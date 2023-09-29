@@ -1,4 +1,4 @@
-name: VelocityV1
+name: Position
 
 defaults:
   # see https://hydra.cc/docs/advanced/overriding_packages/
@@ -7,7 +7,7 @@ defaults:
 
 env:
   num_envs: 4096
-  max_episode_length: 1000
+  max_episode_length: 800
 
 sim:
   dt: 0.005
@@ -25,5 +25,5 @@ randomization:
       p_gains: [0.8, 1.2]
       d_gains: [0.8, 1.2]
 
-time_encoding: false
 action_scaling: 1.0
+time_encoding: false

@@ -1,4 +1,4 @@
-name: VelocityEnv
+name: Velocity
 
 defaults:
   # see https://hydra.cc/docs/advanced/overriding_packages/
@@ -25,4 +25,5 @@ randomization:
       p_gains: [0.8, 1.2]
       d_gains: [0.8, 1.2]
 
+action_scaling: 1.0
 time_encoding: false

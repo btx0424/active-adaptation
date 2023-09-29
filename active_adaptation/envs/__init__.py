@@ -1,2 +1,4 @@
-from .velocity import VelocityEnv
-# from .velocity_v1 import VelocityEnvV1
+from .velocity import Velocity
+from .velocity_v1 import VelocityV1
+
+from .position import Position

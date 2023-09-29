@@ -71,7 +71,7 @@ def attach_payload(parent_path):
     joint.GetAttribute("drive:linear:physics:damping").Set(10.0)
     joint.GetAttribute("drive:linear:physics:stiffness").Set(10000.0)
 
-class Velocity(IsaacEnv):
+class Position(IsaacEnv):
     def __init__(self, cfg, headless):
         self.action_scaling = cfg.task.get("action_scaling", 1.0)
         self.randomization = cfg.task.get("randomization", {})

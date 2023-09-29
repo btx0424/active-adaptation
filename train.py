@@ -90,7 +90,7 @@ def main(cfg):
     print(OmegaConf.to_yaml(cfg))
 
     from omni_drones.envs.isaac_env import IsaacEnv
-    from active_adaptation.envs import VelocityEnv
+    import active_adaptation.envs
     algos = {
         "ppo": PPOPolicy,
         "ppo_adaptive_separate": PPOAdaptiveSeparate,

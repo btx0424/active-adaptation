@@ -71,7 +71,7 @@ def attach_payload(parent_path):
     joint.GetAttribute("drive:linear:physics:damping").Set(10.0)
     joint.GetAttribute("drive:linear:physics:stiffness").Set(10000.0)
 
-class Velocity(IsaacEnv):
+class VelocityV1(IsaacEnv):
     def __init__(self, cfg, headless):
         self.action_scaling = cfg.task.get("action_scaling", 1.0)
         self.randomization = cfg.task.get("randomization", {})
@@ -89,7 +89,9 @@ class Velocity(IsaacEnv):
             torch.tensor([-2.0, -2.0], device=self.device), 
             torch.tensor([2.0, 2.0], device=self.device),
         )
-        self.commands = torch.zeros(self.num_envs, 3, device=self.device)
+        self.commands_start_t = torch.zeros(self.num_envs, device=self.device)
+        self.commands_start = torch.zeros(self.num_envs, 3, device=self.device)
+        self.commands_end = torch.zeros(self.num_envs, 3, device=self.device)
         self.command_interval = 300
         self.push_interval = 600
         self.push_acc_dist = D.Uniform(
@@ -266,9 +268,11 @@ class Velocity(IsaacEnv):
             # ).unsqueeze(1)
 
         # sample commands
-        lin_vel_commands = self.commands_dist.sample(env_ids.shape)
+        lin_vel_commands = self.commands_dist.sample(env_ids.shape+(2,))
         lin_vel_commands *= (lin_vel_commands.norm(dim=-1, keepdim=True) > 0.6).float()
-        self.commands[env_ids, :2] = lin_vel_commands
+        self.commands_start[env_ids, :2] = lin_vel_commands[..., 0, :]
+        self.commands_end[env_ids, :2] = lin_vel_commands[..., 1, :]
+        self.commands_start_t[env_ids] = 0
 
         if hasattr(self, "base_mass_dist"):
             # randomize base mass
@@ -319,6 +323,9 @@ class Velocity(IsaacEnv):
         return tensordict
     
     def _compute_state_and_obs(self):
+        t = (self.progress_buf - self.commands_start_t) / self.command_interval
+        self.commands = self.commands_start.lerp(self.commands_end, t.unsqueeze(-1))
+
         self.robot.update_buffers(dt=self.dt * self.substeps)
         self.robot.data.heading = quat_axis(self.robot.data.root_quat_w, 0)
         
@@ -463,9 +470,11 @@ class Velocity(IsaacEnv):
 
         # resample commands
         change_commands = ((self.progress_buf % self.command_interval) == 0).nonzero().squeeze(1)
-        lin_vel_commands = self.commands_dist.sample(change_commands.shape)
+        lin_vel_commands = self.commands_dist.sample(change_commands.shape+(2,))
         lin_vel_commands *= (lin_vel_commands.norm(dim=-1, keepdim=True) > 0.6).float()
-        self.commands[change_commands, :2] = lin_vel_commands
+        self.commands_start[change_commands, :2] = lin_vel_commands[..., 0, :]
+        self.commands_end[change_commands, :2] = lin_vel_commands[..., 1, :]
+        self.commands_start_t[change_commands] = self.progress_buf[change_commands]
 
         return TensorDict({
             "agents": {
