@@ -1,3 +1,5 @@
-python train.py headless=true algo=ppo eval_interval=200 total_frames=140000000 
-python train.py headless=true algo=ppo_gru eval_interval=200 total_frames=140000000 
-python train.py headless=true algo=ppo_adapt eval_interval=200 total_frames=140000000 
+python train.py headless=true algo=ppo  total_frames=140000000 
+python train.py headless=true algo=ppo_gru  total_frames=140000000 
+python train.py headless=true algo=ppo_adapt  total_frames=140000000 
+python train.py headless=true algo=ppo_adapt algo.condition_mode=film  total_frames=140000000 
+python train.py headless=true algo=ppo_adapt algo.condition_mode=d2rl  total_frames=140000000

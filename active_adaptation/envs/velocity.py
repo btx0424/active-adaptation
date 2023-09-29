@@ -103,6 +103,7 @@ class VelocityEnv(IsaacEnv):
         )
         self.robot.base.initialize()
         self.base_mass = self.robot.base.get_masses(clone=True)
+        self.base_inertia = self.robot.base.get_inertias(clone=True)[..., [0, 4, 8]]
 
         import pprint
         randomization_cfg = self.randomization.get("train", {})
@@ -196,8 +197,9 @@ class VelocityEnv(IsaacEnv):
                     "p_gains": UnboundedContinuousTensorSpec((1, 12)),
                     # "d_gains": UnboundedContinuousTensorSpec((1, 12)),
                     "feet_pos": UnboundedContinuousTensorSpec((1, 4 * 3)),
-                    "feet_vel": UnboundedContinuousTensorSpec((1, 4 * 3)),
+                    # "feet_vel": UnboundedContinuousTensorSpec((1, 4 * 3)),
                     "normalized_forces": UnboundedContinuousTensorSpec((1, 3)),
+                    "normalized_torques": UnboundedContinuousTensorSpec((1, 3)),
                 })
             },
         }).expand(self.num_envs).to(self.device)
@@ -325,7 +327,8 @@ class VelocityEnv(IsaacEnv):
                 .clone()
                 .split([3, 3], dim=-1)
             )
-        normalized_forces = 0.2 * (forces / self.base_mass.unsqueeze(-1))
+        normalized_forces = 0.2 * (forces / self.base_mass.unsqueeze(1))
+        normalized_torques = 0.2 * (torques / self.base_inertia.unsqueeze(1))
 
         feet_pos = []
         feet_vel = []
@@ -343,8 +346,9 @@ class VelocityEnv(IsaacEnv):
             torch.stack(feet_pos, dim=-2)
         )
         self.intrinsics["feet_pos"][:] = self.feet_pos_b.reshape(-1, 1, 12)
-        self.intrinsics["feet_vel"][:] = self.feet_vel_b.reshape(-1, 1, 12)
+        # self.intrinsics["feet_vel"][:] = self.feet_vel_b.reshape(-1, 1, 12)
         self.intrinsics["normalized_forces"][:] = normalized_forces.reshape(-1, 1, 3)
+        self.intrinsics["normalized_torques"][:] = normalized_torques.reshape(-1, 1, 3)
 
         obs = [
             # base orientation
@@ -392,6 +396,8 @@ class VelocityEnv(IsaacEnv):
         # -- compute reward
         lin_vel_error = square_norm(self.commands[:, :2] - self.robot.data.root_lin_vel_w[:, :2])
         # ang_vel_error = torch.square(self.commands[:, 2] - self.robot.data.root_ang_vel_b[:, 2])
+        # lin_vel_proj = (self.robot.data.root_lin_vel_w[:, :2] * self.commands[:, :2]).sum(-1, keepdim=True)
+        
         base_height_error = (
             (self.robot.data.root_pos_w[:, [2]] - self.base_target_height)
             .abs()
@@ -406,7 +412,7 @@ class VelocityEnv(IsaacEnv):
         )
 
         # lin_vel_xy_exp = torch.exp(-lin_vel_error / 0.25)
-        lin_vel_xy_exp = torch.exp(-lin_vel_error / 0.5)
+        # lin_vel_xy_exp = torch.exp(-lin_vel_error / 0.5)
         # ang_vel_z_exp = torch.exp(-ang_vel_error / 0.25)
         lin_vel_z_l2 = torch.square(self.robot.data.root_lin_vel_w[:, 2])
         ang_vel_xy_l2 = square_norm(self.robot.data.root_ang_vel_w[:, :2])
@@ -420,6 +426,7 @@ class VelocityEnv(IsaacEnv):
         reward = (
             # 2.0 * lin_vel_xy_exp
             2.0 / (1. + lin_vel_error / 0.5)
+            # lin_vel_proj.clamp_max(self.commands[:, :2].norm(dim=-1, keepdim=True))
             + 0.5 * heading_projection
             # + 0.5 * ang_vel_z_exp.unsqueeze(1)
             + 0.5 / (1 + base_height_error)
