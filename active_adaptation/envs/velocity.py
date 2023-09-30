@@ -169,6 +169,10 @@ class Velocity(IsaacEnv):
         base_prim = prim_utils.get_prim_at_path("/World/envs/env_0/Robot/base")
         PhysxSchema.PhysxArticulationForceSensorAPI.Apply(base_prim)
 
+        for path in ["FL_calf", "FR_calf", "RL_calf", "RR_calf"]:
+            calf_prim = prim_utils.get_prim_at_path(f"/World/envs/env_0/Robot/{path}")
+            PhysxSchema.PhysxArticulationForceSensorAPI.Apply(calf_prim)
+
         kit_utils.create_ground_plane(
             "/World/defaultGroundPlane",
             static_friction=1.0,
@@ -199,8 +203,8 @@ class Velocity(IsaacEnv):
                     # "d_gains": UnboundedContinuousTensorSpec((1, 12)),
                     "feet_pos": UnboundedContinuousTensorSpec((1, 4 * 3)),
                     # "feet_vel": UnboundedContinuousTensorSpec((1, 4 * 3)),
-                    "normalized_forces": UnboundedContinuousTensorSpec((1, 3)),
-                    "normalized_torques": UnboundedContinuousTensorSpec((1, 3)),
+                    "normalized_forces": UnboundedContinuousTensorSpec((1, 3 * 5)),
+                    # "normalized_torques": UnboundedContinuousTensorSpec((1, 3)),
                 })
             },
         }).expand(self.num_envs).to(self.device)
@@ -349,8 +353,8 @@ class Velocity(IsaacEnv):
         )
         self.intrinsics["feet_pos"][:] = self.feet_pos_b.reshape(-1, 1, 12)
         # self.intrinsics["feet_vel"][:] = self.feet_vel_b.reshape(-1, 1, 12)
-        self.intrinsics["normalized_forces"][:] = normalized_forces.reshape(-1, 1, 3)
-        self.intrinsics["normalized_torques"][:] = normalized_torques.reshape(-1, 1, 3)
+        self.intrinsics["normalized_forces"][:] = normalized_forces.reshape(-1, 1, 3 * 5)
+        # self.intrinsics["normalized_torques"][:] = normalized_torques.reshape(-1, 1, 3)
 
         obs = [
             # base orientation
@@ -427,9 +431,9 @@ class Velocity(IsaacEnv):
         
         reward = (
             # 2.0 * lin_vel_xy_exp
-            2.0 / (1. + lin_vel_error / 0.5)
+            1.0 / (1. + lin_vel_error / 0.5)
             # lin_vel_proj.clamp_max(self.commands[:, :2].norm(dim=-1, keepdim=True))
-            + 0.5 * heading_projection
+            + 0.25 * heading_projection
             # + 0.5 * ang_vel_z_exp.unsqueeze(1)
             + 0.5 / (1 + base_height_error)
             - 2.0 * lin_vel_z_l2.unsqueeze(1)
