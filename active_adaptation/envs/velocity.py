@@ -89,8 +89,13 @@ class Velocity(IsaacEnv):
             torch.tensor([-2.0, -2.0], device=self.device), 
             torch.tensor([2.0, 2.0], device=self.device),
         )
-        self.commands = torch.zeros(self.num_envs, 3, device=self.device)
+
+        import math
         self.command_interval = 300
+        self.n_commands = math.ceil(self.max_episode_length / self.command_interval)
+        self.commands_queue = torch.zeros(self.num_envs, self.n_commands+1, 3, device=self.device)
+        self.commands_i = torch.zeros(self.num_envs, 1, 1, dtype=torch.long, device=self.device)
+
         self.push_interval = 600
         self.push_acc_dist = D.Uniform(
             torch.tensor([-3, -3, -0.25], device=self.device) / (self.dt * self.substeps), 
@@ -186,7 +191,7 @@ class Velocity(IsaacEnv):
     def _set_specs(self):
         self.robot.initialize("/World/envs/env_*/Robot")
         observation_dim = (
-            31
+            30
             + 3 + 3 # linvel_b, angvel_b
             + 12 + 12 # dof_pos, dof_vel
             + 2
@@ -196,6 +201,7 @@ class Velocity(IsaacEnv):
             "agents": {
                 "observation": UnboundedContinuousTensorSpec((1, observation_dim)),
                 "intrinsics": CompositeSpec({
+                    "base_height": UnboundedContinuousTensorSpec((1, 1)),
                     "base_mass": UnboundedContinuousTensorSpec((1, 1)),
                     "payload_mass": UnboundedContinuousTensorSpec((1, 1)),
                     "legs_masses": UnboundedContinuousTensorSpec((1, 8)),
@@ -270,9 +276,10 @@ class Velocity(IsaacEnv):
             # ).unsqueeze(1)
 
         # sample commands
-        lin_vel_commands = self.commands_dist.sample(env_ids.shape)
-        lin_vel_commands *= (lin_vel_commands.norm(dim=-1, keepdim=True) > 0.6).float()
-        self.commands[env_ids, :2] = lin_vel_commands
+        commands_queue = self.commands_dist.sample(env_ids.shape+(self.n_commands+1,))
+        commands_queue *= (commands_queue.norm(dim=-1, keepdim=True) > 0.6).float()
+        self.commands_queue[env_ids, :, :2] = commands_queue
+        self.commands_i[env_ids] = 0
 
         if hasattr(self, "base_mass_dist"):
             # randomize base mass
@@ -325,7 +332,12 @@ class Velocity(IsaacEnv):
     def _compute_state_and_obs(self):
         self.robot.update_buffers(dt=self.dt * self.substeps)
         self.robot.data.heading = quat_axis(self.robot.data.root_quat_w, 0)
-        
+
+        t = self.progress_buf % self.command_interval / self.command_interval
+        c0 = self.commands_queue.take_along_dim(self.commands_i, dim=1)
+        c1 = self.commands_queue.take_along_dim(self.commands_i+1, dim=1)
+        self.commands = c0.lerp(c1, t.reshape(-1, 1, 1)).squeeze(1)
+
         with disable_warnings(self.robot.articulations._physics_sim_view):
             forces, torques = (
                 self.robot.articulations._physics_view
@@ -355,10 +367,12 @@ class Velocity(IsaacEnv):
         # self.intrinsics["feet_vel"][:] = self.feet_vel_b.reshape(-1, 1, 12)
         self.intrinsics["normalized_forces"][:] = normalized_forces.reshape(-1, 1, 3 * 5)
         # self.intrinsics["normalized_torques"][:] = normalized_torques.reshape(-1, 1, 3)
-
+        self.intrinsics["base_height"][:] = (
+            self.robot.data.root_pos_w[:, [2]] - self.base_target_height
+        ).unsqueeze(1)
+        
         obs = [
             # base orientation
-            self.robot.data.root_pos_w[:, [2]] - self.base_target_height,
             self.robot.data.root_lin_vel_b,
             self.robot.data.root_ang_vel_b,
             self.robot.data.projected_gravity_b,
@@ -431,7 +445,7 @@ class Velocity(IsaacEnv):
         
         reward = (
             # 2.0 * lin_vel_xy_exp
-            1.0 / (1. + lin_vel_error / 0.5)
+            1.2 / (1. + lin_vel_error / 0.5)
             # lin_vel_proj.clamp_max(self.commands[:, :2].norm(dim=-1, keepdim=True))
             + 0.25 * heading_projection
             # + 0.5 * ang_vel_z_exp.unsqueeze(1)
@@ -467,9 +481,7 @@ class Velocity(IsaacEnv):
 
         # resample commands
         change_commands = ((self.progress_buf % self.command_interval) == 0).nonzero().squeeze(1)
-        lin_vel_commands = self.commands_dist.sample(change_commands.shape)
-        lin_vel_commands *= (lin_vel_commands.norm(dim=-1, keepdim=True) > 0.6).float()
-        self.commands[change_commands, :2] = lin_vel_commands
+        self.commands_i[change_commands] += 1
 
         return TensorDict({
             "agents": {

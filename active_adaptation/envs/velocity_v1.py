@@ -91,8 +91,9 @@ class VelocityV1(IsaacEnv):
         )
 
         self.command_interval = 300
-        self.n_commands = self.max_episode_length // self.command_interval
-        self.commands_all = torch.zeros(self.num_envs, self.n_commands + 1, 3, device=self.device)
+        import math
+        self.n_commands = math.ceil(self.max_episode_length / self.command_interval)
+        self.commands_queue = torch.zeros(self.num_envs, self.n_commands + 1, 3, device=self.device)
         self.commands_i = torch.zeros(self.num_envs, 1, 1, dtype=torch.long, device=self.device)
 
         self.push_interval = 600
@@ -272,7 +273,7 @@ class VelocityV1(IsaacEnv):
         # sample commands
         lin_vel_commands = self.commands_dist.sample(env_ids.shape+(self.n_commands+1,))
         lin_vel_commands *= (lin_vel_commands.norm(dim=-1, keepdim=True) > 0.6).float()
-        self.commands_all[env_ids, :, :2] = lin_vel_commands
+        self.commands_queue[env_ids, :, :2] = lin_vel_commands
         self.commands_i[env_ids] = 0
 
         if hasattr(self, "base_mass_dist"):
@@ -325,8 +326,9 @@ class VelocityV1(IsaacEnv):
     
     def _compute_state_and_obs(self):
         t = self.progress_buf % self.command_interval / self.command_interval
-        c0 = self.commands_all.take_along_dim(self.commands_i, dim=1)
-        c1 = self.commands_all.take_along_dim(self.commands_i+1, dim=1)
+        assert (self.commands_i < self.n_commands).all()
+        c0 = self.commands_queue.take_along_dim(self.commands_i, dim=1)
+        c1 = self.commands_queue.take_along_dim(self.commands_i+1, dim=1)
         self.commands = c0.lerp(c1, t.reshape(-1, 1, 1)).squeeze(1)
 
         self.robot.update_buffers(dt=self.dt * self.substeps)
@@ -473,7 +475,7 @@ class VelocityV1(IsaacEnv):
 
         # resample commands
         change_commands = ((self.progress_buf % self.command_interval) == 0).nonzero().squeeze(1)
-        self.commands_i[change_commands].add_(1)
+        self.commands_i[change_commands] = self.commands_i[change_commands] + 1
 
         return TensorDict({
             "agents": {
