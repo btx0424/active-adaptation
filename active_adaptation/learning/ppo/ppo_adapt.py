@@ -194,7 +194,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         self.cfg = cfg
         self.device = device
 
-        self.entropy_coef = 0.001
+        self.entropy_coef = 0.01
         self.clip_param = 0.1
         self.critic_loss_fn = nn.HuberLoss(delta=10)
         self.adaptation_key = self.cfg.adaptation_key
@@ -206,8 +206,9 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         
         self.n_agents, self.action_dim = action_spec.shape[-2:]
 
+        print(observation_spec)
         intrinsics_dim = observation_spec[("agents", "intrinsics")].shape[-1]
-        print(observation_spec[("agents", "intrinsics")])
+        observation_dim = observation_spec[("agents", "observation")].shape[-1]
 
         fake_input = observation_spec.zero()
 
@@ -219,13 +220,21 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         if self.cfg.condition_mode == "cat":
             def condition():
                 return TensorDictSequential(
-                    TensorDictModule(make_mlp([256, 256]), [("agents", "observation")], ["_feature"]),
+                    TensorDictModule(
+                        nn.Sequential(nn.LayerNorm(observation_dim), make_mlp([256, 256])), 
+                        [("agents", "observation")], 
+                        ["_feature"]
+                    ),
                     CatTensors(["_feature", "context"], "_feature", del_keys=False)
                 )
         elif self.cfg.condition_mode == "film":
             def condition():
                 return TensorDictSequential(
-                    TensorDictModule(make_mlp([256, 256]), [("agents", "observation")], ["_feature"]),
+                    TensorDictModule(
+                        nn.Sequential(nn.LayerNorm(observation_dim), make_mlp([256, 256])), 
+                        [("agents", "observation")], 
+                        ["_feature"]
+                    ),
                     TensorDictModule(FiLM(128), ["_feature", "context"], ["_feature"])
                 )
         elif self.cfg.condition_mode == "d2rl":

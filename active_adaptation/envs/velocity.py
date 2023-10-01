@@ -187,7 +187,7 @@ class Velocity(IsaacEnv):
             self.payload.initialize()
             self.payload_mass_dist = D.Uniform(
                 torch.tensor([0.05], device=self.device),
-                torch.tensor([1.0], device=self.device)
+                torch.tensor([.5], device=self.device)
             )
 
         self.pos_buffer = torch.zeros(self.num_envs, 3, device=self.device)
@@ -232,23 +232,24 @@ class Velocity(IsaacEnv):
     def _set_specs(self):
         self.robot.initialize("/World/envs/env_*/Robot")
         observation_dim = (
-            30
+            10
             + 3 + 3 # linvel_b, angvel_b
             + 12 + 12 # dof_pos, dof_vel
+            + 12 + 12 # actions
             + 2
         )
 
         self.observation_spec = CompositeSpec({
             "agents": {
                 "observation": UnboundedContinuousTensorSpec((1, observation_dim)),
-                "observation_h": UnboundedContinuousTensorSpec((1, 32, observation_dim)),
+                # "observation_h": UnboundedContinuousTensorSpec((1, 32, observation_dim)),
                 "intrinsics": CompositeSpec({
                     "base_height": UnboundedContinuousTensorSpec((1, 1)),
                     "base_mass": UnboundedContinuousTensorSpec((1, 1)),
                     "payload_mass": UnboundedContinuousTensorSpec((1, 1)),
                     "legs_masses": UnboundedContinuousTensorSpec((1, 8)),
                     "p_gains": UnboundedContinuousTensorSpec((1, 12)),
-                    # "d_gains": UnboundedContinuousTensorSpec((1, 12)),
+                    "d_gains": UnboundedContinuousTensorSpec((1, 12)),
                     "feet_pos": UnboundedContinuousTensorSpec((1, 4 * 3)),
                     # "feet_vel": UnboundedContinuousTensorSpec((1, 4 * 3)),
                     "normalized_forces": UnboundedContinuousTensorSpec((1, 3 * 9)),
@@ -313,10 +314,10 @@ class Velocity(IsaacEnv):
                 (p_gains - self.motor_p_gains_dist.low)
                 / (self.motor_p_gains_dist.high - self.motor_p_gains_dist.low)
             ).unsqueeze(1)
-            # self.intrinsics["d_gains"][env_ids] = (
-            #     (d_gains - self.motor_d_gains_dist.low)
-            #     / (self.motor_d_gains_dist.high - self.motor_d_gains_dist.low)
-            # ).unsqueeze(1)
+            self.intrinsics["d_gains"][env_ids] = (
+                (d_gains - self.motor_d_gains_dist.low)
+                / (self.motor_d_gains_dist.high - self.motor_d_gains_dist.low)
+            ).unsqueeze(1)
 
         # sample commands
         commands_queue = self.commands_dist.sample(env_ids.shape+(self.n_commands,))
@@ -420,6 +421,7 @@ class Velocity(IsaacEnv):
         dof_vel = self.robot.data.dof_vel - self.robot.data.actuator_vel_offset
         obs = [
             # base orientation
+            self.robot.data.root_quat_w,
             self.robot.data.root_lin_vel_b,
             self.robot.data.root_ang_vel_b,
             self.robot.data.projected_gravity_b,
@@ -559,4 +561,7 @@ class Velocity(IsaacEnv):
 
 def square_norm(x: torch.Tensor):
     return x.square().sum(dim=-1, keepdim=True)
+
+def noise(x: torch.Tensor, scale: float):
+    return x + torch.randn_like(x) * scale
 

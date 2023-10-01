@@ -67,7 +67,7 @@ class EpisodeStats:
             done_or_truncated = done_or_truncated.squeeze(-1)
             self._episodes += done_or_truncated.sum().item()
             self._stats.extend(
-                tensordict.select(*self.in_keys)[done_or_truncated].clone().unbind(0)
+                tensordict["next"].select(*self.in_keys)[done_or_truncated].clone().unbind(0)
             )
     
     def pop(self):
@@ -212,9 +212,11 @@ def main(cfg):
         info["recording"] = wandb.Video(video_array, fps=0.5 / (cfg.sim.dt * cfg.sim.substeps), format="mp4")
         
         df = pd.DataFrame(traj_stats["stats"].to_dict())
-        table = wandb.Table(dataframe=df)
-        info["eval/return"] = wandb.plot.histogram(table, "return")
-        info["eval/episode_len"] = wandb.plot.histogram(table, "episode_len")
+        # table = wandb.Table(dataframe=df)
+        # info["eval/return"] = wandb.plot.histogram(table, "return")
+        # info["eval/episode_len"] = wandb.plot.histogram(table, "episode_len")
+        info["eval/return"] = np.histogram(df["return"], bins=10)
+        info["eval/episode_len"] = np.histogram(df["episode_len"], bins=10)
         
         if (
             hasattr(policy, "adaptation_loss_traj")
