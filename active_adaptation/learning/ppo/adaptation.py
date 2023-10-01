@@ -5,8 +5,10 @@ import torch.nn.functional as F
 from torchrl.data import TensorSpec
 from torchrl.envs.transforms import Transform
 from torchrl.objectives.utils import hold_out_net
+from torchrl.modules import ProbabilisticActor
 
 from tensordict import TensorDict, TensorDictBase
+from tensordict.nn import TensorDictModule
 
 
 class AdaptationModule(Transform):

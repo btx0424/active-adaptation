@@ -131,7 +131,8 @@ def main(cfg):
             transform = FromDiscreteAction(nbins=nbins)
             transforms.append(transform)
     
-    env = TransformedEnv(base_env, Compose(*transforms))
+    transforms = Compose(*transforms)
+    env = TransformedEnv(base_env, transforms)
 
     policy = algos[cfg.algo.name.lower()](
         cfg.algo, 
@@ -141,8 +142,8 @@ def main(cfg):
         device=base_env.device
     )
 
-    if hasattr(policy, "adaptation_loss"):
-        env = TransformedEnv(base_env, Compose(*transforms, policy.adaptation_loss))
+    # if hasattr(policy, "adaptation_loss"):
+    #     transforms.append(policy.adaptation_loss)
 
     frames_per_batch = env.num_envs * int(cfg.algo.train_every)
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch

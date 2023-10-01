@@ -27,8 +27,10 @@ import torch.nn.functional as F
 import torch.distributions as D
 
 from torchrl.data import CompositeSpec, TensorSpec
-from torchrl.envs.transforms import CatTensors, Transform
+from torchrl.envs.transforms import CatTensors
 from torchrl.modules import ProbabilisticActor
+from torchrl.objectives.utils import hold_out_net
+
 from tensordict import TensorDict, TensorDictBase
 from tensordict.nn import TensorDictModule, TensorDictSequential, TensorDictModuleBase
 
@@ -39,7 +41,7 @@ from typing import Any, Mapping, Union, Tuple
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
 from .common import GAE
-from .adaptation import ActionDistDiv, ActionValue, MSE
+from .adaptation import Action, Value, ActionValue, MSE
 
 @dataclass
 class PPOConfig:
@@ -280,7 +282,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
             self.critic.apply(init_)
             self.encoder.apply(init_)
 
-        if self.phase in ("adpatation", "finetune"):
+        if self.phase in ("adaptation", "finetune"):
             if self.cfg.adaptation_loss == "mse":
                 self.adaptation_module = TensorDictModule(
                     TConv(fake_input[self.adaptation_key].shape[-1]), 
@@ -297,7 +299,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
                     [("agents", "observation_h")], [self.adaptation_key]
                 ).to(self.device)
                 self.adaptation_module(fake_input)
-                self.adaptation_loss = ValueDeviation(
+                self.adaptation_loss = Value(
                     self.encoder,
                     self.adaptation_module,
                     self.critic
@@ -308,7 +310,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
                     [("agents", "observation_h")], [self.adaptation_key]
                 ).to(self.device)
                 self.adaptation_module(fake_input)
-                self.adaptation_loss = ActionDistDiv(
+                self.adaptation_loss = Action(
                     self.encoder,
                     self.adaptation_module,
                     self.actor

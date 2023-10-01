@@ -432,8 +432,11 @@ class Velocity(IsaacEnv):
         
         obs = torch.cat(obs, dim=-1)
 
-        self.diff_linvel_w = (self.robot.data.root_pos_w - self.pos_buffer) / (self.dt * self.substeps)
-        self.pos_buffer[:] = self.robot.data.root_pos_w
+        self.diff_linvel_w = (
+            (self.robot.data.root_pos_w - self.pos_buffer) / (3 * (self.dt * self.substeps))
+        )
+        update_buffer = self.progress_buf % 3 == 0
+        self.pos_buffer[update_buffer] = self.robot.data.root_pos_w[update_buffer]
 
         if self._should_render(0):
             self.draw.clear_lines()
