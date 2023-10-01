@@ -187,7 +187,7 @@ class Velocity(IsaacEnv):
             self.payload.initialize()
             self.payload_mass_dist = D.Uniform(
                 torch.tensor([0.05], device=self.device),
-                torch.tensor([2.0], device=self.device)
+                torch.tensor([1.0], device=self.device)
             )
 
         self.pos_buffer = torch.zeros(self.num_envs, 3, device=self.device)
@@ -472,9 +472,13 @@ class Velocity(IsaacEnv):
 
     def _compute_reward_and_done(self):
         # -- compute reward
-        lin_vel_error = square_norm(self.commands[:, :2] - self.robot.data.root_lin_vel_w[:, :2])
+        lin_vel_w = self.robot.data.root_lin_vel_w
+        lin_vel_error = square_norm(self.commands[:, :2] - lin_vel_w[:, :2])
         # ang_vel_error = torch.square(self.commands[:, 2] - self.robot.data.root_ang_vel_b[:, 2])
-        # lin_vel_proj = (self.robot.data.root_lin_vel_w[:, :2] * self.commands[:, :2]).sum(-1, keepdim=True)
+        # lin_vel_proj = (lin_vel_w * self.commands).sum(-1, keepdim=True)
+        # lin_vel_error_projected = (
+        #     (self.commands.norm(dim=-1, keepdim=True) - lin_vel_proj).clip(0.)
+        # )
         
         base_height_error = (
             (self.robot.data.root_pos_w[:, [2]] - self.base_target_height)
@@ -504,6 +508,7 @@ class Velocity(IsaacEnv):
         reward = (
             # 2.0 * lin_vel_xy_exp
             1.2 / (1. + lin_vel_error / 0.5)
+            # 1.2 / (1. + lin_vel_error_projected / 0.5)
             # lin_vel_proj.clamp_max(self.commands[:, :2].norm(dim=-1, keepdim=True))
             + 0.25 * heading_projection
             # + 0.5 * ang_vel_z_exp.unsqueeze(1)

@@ -19,11 +19,13 @@ randomization:
     motor:
       p_gains: [0.8, 1.2]
       d_gains: [0.8, 1.2]
+    payload_mass: [0.05, 1.]
   eval:
     base_mass: [0.8, 1.2]
     motor:
       p_gains: [0.8, 1.2]
       d_gains: [0.8, 1.2]
+    payload_mass: [0.05, 1.]
 
 action_scaling: 1.0
 time_encoding: false
