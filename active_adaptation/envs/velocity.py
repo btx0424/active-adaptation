@@ -21,13 +21,15 @@
 # SOFTWARE.
 
 
-from typing import List, Optional
+from typing import List, Optional, Sequence
+
+from omni.isaac.orbit.robots.legged_robot.legged_robot_cfg import LeggedRobotCfg
 
 from omni.isaac.core.utils.viewports import set_camera_view
 import omni.isaac.core.utils.prims as prim_utils
 import omni.isaac.orbit.utils.kit as kit_utils
 
-from omni.isaac.orbit.robots.legged_robot import LeggedRobot
+from omni.isaac.orbit.robots.legged_robot import LeggedRobot as _LeggedRobot
 from omni.isaac.orbit.robots.config.anymal import ANYMAL_B_CFG, ANYMAL_C_CFG
 from omni.isaac.orbit.robots.config.unitree import UNITREE_A1_CFG
 from omni.isaac.orbit.actuators.model import IdealActuator
@@ -71,6 +73,38 @@ def attach_payload(parent_path):
     joint.GetAttribute("drive:linear:physics:damping").Set(10.0)
     joint.GetAttribute("drive:linear:physics:stiffness").Set(10000.0)
 
+
+class LeggedRobot(_LeggedRobot):
+
+    def __init__(self, cfg: LeggedRobotCfg, force_sensor_cfg: List[str] = []):
+        super().__init__(cfg)
+        self.force_sensor_cfg = force_sensor_cfg
+
+    def spawn(self, prim_path: str, translation: Sequence[float] = None, orientation: Sequence[float] = None):
+        super().spawn(prim_path, translation, orientation)
+        if "base" in self.force_sensor_cfg:
+            base_prim = prim_utils.get_prim_at_path(prim_path + "/base")
+        
+        if "calf" in self.force_sensor_cfg:
+            for path in ["FL_calf", "FR_calf", "RL_calf", "RR_calf"]:
+                calf_prim = prim_utils.get_prim_at_path(prim_path + "/" + path)
+                PhysxSchema.PhysxArticulationForceSensorAPI.Apply(calf_prim)
+
+        
+    def initialize(self, prim_paths_expr: str = None):
+        super().initialize(prim_paths_expr)
+        self.base = RigidPrimView(
+            f"{self._prim_paths_expr}/base",
+            reset_xform_properties=False,
+        )
+        self.legs = RigidPrimView(
+            f"{self._prim_paths_expr}/.*_(calf|thigh)",
+            reset_xform_properties=False,
+        )
+        self.base.initialize()
+        self.legs.initialize()
+
+
 class Velocity(IsaacEnv):
     def __init__(self, cfg, headless):
         self.action_scaling = cfg.task.get("action_scaling", 1.0)
@@ -93,7 +127,7 @@ class Velocity(IsaacEnv):
         import math
         self.command_interval = 300
         self.n_commands = math.ceil(self.max_episode_length / self.command_interval)
-        self.commands_queue = torch.zeros(self.num_envs, self.n_commands+1, 3, device=self.device)
+        self.commands_queue = torch.zeros(self.num_envs, self.n_commands, 3, device=self.device)
         self.commands_i = torch.zeros(self.num_envs, 1, 1, dtype=torch.long, device=self.device)
 
         self.push_interval = 600
@@ -153,9 +187,10 @@ class Velocity(IsaacEnv):
             self.payload.initialize()
             self.payload_mass_dist = D.Uniform(
                 torch.tensor([0.05], device=self.device),
-                torch.tensor([0.6], device=self.device)
+                torch.tensor([2.0], device=self.device)
             )
 
+        self.pos_buffer = torch.zeros(self.num_envs, 3, device=self.device)
         self.heading_target = torch.zeros(self.num_envs, device=self.device)
 
         self.base_target_height = 0.3
@@ -171,12 +206,18 @@ class Velocity(IsaacEnv):
         self.robot.spawn("/World/envs/env_0/Robot")
         attach_payload("/World/envs/env_0/Robot")
 
-        base_prim = prim_utils.get_prim_at_path("/World/envs/env_0/Robot/base")
-        PhysxSchema.PhysxArticulationForceSensorAPI.Apply(base_prim)
-
-        for path in ["FL_calf", "FR_calf", "RL_calf", "RR_calf"]:
-            calf_prim = prim_utils.get_prim_at_path(f"/World/envs/env_0/Robot/{path}")
-            PhysxSchema.PhysxArticulationForceSensorAPI.Apply(calf_prim)
+        force_sensor_cfg = self.cfg.task.get("force_sensor", [])
+        if "base" in force_sensor_cfg:
+            base_prim = prim_utils.get_prim_at_path("/World/envs/env_0/Robot/base")
+            PhysxSchema.PhysxArticulationForceSensorAPI.Apply(base_prim)
+        if "calf" in force_sensor_cfg:
+            for path in ["FL_calf", "FR_calf", "RL_calf", "RR_calf"]:
+                calf_prim = prim_utils.get_prim_at_path(f"/World/envs/env_0/Robot/{path}")
+                PhysxSchema.PhysxArticulationForceSensorAPI.Apply(calf_prim)
+        if "thigh" in force_sensor_cfg:
+            for path in ["FL_thigh", "FR_thigh", "RL_thigh", "RR_thigh"]:
+                thigh_prim = prim_utils.get_prim_at_path(f"/World/envs/env_0/Robot/{path}")
+                PhysxSchema.PhysxArticulationForceSensorAPI.Apply(thigh_prim)
 
         kit_utils.create_ground_plane(
             "/World/defaultGroundPlane",
@@ -200,6 +241,7 @@ class Velocity(IsaacEnv):
         self.observation_spec = CompositeSpec({
             "agents": {
                 "observation": UnboundedContinuousTensorSpec((1, observation_dim)),
+                "observation_h": UnboundedContinuousTensorSpec((1, 32, observation_dim)),
                 "intrinsics": CompositeSpec({
                     "base_height": UnboundedContinuousTensorSpec((1, 1)),
                     "base_mass": UnboundedContinuousTensorSpec((1, 1)),
@@ -209,11 +251,12 @@ class Velocity(IsaacEnv):
                     # "d_gains": UnboundedContinuousTensorSpec((1, 12)),
                     "feet_pos": UnboundedContinuousTensorSpec((1, 4 * 3)),
                     # "feet_vel": UnboundedContinuousTensorSpec((1, 4 * 3)),
-                    "normalized_forces": UnboundedContinuousTensorSpec((1, 3 * 5)),
+                    "normalized_forces": UnboundedContinuousTensorSpec((1, 3 * 9)),
                     # "normalized_torques": UnboundedContinuousTensorSpec((1, 3)),
                 })
             },
         }).expand(self.num_envs).to(self.device)
+
         self.action_spec = CompositeSpec({
             "agents": CompositeSpec({
                 "action": UnboundedContinuousTensorSpec((1, self.robot.num_actions)),
@@ -276,7 +319,7 @@ class Velocity(IsaacEnv):
             # ).unsqueeze(1)
 
         # sample commands
-        commands_queue = self.commands_dist.sample(env_ids.shape+(self.n_commands+1,))
+        commands_queue = self.commands_dist.sample(env_ids.shape+(self.n_commands,))
         commands_queue *= (commands_queue.norm(dim=-1, keepdim=True) > 0.6).float()
         self.commands_queue[env_ids, :, :2] = commands_queue
         self.commands_i[env_ids] = 0
@@ -333,11 +376,13 @@ class Velocity(IsaacEnv):
         self.robot.update_buffers(dt=self.dt * self.substeps)
         self.robot.data.heading = quat_axis(self.robot.data.root_quat_w, 0)
 
-        t = self.progress_buf % self.command_interval / self.command_interval
-        c0 = self.commands_queue.take_along_dim(self.commands_i, dim=1)
-        c1 = self.commands_queue.take_along_dim(self.commands_i+1, dim=1)
-        self.commands = c0.lerp(c1, t.reshape(-1, 1, 1)).squeeze(1)
-
+        self.commands = (
+            self.commands_queue
+            .take_along_dim(self.commands_i, dim=1)
+            .squeeze(1)
+        )
+        cmd_lin_vel_b = quat_rotate_inverse(self.robot.data.root_quat_w, self.commands)
+       
         with disable_warnings(self.robot.articulations._physics_sim_view):
             forces, torques = (
                 self.robot.articulations._physics_view
@@ -346,7 +391,7 @@ class Velocity(IsaacEnv):
                 .split([3, 3], dim=-1)
             )
         normalized_forces = 0.2 * (forces / self.base_mass.unsqueeze(1))
-        normalized_torques = 0.2 * (torques / self.base_inertia.unsqueeze(1))
+        # normalized_torques = 0.2 * (torques / self.base_inertia.unsqueeze(1))
 
         feet_pos = []
         feet_vel = []
@@ -365,38 +410,51 @@ class Velocity(IsaacEnv):
         )
         self.intrinsics["feet_pos"][:] = self.feet_pos_b.reshape(-1, 1, 12)
         # self.intrinsics["feet_vel"][:] = self.feet_vel_b.reshape(-1, 1, 12)
-        self.intrinsics["normalized_forces"][:] = normalized_forces.reshape(-1, 1, 3 * 5)
+        self.intrinsics["normalized_forces"][:] = normalized_forces.reshape(self.num_envs, 1, -1)
         # self.intrinsics["normalized_torques"][:] = normalized_torques.reshape(-1, 1, 3)
         self.intrinsics["base_height"][:] = (
             self.robot.data.root_pos_w[:, [2]] - self.base_target_height
         ).unsqueeze(1)
         
+        dof_pos = self.robot.data.dof_pos - self.robot.data.actuator_pos_offset
+        dof_vel = self.robot.data.dof_vel - self.robot.data.actuator_vel_offset
         obs = [
             # base orientation
             self.robot.data.root_lin_vel_b,
             self.robot.data.root_ang_vel_b,
             self.robot.data.projected_gravity_b,
-            quat_rotate_inverse(self.robot.data.root_quat_w, self.commands),
-            self.robot.data.dof_pos - self.robot.data.actuator_pos_offset,
-            self.robot.data.dof_vel - self.robot.data.actuator_vel_offset,
+            cmd_lin_vel_b - self.robot.data.root_lin_vel_b,
+            dof_pos,
+            dof_vel,
             self.actions, # a_{t-1}
             self.previous_actions, # a_{t-2}
         ]
         
         obs = torch.cat(obs, dim=-1)
 
+        self.diff_linvel_w = (self.robot.data.root_pos_w - self.pos_buffer) / (self.dt * self.substeps)
+        self.pos_buffer[:] = self.robot.data.root_pos_w
+
         if self._should_render(0):
             self.draw.clear_lines()
-            colors = [(1.0, 1.0, 1.0, 1.0), (1.0, 0.5, 0.5, 1.0)]
-            sizes = [2, 2]
             robot_pos = self.robot.data.root_pos_w[self.central_env_idx].cpu()
             linvel_start = robot_pos + torch.tensor([0., 0., 0.5])
-            linvel_end = linvel_start + self.robot.data.root_lin_vel_w[self.central_env_idx].cpu()
+            linvel = self.robot.data.root_lin_vel_w[self.central_env_idx].cpu()
+            diff_linvel = self.diff_linvel_w[self.central_env_idx].cpu()
+
+            linvel_end = linvel_start + linvel
+            diff_linvel_end = linvel_start + diff_linvel
             target_linvel_end = linvel_start + self.commands[self.central_env_idx].cpu()
             
-            point_list_0 = [ linvel_start.tolist(), linvel_start.tolist()]
-            point_list_1 = [target_linvel_end.tolist(), linvel_end.tolist()]
+            point_list_0 = [linvel_start.tolist()] * 3
+            point_list_1 = [
+                target_linvel_end.tolist(), 
+                linvel_end.tolist(),
+                diff_linvel_end.tolist()
+            ]
             
+            colors = [(1.0, 1.0, 1.0, 1.0), (1.0, 0.5, 0.5, 1.0), (0.5, 1.0, 0.5, 1.0)]
+            sizes = [2, 2, 2]
             self.draw.draw_lines(point_list_0, point_list_1, colors, sizes)
             set_camera_view(
                 eye=robot_pos.numpy() + np.asarray(self.cfg.viewer.eye),

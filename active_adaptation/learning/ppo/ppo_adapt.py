@@ -236,7 +236,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         actor_module = TensorDictSequential(
             condition(),
             TensorDictModule(
-                nn.Sequential(make_mlp([256, 128]), Actor(self.action_dim)), 
+                nn.Sequential(make_mlp([256]), Actor(self.action_dim)), 
                 ["_feature"], ["loc", "scale"]
             )
         )
@@ -251,7 +251,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         self.critic = TensorDictSequential(
             condition(),
             TensorDictModule(
-                nn.Sequential(make_mlp([256, 128]), nn.LazyLinear(1)), 
+                nn.Sequential(make_mlp([256]), nn.LazyLinear(1)), 
                 ["_feature"], ["state_value"]
             )
         ).to(self.device)

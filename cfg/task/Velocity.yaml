@@ -27,3 +27,5 @@ randomization:
 
 action_scaling: 1.0
 time_encoding: false
+
+force_sensor: ["base", "calf", "thigh"]

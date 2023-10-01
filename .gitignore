@@ -165,3 +165,5 @@ wandb/
 
 # nohup
 *.out
+
+*.ipynb
