@@ -131,11 +131,18 @@ def main(cfg):
             transform = FromDiscreteAction(nbins=nbins)
             transforms.append(transform)
     
-    env = TransformedEnv(base_env, Compose(*transforms)).train()
-    env.set_seed(cfg.seed)
+    env = TransformedEnv(base_env, Compose(*transforms))
 
     policy = algos[cfg.algo.name.lower()](
-        cfg.algo, env.observation_spec, env.action_spec, env.reward_spec, device=base_env.device)
+        cfg.algo, 
+        env.observation_spec, 
+        env.action_spec, 
+        env.reward_spec, 
+        device=base_env.device
+    )
+
+    if hasattr(policy, "adaptation_loss"):
+        env = TransformedEnv(base_env, Compose(*transforms, policy.adaptation_loss))
 
     frames_per_batch = env.num_envs * int(cfg.algo.train_every)
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
@@ -148,6 +155,7 @@ def main(cfg):
         if isinstance(k, tuple) and k[0]=="stats"
     ]
     episode_stats = EpisodeStats(stats_keys)
+    env.set_seed(cfg.seed)
     collector = SyncDataCollector(
         env,
         policy=policy,
@@ -279,12 +287,13 @@ def main(cfg):
     try:
         ckpt_path = os.path.join(run.dir, "checkpoint_final.pt")
         torch.save(policy.state_dict(), ckpt_path)
+        artifact = wandb.Artifact(f"{type(policy).__name__}", type="model")
+        artifact.add_file(ckpt_path)
+        run.log_artifact(artifact)
         logging.info(f"Saved checkpoint to {str(ckpt_path)}")
     except AttributeError:
         logging.warning(f"Policy {policy} does not implement `.state_dict()`")
         
-
-    wandb.save(os.path.join(run.dir, "checkpoint*"))
     wandb.finish()
     
     simulation_app.close()
