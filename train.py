@@ -215,8 +215,8 @@ def main(cfg):
         # table = wandb.Table(dataframe=df)
         # info["eval/return"] = wandb.plot.histogram(table, "return")
         # info["eval/episode_len"] = wandb.plot.histogram(table, "episode_len")
-        info["eval/return"] = np.histogram(df["return"], bins=10)
-        info["eval/episode_len"] = np.histogram(df["episode_len"], bins=10)
+        # info["eval/return"] = wandb.Histogram(np.histogram(df["return"], bins=10))
+        # info["eval/episode_len"] = wandb.Histogram(np.histogram(df["episode_len"], bins=10))
         
         if (
             hasattr(policy, "adaptation_loss_traj")

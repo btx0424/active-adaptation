@@ -96,6 +96,7 @@ class PPOPolicy:
         self.gae = GAE(0.99, 0.95)
 
         fake_input = observation_spec.zero()
+        observation_dim = observation_spec[("agents", "observation")].shape[-1]
         
         if self.cfg.priv_actor:
             intrinsics_dim = observation_spec[("agents", "intrinsics")].shape[-1]
@@ -113,7 +114,11 @@ class PPOPolicy:
             )
         else:
             actor_module=TensorDictModule(
-                nn.Sequential(make_mlp([256, 256, 256]), Actor(self.action_dim)),
+                nn.Sequential(
+                    nn.LayerNorm(observation_dim),
+                    make_mlp([256, 256, 256]), 
+                    Actor(self.action_dim)
+                ),
                 [("agents", "observation")], ["loc", "scale"]
             )
         self.actor: ProbabilisticActor = ProbabilisticActor(
@@ -140,7 +145,11 @@ class PPOPolicy:
             ).to(self.device)
         else:
             self.critic = TensorDictModule(
-                nn.Sequential(make_mlp([256, 256, 256]), nn.LazyLinear(1)),
+                nn.Sequential(
+                    nn.LayerNorm(observation_dim),
+                    make_mlp([256, 256, 256]), 
+                    nn.LazyLinear(1)
+                ),
                 [("agents", "observation")], ["state_value"]
             ).to(self.device)
 

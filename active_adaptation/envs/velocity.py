@@ -21,15 +21,12 @@
 # SOFTWARE.
 
 
-from typing import List, Optional, Sequence
 
 from omni.isaac.orbit.robots.legged_robot.legged_robot_cfg import LeggedRobotCfg
 
 from omni.isaac.core.utils.viewports import set_camera_view
 import omni.isaac.core.utils.prims as prim_utils
 import omni.isaac.orbit.utils.kit as kit_utils
-
-from omni.isaac.orbit.robots.legged_robot import LeggedRobot as _LeggedRobot
 from omni.isaac.orbit.robots.config.anymal import ANYMAL_B_CFG, ANYMAL_C_CFG
 from omni.isaac.orbit.robots.config.unitree import UNITREE_A1_CFG
 from omni.isaac.orbit.actuators.model import IdealActuator
@@ -49,6 +46,8 @@ from tensordict.tensordict import TensorDictBase, TensorDict
 from torchrl.data import UnboundedContinuousTensorSpec, CompositeSpec, BinaryDiscreteTensorSpec
 
 from omni.isaac.debug_draw import _debug_draw
+from .robot import LeggedRobot
+
 
 def attach_payload(parent_path):
     import omni.physx.scripts.utils as script_utils
@@ -72,37 +71,6 @@ def attach_payload(parent_path):
     joint.GetAttribute("physics:axis").Set("Z")
     joint.GetAttribute("drive:linear:physics:damping").Set(10.0)
     joint.GetAttribute("drive:linear:physics:stiffness").Set(10000.0)
-
-
-class LeggedRobot(_LeggedRobot):
-
-    def __init__(self, cfg: LeggedRobotCfg, force_sensor_cfg: List[str] = []):
-        super().__init__(cfg)
-        self.force_sensor_cfg = force_sensor_cfg
-
-    def spawn(self, prim_path: str, translation: Sequence[float] = None, orientation: Sequence[float] = None):
-        super().spawn(prim_path, translation, orientation)
-        if "base" in self.force_sensor_cfg:
-            base_prim = prim_utils.get_prim_at_path(prim_path + "/base")
-        
-        if "calf" in self.force_sensor_cfg:
-            for path in ["FL_calf", "FR_calf", "RL_calf", "RR_calf"]:
-                calf_prim = prim_utils.get_prim_at_path(prim_path + "/" + path)
-                PhysxSchema.PhysxArticulationForceSensorAPI.Apply(calf_prim)
-
-        
-    def initialize(self, prim_paths_expr: str = None):
-        super().initialize(prim_paths_expr)
-        self.base = RigidPrimView(
-            f"{self._prim_paths_expr}/base",
-            reset_xform_properties=False,
-        )
-        self.legs = RigidPrimView(
-            f"{self._prim_paths_expr}/.*_(calf|thigh)",
-            reset_xform_properties=False,
-        )
-        self.base.initialize()
-        self.legs.initialize()
 
 
 class Velocity(IsaacEnv):
@@ -201,23 +169,9 @@ class Velocity(IsaacEnv):
     def _design_scene(self):
         # self.robot = LeggedRobot(ANYMAL_C_CFG)
         # UNITREE_A1_CFG.actuator_groups["base_legs"].control_cfg.command_types=["p_rel"]
-        from pxr import PhysxSchema
         self.robot = LeggedRobot(UNITREE_A1_CFG)
         self.robot.spawn("/World/envs/env_0/Robot")
         attach_payload("/World/envs/env_0/Robot")
-
-        force_sensor_cfg = self.cfg.task.get("force_sensor", [])
-        if "base" in force_sensor_cfg:
-            base_prim = prim_utils.get_prim_at_path("/World/envs/env_0/Robot/base")
-            PhysxSchema.PhysxArticulationForceSensorAPI.Apply(base_prim)
-        if "calf" in force_sensor_cfg:
-            for path in ["FL_calf", "FR_calf", "RL_calf", "RR_calf"]:
-                calf_prim = prim_utils.get_prim_at_path(f"/World/envs/env_0/Robot/{path}")
-                PhysxSchema.PhysxArticulationForceSensorAPI.Apply(calf_prim)
-        if "thigh" in force_sensor_cfg:
-            for path in ["FL_thigh", "FR_thigh", "RL_thigh", "RR_thigh"]:
-                thigh_prim = prim_utils.get_prim_at_path(f"/World/envs/env_0/Robot/{path}")
-                PhysxSchema.PhysxArticulationForceSensorAPI.Apply(thigh_prim)
 
         kit_utils.create_ground_plane(
             "/World/defaultGroundPlane",
@@ -237,6 +191,8 @@ class Velocity(IsaacEnv):
             + 12 + 12 # dof_pos, dof_vel
             + 12 + 12 # actions
             + 2
+            + 12 + 12 # feet_pos, feet_vel
+            # + 9 * 3 # normalized_forces
         )
 
         self.observation_spec = CompositeSpec({
@@ -384,34 +340,34 @@ class Velocity(IsaacEnv):
         )
         cmd_lin_vel_b = quat_rotate_inverse(self.robot.data.root_quat_w, self.commands)
        
-        with disable_warnings(self.robot.articulations._physics_sim_view):
-            forces, torques = (
-                self.robot.articulations._physics_view
-                .get_force_sensor_forces()
-                .clone()
-                .split([3, 3], dim=-1)
-            )
-        normalized_forces = 0.2 * (forces / self.base_mass.unsqueeze(1))
+        # with disable_warnings(self.robot.articulations._physics_sim_view):
+        #     forces, torques = (
+        #         self.robot.articulations._physics_view
+        #         .get_force_sensor_forces()
+        #         .clone()
+        #         .split([3, 3], dim=-1)
+        #     )
+        # normalized_forces = 0.2 * (forces / self.base_mass.unsqueeze(1))
         # normalized_torques = 0.2 * (torques / self.base_inertia.unsqueeze(1))
 
-        feet_pos = []
-        feet_vel = []
-        for body, view in self.robot.feet_bodies.items():
-            feet_vel.append(view.get_velocities()[..., :3])
-            feet_pos_w, feet_quat_w = view.get_world_poses()
-            feet_pos.append(feet_pos_w - self.robot.data.root_pos_w)
+        # feet_pos = []
+        # feet_vel = []
+        # for body, view in self.robot.feet_bodies.items():
+        #     feet_vel.append(view.get_velocities()[..., :3])
+        #     feet_pos_w, feet_quat_w = view.get_world_poses()
+        #     feet_pos.append(feet_pos_w - self.robot.data.root_pos_w)
             
-        self.feet_vel_b = quat_rotate_inverse(
-            self.robot.data.root_quat_w.unsqueeze(1).expand(-1, 4, -1),
-            torch.stack(feet_vel, dim=-2)
-        )
-        self.feet_pos_b = quat_rotate_inverse(
-            self.robot.data.root_quat_w.unsqueeze(1).expand(-1, 4, -1),
-            torch.stack(feet_pos, dim=-2)
-        )
-        self.intrinsics["feet_pos"][:] = self.feet_pos_b.reshape(-1, 1, 12)
+        # self.feet_vel_b = quat_rotate_inverse(
+        #     self.robot.data.root_quat_w.unsqueeze(1).expand(-1, 4, -1),
+        #     torch.stack(feet_vel, dim=-2)
+        # )
+        # self.feet_pos_b = quat_rotate_inverse(
+        #     self.robot.data.root_quat_w.unsqueeze(1).expand(-1, 4, -1),
+        #     torch.stack(feet_pos, dim=-2)
+        # )
+        self.intrinsics["feet_pos"][:] = self.robot.feet_pos_b.reshape(-1, 1, 12)
         # self.intrinsics["feet_vel"][:] = self.feet_vel_b.reshape(-1, 1, 12)
-        self.intrinsics["normalized_forces"][:] = normalized_forces.reshape(self.num_envs, 1, -1)
+        # self.intrinsics["normalized_forces"][:] = normalized_forces.reshape(self.num_envs, 1, -1)
         # self.intrinsics["normalized_torques"][:] = normalized_torques.reshape(-1, 1, 3)
         self.intrinsics["base_height"][:] = (
             self.robot.data.root_pos_w[:, [2]] - self.base_target_height
@@ -420,7 +376,6 @@ class Velocity(IsaacEnv):
         dof_pos = self.robot.data.dof_pos - self.robot.data.actuator_pos_offset
         dof_vel = self.robot.data.dof_vel - self.robot.data.actuator_vel_offset
         obs = [
-            # base orientation
             self.robot.data.root_quat_w,
             self.robot.data.root_lin_vel_b,
             self.robot.data.root_ang_vel_b,
@@ -430,6 +385,11 @@ class Velocity(IsaacEnv):
             dof_vel,
             self.actions, # a_{t-1}
             self.previous_actions, # a_{t-2}
+            # 
+            # self.intrinsics["base_mass"].squeeze(1),
+            self.robot.feet_pos_b.reshape(self.num_envs, 12),
+            self.robot.feet_vel_b.reshape(self.num_envs, 12),
+            # normalized_forces.reshape(self.num_envs, 27),
         ]
         
         obs = torch.cat(obs, dim=-1)
@@ -494,8 +454,8 @@ class Velocity(IsaacEnv):
             .sum(-1, keepdim=True)
         )
         feet_symmetry_error = (
-            self.feet_pos_b[:, [0, 1], 1].sum(dim=-1, keepdim=True).abs()
-            + self.feet_pos_b[:, [2, 3], 1].sum(dim=-1, keepdim=True).abs()
+            self.robot.feet_pos_b[:, [0, 1], 1].sum(dim=-1, keepdim=True).abs()
+            + self.robot.feet_pos_b[:, [2, 3], 1].sum(dim=-1, keepdim=True).abs()
         )
 
         # lin_vel_xy_exp = torch.exp(-lin_vel_error / 0.25)
