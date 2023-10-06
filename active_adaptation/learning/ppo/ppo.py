@@ -180,7 +180,7 @@ class PPOPolicy:
             next_values = self.critic(next_tensordict)["state_value"]
         rewards = tensordict[("next", "agents", "reward")]
         dones = (
-            tensordict[("next", "done")]
+            tensordict[("next", "terminated")]
             .expand(-1, -1, self.n_agents)
             .unsqueeze(-1)
         )

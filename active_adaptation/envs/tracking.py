@@ -173,6 +173,9 @@ class Tracking(IsaacEnv):
             + 3 + 3 # linvel_b, angvel_b
             + 12 + 12 # dof_pos, dof_vel
             + 2
+            # + 2 # base and payload mass
+            # + 12 # + 12 # feet_pos, feet_vel
+            # + 9 * 3 # forces
         )
 
         self.observation_spec = CompositeSpec({
@@ -328,7 +331,11 @@ class Tracking(IsaacEnv):
         )[:, :, :2]
 
         self.robot.update_buffers(dt=self.dt * self.substeps)
-    
+
+        normalized_forces = (
+            self.robot.force_sensor_forces
+            / self.base_mass.unsqueeze(-2)
+        )
         self.intrinsics["feet_pos"][:] = self.robot.feet_pos_b.reshape(-1, 1, 12)
         self.intrinsics["feet_vel"][:] = self.robot.feet_vel_b.reshape(-1, 1, 12)
         # self.intrinsics["normalized_forces"][:] = normalized_forces.reshape(-1, 1, 3)
@@ -345,22 +352,33 @@ class Tracking(IsaacEnv):
             self.robot.data.dof_vel - self.robot.data.actuator_vel_offset,
             self.actions, # a_{t-1}
             self.previous_actions, # a_{t-2}
+
+            # self.intrinsics["base_mass"].squeeze(1),
+            # self.intrinsics["payload_mass"].squeeze(1),
+            # self.robot.feet_pos_b.flatten(1) * 0.1,
+            # self.robot.feet_vel_b.flatten(1) * 0.1,
+            # normalized_forces.flatten(1) * 0.1,
         ]
         
         obs = torch.cat(obs, dim=-1)
 
         if self._should_render(0):
             self.debug_draw.clear()
-            robot_pos = self.robot.data.root_pos_w[self.central_env_idx]
+            robot_pos = self.robot.data.root_pos_w[self.central_env_idx].cpu()
             
             ref_pos = torch.zeros(4, 3)
             ref_pos[:, :2] = (
                 robot_pos[:2].unsqueeze(0)
-                + self.ref_pos[self.central_env_idx] 
-                + self.envs_positions[self.central_env_idx, :2]
-            ).cpu()
+                + self.ref_pos[self.central_env_idx].cpu()
+                # + self.envs_positions[self.central_env_idx, :2]
+            )
             ref_pos[:, 2] = self.base_target_height
             self.debug_draw.plot(ref_pos)
+
+            set_camera_view(
+                eye=robot_pos.numpy() + np.asarray(self.cfg.viewer.eye),
+                target=robot_pos.numpy() + np.asarray(self.cfg.viewer.lookat)                        
+            )
 
         return TensorDict({
             "agents": {
