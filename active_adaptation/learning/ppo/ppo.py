@@ -101,9 +101,9 @@ class PPOPolicy:
         if self.cfg.priv_actor:
             intrinsics_dim = observation_spec[("agents", "intrinsics")].shape[-1]
             actor_module = TensorDictSequential(
-                TensorDictModule(make_mlp([128, 128]), [("agents", "observation")], ["feature"]),
+                TensorDictModule(make_mlp([256]), [("agents", "observation")], ["feature"]),
                 TensorDictModule(
-                    nn.Sequential(nn.LayerNorm(intrinsics_dim), make_mlp([64, 64])), 
+                    nn.Sequential(make_mlp([64, 64])), 
                     [("agents", "intrinsics")], ["context"]
                 ),
                 CatTensors(["feature", "context"], "feature"),
@@ -115,7 +115,8 @@ class PPOPolicy:
         else:
             actor_module=TensorDictModule(
                 nn.Sequential(
-                    nn.LayerNorm(observation_dim),
+                    # nn.LayerNorm(observation_dim),
+                    # nn.InstanceNorm1d(observation_dim),
                     make_mlp([256, 256, 256]), 
                     Actor(self.action_dim)
                 ),
@@ -132,9 +133,9 @@ class PPOPolicy:
         if self.cfg.priv_critic:
             intrinsics_dim = observation_spec[("agents", "intrinsics")].shape[-1]
             self.critic = TensorDictSequential(
-                TensorDictModule(make_mlp([128, 128]), [("agents", "observation")], ["feature"]),
+                TensorDictModule(make_mlp([256]), [("agents", "observation")], ["feature"]),
                 TensorDictModule(
-                    nn.Sequential(nn.LayerNorm(intrinsics_dim), make_mlp([64, 64])), 
+                    nn.Sequential(make_mlp([64, 64])), 
                     [("agents", "intrinsics")], ["context"]
                 ),
                 CatTensors(["feature", "context"], "feature"),
@@ -146,7 +147,8 @@ class PPOPolicy:
         else:
             self.critic = TensorDictModule(
                 nn.Sequential(
-                    nn.LayerNorm(observation_dim),
+                    # nn.LayerNorm(observation_dim),
+                    # nn.InstanceNorm1d(observation_dim),
                     make_mlp([256, 256, 256]), 
                     nn.LazyLinear(1)
                 ),

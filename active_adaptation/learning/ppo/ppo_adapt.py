@@ -213,7 +213,10 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         fake_input = observation_spec.zero()
 
         self.encoder = TensorDictModule(
-            nn.Sequential(nn.LayerNorm(intrinsics_dim), make_mlp([64, 64])), 
+            nn.Sequential(
+                nn.LayerNorm(intrinsics_dim), 
+                make_mlp([64, 64])
+            ), 
             [("agents", "intrinsics")], ["context"]
         ).to(self.device)
 
@@ -221,7 +224,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
             def condition():
                 return TensorDictSequential(
                     TensorDictModule(
-                        nn.Sequential(nn.LayerNorm(observation_dim), make_mlp([256, 256])), 
+                        nn.Sequential(nn.LayerNorm(observation_dim), make_mlp([256])), 
                         [("agents", "observation")], 
                         ["_feature"]
                     ),
@@ -248,7 +251,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         actor_module = TensorDictSequential(
             condition(),
             TensorDictModule(
-                nn.Sequential(make_mlp([256]), Actor(self.action_dim)), 
+                nn.Sequential(make_mlp([256, 128]), Actor(self.action_dim)), 
                 ["_feature"], ["loc", "scale"]
             )
         )
@@ -263,7 +266,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         self.critic = TensorDictSequential(
             condition(),
             TensorDictModule(
-                nn.Sequential(make_mlp([256]), nn.LazyLinear(1)), 
+                nn.Sequential(make_mlp([256, 128]), nn.LazyLinear(1)), 
                 ["_feature"], ["state_value"]
             )
         ).to(self.device)
@@ -287,9 +290,9 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
                     nn.init.orthogonal_(module.weight, 0.01)
                     nn.init.constant_(module.bias, 0.)
             
-            self.actor.apply(init_)
-            self.critic.apply(init_)
-            self.encoder.apply(init_)
+            # self.actor.apply(init_)
+            # self.critic.apply(init_)
+            # self.encoder.apply(init_)
 
         if self.phase in ("adaptation", "finetune"):
             if self.cfg.adaptation_loss == "mse":

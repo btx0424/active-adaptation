@@ -191,7 +191,9 @@ class Velocity(IsaacEnv):
             + 12 + 12 # dof_pos, dof_vel
             + 12 + 12 # actions
             + 2
-            + 12 + 12 # feet_pos, feet_vel
+            # + 2 # base_mass, payload_mass
+            # + 12 + 12 # p_gains, d_gains
+            # + 12 + 12 # feet_pos, feet_vel
             # + 9 * 3 # normalized_forces
         )
 
@@ -207,7 +209,7 @@ class Velocity(IsaacEnv):
                     "p_gains": UnboundedContinuousTensorSpec((1, 12)),
                     "d_gains": UnboundedContinuousTensorSpec((1, 12)),
                     "feet_pos": UnboundedContinuousTensorSpec((1, 4 * 3)),
-                    # "feet_vel": UnboundedContinuousTensorSpec((1, 4 * 3)),
+                    "feet_vel": UnboundedContinuousTensorSpec((1, 4 * 3)),
                     "normalized_forces": UnboundedContinuousTensorSpec((1, 3 * 9)),
                     # "normalized_torques": UnboundedContinuousTensorSpec((1, 3)),
                 })
@@ -226,7 +228,8 @@ class Velocity(IsaacEnv):
         }).expand(self.num_envs).to(self.device)
         self.done_spec = CompositeSpec({
             "done": BinaryDiscreteTensorSpec(1, dtype=bool, device=self.device),
-            "truncated": BinaryDiscreteTensorSpec(1, dtype=bool, device=self.device)
+            "terminated": BinaryDiscreteTensorSpec(1, dtype=bool, device=self.device),
+            "truncated": BinaryDiscreteTensorSpec(1, dtype=bool, device=self.device),
         }).expand(self.num_envs).to(self.device)
 
         stats_spec = CompositeSpec({
@@ -331,7 +334,6 @@ class Velocity(IsaacEnv):
     
     def _compute_state_and_obs(self):
         self.robot.update_buffers(dt=self.dt * self.substeps)
-        self.robot.data.heading = quat_axis(self.robot.data.root_quat_w, 0)
 
         self.commands = (
             self.commands_queue
@@ -340,34 +342,13 @@ class Velocity(IsaacEnv):
         )
         cmd_lin_vel_b = quat_rotate_inverse(self.robot.data.root_quat_w, self.commands)
        
-        # with disable_warnings(self.robot.articulations._physics_sim_view):
-        #     forces, torques = (
-        #         self.robot.articulations._physics_view
-        #         .get_force_sensor_forces()
-        #         .clone()
-        #         .split([3, 3], dim=-1)
-        #     )
-        # normalized_forces = 0.2 * (forces / self.base_mass.unsqueeze(1))
-        # normalized_torques = 0.2 * (torques / self.base_inertia.unsqueeze(1))
+        normalized_forces = (
+            self.robot.force_sensor_forces / self.base_mass.unsqueeze(1)
+        )
 
-        # feet_pos = []
-        # feet_vel = []
-        # for body, view in self.robot.feet_bodies.items():
-        #     feet_vel.append(view.get_velocities()[..., :3])
-        #     feet_pos_w, feet_quat_w = view.get_world_poses()
-        #     feet_pos.append(feet_pos_w - self.robot.data.root_pos_w)
-            
-        # self.feet_vel_b = quat_rotate_inverse(
-        #     self.robot.data.root_quat_w.unsqueeze(1).expand(-1, 4, -1),
-        #     torch.stack(feet_vel, dim=-2)
-        # )
-        # self.feet_pos_b = quat_rotate_inverse(
-        #     self.robot.data.root_quat_w.unsqueeze(1).expand(-1, 4, -1),
-        #     torch.stack(feet_pos, dim=-2)
-        # )
         self.intrinsics["feet_pos"][:] = self.robot.feet_pos_b.reshape(-1, 1, 12)
-        # self.intrinsics["feet_vel"][:] = self.feet_vel_b.reshape(-1, 1, 12)
-        # self.intrinsics["normalized_forces"][:] = normalized_forces.reshape(self.num_envs, 1, -1)
+        self.intrinsics["feet_vel"][:] = self.robot.feet_vel_b.reshape(-1, 1, 12)
+        self.intrinsics["normalized_forces"][:] = normalized_forces.reshape(self.num_envs, 1, -1)
         # self.intrinsics["normalized_torques"][:] = normalized_torques.reshape(-1, 1, 3)
         self.intrinsics["base_height"][:] = (
             self.robot.data.root_pos_w[:, [2]] - self.base_target_height
@@ -386,10 +367,13 @@ class Velocity(IsaacEnv):
             self.actions, # a_{t-1}
             self.previous_actions, # a_{t-2}
             # 
+            # self.intrinsics["payload_mass"].squeeze(1),
             # self.intrinsics["base_mass"].squeeze(1),
-            self.robot.feet_pos_b.reshape(self.num_envs, 12),
-            self.robot.feet_vel_b.reshape(self.num_envs, 12),
-            # normalized_forces.reshape(self.num_envs, 27),
+            # self.intrinsics["p_gains"].reshape(self.num_envs, 12),
+            # self.intrinsics["d_gains"].reshape(self.num_envs, 12),
+            # self.robot.feet_pos_b.reshape(self.num_envs, 12),
+            # self.robot.feet_vel_b.reshape(self.num_envs, 12),
+            # 0.2 * normalized_forces.reshape(self.num_envs, 27),
         ]
         
         obs = torch.cat(obs, dim=-1)
@@ -425,7 +409,7 @@ class Velocity(IsaacEnv):
                 eye=robot_pos.numpy() + np.asarray(self.cfg.viewer.eye),
                 target=robot_pos.numpy() + np.asarray(self.cfg.viewer.lookat)                        
             )
-    
+
 
         return TensorDict({
             "agents": {
@@ -450,7 +434,7 @@ class Velocity(IsaacEnv):
             .abs()
         )
         heading_projection = (
-            (normalize(self.robot.data.heading[:, :2]) * self.commands[:, :2])
+            (normalize(self.robot.heading[:, :2]) * self.commands[:, :2])
             .sum(-1, keepdim=True)
         )
         feet_symmetry_error = (
@@ -472,7 +456,7 @@ class Velocity(IsaacEnv):
         
         reward = (
             # 2.0 * lin_vel_xy_exp
-            1.2 / (1. + lin_vel_error / 0.5)
+            2.0 / (1. + lin_vel_error / 0.25)
             # 1.2 / (1. + lin_vel_error_projected / 0.5)
             # lin_vel_proj.clamp_max(self.commands[:, :2].norm(dim=-1, keepdim=True))
             + 0.25 * heading_projection
@@ -491,7 +475,7 @@ class Velocity(IsaacEnv):
         self.base_height_error[:] = base_height_error
 
         truncated = (self.progress_buf >= self.max_episode_length).unsqueeze(-1)
-        done = (
+        terminated = (
             (self.robot.data.root_pos_w[:, 2] <= self.base_target_height * 0.5)
             | (self.robot.data.projected_gravity_b[:, 2] >= -0.5)
         ).unsqueeze(1)
@@ -515,12 +499,15 @@ class Velocity(IsaacEnv):
             "agents": {
                 "reward": reward.reshape(-1, 1, 1)
             },
-            "done": done,
+            "done": terminated | truncated,
+            "terminated": terminated,
             "truncated": truncated,
         }, self.num_envs)
 
+
 def square_norm(x: torch.Tensor):
     return x.square().sum(dim=-1, keepdim=True)
+
 
 def noise(x: torch.Tensor, scale: float):
     return x + torch.randn_like(x) * scale
