@@ -187,7 +187,7 @@ class Velocity(IsaacEnv):
         self.robot.initialize("/World/envs/env_*/Robot")
         observation_dim = (
             10
-            + 3 + 3 # linvel_b, angvel_b
+            + 3 # + 3 # linvel_b, angvel_b
             + 12 + 12 # dof_pos, dof_vel
             + 12 + 12 # actions
             + 2
@@ -210,8 +210,9 @@ class Velocity(IsaacEnv):
                     "d_gains": UnboundedContinuousTensorSpec((1, 12)),
                     "feet_pos": UnboundedContinuousTensorSpec((1, 4 * 3)),
                     "feet_vel": UnboundedContinuousTensorSpec((1, 4 * 3)),
-                    "normalized_forces": UnboundedContinuousTensorSpec((1, 3 * 9)),
+                    # "normalized_forces": UnboundedContinuousTensorSpec((1, 3 * 9)),
                     # "normalized_torques": UnboundedContinuousTensorSpec((1, 3)),
+                    "vel_error": UnboundedContinuousTensorSpec((1, 2)),
                 })
             },
         }).expand(self.num_envs).to(self.device)
@@ -348,32 +349,26 @@ class Velocity(IsaacEnv):
 
         self.intrinsics["feet_pos"][:] = self.robot.feet_pos_b.reshape(-1, 1, 12)
         self.intrinsics["feet_vel"][:] = self.robot.feet_vel_b.reshape(-1, 1, 12)
-        self.intrinsics["normalized_forces"][:] = normalized_forces.reshape(self.num_envs, 1, -1)
+        # self.intrinsics["normalized_forces"][:] = normalized_forces.reshape(self.num_envs, 1, -1)
         # self.intrinsics["normalized_torques"][:] = normalized_torques.reshape(-1, 1, 3)
         self.intrinsics["base_height"][:] = (
             self.robot.data.root_pos_w[:, [2]] - self.base_target_height
+        ).unsqueeze(1)
+        self.intrinsics["vel_error"][:] = (
+            self.robot.data.root_lin_vel_w[:, :2] - self.commands[:, :2]
         ).unsqueeze(1)
         
         dof_pos = self.robot.data.dof_pos - self.robot.data.actuator_pos_offset
         dof_vel = self.robot.data.dof_vel - self.robot.data.actuator_vel_offset
         obs = [
             self.robot.data.root_quat_w,
-            self.robot.data.root_lin_vel_b,
             self.robot.data.root_ang_vel_b,
             self.robot.data.projected_gravity_b,
-            cmd_lin_vel_b - self.robot.data.root_lin_vel_b,
+            cmd_lin_vel_b,
             dof_pos,
             dof_vel,
             self.actions, # a_{t-1}
             self.previous_actions, # a_{t-2}
-            # 
-            # self.intrinsics["payload_mass"].squeeze(1),
-            # self.intrinsics["base_mass"].squeeze(1),
-            # self.intrinsics["p_gains"].reshape(self.num_envs, 12),
-            # self.intrinsics["d_gains"].reshape(self.num_envs, 12),
-            # self.robot.feet_pos_b.reshape(self.num_envs, 12),
-            # self.robot.feet_vel_b.reshape(self.num_envs, 12),
-            # 0.2 * normalized_forces.reshape(self.num_envs, 27),
         ]
         
         obs = torch.cat(obs, dim=-1)
@@ -461,7 +456,7 @@ class Velocity(IsaacEnv):
             # lin_vel_proj.clamp_max(self.commands[:, :2].norm(dim=-1, keepdim=True))
             + 0.25 * heading_projection
             # + 0.5 * ang_vel_z_exp.unsqueeze(1)
-            + 0.5 / (1 + base_height_error)
+            + 0.5 / (1 + base_height_error / 0.25)
             - 2.0 * lin_vel_z_l2.unsqueeze(1)
             - 0.05 * ang_vel_xy_l2
             - 2.0 * flat_orientation_l2
