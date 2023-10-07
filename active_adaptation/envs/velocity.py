@@ -205,14 +205,14 @@ class Velocity(IsaacEnv):
                     "base_height": UnboundedContinuousTensorSpec((1, 1)),
                     "base_mass": UnboundedContinuousTensorSpec((1, 1)),
                     "payload_mass": UnboundedContinuousTensorSpec((1, 1)),
-                    "legs_masses": UnboundedContinuousTensorSpec((1, 8)),
+                    # "legs_masses": UnboundedContinuousTensorSpec((1, 8)),
                     "p_gains": UnboundedContinuousTensorSpec((1, 12)),
                     "d_gains": UnboundedContinuousTensorSpec((1, 12)),
                     "feet_pos": UnboundedContinuousTensorSpec((1, 4 * 3)),
-                    "feet_vel": UnboundedContinuousTensorSpec((1, 4 * 3)),
+                    # "feet_vel": UnboundedContinuousTensorSpec((1, 4 * 3)),
                     # "normalized_forces": UnboundedContinuousTensorSpec((1, 3 * 9)),
                     # "normalized_torques": UnboundedContinuousTensorSpec((1, 3)),
-                    "vel_error": UnboundedContinuousTensorSpec((1, 2)),
+                    "vel_error": UnboundedContinuousTensorSpec((1, 3)),
                 })
             },
         }).expand(self.num_envs).to(self.device)
@@ -295,12 +295,12 @@ class Velocity(IsaacEnv):
             self.robot.base.set_masses(base_mass * self.base_mass[env_ids], env_indices=env_ids)
 
             # randomize leg mass
-            legs_mass = self.legs_mass_dist.sample(env_ids.shape + (8,))
-            self.intrinsics["legs_masses"][env_ids] = (
-                (legs_mass - self.legs_mass_dist.low)
-                / (self.legs_mass_dist.high - self.legs_mass_dist.low)
-            ).reshape(-1, 1, 8)
-            self.robot.legs.set_masses(legs_mass * self.legs_masses[env_ids], env_indices=env_ids)
+            # legs_mass = self.legs_mass_dist.sample(env_ids.shape + (8,))
+            # self.intrinsics["legs_masses"][env_ids] = (
+            #     (legs_mass - self.legs_mass_dist.low)
+            #     / (self.legs_mass_dist.high - self.legs_mass_dist.low)
+            # ).reshape(-1, 1, 8)
+            # self.robot.legs.set_masses(legs_mass * self.legs_masses[env_ids], env_indices=env_ids)
 
         if hasattr(self, "payload_mass_dist"):
             # randomize payload mass
@@ -348,15 +348,14 @@ class Velocity(IsaacEnv):
         )
 
         self.intrinsics["feet_pos"][:] = self.robot.feet_pos_b.reshape(-1, 1, 12)
-        self.intrinsics["feet_vel"][:] = self.robot.feet_vel_b.reshape(-1, 1, 12)
+        # self.intrinsics["feet_vel"][:] = self.robot.feet_vel_b.reshape(-1, 1, 12)
         # self.intrinsics["normalized_forces"][:] = normalized_forces.reshape(self.num_envs, 1, -1)
         # self.intrinsics["normalized_torques"][:] = normalized_torques.reshape(-1, 1, 3)
         self.intrinsics["base_height"][:] = (
             self.robot.data.root_pos_w[:, [2]] - self.base_target_height
         ).unsqueeze(1)
-        self.intrinsics["vel_error"][:] = (
-            self.robot.data.root_lin_vel_w[:, :2] - self.commands[:, :2]
-        ).unsqueeze(1)
+        vel_error = self.robot.data.root_lin_vel_b - cmd_lin_vel_b
+        self.intrinsics["vel_error"][:] = vel_error.unsqueeze(1)
         
         dof_pos = self.robot.data.dof_pos - self.robot.data.actuator_pos_offset
         dof_vel = self.robot.data.dof_vel - self.robot.data.actuator_vel_offset
@@ -409,7 +408,7 @@ class Velocity(IsaacEnv):
         return TensorDict({
             "agents": {
                 "observation": obs.unsqueeze(1),
-                "intrinsics": self.intrinsics,
+                "intrinsics": self.intrinsics.clone(),
             },
             "stats": self.stats.clone(),
         }, self.num_envs)
