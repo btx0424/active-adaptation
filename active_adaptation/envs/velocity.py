@@ -194,8 +194,8 @@ class Velocity(IsaacEnv):
             + 12 + 12 # actions
             + 2
             # + 2 # base_mass, payload_mass
-            # + 12 + 12 # p_gains, d_gains
-            + 12 + 12 # feet_pos, feet_vel
+            # + 12 # + 12 + 12 # p_gains, d_gains, torques
+            # + 12 + 12 # feet_pos, feet_vel
             # + 9 * 3 # normalized_forces
         )
                 
@@ -208,13 +208,15 @@ class Velocity(IsaacEnv):
                     "base_mass": UnboundedContinuousTensorSpec((1, 1)),
                     "payload_mass": UnboundedContinuousTensorSpec((1, 1)),
                     # "legs_masses": UnboundedContinuousTensorSpec((1, 8)),
-                    "p_gains": UnboundedContinuousTensorSpec((1, 12)),
-                    "d_gains": UnboundedContinuousTensorSpec((1, 12)),
+                    # "p_gains": UnboundedContinuousTensorSpec((1, 12)),
+                    # "d_gains": UnboundedContinuousTensorSpec((1, 12)),
                     "feet_pos": UnboundedContinuousTensorSpec((1, 4 * 3)),
                     # "feet_vel": UnboundedContinuousTensorSpec((1, 4 * 3)),
                     # "normalized_forces": UnboundedContinuousTensorSpec((1, 3 * 9)),
                     # "normalized_torques": UnboundedContinuousTensorSpec((1, 3)),
+                    "base_vel": UnboundedContinuousTensorSpec((1, 3)),
                     "vel_error": UnboundedContinuousTensorSpec((1, 3)),
+                    "applied_torques": UnboundedContinuousTensorSpec((1, 13)),
                 })
             },
         }).expand(self.num_envs).to(self.device)
@@ -272,14 +274,14 @@ class Velocity(IsaacEnv):
             d_gains = self.motor_d_gains_dist.sample(env_ids.shape)
             self.actuator_model._p_gains[env_ids] = p_gains * self.init_p_gains[env_ids]
             self.actuator_model._d_gains[env_ids] = d_gains * self.init_d_gains[env_ids]
-            self.intrinsics["p_gains"][env_ids] = (
-                (p_gains - self.motor_p_gains_dist.low)
-                / (self.motor_p_gains_dist.high - self.motor_p_gains_dist.low)
-            ).unsqueeze(1)
-            self.intrinsics["d_gains"][env_ids] = (
-                (d_gains - self.motor_d_gains_dist.low)
-                / (self.motor_d_gains_dist.high - self.motor_d_gains_dist.low)
-            ).unsqueeze(1)
+            # self.intrinsics["p_gains"][env_ids] = (
+            #     (p_gains - self.motor_p_gains_dist.low)
+            #     / (self.motor_p_gains_dist.high - self.motor_p_gains_dist.low)
+            # ).unsqueeze(1)
+            # self.intrinsics["d_gains"][env_ids] = (
+            #     (d_gains - self.motor_d_gains_dist.low)
+            #     / (self.motor_d_gains_dist.high - self.motor_d_gains_dist.low)
+            # ).unsqueeze(1)
 
         # sample commands
         commands_queue = self.commands_dist.sample(env_ids.shape+(self.n_commands,))
@@ -358,6 +360,10 @@ class Velocity(IsaacEnv):
         ).unsqueeze(1)
         vel_error = self.robot.data.root_lin_vel_b - cmd_lin_vel_b
         self.intrinsics["vel_error"][:] = vel_error.unsqueeze(1)
+        self.intrinsics["base_vel"][:] = self.robot.data.root_lin_vel_b.unsqueeze(1)
+        self.intrinsics["applied_torques"][:] = (
+            self.robot.data.applied_torques.unsqueeze(1) / 30.
+        )
         
         dof_pos = self.robot.data.dof_pos - self.robot.data.actuator_pos_offset
         dof_vel = self.robot.data.dof_vel - self.robot.data.actuator_vel_offset
@@ -373,8 +379,9 @@ class Velocity(IsaacEnv):
             self.previous_actions, # a_{t-2}
             # privileged
             # self.robot.data.root_lin_vel_b,
-            self.robot.feet_pos_b.reshape(-1, 12),
-            self.robot.feet_vel_b.reshape(-1, 12),
+            # (self.actuator._applied_torques / 30.).reshape(-1, 12),
+            # self.robot.feet_pos_b.reshape(-1, 12),
+            # self.robot.feet_vel_b.reshape(-1, 12),
         ]
         
         obs = torch.cat(obs, dim=-1)

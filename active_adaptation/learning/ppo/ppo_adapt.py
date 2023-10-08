@@ -194,7 +194,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         self.cfg = cfg
         self.device = device
 
-        self.entropy_coef = 0.01
+        self.entropy_coef = 0.001
         self.clip_param = 0.1
         self.critic_loss_fn = nn.HuberLoss(delta=10)
         self.adaptation_key = self.cfg.adaptation_key
@@ -214,8 +214,8 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
 
         self.encoder = TensorDictModule(
             nn.Sequential(
-                nn.LayerNorm(intrinsics_dim), 
-                make_mlp([64, 64])
+                # nn.LayerNorm(intrinsics_dim), 
+                make_mlp([128, 128]),
             ), 
             [("agents", "intrinsics")], ["context"]
         ).to(self.device)
@@ -224,7 +224,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
             def condition():
                 return TensorDictSequential(
                     TensorDictModule(
-                        nn.Sequential(nn.LayerNorm(observation_dim), make_mlp([256])), 
+                        nn.Sequential(make_mlp([512])), 
                         [("agents", "observation")], 
                         ["_feature"]
                     ),
@@ -251,7 +251,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         actor_module = TensorDictSequential(
             condition(),
             TensorDictModule(
-                nn.Sequential(make_mlp([256, 128]), Actor(self.action_dim)), 
+                nn.Sequential(make_mlp([256, 256]), Actor(self.action_dim)), 
                 ["_feature"], ["loc", "scale"]
             )
         )
@@ -266,7 +266,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         self.critic = TensorDictSequential(
             condition(),
             TensorDictModule(
-                nn.Sequential(make_mlp([256, 128]), nn.LazyLinear(1)), 
+                nn.Sequential(make_mlp([256, 256]), nn.LazyLinear(1)), 
                 ["_feature"], ["state_value"]
             )
         ).to(self.device)
