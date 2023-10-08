@@ -104,7 +104,9 @@ class Velocity(IsaacEnv):
             torch.tensor([3., 3., 0.25], device=self.device) / (self.dt * self.substeps),
         )
 
-        self.actuator_model = self.robot.actuator_groups["base_legs"].model
+        self.actuator = self.robot.actuator_groups["base_legs"]
+        self.actuator_model = self.actuator.model
+
         self.robot.base = RigidPrimView(
             "/World/envs/env_*/Robot/base",
             reset_xform_properties=False,
@@ -386,24 +388,18 @@ class Velocity(IsaacEnv):
         if self._should_render(0):
             self.draw.clear_lines()
             robot_pos = self.robot.data.root_pos_w[self.central_env_idx].cpu()
-            linvel_start = robot_pos + torch.tensor([0., 0., 0.5])
+            # feet_pos = self.robot.feet_pos_w[self.central_env_idx].cpu()
+            # feet_contact_forces = self.robot.feet_contact_forces[self.central_env_idx].cpu()
+            force = self.robot.force_sensor_forces[self.central_env_idx, 0].cpu() / 5.
+            robot_top = robot_pos + torch.tensor([0., 0., 0.5])
             linvel = self.robot.data.root_lin_vel_w[self.central_env_idx].cpu()
-            diff_linvel = self.diff_linvel_w[self.central_env_idx].cpu()
 
-            linvel_end = linvel_start + linvel
-            diff_linvel_end = linvel_start + diff_linvel
-            target_linvel_end = linvel_start + self.commands[self.central_env_idx].cpu()
-            
-            point_list_0 = [linvel_start.tolist()] * 3
-            point_list_1 = [
-                target_linvel_end.tolist(), 
-                linvel_end.tolist(),
-                diff_linvel_end.tolist()
-            ]
-            
-            colors = [(1.0, 1.0, 1.0, 1.0), (1.0, 0.5, 0.5, 1.0), (0.5, 1.0, 0.5, 1.0)]
-            sizes = [2, 2, 2]
-            self.draw.draw_lines(point_list_0, point_list_1, colors, sizes)
+            command = self.commands[self.central_env_idx].cpu()
+            self.debug_draw.vector(robot_top, command, color=(1., 1., 1., 1.))
+            self.debug_draw.vector(robot_top, linvel, color=(1., 0.5, 0.5, 1.))
+            self.debug_draw.vector(robot_pos, force, color=(0.5, 0.5, 1., 1.))
+            # self.debug_draw.vector(feet_pos, feet_contact_forces, color=(0.5, 1., 0.5, 1.))
+
             set_camera_view(
                 eye=robot_pos.numpy() + np.asarray(self.cfg.viewer.eye),
                 target=robot_pos.numpy() + np.asarray(self.cfg.viewer.lookat)                        

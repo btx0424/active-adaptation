@@ -4,8 +4,8 @@ from omni.isaac.orbit.robots.legged_robot import LeggedRobot as _LeggedRobot
 from omni.isaac.orbit.robots.legged_robot.legged_robot_cfg import LeggedRobotCfg
 import omni.isaac.core.utils.prims as prim_utils
 
-from typing import List, Optional, Sequence
-from omni_drones.views import RigidPrimView, disable_warnings
+from typing import List, Optional, Sequence, Dict
+from omni_drones.views import RigidPrimView, _RigidPrimView, disable_warnings
 from omni_drones.utils.torch import quat_rotate_inverse, quat_axis
 
 class LeggedRobot(_LeggedRobot):
@@ -21,17 +21,18 @@ class LeggedRobot(_LeggedRobot):
         base_prim = prim_utils.get_prim_at_path(prim_path + "/base")
         PhysxSchema.PhysxArticulationForceSensorAPI.Apply(base_prim)
         
-        for path in ["FL_calf", "FR_calf", "RL_calf", "RR_calf"]:
-            calf_prim = prim_utils.get_prim_at_path(prim_path + "/" + path)
-            PhysxSchema.PhysxArticulationForceSensorAPI.Apply(calf_prim)
+        # for path in ["FL_calf", "FR_calf", "RL_calf", "RR_calf"]:
+        #     calf_prim = prim_utils.get_prim_at_path(prim_path + "/" + path)
+        #     PhysxSchema.PhysxArticulationForceSensorAPI.Apply(calf_prim)
         
-        for path in ["FL_thigh", "FR_thigh", "RL_thigh", "RR_thigh"]:
-            thigh_prim = prim_utils.get_prim_at_path(prim_path + "/" + path)
-            PhysxSchema.PhysxArticulationForceSensorAPI.Apply(thigh_prim)
+        # for path in ["FL_thigh", "FR_thigh", "RL_thigh", "RR_thigh"]:
+        #     thigh_prim = prim_utils.get_prim_at_path(prim_path + "/" + path)
+        #     PhysxSchema.PhysxArticulationForceSensorAPI.Apply(thigh_prim)
 
         
     def initialize(self, prim_paths_expr: str = None):
         super().initialize(prim_paths_expr)
+
         self.base = RigidPrimView(
             f"{self._prim_paths_expr}/base",
             reset_xform_properties=False,
@@ -45,8 +46,11 @@ class LeggedRobot(_LeggedRobot):
         self.legs.initialize()
         self.heading = torch.zeros(self.count, 3, device=self.device)
         self.feet_pos_b = torch.zeros(self.count, 4, 3, device=self.device)
+        self.feet_pos_w = torch.zeros(self.count, 4, 3, device=self.device)
         self.feet_vel_b = torch.zeros(self.count, 4, 3, device=self.device)
-        self.force_sensor_forces = torch.zeros(self.count, 9, 3, device=self.device)
+        
+        n_sensors = self.articulations._physics_view.max_force_sensors
+        self.force_sensor_forces = torch.zeros(self.count, n_sensors, 3, device=self.device)
     
     def update_buffers(self, dt: float):
         super().update_buffers(dt)
@@ -61,12 +65,15 @@ class LeggedRobot(_LeggedRobot):
             )
         self.force_sensor_forces[:] = force
 
-        feet_pos = []
+        feet_pos_b = []
+        feet_pos_w = []
         feet_vel = []
-        for body, view in self.feet_bodies.items():
+        for i, (body, view) in enumerate(self.feet_bodies.items()):
             feet_vel.append(view.get_velocities()[..., :3])
-            feet_pos_w, feet_quat_w = view.get_world_poses()
-            feet_pos.append(feet_pos_w - self.data.root_pos_w)
+            feet_pos, feet_quat = view.get_world_poses(clone=True)
+            feet_pos_w.append(feet_pos)
+            feet_pos_b.append(feet_pos - self.data.root_pos_w)
+            # self.feet_contact_forces[:, i] = view.get_net_contact_forces()
         
         self.feet_vel_b[:] = quat_rotate_inverse(
             self.data.root_quat_w.unsqueeze(1).expand(-1, 4, -1),
@@ -74,7 +81,8 @@ class LeggedRobot(_LeggedRobot):
         )
         self.feet_pos_b[:] = quat_rotate_inverse(
             self.data.root_quat_w.unsqueeze(1).expand(-1, 4, -1),
-            torch.stack(feet_pos, dim=-2)
+            torch.stack(feet_pos_b, dim=-2)
         )
+        self.feet_pos_w[:] = torch.stack(feet_pos_w, dim=-2)
 
 
