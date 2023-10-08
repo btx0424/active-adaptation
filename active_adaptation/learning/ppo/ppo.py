@@ -30,10 +30,11 @@ from torchrl.data import CompositeSpec, TensorSpec
 from torchrl.modules import ProbabilisticActor
 from torchrl.envs.transforms import CatTensors
 from tensordict import TensorDict
-from tensordict.nn import TensorDictModule, TensorDictSequential
+from tensordict.nn import TensorDictModuleBase, TensorDictModule, TensorDictSequential
 
 from hydra.core.config_store import ConfigStore
 from dataclasses import dataclass
+from typing import Union
 
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
@@ -48,6 +49,8 @@ class PPOConfig:
 
     priv_actor: bool = False
     priv_critic: bool = False
+
+    checkpoint_path: Union[str, None] = None
 
 cs = ConfigStore.instance()
 cs.store("ppo", node=PPOConfig, group="algo")
@@ -76,7 +79,7 @@ class Actor(nn.Module):
         return loc, scale
 
 
-class PPOPolicy:
+class PPOPolicy(TensorDictModuleBase):
 
     def __init__(
         self, 
@@ -86,6 +89,7 @@ class PPOPolicy:
         reward_spec: TensorSpec,
         device
     ):
+        super().__init__()
         self.cfg = cfg
         self.device = device
 
@@ -101,9 +105,9 @@ class PPOPolicy:
         if self.cfg.priv_actor:
             intrinsics_dim = observation_spec[("agents", "intrinsics")].shape[-1]
             actor_module = TensorDictSequential(
-                TensorDictModule(make_mlp([256]), [("agents", "observation")], ["feature"]),
+                TensorDictModule(make_mlp([512]), [("agents", "observation")], ["feature"]),
                 TensorDictModule(
-                    nn.Sequential(make_mlp([64, 64])), 
+                    nn.Sequential(make_mlp([128, 128])), 
                     [("agents", "intrinsics")], ["context"]
                 ),
                 CatTensors(["feature", "context"], "feature"),
@@ -117,7 +121,7 @@ class PPOPolicy:
                 nn.Sequential(
                     # nn.LayerNorm(observation_dim),
                     # nn.InstanceNorm1d(observation_dim),
-                    make_mlp([256, 256, 256]), 
+                    make_mlp([512, 256, 256]), 
                     Actor(self.action_dim)
                 ),
                 [("agents", "observation")], ["loc", "scale"]
@@ -133,9 +137,9 @@ class PPOPolicy:
         if self.cfg.priv_critic:
             intrinsics_dim = observation_spec[("agents", "intrinsics")].shape[-1]
             self.critic = TensorDictSequential(
-                TensorDictModule(make_mlp([256]), [("agents", "observation")], ["feature"]),
+                TensorDictModule(make_mlp([512]), [("agents", "observation")], ["feature"]),
                 TensorDictModule(
-                    nn.Sequential(make_mlp([64, 64])), 
+                    nn.Sequential(make_mlp([128, 128])), 
                     [("agents", "intrinsics")], ["context"]
                 ),
                 CatTensors(["feature", "context"], "feature"),
@@ -149,7 +153,7 @@ class PPOPolicy:
                 nn.Sequential(
                     # nn.LayerNorm(observation_dim),
                     # nn.InstanceNorm1d(observation_dim),
-                    make_mlp([256, 256, 256]), 
+                    make_mlp([512, 256, 256]), 
                     nn.LazyLinear(1)
                 ),
                 [("agents", "observation")], ["state_value"]
@@ -158,13 +162,17 @@ class PPOPolicy:
         self.actor(fake_input)
         self.critic(fake_input)
         
-        def init_(module):
-            if isinstance(module, nn.Linear):
-                nn.init.orthogonal_(module.weight, 0.01)
-                nn.init.constant_(module.bias, 0.)
-        
-        self.actor.apply(init_)
-        self.critic.apply(init_)
+        if self.cfg.checkpoint_path is not None:
+            state_dict = torch.load(self.cfg.checkpoint_path)
+            self.load_state_dict(state_dict, strict=False)
+        else:
+            def init_(module):
+                if isinstance(module, nn.Linear):
+                    nn.init.orthogonal_(module.weight, 0.01)
+                    nn.init.constant_(module.bias, 0.)
+            
+            self.actor.apply(init_)
+            self.critic.apply(init_)
 
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=5e-4)

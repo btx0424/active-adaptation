@@ -194,29 +194,31 @@ def main(cfg):
         env.reset()
 
         done = trajs.get(("next", "done"))
-        truncated = trajs.get(("next", "truncated"), None)
-        done_or_truncated = (done | truncated) if truncated is not None else done
-        first_done = torch.argmax(done_or_truncated.long(), dim=1).cpu()
+        first_done = torch.argmax(done.long(), dim=1).cpu()
 
-        def take_first(tensor: torch.Tensor):
+        def take_first_episode(tensor: torch.Tensor):
             indices = first_done.reshape(first_done.shape+(1,)*(tensor.ndim-2))
-            return torch.take_along_dim(tensor, indices)
+            return torch.take_along_dim(tensor, indices, dim=1).reshape(-1)
         
-        traj_stats = trajs["next"].select(*stats_keys).cpu().apply(take_first, batch_size=[len(first_done)])
-        info = {
-            "eval/" + (".".join(k) if isinstance(k, tuple) else k): torch.mean(v.float()).item() 
-            for k, v in traj_stats.items(True, True)
+        traj_stats = {
+            k: take_first_episode(v)
+            for k, v in trajs[("next", "stats")].cpu().items()
         }
+
+        info = {
+            "eval/stats." + k: torch.mean(v.float()).item() 
+            for k, v in traj_stats.items()
+        }
+
+        # log video
         video_array = np.stack(frames).transpose(0, 3, 1, 2)
         frames.clear()
         info["recording"] = wandb.Video(video_array, fps=0.5 / (cfg.sim.dt * cfg.sim.substeps), format="mp4")
         
-        df = pd.DataFrame(traj_stats["stats"].to_dict())
-        # table = wandb.Table(dataframe=df)
-        # info["eval/return"] = wandb.plot.histogram(table, "return")
-        # info["eval/episode_len"] = wandb.plot.histogram(table, "episode_len")
-        # info["eval/return"] = wandb.Histogram(np.histogram(df["return"], bins=10))
-        # info["eval/episode_len"] = wandb.Histogram(np.histogram(df["episode_len"], bins=10))
+        df = pd.DataFrame(traj_stats)
+        table = wandb.Table(dataframe=df)
+        info["eval/hist/return"] = wandb.plot.histogram(table, "return")
+        info["eval/hist/episode_len"] = wandb.plot.histogram(table, "episode_len")
         
         if (
             hasattr(policy, "adaptation_loss_traj")

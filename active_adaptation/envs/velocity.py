@@ -193,10 +193,10 @@ class Velocity(IsaacEnv):
             + 2
             # + 2 # base_mass, payload_mass
             # + 12 + 12 # p_gains, d_gains
-            # + 12 + 12 # feet_pos, feet_vel
+            + 12 + 12 # feet_pos, feet_vel
             # + 9 * 3 # normalized_forces
         )
-
+                
         self.observation_spec = CompositeSpec({
             "agents": {
                 "observation": UnboundedContinuousTensorSpec((1, observation_dim)),
@@ -360,6 +360,7 @@ class Velocity(IsaacEnv):
         dof_pos = self.robot.data.dof_pos - self.robot.data.actuator_pos_offset
         dof_vel = self.robot.data.dof_vel - self.robot.data.actuator_vel_offset
         obs = [
+            # basic
             self.robot.data.root_quat_w,
             self.robot.data.root_ang_vel_b,
             self.robot.data.projected_gravity_b,
@@ -368,6 +369,10 @@ class Velocity(IsaacEnv):
             dof_vel,
             self.actions, # a_{t-1}
             self.previous_actions, # a_{t-2}
+            # privileged
+            # self.robot.data.root_lin_vel_b,
+            self.robot.feet_pos_b.reshape(-1, 12),
+            self.robot.feet_vel_b.reshape(-1, 12),
         ]
         
         obs = torch.cat(obs, dim=-1)
