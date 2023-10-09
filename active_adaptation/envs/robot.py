@@ -8,6 +8,8 @@ from typing import List, Optional, Sequence, Dict
 from omni_drones.views import RigidPrimView, _RigidPrimView, disable_warnings
 from omni_drones.utils.torch import quat_rotate_inverse, quat_axis
 
+from torchrl.data import CompositeSpec
+
 class LeggedRobot(_LeggedRobot):
 
     force_sensor_forces: torch.Tensor

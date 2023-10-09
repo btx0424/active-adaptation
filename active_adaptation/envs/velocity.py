@@ -32,11 +32,11 @@ from omni.isaac.orbit.robots.config.unitree import UNITREE_A1_CFG
 from omni.isaac.orbit.actuators.model import IdealActuator
 from omni.isaac.orbit.utils.mdp import ObservationManager, RewardManager
 from omni.isaac.orbit.utils.dict import class_to_dict
-from omni.isaac.orbit_envs.locomotion.velocity.velocity_cfg import ObservationsCfg, RewardsCfg
+from omni.isaac.orbit_envs.locomotion.velocity.velocity_cfg import ISAAC_NUCLEUS_DIR
 
 from omni_drones.envs import IsaacEnv
-from omni_drones.views import RigidPrimView, disable_warnings
-from omni_drones.utils.torch import quat_axis, normalize, quat_rotate_inverse
+from omni_drones.views import RigidPrimView
+from omni_drones.utils.torch import normalize, quat_rotate_inverse
 
 import torch
 import torch.distributions as D
@@ -45,35 +45,48 @@ import numpy as np
 from tensordict.tensordict import TensorDictBase, TensorDict
 from torchrl.data import UnboundedContinuousTensorSpec, CompositeSpec, BinaryDiscreteTensorSpec
 
-from omni.isaac.debug_draw import _debug_draw
 from .robot import LeggedRobot
+from .utils import attach_payload
 
-
-def attach_payload(parent_path):
-    import omni.physx.scripts.utils as script_utils
-    import omni.isaac.core.utils.prims as prim_utils
-    from omni.isaac.core import objects
-    from pxr import UsdPhysics
-
-    payload_prim = objects.DynamicCuboid(
-        prim_path=parent_path + "/payload",
-        scale=torch.tensor([0.18, 0.16, 0.12]),
-        mass=0.0001,
-        translation=torch.tensor([0.0, 0.0, 0.1]),
-    ).prim
-
-    parent_prim = prim_utils.get_prim_at_path(parent_path + "/base")
-    stage = prim_utils.get_current_stage()
-    joint = script_utils.createJoint(stage, "Prismatic", payload_prim, parent_prim)
-    UsdPhysics.DriveAPI.Apply(joint, "linear")
-    joint.GetAttribute("physics:lowerLimit").Set(-0.15)
-    joint.GetAttribute("physics:upperLimit").Set(0.15)
-    joint.GetAttribute("physics:axis").Set("Z")
-    joint.GetAttribute("drive:linear:physics:damping").Set(10.0)
-    joint.GetAttribute("drive:linear:physics:stiffness").Set(10000.0)
+class Pan:
+    def __init__(self, low, high):
+        self.low = low
+        self.high = high
+        self.scale = high - low
+    
+    def sample(self, size: torch.Size):
+        theta = torch.rand(size, device=self.low.device) * 2. * torch.pi
+        sample = torch.rand(size + (2,), device=self.low.device) * self.scale + self.low
+        sample = torch.stack([
+            sample[..., 0] * theta.cos(),
+            sample[..., 0] * theta.sin(),
+            sample[..., 1]
+        ], dim=-1)
+        return sample
 
 
 class Velocity(IsaacEnv):
+
+    OBS_SPECS = {
+        # bodies
+        "base_height": UnboundedContinuousTensorSpec((1, 1)),
+        "base_mass": UnboundedContinuousTensorSpec((1, 1)),
+        "payload_mass": UnboundedContinuousTensorSpec((1, 1)),
+        "legs_masses": UnboundedContinuousTensorSpec((1, 8)),
+        # joints
+        "p_gains": UnboundedContinuousTensorSpec((1, 12)),
+        "d_gains": UnboundedContinuousTensorSpec((1, 12)),
+        "applied_torques": UnboundedContinuousTensorSpec((1, 13)),
+        # sensory
+        "feet_pos": UnboundedContinuousTensorSpec((1, 4 * 3)),
+        "feet_vel": UnboundedContinuousTensorSpec((1, 4 * 3)),
+        "feet_height": UnboundedContinuousTensorSpec((1, 4)),
+        "normalized_forces": UnboundedContinuousTensorSpec((1, 3 * 9)),
+        # "normalized_torques": UnboundedContinuousTensorSpec((1, 3)),
+        "base_linvel": UnboundedContinuousTensorSpec((1, 3)),
+    }
+
+
     def __init__(self, cfg, headless):
         self.action_scaling = cfg.task.get("action_scaling", 1.0)
         self.randomization = cfg.task.get("randomization", {})
@@ -83,8 +96,8 @@ class Velocity(IsaacEnv):
         self.actions = torch.zeros((self.num_envs, self.robot.num_actions), device=self.device)
         self.previous_actions = torch.zeros((self.num_envs, self.robot.num_actions), device=self.device)
         self.init_vel_dist = D.Uniform(
-            torch.tensor([-.5, -.5, 0.], device=self.device),
-            torch.tensor([.5, .5, 0.], device=self.device)
+            torch.tensor([-.8, -.8, 0.], device=self.device),
+            torch.tensor([.8, .8, 0.8], device=self.device)
         )
         # -- command: x vel, y vel, yaw vel, heading
         self.commands_dist = D.Uniform(
@@ -93,25 +106,21 @@ class Velocity(IsaacEnv):
         )
 
         import math
-        self.command_interval = 300
+        self.command_interval = 200
         self.n_commands = math.ceil(self.max_episode_length / self.command_interval)
         self.commands_queue = torch.zeros(self.num_envs, self.n_commands, 3, device=self.device)
         self.commands_i = torch.zeros(self.num_envs, 1, 1, dtype=torch.long, device=self.device)
 
-        self.push_interval = 600
-        self.push_acc_dist = D.Uniform(
-            torch.tensor([-3, -3, -0.25], device=self.device) / (self.dt * self.substeps), 
-            torch.tensor([3., 3., 0.25], device=self.device) / (self.dt * self.substeps),
+        self.push_interval = 300
+        self.push_force_dist = Pan(
+            torch.tensor([1., -.25], device=self.device) * 5./ (self.dt * self.substeps),
+            torch.tensor([1.6, .25], device=self.device) * 5. / (self.dt * self.substeps)
         )
+        self.push_force = torch.zeros(self.num_envs, 3, device=self.device)
 
         self.actuator = self.robot.actuator_groups["base_legs"]
         self.actuator_model = self.actuator.model
 
-        self.robot.base = RigidPrimView(
-            "/World/envs/env_*/Robot/base",
-            reset_xform_properties=False,
-        )
-        self.robot.base.initialize()
         self.base_mass = self.robot.base.get_masses(clone=True)
         self.base_inertia = self.robot.base.get_inertias(clone=True)[..., [0, 4, 8]]
 
@@ -133,9 +142,10 @@ class Velocity(IsaacEnv):
                     torch.ones(12, device=self.device) * cfg["d_gains"][1],
                 )
         if randomization_cfg.get("base_mass", None) is not None:
+            low, high = randomization_cfg["base_mass"]
             self.base_mass_dist = D.Uniform(
-                torch.tensor([0.8], device=self.device),
-                torch.tensor([1.2], device=self.device)
+                torch.tensor([low], device=self.device),
+                torch.tensor([high], device=self.device)
             )
             self.robot.legs = RigidPrimView(
                 "/World/envs/env_*/Robot/.*_(calf|thigh)",
@@ -166,8 +176,6 @@ class Velocity(IsaacEnv):
         self.base_target_height = 0.3
         self.base_height_error = torch.zeros(self.num_envs, 1, device=self.device)
 
-        self.draw = _debug_draw.acquire_debug_draw_interface()
-
     def _design_scene(self):
         # self.robot = LeggedRobot(ANYMAL_C_CFG)
         # UNITREE_A1_CFG.actuator_groups["base_legs"].control_cfg.command_types=["p_rel"]
@@ -175,49 +183,42 @@ class Velocity(IsaacEnv):
         self.robot.spawn("/World/envs/env_0/Robot")
         attach_payload("/World/envs/env_0/Robot")
 
-        kit_utils.create_ground_plane(
-            "/World/defaultGroundPlane",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-            restitution=0.0,
-            improve_patch_friction=True,
-            combine_mode="max",
-        )
+        if True:
+            kit_utils.create_ground_plane(
+                "/World/defaultGroundPlane",
+                static_friction=1.0,
+                dynamic_friction=1.0,
+                restitution=0.0,
+                improve_patch_friction=True,
+                combine_mode="max",
+            )
+        else:
+            prim_utils.create_prim(
+                "/World/defaultGroundPlane", 
+                usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Terrains/rough_plane.usd"
+            )
         return ["/World/defaultGroundPlane"]
     
     def _set_specs(self):
         self.robot.initialize("/World/envs/env_*/Robot")
         observation_dim = (
             10
-            + 3 # + 3 # linvel_b, angvel_b
+            + 3 
             + 12 + 12 # dof_pos, dof_vel
             + 12 + 12 # actions
             + 2
-            # + 2 # base_mass, payload_mass
-            # + 12 # + 12 + 12 # p_gains, d_gains, torques
-            # + 12 + 12 # feet_pos, feet_vel
-            # + 9 * 3 # normalized_forces
         )
-                
+        
+        intrinsics_spec = CompositeSpec({
+            key: self.OBS_SPECS[key]
+            for key in self.cfg.task.priv_obs
+        })
+
         self.observation_spec = CompositeSpec({
             "agents": {
                 "observation": UnboundedContinuousTensorSpec((1, observation_dim)),
-                # "observation_h": UnboundedContinuousTensorSpec((1, 32, observation_dim)),
-                "intrinsics": CompositeSpec({
-                    "base_height": UnboundedContinuousTensorSpec((1, 1)),
-                    "base_mass": UnboundedContinuousTensorSpec((1, 1)),
-                    "payload_mass": UnboundedContinuousTensorSpec((1, 1)),
-                    # "legs_masses": UnboundedContinuousTensorSpec((1, 8)),
-                    # "p_gains": UnboundedContinuousTensorSpec((1, 12)),
-                    # "d_gains": UnboundedContinuousTensorSpec((1, 12)),
-                    "feet_pos": UnboundedContinuousTensorSpec((1, 4 * 3)),
-                    # "feet_vel": UnboundedContinuousTensorSpec((1, 4 * 3)),
-                    # "normalized_forces": UnboundedContinuousTensorSpec((1, 3 * 9)),
-                    # "normalized_torques": UnboundedContinuousTensorSpec((1, 3)),
-                    "base_vel": UnboundedContinuousTensorSpec((1, 3)),
-                    "vel_error": UnboundedContinuousTensorSpec((1, 3)),
-                    "applied_torques": UnboundedContinuousTensorSpec((1, 13)),
-                })
+                "observation_h": UnboundedContinuousTensorSpec((1, observation_dim, 32)),
+                "intrinsics": intrinsics_spec,
             },
         }).expand(self.num_envs).to(self.device)
 
@@ -251,6 +252,7 @@ class Velocity(IsaacEnv):
         self.observation_spec["stats"] = stats_spec
         self.stats = stats_spec.zero()
         self.intrinsics = self.observation_spec[("agents", "intrinsics")].zero()
+        self.observation_h = self.observation_spec[("agents", "observation_h")].zero()
 
     def _reset_idx(self, env_ids: torch.Tensor):
         # -- dof state (handled by the robot)
@@ -317,19 +319,21 @@ class Velocity(IsaacEnv):
     
         # -- reset history
         self.previous_actions[env_ids] = 0.
+        self.observation_h[env_ids] = 0.
         self.stats[env_ids] = 0.
 
     def _step(self, tensordict: TensorDictBase) -> TensorDictBase:
         self.actions[:] = tensordict[("agents", "action")].squeeze(1)
-        # push = ((self.progress_buf % self.push_interval) == 0).nonzero().squeeze(1)
-        # if len(push) > 0:
-        #     push_force = self.base_mass[push] * self.push_acc_dist.sample(push.shape)
-        actions = self.actions.clip(-100., 100.) * self.action_scaling
+        push = ((self.progress_buf + 1) % self.push_interval == 0).nonzero().squeeze(1)
+        self.push_force[push] = self.push_force_dist.sample(push.shape)
+
+        actions = self.actions.clip(-10., 10.) * self.action_scaling
         for substep in range(self.substeps):
             self.robot.apply_action(actions)
-            # if len(push) > 0:
-            #     self.robot.base.apply_forces(push_force, indices=push)
+            self.robot.base.apply_forces(self.push_force)
             self.sim.step(self._should_render(substep) and substep == self.substeps-1)
+        
+        self.push_force.mul_(0.7)
         self._post_sim_step(tensordict)
         self.progress_buf += 1
         tensordict = TensorDict({}, self.batch_size, device=self.device)
@@ -351,19 +355,20 @@ class Velocity(IsaacEnv):
             self.robot.force_sensor_forces / self.base_mass.unsqueeze(1)
         )
 
-        self.intrinsics["feet_pos"][:] = self.robot.feet_pos_b.reshape(-1, 1, 12)
-        # self.intrinsics["feet_vel"][:] = self.robot.feet_vel_b.reshape(-1, 1, 12)
-        # self.intrinsics["normalized_forces"][:] = normalized_forces.reshape(self.num_envs, 1, -1)
-        # self.intrinsics["normalized_torques"][:] = normalized_torques.reshape(-1, 1, 3)
-        self.intrinsics["base_height"][:] = (
-            self.robot.data.root_pos_w[:, [2]] - self.base_target_height
-        ).unsqueeze(1)
-        vel_error = self.robot.data.root_lin_vel_b - cmd_lin_vel_b
-        self.intrinsics["vel_error"][:] = vel_error.unsqueeze(1)
-        self.intrinsics["base_vel"][:] = self.robot.data.root_lin_vel_b.unsqueeze(1)
-        self.intrinsics["applied_torques"][:] = (
-            self.robot.data.applied_torques.unsqueeze(1) / 30.
-        )
+        if self.intrinsics.get("base_height", None) is not None:
+            self.intrinsics["base_linvel"][:] = (
+                self.robot.data.root_lin_vel_b - cmd_lin_vel_b
+            ).unsqueeze(1)
+        if self.intrinsics.get("feet_pos", None) is not None:
+            self.intrinsics["feet_pos"][:] = self.robot.feet_pos_b.reshape(-1, 1, 12)
+        if self.intrinsics.get("feet_vel", None) is not None:
+            self.intrinsics["feet_vel"][:] = self.robot.feet_vel_b.reshape(-1, 1, 12)
+        if self.intrinsics.get("feet_height", None) is not None:
+            self.intrinsics["feet_height"][:] = self.robot.feet_pos_w[..., [2]].reshape(-1, 1, 4)
+        if self.intrinsics.get("normalized_forces", None) is not None:
+            self.intrinsics["normalized_forces"][:] = normalized_forces.reshape(-1, 1, 27)
+        if self.intrinsics.get("applied_torques", None) is not None:
+            self.intrinsics["applied_torques"][:] = self.robot.data.applied_torques.unsqueeze(1) / 30.
         
         dof_pos = self.robot.data.dof_pos - self.robot.data.actuator_pos_offset
         dof_vel = self.robot.data.dof_vel - self.robot.data.actuator_vel_offset
@@ -373,18 +378,15 @@ class Velocity(IsaacEnv):
             self.robot.data.root_ang_vel_b,
             self.robot.data.projected_gravity_b,
             cmd_lin_vel_b,
-            dof_pos,
-            dof_vel,
+            noise(dof_pos, 0.05),
+            noise(dof_vel, 0.1),
             self.actions, # a_{t-1}
             self.previous_actions, # a_{t-2}
-            # privileged
-            # self.robot.data.root_lin_vel_b,
-            # (self.actuator._applied_torques / 30.).reshape(-1, 12),
-            # self.robot.feet_pos_b.reshape(-1, 12),
-            # self.robot.feet_vel_b.reshape(-1, 12),
         ]
         
-        obs = torch.cat(obs, dim=-1)
+        obs = torch.cat(obs, dim=-1).unsqueeze(1)
+        self.observation_h[..., :-1] = self.observation_h[..., 1:]
+        self.observation_h[..., -1] = obs
 
         self.diff_linvel_w = (
             (self.robot.data.root_pos_w - self.pos_buffer) / (3 * (self.dt * self.substeps))
@@ -393,18 +395,20 @@ class Velocity(IsaacEnv):
         self.pos_buffer[update_buffer] = self.robot.data.root_pos_w[update_buffer]
 
         if self._should_render(0):
-            self.draw.clear_lines()
+            self.debug_draw.clear()
             robot_pos = self.robot.data.root_pos_w[self.central_env_idx].cpu()
             # feet_pos = self.robot.feet_pos_w[self.central_env_idx].cpu()
             # feet_contact_forces = self.robot.feet_contact_forces[self.central_env_idx].cpu()
             force = self.robot.force_sensor_forces[self.central_env_idx, 0].cpu() / 5.
             robot_top = robot_pos + torch.tensor([0., 0., 0.5])
             linvel = self.robot.data.root_lin_vel_w[self.central_env_idx].cpu()
+            push_force = self.push_force[self.central_env_idx].cpu()
 
             command = self.commands[self.central_env_idx].cpu()
             self.debug_draw.vector(robot_top, command, color=(1., 1., 1., 1.))
             self.debug_draw.vector(robot_top, linvel, color=(1., 0.5, 0.5, 1.))
             self.debug_draw.vector(robot_pos, force, color=(0.5, 0.5, 1., 1.))
+            self.debug_draw.vector(robot_pos, push_force, color=(0.5, 1., 0.5, 1.))
             # self.debug_draw.vector(feet_pos, feet_contact_forces, color=(0.5, 1., 0.5, 1.))
 
             set_camera_view(
@@ -415,7 +419,7 @@ class Velocity(IsaacEnv):
 
         return TensorDict({
             "agents": {
-                "observation": obs.unsqueeze(1),
+                "observation": obs,
                 "intrinsics": self.intrinsics.clone(),
             },
             "stats": self.stats.clone(),
@@ -479,7 +483,7 @@ class Velocity(IsaacEnv):
         truncated = (self.progress_buf >= self.max_episode_length).unsqueeze(-1)
         terminated = (
             (self.robot.data.root_pos_w[:, 2] <= self.base_target_height * 0.5)
-            | (self.robot.data.projected_gravity_b[:, 2] >= -0.5)
+            | (self.robot.data.projected_gravity_b[:, 2] >= -0.3)
         ).unsqueeze(1)
         
         self.stats["return"].add_(reward)
@@ -512,5 +516,5 @@ def square_norm(x: torch.Tensor):
 
 
 def noise(x: torch.Tensor, scale: float):
-    return x + torch.randn_like(x) * scale
+    return x + torch.randn_like(x).clip(-3., 3.) * scale
 

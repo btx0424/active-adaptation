@@ -181,6 +181,15 @@ class FiLM(nn.Module):
         return feature
 
 
+class Chunk(nn.Module):
+    def __init__(self, n) -> None:
+        super().__init__()
+        self.n = n
+    
+    def forward(self, x):
+        return x.chunk(self.n, dim=-1)
+
+
 class PPOAdaptivePolicy(TensorDictModuleBase):
     
     def __init__(self,
@@ -215,20 +224,21 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         self.encoder = TensorDictModule(
             nn.Sequential(
                 # nn.LayerNorm(intrinsics_dim), 
-                make_mlp([128, 128]),
+                make_mlp([128, 64]),
+                Chunk(2),
             ), 
-            [("agents", "intrinsics")], ["context"]
+            [("agents", "intrinsics")], ["context_actor", "context_critic"]
         ).to(self.device)
 
         if self.cfg.condition_mode == "cat":
-            def condition():
+            def condition(branch: str):
                 return TensorDictSequential(
                     TensorDictModule(
                         nn.Sequential(make_mlp([512])), 
                         [("agents", "observation")], 
                         ["_feature"]
                     ),
-                    CatTensors(["_feature", "context"], "_feature", del_keys=False)
+                    CatTensors(["_feature", f"context_{branch}"], "_feature", del_keys=False)
                 )
         elif self.cfg.condition_mode == "film":
             def condition():
@@ -249,7 +259,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
             raise NotImplementedError(self.cfg.condition_mode)
 
         actor_module = TensorDictSequential(
-            condition(),
+            condition("actor"),
             TensorDictModule(
                 nn.Sequential(make_mlp([256, 256]), Actor(self.action_dim)), 
                 ["_feature"], ["loc", "scale"]
@@ -264,7 +274,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         ).to(self.device)
 
         self.critic = TensorDictSequential(
-            condition(),
+            condition("critic"),
             TensorDictModule(
                 nn.Sequential(make_mlp([256, 256]), nn.LazyLinear(1)), 
                 ["_feature"], ["state_value"]
@@ -375,7 +385,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
             if self.adaptation_key != "context":
                 self.encoder(tensordict)
             self.adaptation_module(tensordict)
-        assert tensordict.get("context", None) is not None
+        # assert tensordict.get("context", None) is not None
         return tensordict
 
     def _train_policy(self, tensordict: TensorDict):

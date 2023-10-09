@@ -15,19 +15,28 @@ sim:
 
 randomization:
   train:
-    base_mass: [0.8, 1.2]
+    base_mass: [0.7, 1.3]
     motor:
-      p_gains: [0.8, 1.2]
-      d_gains: [0.8, 1.2]
-    payload_mass: [0.05, 1.]
+      p_gains: [0.7, 1.3]
+      d_gains: [0.7, 1.3]
+    payload_mass: [0.05, 0.6]
   eval:
-    base_mass: [0.8, 1.2]
+    base_mass: [0.7, 1.3]
     motor:
-      p_gains: [0.8, 1.2]
-      d_gains: [0.8, 1.2]
-    payload_mass: [0.05, 1.]
+      p_gains: [0.7, 1.3]
+      d_gains: [0.7, 1.3]
+    payload_mass: [0.05, 0.6]
 
 action_scaling: 1.0
 time_encoding: false
 
 force_sensor: ["base", "calf", "thigh"]
+
+priv_obs: 
+  - base_mass
+  - payload_mass
+  - base_linvel
+  - applied_torques
+  - feet_pos
+  - feet_vel
+  - feet_height
