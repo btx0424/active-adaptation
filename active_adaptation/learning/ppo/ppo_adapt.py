@@ -36,11 +36,11 @@ from tensordict.nn import TensorDictModule, TensorDictSequential, TensorDictModu
 
 from hydra.core.config_store import ConfigStore
 from dataclasses import dataclass
-from typing import Any, Mapping, Union, Tuple
+from typing import Any, Mapping, Union, Sequence
 
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
-from .common import GAE
+from .common import GAE, Duplicate, Chunk
 from .adaptation import Action, Value, ActionValue, MSE
 
 @dataclass
@@ -54,6 +54,7 @@ class PPOConfig:
     phase: str = "encoder"
     condition_mode: str = "cat"
 
+    encoder_mode: str = "separate" # shared, separate, seperate_heads
     # what the adaptation module learns to predict
     adaptation_key: Any = "context"
     adaptation_loss: str = "mse"
@@ -181,13 +182,37 @@ class FiLM(nn.Module):
         return feature
 
 
-class Chunk(nn.Module):
-    def __init__(self, n) -> None:
-        super().__init__()
-        self.n = n
-    
-    def forward(self, x):
-        return x.chunk(self.n, dim=-1)
+def make_encoder(mode: str, num_units: Sequence[int]):
+    if mode == "shared":
+        encoder = TensorDictModule(
+            nn.Sequential(
+                make_mlp(num_units),
+                Duplicate(2),
+            ),
+            [("agents", "intrinsics")], ["context_actor", "context_critic"]
+        )
+    elif mode == "separate":
+        encoder = TensorDictSequential(
+            TensorDictModule(
+                make_mlp(num_units),
+                [("agents", "intrinsics")], ["context_actor"]
+            ),
+            TensorDictModule(
+                make_mlp(num_units),
+                [("agents", "intrinsics")], ["context_critic"]
+            )
+        )
+    elif mode == "seperate_heads":
+        encoder = TensorDictModule(
+            nn.Sequential(
+                make_mlp(num_units),
+                Duplicate(2),
+            ),
+            [("agents", "intrinsics")], ["context_actor", "context_critic"]
+        )
+    else:
+        raise ValueError(mode)
+    return encoder
 
 
 class PPOAdaptivePolicy(TensorDictModuleBase):
@@ -221,14 +246,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
 
         fake_input = observation_spec.zero()
 
-        self.encoder = TensorDictModule(
-            nn.Sequential(
-                # nn.LayerNorm(intrinsics_dim), 
-                make_mlp([128, 64]),
-                Chunk(2),
-            ), 
-            [("agents", "intrinsics")], ["context_actor", "context_critic"]
-        ).to(self.device)
+        self.encoder = make_encoder("separate", [128, 128]).to(self.device)
 
         if self.cfg.condition_mode == "cat":
             def condition(branch: str):

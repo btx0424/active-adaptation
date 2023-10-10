@@ -24,6 +24,22 @@
 import torch
 import torch.nn as nn
 
+class Chunk(nn.Module):
+    def __init__(self, n) -> None:
+        super().__init__()
+        self.n = n
+    
+    def forward(self, x):
+        return x.chunk(self.n, dim=-1)
+
+class Duplicate(nn.Module):
+    def __init__(self, n) -> None:
+        super().__init__()
+        self.n = n
+    
+    def forward(self, x):
+        return tuple(x for _ in range(self.n))
+
 
 class GAE(nn.Module):
     def __init__(self, gamma, lmbda):
