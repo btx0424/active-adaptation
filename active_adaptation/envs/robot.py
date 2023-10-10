@@ -47,9 +47,9 @@ class LeggedRobot(_LeggedRobot):
         self.base.initialize()
         self.legs.initialize()
         self.heading = torch.zeros(self.count, 3, device=self.device)
-        self.feet_pos_b = torch.zeros(self.count, 4, 3, device=self.device)
-        self.feet_pos_w = torch.zeros(self.count, 4, 3, device=self.device)
-        self.feet_vel_b = torch.zeros(self.count, 4, 3, device=self.device)
+        self.feet_pos_b = self.data.feet_state_b[..., :3]
+        self.feet_vel_b = self.data.feet_state_b[..., 7:10]
+        self.feet_pos_w = self.data.feet_state_w[..., :3]
         
         n_sensors = self.articulations._physics_view.max_force_sensors
         self.force_sensor_forces = torch.zeros(self.count, n_sensors, 3, device=self.device)
@@ -66,26 +66,6 @@ class LeggedRobot(_LeggedRobot):
                 .split([3, 3], dim=-1)
             )
         self.force_sensor_forces.lerp_(force, 0.5)
-
-        feet_pos_b = []
-        feet_pos_w = []
-        feet_vel = []
-        for i, (body, view) in enumerate(self.feet_bodies.items()):
-            feet_vel.append(view.get_velocities()[..., :3])
-            feet_pos, feet_quat = view.get_world_poses(clone=True)
-            feet_pos_w.append(feet_pos)
-            feet_pos_b.append(feet_pos - self.data.root_pos_w)
-            # self.feet_contact_forces[:, i] = view.get_net_contact_forces()
-        
-        self.feet_vel_b[:] = quat_rotate_inverse(
-            self.data.root_quat_w.unsqueeze(1).expand(-1, 4, -1),
-            torch.stack(feet_vel, dim=-2)
-        )
-        self.feet_pos_b[:] = quat_rotate_inverse(
-            self.data.root_quat_w.unsqueeze(1).expand(-1, 4, -1),
-            torch.stack(feet_pos_b, dim=-2)
-        )
-        self.feet_pos_w[:] = torch.stack(feet_pos_w, dim=-2)
 
     def reset_buffers(self, env_ids):
         super().reset_buffers(env_ids)

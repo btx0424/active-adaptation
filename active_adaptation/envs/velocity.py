@@ -83,7 +83,7 @@ class Velocity(IsaacEnv):
         "feet_height": UnboundedContinuousTensorSpec((1, 4)),
         "normalized_forces": UnboundedContinuousTensorSpec((1, 3 * 9)),
         # "normalized_torques": UnboundedContinuousTensorSpec((1, 3)),
-        "base_linvel": UnboundedContinuousTensorSpec((1, 3)),
+        "base_linvel": UnboundedContinuousTensorSpec((1, 6)),
     }
 
 
@@ -357,9 +357,14 @@ class Velocity(IsaacEnv):
         )
 
         if self.intrinsics.get("base_height", None) is not None:
-            self.intrinsics["base_linvel"][:] = (
-                self.robot.data.root_lin_vel_b - cmd_lin_vel_b
+            self.intrinsics["base_height"][:] = (
+                self.robot.data.root_pos_w[..., [2]]- self.base_target_height
             ).unsqueeze(1)
+        if self.intrinsics.get("base_linvel", None) is not None:
+            self.intrinsics["base_linvel"][:] = torch.cat([
+                self.robot.data.root_lin_vel_b,
+                self.robot.data.root_lin_vel_b - cmd_lin_vel_b
+            ], dim=-1).unsqueeze(1)
         if self.intrinsics.get("feet_pos", None) is not None:
             self.intrinsics["feet_pos"][:] = self.robot.feet_pos_b.reshape(-1, 1, 12)
         if self.intrinsics.get("feet_vel", None) is not None:

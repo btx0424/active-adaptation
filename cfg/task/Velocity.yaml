@@ -39,6 +39,7 @@ priv_obs:
   - base_mass
   - payload_mass
   # - legs_mass
+  # - base_height
   - base_linvel
   - applied_torques
   - feet_pos
