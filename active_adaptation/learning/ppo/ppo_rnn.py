@@ -322,7 +322,11 @@ class PPORNNPolicy:
         with torch.no_grad():
             next_values = self.critic(next_tensordict)["state_value"].squeeze(1)
         rewards = tensordict[("next", "agents", "reward")]
-        dones = tensordict[("next", "done")].expand(-1, -1, self.n_agents).unsqueeze(-1)
+        dones = (
+            tensordict[("next", "terminated")]
+            .expand(-1, -1, self.n_agents)
+            .unsqueeze(-1)
+        )
         values = tensordict["state_value"]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)

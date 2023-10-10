@@ -318,9 +318,9 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
                     nn.init.orthogonal_(module.weight, 0.01)
                     nn.init.constant_(module.bias, 0.)
             
-            # self.actor.apply(init_)
-            # self.critic.apply(init_)
-            # self.encoder.apply(init_)
+            self.actor.apply(init_)
+            self.critic.apply(init_)
+            self.encoder.apply(init_)
 
         if self.phase in ("adaptation", "finetune"):
             if self.cfg.adaptation_loss == "mse":
@@ -372,8 +372,8 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
 
 
         self.encoder_opt = torch.optim.Adam(self.encoder.parameters(), lr=5e-4)
-        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
-        self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=5e-4)
+        self.actor_opt = torch.optim.Adam(list(self.actor.parameters()) + list(self.encoder.parameters()), lr=5e-4)
+        self.critic_opt = torch.optim.Adam(list(self.critic.parameters()) + list(self.encoder.parameters()), lr=5e-4)
     
     def forward(self, tensordict: TensorDict):
         self._get_context(tensordict)
@@ -413,7 +413,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
             next_values = self.critic(next_tensordict)["state_value"]
         rewards = tensordict[("next", "agents", "reward")]
         dones = (
-            tensordict[("next", "done")]
+            tensordict[("next", "terminated")]
             .expand(-1, -1, self.n_agents)
             .unsqueeze(-1)
         )
@@ -468,13 +468,13 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         loss = policy_loss + entropy_loss + value_loss
         self.actor_opt.zero_grad()
         self.critic_opt.zero_grad()
-        self.encoder_opt.zero_grad()
+        # self.encoder_opt.zero_grad()
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.actor.parameters(), 5)
         critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 5)
         self.actor_opt.step()
         self.critic_opt.step()
-        self.encoder_opt.step()
+        # self.encoder_opt.step()
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
         return TensorDict({
             "policy_loss": policy_loss,

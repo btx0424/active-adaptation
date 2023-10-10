@@ -248,6 +248,7 @@ class Velocity(IsaacEnv):
             "dof_acc": UnboundedContinuousTensorSpec(1),
             "action_rate": UnboundedContinuousTensorSpec(1),
             "feet_symmetry": UnboundedContinuousTensorSpec(1),
+            "feet_clearance": UnboundedContinuousTensorSpec(1),
         }).expand(self.num_envs).to(self.device)
         self.observation_spec["stats"] = stats_spec
         self.stats = stats_spec.zero()
@@ -324,8 +325,8 @@ class Velocity(IsaacEnv):
 
     def _step(self, tensordict: TensorDictBase) -> TensorDictBase:
         self.actions[:] = tensordict[("agents", "action")].squeeze(1)
-        push = ((self.progress_buf + 1) % self.push_interval == 0).nonzero().squeeze(1)
-        self.push_force[push] = self.push_force_dist.sample(push.shape)
+        # push = ((self.progress_buf + 1) % self.push_interval == 0).nonzero().squeeze(1)
+        # self.push_force[push] = self.push_force_dist.sample(push.shape)
 
         actions = self.actions.clip(-10., 10.) * self.action_scaling
         for substep in range(self.substeps):
@@ -447,6 +448,7 @@ class Velocity(IsaacEnv):
             self.robot.feet_pos_b[:, [0, 1], 1].sum(dim=-1, keepdim=True).abs()
             + self.robot.feet_pos_b[:, [2, 3], 1].sum(dim=-1, keepdim=True).abs()
         )
+        feet_clearance = self.robot.feet_pos_w[:, :, 2].sum(dim=-1, keepdim=True)
 
         # lin_vel_xy_exp = torch.exp(-lin_vel_error / 0.25)
         # lin_vel_xy_exp = torch.exp(-lin_vel_error / 0.5)
@@ -476,6 +478,7 @@ class Velocity(IsaacEnv):
             - 0.01 * action_rate_l2
             - 0.0005 * energy
             - 2 * feet_symmetry_error
+            + 0.2 * feet_clearance
         ).clip(min=0.)
 
         self.base_height_error[:] = base_height_error
@@ -496,6 +499,7 @@ class Velocity(IsaacEnv):
         self.stats["dof_acc"].add_(dof_acc_l2)
         self.stats["action_rate"].add_(action_rate_l2)
         self.stats["feet_symmetry"].add_(feet_symmetry_error)
+        self.stats["feet_clearance"].add_(feet_clearance)
 
         # resample commands
         change_commands = ((self.progress_buf % self.command_interval) == 0).nonzero().squeeze(1)
