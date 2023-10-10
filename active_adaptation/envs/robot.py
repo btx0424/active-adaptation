@@ -65,7 +65,7 @@ class LeggedRobot(_LeggedRobot):
                 .clone()
                 .split([3, 3], dim=-1)
             )
-        self.force_sensor_forces[:] = force
+        self.force_sensor_forces.lerp_(force, 0.5)
 
         feet_pos_b = []
         feet_pos_w = []
@@ -87,4 +87,6 @@ class LeggedRobot(_LeggedRobot):
         )
         self.feet_pos_w[:] = torch.stack(feet_pos_w, dim=-2)
 
-
+    def reset_buffers(self, env_ids):
+        super().reset_buffers(env_ids)
+        self.force_sensor_forces[env_ids] = 0.

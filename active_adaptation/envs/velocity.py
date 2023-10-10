@@ -90,6 +90,7 @@ class Velocity(IsaacEnv):
     def __init__(self, cfg, headless):
         self.action_scaling = cfg.task.get("action_scaling", 1.0)
         self.randomization = cfg.task.get("randomization", {})
+        self.command_interval = cfg.task.get("command_interval")
 
         super().__init__(cfg, headless)
         # -- history
@@ -100,13 +101,12 @@ class Velocity(IsaacEnv):
             torch.tensor([.8, .8, 0.8], device=self.device)
         )
         # -- command: x vel, y vel, yaw vel, heading
-        self.commands_dist = D.Uniform(
-            torch.tensor([-2.0, -2.0], device=self.device), 
-            torch.tensor([2.0, 2.0], device=self.device),
+        self.commands_dist = Pan(
+            torch.tensor([0.4, -0.], device=self.device),
+            torch.tensor([2.4, 0.], device=self.device)
         )
 
         import math
-        self.command_interval = 200
         self.n_commands = math.ceil(self.max_episode_length / self.command_interval)
         self.commands_queue = torch.zeros(self.num_envs, self.n_commands, 3, device=self.device)
         self.commands_i = torch.zeros(self.num_envs, 1, 1, dtype=torch.long, device=self.device)
@@ -147,16 +147,11 @@ class Velocity(IsaacEnv):
                 torch.tensor([low], device=self.device),
                 torch.tensor([high], device=self.device)
             )
-            self.robot.legs = RigidPrimView(
-                "/World/envs/env_*/Robot/.*_(calf|thigh)",
-                reset_xform_properties=False,
-                shape=(-1, 8)
-            )
-            self.robot.legs.initialize()
             self.legs_masses = self.robot.legs.get_masses(clone=True)
+            low, high = randomization_cfg["legs_mass"]
             self.legs_mass_dist = D.Uniform(
-                torch.tensor([0.8], device=self.device),
-                torch.tensor([1.2], device=self.device)
+                torch.tensor([low], device=self.device),
+                torch.tensor([high], device=self.device)
             )
 
         if randomization_cfg.get("payload_mass", None) is not None:
@@ -165,16 +160,19 @@ class Velocity(IsaacEnv):
                 reset_xform_properties=False,
             )
             self.payload.initialize()
+            low, high = randomization_cfg["payload_mass"]
             self.payload_mass_dist = D.Uniform(
-                torch.tensor([0.05], device=self.device),
-                torch.tensor([.5], device=self.device)
+                torch.tensor([low], device=self.device),
+                torch.tensor([high], device=self.device)
             )
 
-        self.pos_buffer = torch.zeros(self.num_envs, 3, device=self.device)
-        self.heading_target = torch.zeros(self.num_envs, device=self.device)
+        self.pos_buffer = torch.zeros(self.num_envs, 3, 3, device=self.device)
 
         self.base_target_height = 0.3
         self.base_height_error = torch.zeros(self.num_envs, 1, device=self.device)
+
+        # visulization
+        self.feet_pos_traj = []
 
     def _design_scene(self):
         # self.robot = LeggedRobot(ANYMAL_C_CFG)
@@ -288,9 +286,11 @@ class Velocity(IsaacEnv):
 
         # sample commands
         commands_queue = self.commands_dist.sample(env_ids.shape+(self.n_commands,))
-        commands_queue *= (commands_queue.norm(dim=-1, keepdim=True) > 0.6).float()
-        self.commands_queue[env_ids, :, :2] = commands_queue
+        self.commands_queue[env_ids] = commands_queue
         self.commands_i[env_ids] = 0
+
+        if (env_ids == self.central_env_idx).any():
+            self.feet_pos_traj.clear()
 
         if hasattr(self, "base_mass_dist"):
             # randomize base mass
@@ -325,8 +325,8 @@ class Velocity(IsaacEnv):
 
     def _step(self, tensordict: TensorDictBase) -> TensorDictBase:
         self.actions[:] = tensordict[("agents", "action")].squeeze(1)
-        # push = ((self.progress_buf + 1) % self.push_interval == 0).nonzero().squeeze(1)
-        # self.push_force[push] = self.push_force_dist.sample(push.shape)
+        push = ((self.progress_buf + 1) % self.push_interval == 0).nonzero().squeeze(1)
+        self.push_force[push] = self.push_force_dist.sample(push.shape)
 
         actions = self.actions.clip(-10., 10.) * self.action_scaling
         for substep in range(self.substeps):
@@ -380,7 +380,7 @@ class Velocity(IsaacEnv):
             self.robot.data.projected_gravity_b,
             cmd_lin_vel_b,
             noise(dof_pos, 0.05),
-            noise(dof_vel, 0.1),
+            noise(dof_vel, 0.05),
             self.actions, # a_{t-1}
             self.previous_actions, # a_{t-2}
         ]
@@ -390,28 +390,40 @@ class Velocity(IsaacEnv):
         self.observation_h[..., -1] = obs
 
         self.diff_linvel_w = (
-            (self.robot.data.root_pos_w - self.pos_buffer) / (3 * (self.dt * self.substeps))
+            (self.robot.data.root_pos_w - self.pos_buffer[:, 0]) 
+            / (self.pos_buffer.shape[1] * (self.dt * self.substeps))
         )
-        update_buffer = self.progress_buf % 3 == 0
-        self.pos_buffer[update_buffer] = self.robot.data.root_pos_w[update_buffer]
+        self.pos_buffer[:, :-1] = self.pos_buffer[:, 1:]
+        self.pos_buffer[:, -1] = self.robot.data.root_pos_w
 
         if self._should_render(0):
             self.debug_draw.clear()
             robot_pos = self.robot.data.root_pos_w[self.central_env_idx].cpu()
+            feet_pos = self.robot.feet_pos_w[self.central_env_idx].cpu()
+            self.feet_pos_traj.append(feet_pos)
             # feet_pos = self.robot.feet_pos_w[self.central_env_idx].cpu()
             # feet_contact_forces = self.robot.feet_contact_forces[self.central_env_idx].cpu()
             force = self.robot.force_sensor_forces[self.central_env_idx, 0].cpu() / 5.
             robot_top = robot_pos + torch.tensor([0., 0., 0.5])
             linvel = self.robot.data.root_lin_vel_w[self.central_env_idx].cpu()
+            diff_linvel = self.diff_linvel_w[self.central_env_idx].cpu()
             push_force = self.push_force[self.central_env_idx].cpu()
 
             command = self.commands[self.central_env_idx].cpu()
             self.debug_draw.vector(robot_top, command, color=(1., 1., 1., 1.))
             self.debug_draw.vector(robot_top, linvel, color=(1., 0.5, 0.5, 1.))
+            self.debug_draw.vector(robot_top, diff_linvel, color=(0.5, 0.5, 1., 1.))
+
             self.debug_draw.vector(robot_pos, force, color=(0.5, 0.5, 1., 1.))
             self.debug_draw.vector(robot_pos, push_force, color=(0.5, 1., 0.5, 1.))
-            # self.debug_draw.vector(feet_pos, feet_contact_forces, color=(0.5, 1., 0.5, 1.))
 
+            if len(self.feet_pos_traj) > 1:
+                feet_pos_traj = torch.stack(self.feet_pos_traj, dim=1)
+                self.debug_draw.plot(feet_pos_traj[0], 1., color=(1., 0., 0., .6))
+                self.debug_draw.plot(feet_pos_traj[1], 1., color=(0., 1., 0., .6))
+                self.debug_draw.plot(feet_pos_traj[2], 1., color=(0., 0., 1., .6))
+                self.debug_draw.plot(feet_pos_traj[3], 1., color=(1., 1., 0., .6))
+            
             set_camera_view(
                 eye=robot_pos.numpy() + np.asarray(self.cfg.viewer.eye),
                 target=robot_pos.numpy() + np.asarray(self.cfg.viewer.lookat)                        
@@ -478,7 +490,7 @@ class Velocity(IsaacEnv):
             - 0.01 * action_rate_l2
             - 0.0005 * energy
             - 2 * feet_symmetry_error
-            + 0.2 * feet_clearance
+            # + 0.2 * feet_clearance
         ).clip(min=0.)
 
         self.base_height_error[:] = base_height_error
