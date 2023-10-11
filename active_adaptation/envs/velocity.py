@@ -102,8 +102,8 @@ class Velocity(IsaacEnv):
         )
         # -- command: x vel, y vel, yaw vel, heading
         self.commands_dist = Pan(
-            torch.tensor([0.4, -0.], device=self.device),
-            torch.tensor([2.4, 0.], device=self.device)
+            torch.tensor([0., -0.], device=self.device),
+            torch.tensor([2.8, 0.], device=self.device)
         )
 
         import math
@@ -286,6 +286,7 @@ class Velocity(IsaacEnv):
 
         # sample commands
         commands_queue = self.commands_dist.sample(env_ids.shape+(self.n_commands,))
+        commands_queue *= (commands_queue.norm(dim=-1, keepdim=True) > 0.6).float()
         self.commands_queue[env_ids] = commands_queue
         self.commands_i[env_ids] = 0
 
@@ -422,12 +423,12 @@ class Velocity(IsaacEnv):
             self.debug_draw.vector(robot_pos, force, color=(0.5, 0.5, 1., 1.))
             self.debug_draw.vector(robot_pos, push_force, color=(0.5, 1., 0.5, 1.))
 
-            if len(self.feet_pos_traj) > 1:
-                feet_pos_traj = torch.stack(self.feet_pos_traj, dim=1)
-                self.debug_draw.plot(feet_pos_traj[0], 1., color=(1., 0., 0., .6))
-                self.debug_draw.plot(feet_pos_traj[1], 1., color=(0., 1., 0., .6))
-                self.debug_draw.plot(feet_pos_traj[2], 1., color=(0., 0., 1., .6))
-                self.debug_draw.plot(feet_pos_traj[3], 1., color=(1., 1., 0., .6))
+            if len(self.feet_pos_traj[1:]) > 1:
+                feet_pos_traj = torch.stack(self.feet_pos_traj[1:], dim=1)
+                self.debug_draw.plot(feet_pos_traj[0], 1., color=(1., 0., 0., .8))
+                self.debug_draw.plot(feet_pos_traj[1], 1., color=(0., 1., 0., .8))
+                self.debug_draw.plot(feet_pos_traj[2], 1., color=(0., 0., 1., .8))
+                self.debug_draw.plot(feet_pos_traj[3], 1., color=(1., 1., 0., .8))
             
             set_camera_view(
                 eye=robot_pos.numpy() + np.asarray(self.cfg.viewer.eye),
@@ -470,7 +471,7 @@ class Velocity(IsaacEnv):
         # lin_vel_xy_exp = torch.exp(-lin_vel_error / 0.25)
         # lin_vel_xy_exp = torch.exp(-lin_vel_error / 0.5)
         # ang_vel_z_exp = torch.exp(-ang_vel_error / 0.25)
-        lin_vel_z_l2 = torch.square(self.robot.data.root_lin_vel_w[:, 2])
+        lin_vel_z_l2 = torch.square(self.robot.data.root_lin_vel_w[:, [2]])
         ang_vel_xy_l2 = square_norm(self.robot.data.root_ang_vel_w[:, :2])
         flat_orientation_l2 = square_norm(self.robot.data.projected_gravity_b[:, :2])
         dof_torques_l2 = square_norm(self.robot.data.applied_torques)
@@ -479,23 +480,23 @@ class Velocity(IsaacEnv):
         self.previous_actions[:] = self.actions
         energy = (self.robot.data.dof_vel * self.robot.data.applied_torques).abs().sum(dim=-1, keepdim=True)
         
+        reward_linvel = 1. / (1. + lin_vel_error / 0.25)
         reward = (
-            # 2.0 * lin_vel_xy_exp
-            2.0 / (1. + lin_vel_error / 0.25)
+            2.0  * reward_linvel    
             # 1.2 / (1. + lin_vel_error_projected / 0.5)
             # lin_vel_proj.clamp_max(self.commands[:, :2].norm(dim=-1, keepdim=True))
             + 0.25 * heading_projection
             # + 0.5 * ang_vel_z_exp.unsqueeze(1)
             + 0.5 / (1 + base_height_error / 0.25)
-            - 2.0 * lin_vel_z_l2.unsqueeze(1)
+            - 2.0 * lin_vel_z_l2
             - 0.05 * ang_vel_xy_l2
             - 2.0 * flat_orientation_l2
             - 0.000025 * dof_torques_l2
             - 2.5e-7 * dof_acc_l2
             - 0.01 * action_rate_l2
             - 0.0005 * energy
-            - 2 * feet_symmetry_error
-            # + 0.2 * feet_clearance
+            - 2. * reward_linvel * feet_symmetry_error
+            + 0.5 * reward_linvel * feet_clearance
         ).clip(min=0.)
 
         self.base_height_error[:] = base_height_error
