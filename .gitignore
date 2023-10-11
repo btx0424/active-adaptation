@@ -162,6 +162,7 @@ cython_debug/
 # hydra and wandb
 outputs/
 wandb/
+artifacts/
 
 # nohup
 *.out

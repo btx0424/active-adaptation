@@ -100,10 +100,11 @@ class Velocity(IsaacEnv):
             torch.tensor([-.8, -.8, 0.], device=self.device),
             torch.tensor([.8, .8, 0.8], device=self.device)
         )
-        # -- command: x vel, y vel, yaw vel, heading
+        # -- command: target velocity
+        low, high = cfg.task.get("command_speed")
         self.commands_dist = Pan(
-            torch.tensor([0., -0.], device=self.device),
-            torch.tensor([2.8, 0.], device=self.device)
+            torch.tensor([low, -0.], device=self.device),
+            torch.tensor([high, 0.], device=self.device)
         )
 
         import math
@@ -166,7 +167,7 @@ class Velocity(IsaacEnv):
                 torch.tensor([high], device=self.device)
             )
 
-        self.pos_buffer = torch.zeros(self.num_envs, 3, 3, device=self.device)
+        # self.pos_buffer = torch.zeros(self.num_envs, 3, 3, device=self.device)
 
         self.base_target_height = 0.3
         self.base_height_error = torch.zeros(self.num_envs, 1, device=self.device)
@@ -286,7 +287,7 @@ class Velocity(IsaacEnv):
 
         # sample commands
         commands_queue = self.commands_dist.sample(env_ids.shape+(self.n_commands,))
-        commands_queue *= (commands_queue.norm(dim=-1, keepdim=True) > 0.6).float()
+        # commands_queue *= (commands_queue.norm(dim=-1, keepdim=True) > 0.6).float()
         self.commands_queue[env_ids] = commands_queue
         self.commands_i[env_ids] = 0
 
@@ -395,12 +396,12 @@ class Velocity(IsaacEnv):
         self.observation_h[..., :-1] = self.observation_h[..., 1:]
         self.observation_h[..., -1] = obs
 
-        self.diff_linvel_w = (
-            (self.robot.data.root_pos_w - self.pos_buffer[:, 0]) 
-            / (self.pos_buffer.shape[1] * (self.dt * self.substeps))
-        )
-        self.pos_buffer[:, :-1] = self.pos_buffer[:, 1:]
-        self.pos_buffer[:, -1] = self.robot.data.root_pos_w
+        # self.diff_linvel_w = (
+        #     (self.robot.data.root_pos_w - self.pos_buffer[:, 0]) 
+        #     / (self.pos_buffer.shape[1] * (self.dt * self.substeps))
+        # )
+        # self.pos_buffer[:, :-1] = self.pos_buffer[:, 1:]
+        # self.pos_buffer[:, -1] = self.robot.data.root_pos_w
 
         if self._should_render(0):
             self.debug_draw.clear()
@@ -412,13 +413,13 @@ class Velocity(IsaacEnv):
             force = self.robot.force_sensor_forces[self.central_env_idx, 0].cpu() / 5.
             robot_top = robot_pos + torch.tensor([0., 0., 0.5])
             linvel = self.robot.data.root_lin_vel_w[self.central_env_idx].cpu()
-            diff_linvel = self.diff_linvel_w[self.central_env_idx].cpu()
+            # diff_linvel = self.diff_linvel_w[self.central_env_idx].cpu()
             push_force = self.push_force[self.central_env_idx].cpu()
 
             command = self.commands[self.central_env_idx].cpu()
             self.debug_draw.vector(robot_top, command, color=(1., 1., 1., 1.))
             self.debug_draw.vector(robot_top, linvel, color=(1., 0.5, 0.5, 1.))
-            self.debug_draw.vector(robot_top, diff_linvel, color=(0.5, 0.5, 1., 1.))
+            # self.debug_draw.vector(robot_top, diff_linvel, color=(0.5, 0.5, 1., 1.))
 
             self.debug_draw.vector(robot_pos, force, color=(0.5, 0.5, 1., 1.))
             self.debug_draw.vector(robot_pos, push_force, color=(0.5, 1., 0.5, 1.))

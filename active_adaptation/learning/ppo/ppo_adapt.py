@@ -214,6 +214,20 @@ def make_encoder(mode: str, num_units: Sequence[int]):
         raise ValueError(mode)
     return encoder
 
+def parse_path(path):
+    if path is None:
+        return None
+    elif isinstance(path, str):
+        if path.startswith("artifact"):
+            import wandb
+            import os
+            api = wandb.Api()
+            artifact = api.artifact(path)
+            dir_path = artifact.download()
+            checkpoint_path = os.path.join(dir_path, "checkpoint.pth")
+            return checkpoint_path
+        return path
+
 
 class PPOAdaptivePolicy(TensorDictModuleBase):
     
@@ -305,12 +319,9 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         self.actor(fake_input)
         self.critic(fake_input)
 
-        if self.cfg.checkpoint_path == "auto":
-            import wandb
-            api = wandb.Api()
-
-        elif self.cfg.checkpoint_path is not None:
-            state_dict = torch.load(self.cfg.checkpoint_path)
+        checkpoint_path = parse_path(self.cfg.checkpoint_path)
+        if checkpoint_path is not None:
+            state_dict = torch.load(checkpoint_path)
             self.load_state_dict(state_dict, strict=False)
         else:
             def init_(module):
@@ -514,6 +525,9 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
             reduction="none"
         ).mean((1, 2))
         return {"mse": mse.cpu(), "value_error": value_error.cpu()}
+
+    def __str__(self) -> str:
+        return f"PPOAdapt-{self.cfg.phase}"
 
 
 def make_batch(tensordict: TensorDict, num_minibatches: int):

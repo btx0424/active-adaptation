@@ -292,7 +292,10 @@ def main(cfg):
     try:
         ckpt_path = os.path.join(run.dir, "checkpoint_final.pt")
         torch.save(policy.state_dict(), ckpt_path)
-        artifact = wandb.Artifact(f"{type(policy).__name__}", type="model")
+        artifact = wandb.Artifact(
+            f"{type(base_env).__name__}-{type(policy).__name__}", 
+            type="model"
+        )
         artifact.add_file(ckpt_path)
         run.log_artifact(artifact)
         logging.info(f"Saved checkpoint to {str(ckpt_path)}")
