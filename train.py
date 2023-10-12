@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from functorch import vmap
 from omegaconf import OmegaConf
 
-from omni_drones import CONFIG_PATH, init_simulation_app
+from omni_drones import init_simulation_app
 from torchrl.data import CompositeSpec
 from omni_drones.utils.torchrl import SyncDataCollector
 from omni_drones.utils.torchrl.transforms import (
@@ -32,6 +32,7 @@ from torchrl.envs.transforms import (
     TransformedEnv, 
     InitTracker, 
     Compose,
+    RewardSum,
     CatTensors
 )
 
@@ -132,7 +133,7 @@ def main(cfg):
             transforms.append(transform)
     
     transforms = Compose(*transforms)
-    env = TransformedEnv(base_env, transforms)
+    env = TransformedEnv(base_env, transforms.clone())
 
     policy = algos[cfg.algo.name.lower()](
         cfg.algo, 
@@ -142,8 +143,9 @@ def main(cfg):
         device=base_env.device
     )
 
-    # if hasattr(policy, "adaptation_loss"):
-    #     transforms.append(policy.adaptation_loss)
+    if hasattr(policy, "adaptation_loss"):
+        # transforms.append(policy.adaptation_loss)
+        env = TransformedEnv(env, policy.adaptation_loss)
 
     frames_per_batch = env.num_envs * int(cfg.algo.train_every)
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
@@ -152,7 +154,7 @@ def main(cfg):
     save_interval = cfg.get("save_interval", -1)
 
     stats_keys = [
-        k for k in base_env.observation_spec.keys(True, True) 
+        k for k in env.observation_spec.keys(True, True) 
         if isinstance(k, tuple) and k[0]=="stats"
     ]
     episode_stats = EpisodeStats(stats_keys)

@@ -440,6 +440,7 @@ class Velocity(IsaacEnv):
         return TensorDict({
             "agents": {
                 "observation": obs,
+                "observation_h": self.observation_h,
                 "intrinsics": self.intrinsics.clone(),
             },
             "stats": self.stats.clone(),

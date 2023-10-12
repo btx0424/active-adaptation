@@ -214,17 +214,43 @@ def make_encoder(mode: str, num_units: Sequence[int]):
         raise ValueError(mode)
     return encoder
 
-def parse_path(path):
+
+def make_adaptation_module(encoder_mode: str, dim: int):
+    if encoder_mode == "shared":
+        module = TensorDictModule(
+            nn.Sequential(TConv(dim), Duplicate(2)), 
+            [("agents", "observation_h")], 
+            ["context_actor", "context_critic"]
+        )
+    elif encoder_mode == "separate":
+        module = TensorDictSequential(
+            TensorDictModule(
+                nn.Sequential(TConv(dim)), 
+                [("agents", "observation_h")], 
+                ["context_actor"]
+            ),
+            TensorDictModule(
+                nn.Sequential(TConv(dim)), 
+                [("agents", "observation_h")], 
+                ["context_critic"]
+            )
+        )
+    else:
+        raise ValueError(encoder_mode)
+    return module
+
+
+def parse_path(path: Union[str, None]):
     if path is None:
         return None
     elif isinstance(path, str):
-        if path.startswith("artifact"):
+        if path.startswith("artifact:"):
             import wandb
             import os
             api = wandb.Api()
-            artifact = api.artifact(path)
+            artifact = api.artifact(path[9:])
             dir_path = artifact.download()
-            checkpoint_path = os.path.join(dir_path, "checkpoint.pth")
+            checkpoint_path = os.path.join(dir_path, "checkpoint_final.pt")
             return checkpoint_path
         return path
 
@@ -334,32 +360,20 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
             self.encoder.apply(init_)
 
         if self.phase in ("adaptation", "finetune"):
+            self.adaptation_module = make_adaptation_module(self.cfg.encoder_mode, 128).to(self.device)
+            self.adaptation_module(fake_input)
             if self.cfg.adaptation_loss == "mse":
-                self.adaptation_module = TensorDictModule(
-                    TConv(fake_input[self.adaptation_key].shape[-1]), 
-                    [("agents", "observation_h")], [self.adaptation_key]
-                ).to(self.device)
-                self.adaptation_module(fake_input)
                 self.adaptation_loss = MSE(
                     self.adaptation_module, 
-                    self.adaptation_key, 
+                    ["context_actor", "context_critic"], 
                 ).to(self.device)
             elif self.cfg.adaptation_loss == "value":
-                self.adaptation_module = TensorDictModule(
-                    TConv(fake_input[self.adaptation_key].shape[-1]), 
-                    [("agents", "observation_h")], [self.adaptation_key]
-                ).to(self.device)
-                self.adaptation_module(fake_input)
                 self.adaptation_loss = Value(
                     self.encoder,
                     self.adaptation_module,
                     self.critic
                 ).to(self.device)
             elif self.cfg.adaptation_loss == "action":
-                self.adaptation_module = TensorDictModule(
-                    TConv(fake_input[self.adaptation_key].shape[-1]), 
-                    [("agents", "observation_h")], [self.adaptation_key]
-                ).to(self.device)
                 self.adaptation_module(fake_input)
                 self.adaptation_loss = Action(
                     self.encoder,
@@ -367,11 +381,6 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
                     self.actor
                 ).to(self.device)
             elif self.cfg.adaptation_loss == "action_value":
-                self.adaptation_module = TensorDictModule(
-                    TConv(fake_input[self.adaptation_key].shape[-1]), 
-                    [("agents", "observation_h")], [self.adaptation_key]
-                ).to(self.device)
-                self.adaptation_module(fake_input)
                 self.adaptation_loss = ActionValue(
                     self.encoder,
                     self.adaptation_module,
@@ -390,7 +399,14 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         self._get_context(tensordict)
         self.actor(tensordict)
         self.critic(tensordict)
-        tensordict.exclude("_feature", "loc", "scale", "context", inplace=True)
+        if self.phase == "adaptation":
+            td = self.encoder(tensordict.clone())
+            kl = D.kl_divergence(
+                self.actor.get_dist(tensordict),
+                self.actor.get_dist(td)
+            )
+            tensordict.set("reward_adaptation", -kl.unsqueeze(1))
+        tensordict.exclude("_feature", inplace=True)
         return tensordict
 
     def train_op(self, tensordict: TensorDict):
@@ -407,14 +423,10 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         return info
     
     def _get_context(self, tensordict: TensorDict):
-        assert tensordict.get("context", None) is None
         if self.phase == "encoder":
             self.encoder(tensordict)
         elif self.phase in ("adaptation", "finetune"):
-            if self.adaptation_key != "context":
-                self.encoder(tensordict)
             self.adaptation_module(tensordict)
-        # assert tensordict.get("context", None) is not None
         return tensordict
 
     def _train_policy(self, tensordict: TensorDict):
