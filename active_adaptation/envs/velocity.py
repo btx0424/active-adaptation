@@ -457,8 +457,8 @@ class Velocity(IsaacEnv):
         self.previous_actions[:] = self.actions
         energy = (self.robot.data.dof_vel * self.robot.data.applied_torques).abs().sum(dim=-1, keepdim=True)
         
-        # reward_linvel = 1. / (1. + lin_vel_error / 0.25)
-        reward_linvel = torch.exp(-lin_vel_error / 0.25)
+        reward_linvel = 1. / (1. + lin_vel_error / 0.25)
+        # reward_linvel = torch.exp(-lin_vel_error / 0.25)
         reward = (
             2.0  * reward_linvel    
             + 0.25 * heading_projection
