@@ -399,7 +399,8 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         self._get_context(tensordict)
         self.actor(tensordict)
         self.critic(tensordict)
-        if self.phase == "adaptation":
+        if self.phase in ("adaptation", "finetune"):
+            # label adaptation reward
             td = self.encoder(tensordict.clone())
             kl = D.kl_divergence(
                 self.actor.get_dist(tensordict),

@@ -111,6 +111,7 @@ class Velocity(IsaacEnv):
         self.n_commands = math.ceil(self.max_episode_length / self.command_interval)
         self.commands_queue = torch.zeros(self.num_envs, self.n_commands, 3, device=self.device)
         self.commands_i = torch.zeros(self.num_envs, 1, 1, dtype=torch.long, device=self.device)
+        self.commands = torch.zeros(self.num_envs, 3, device=self.device)
 
         self.push_interval = 300
         self.push_force_dist = Pan(
@@ -289,7 +290,8 @@ class Velocity(IsaacEnv):
         commands_queue = self.commands_dist.sample(env_ids.shape+(self.n_commands,))
         # commands_queue *= (commands_queue.norm(dim=-1, keepdim=True) > 0.6).float()
         self.commands_queue[env_ids] = commands_queue
-        self.commands_i[env_ids] = 0
+        self.commands_i[env_ids] = 0.
+        self.commands[env_ids] = 0.
 
         if (env_ids == self.central_env_idx).any():
             self.feet_pos_traj.clear()
@@ -347,11 +349,12 @@ class Velocity(IsaacEnv):
     def _compute_state_and_obs(self):
         self.robot.update_buffers(dt=self.dt * self.substeps)
 
-        self.commands = (
+        commands_target = (
             self.commands_queue
             .take_along_dim(self.commands_i, dim=1)
             .squeeze(1)
         )
+        self.commands.add_(clip_norm(0.2 * (commands_target - self.commands), 0.1))
         cmd_lin_vel_b = quat_rotate_inverse(self.robot.data.root_quat_w, self.commands)
        
         normalized_forces = (
@@ -470,8 +473,6 @@ class Velocity(IsaacEnv):
         )
         feet_clearance = self.robot.feet_pos_w[:, :, 2].sum(dim=-1, keepdim=True)
 
-        # lin_vel_xy_exp = torch.exp(-lin_vel_error / 0.25)
-        # lin_vel_xy_exp = torch.exp(-lin_vel_error / 0.5)
         # ang_vel_z_exp = torch.exp(-ang_vel_error / 0.25)
         lin_vel_z_l2 = torch.square(self.robot.data.root_lin_vel_w[:, [2]])
         ang_vel_xy_l2 = square_norm(self.robot.data.root_ang_vel_w[:, :2])
@@ -482,11 +483,10 @@ class Velocity(IsaacEnv):
         self.previous_actions[:] = self.actions
         energy = (self.robot.data.dof_vel * self.robot.data.applied_torques).abs().sum(dim=-1, keepdim=True)
         
-        reward_linvel = 1. / (1. + lin_vel_error / 0.25)
+        # reward_linvel = 1. / (1. + lin_vel_error / 0.25)
+        reward_linvel = torch.exp(-lin_vel_error / 0.25)
         reward = (
             2.0  * reward_linvel    
-            # 1.2 / (1. + lin_vel_error_projected / 0.5)
-            # lin_vel_proj.clamp_max(self.commands[:, :2].norm(dim=-1, keepdim=True))
             + 0.25 * heading_projection
             # + 0.5 * ang_vel_z_exp.unsqueeze(1)
             + 0.5 / (1 + base_height_error / 0.25)
@@ -498,7 +498,7 @@ class Velocity(IsaacEnv):
             - 0.01 * action_rate_l2
             - 0.0005 * energy
             - 2. * reward_linvel * feet_symmetry_error
-            + 0.5 * reward_linvel * feet_clearance
+            # + 0.5 * reward_linvel * feet_clearance
         ).clip(min=0.)
 
         self.base_height_error[:] = base_height_error
@@ -541,4 +541,9 @@ def square_norm(x: torch.Tensor):
 
 def noise(x: torch.Tensor, scale: float):
     return x + torch.randn_like(x).clip(-3., 3.) * scale
+
+
+def clip_norm(x: torch.Tensor, max_norm: float):
+    norm = x.norm(dim=-1, keepdim=True)
+    return x * (norm.clamp(max=max_norm) / norm.clamp(min=1e-6))
 
