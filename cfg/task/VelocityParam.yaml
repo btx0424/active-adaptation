@@ -37,10 +37,5 @@ time_encoding: false
 priv_obs: 
   - base_mass
   - payload_mass
-  # - legs_mass
-  - base_height
-  - base_linvel
-  - applied_torques
-  - feet_pos
-  - feet_vel
-  - feet_height
+  - p_gains
+  - d_gains

@@ -61,7 +61,7 @@ class PPOConfig:
 
     def __post_init__(self):
         assert self.condition_mode.lower() in ("cat", "film")
-        assert self.adaptation_key in ("context", ("agents", "intrinsics"), "_feature")
+        assert self.adaptation_key in ("context", ("agents", "observation_priv"), "_feature")
         assert self.phase in ("encoder", "adaptation", "joint", "finetune")
         assert self.adaptation_loss.lower() in ("mse", "gan", "lsgan")
 
@@ -70,7 +70,7 @@ cs.store("ppo_adapt", node=PPOConfig, group="algo")
 cs.store("ppo_adapt_latent_mse", node=PPOConfig(adaptation_loss="mse"), group="algo")
 cs.store("ppo_adapt_latent_gan", node=PPOConfig(adaptation_loss="gan"), group="algo")
 cs.store("ppo_adapt_latent_lsgan", node=PPOConfig(adaptation_loss="lsgan"), group="algo")
-cs.store("ppo_adapt_raw", node=PPOConfig(adaptation_key=("agents", "intrinsics")), group="algo")
+cs.store("ppo_adapt_raw", node=PPOConfig(adaptation_key=("agents", "observation_priv")), group="algo")
 
 
 def make_mlp(num_units):
@@ -189,17 +189,17 @@ def make_encoder(mode: str, num_units: Sequence[int]):
                 make_mlp(num_units),
                 Duplicate(2),
             ),
-            [("agents", "intrinsics")], ["context_actor", "context_critic"]
+            [("agents", "observation_priv")], ["context_actor", "context_critic"]
         )
     elif mode == "separate":
         encoder = TensorDictSequential(
             TensorDictModule(
                 make_mlp(num_units),
-                [("agents", "intrinsics")], ["context_actor"]
+                [("agents", "observation_priv")], ["context_actor"]
             ),
             TensorDictModule(
                 make_mlp(num_units),
-                [("agents", "intrinsics")], ["context_critic"]
+                [("agents", "observation_priv")], ["context_critic"]
             )
         )
     elif mode == "seperate_heads":
@@ -208,7 +208,7 @@ def make_encoder(mode: str, num_units: Sequence[int]):
                 make_mlp(num_units),
                 Duplicate(2),
             ),
-            [("agents", "intrinsics")], ["context_actor", "context_critic"]
+            [("agents", "observation_priv")], ["context_actor", "context_critic"]
         )
     else:
         raise ValueError(mode)
@@ -281,7 +281,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         self.n_agents, self.action_dim = action_spec.shape[-2:]
 
         print(observation_spec)
-        intrinsics_dim = observation_spec[("agents", "intrinsics")].shape[-1]
+        observation_priv_dim = observation_spec[("agents", "observation_priv")].shape[-1]
         observation_dim = observation_spec[("agents", "observation")].shape[-1]
 
         fake_input = observation_spec.zero()
