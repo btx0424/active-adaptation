@@ -408,6 +408,9 @@ class Velocity(IsaacEnv):
                 self.debug_draw.plot(feet_pos_traj[2], 1., color=(0., 0., 1., .8))
                 self.debug_draw.plot(feet_pos_traj[3], 1., color=(1., 1., 0., .8))
             
+            contact_forces = self.robot.contact_forces[self.central_env_idx].cpu()
+            self.debug_draw.vector(feet_pos, contact_forces)
+            
             set_camera_view(
                 eye=robot_pos.numpy() + np.asarray(self.cfg.viewer.eye),
                 target=robot_pos.numpy() + np.asarray(self.cfg.viewer.lookat)                        
@@ -581,4 +584,8 @@ class _Observation:
     @staticmethod
     def applied_torques(env: Velocity, robot: LeggedRobot):
         return robot.data.applied_torques.unsqueeze(1) / 30.
+
+    @staticmethod
+    def contact_forces(env: Velocity, robot: LeggedRobot):
+        return robot.contact_forces.reshape(-1, 1, 12)
 
