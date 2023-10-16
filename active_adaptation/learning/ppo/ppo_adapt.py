@@ -41,7 +41,7 @@ from typing import Any, Mapping, Union, Sequence
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
 from .common import GAE, Duplicate, Chunk
-from .adaptation import Action, Value, ActionValue, MSE
+from .adaptation import Action, Value, ActionValue, MSE, Discriminator
 
 @dataclass
 class PPOConfig:
@@ -387,6 +387,12 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
                     self.actor,
                     self.critic
                 ).to(self.device)
+            elif self.cfg.adaptation_loss == "gan":
+                self.adaptation_loss = Discriminator(
+                    self.encoder,
+                    self.adaptation_module,
+                    self.actor,
+                ).to(self.device)
             else:
                 raise ValueError(self.cfg.adaptation_loss)
 
@@ -406,7 +412,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
                 self.actor.get_dist(tensordict),
                 self.actor.get_dist(td)
             )
-            tensordict.set("reward_adaptation", -kl.unsqueeze(1))
+            tensordict.set("reward_adaptation", -kl.unsqueeze(1) / self.action_dim)
         tensordict.exclude("_feature", inplace=True)
         return tensordict
 
@@ -436,6 +442,10 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
             self._get_context(next_tensordict)
             next_values = self.critic(next_tensordict)["state_value"]
         rewards = tensordict[("next", "agents", "reward")]
+        # adaptation_reward = tensordict.get("reward_adaptation", None)
+        # if adaptation_reward is not None:
+        #     rewards = rewards + adaptation_reward
+        
         dones = (
             tensordict[("next", "terminated")]
             .expand(-1, -1, self.n_agents)

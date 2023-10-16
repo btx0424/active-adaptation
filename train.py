@@ -222,18 +222,18 @@ def main(cfg):
         info["eval/hist/return"] = wandb.plot.histogram(table, "return")
         info["eval/hist/episode_len"] = wandb.plot.histogram(table, "episode_len")
         
-        if (
-            hasattr(policy, "adaptation_loss_traj")
-            and policy.phase == "adaptation"
-        ):
-            fig, axes = plt.subplots(5, 2, sharex=True)
-            for i in range(5):
-                traj = trajs[i, :first_done[i].item()].cpu()
-                traj_loss = policy.adaptation_loss_traj(traj.to(policy.device))
-                axes[i, 0].plot(traj_loss["mse"], label="mse")
-                axes[i, 0].plot(traj_loss["value_error"], label="value_discrepancy")
+        # if (
+        #     hasattr(policy, "adaptation_loss_traj")
+        #     and policy.phase == "adaptation"
+        # ):
+        #     fig, axes = plt.subplots(5, 2, sharex=True)
+        #     for i in range(5):
+        #         traj = trajs[i, :first_done[i].item()].cpu()
+        #         traj_loss = policy.adaptation_loss_traj(traj.to(policy.device))
+        #         axes[i, 0].plot(traj_loss["mse"], label="mse")
+        #         axes[i, 0].plot(traj_loss["value_error"], label="value_discrepancy")
 
-            info["eval/adaptation_loss_traj"] = fig
+        #     info["eval/adaptation_loss_traj"] = fig
         
         fig, axes = plt.subplots(5, 2, sharex=True)
         for i in range(5):

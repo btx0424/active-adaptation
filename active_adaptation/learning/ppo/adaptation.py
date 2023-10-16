@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import torch.distributions as D
 import torch.nn.functional as F
 
@@ -221,7 +222,7 @@ class ActionValue(AdaptationModule):
     def update(self, tensordict: TensorDictBase):
         info = []
         with hold_out_net(self.critic), hold_out_net(self.actor):
-            for epoch in range(4):
+            for epoch in range(2):
                 for batch in make_batch(tensordict, 8):
                     loss = self(batch).mean()
                     self.opt.zero_grad()
@@ -230,6 +231,73 @@ class ActionValue(AdaptationModule):
                     info.append(loss)
         return {"adapt_loss": torch.stack(info).mean().item()}
 
+
+class Discriminator(AdaptationModule):
+    def __init__(
+        self, 
+        encoder: TensorDictModule,
+        adaptation_module: TensorDictModule,
+        actor: ProbabilisticActor,
+    ):
+        super().__init__()
+        self.discriminator = nn.Sequential(
+            nn.LazyLinear(256),
+            nn.LeakyReLU(),
+            nn.LayerNorm(256),
+            nn.LazyLinear(128),
+            nn.LeakyReLU(),
+            nn.LayerNorm(128),
+            nn.LazyLinear(1),
+            nn.Tanh()
+        )
+        self.encoder = encoder
+        self.adaptation_module = adaptation_module
+        self.actor = actor
+        self.opt_dis = torch.optim.Adam(self.discriminator.parameters())
+        self.opt = torch.optim.Adam(self.adaptation_module.parameters(), lr=1e-4)
+    
+    def forward(self, tensordict: TensorDictBase):
+        obs = tensordict[("agents", "observation")]
+        td = self.adaptation_module(tensordict)
+        false_action = self.actor(td)[("agents", "action")]
+        false = self.discriminator(torch.cat([obs, false_action], dim=-1))
+        loss = F.mse_loss(false, torch.ones_like(false), reduction="none")
+        return loss
+
+    def loss_discriminator(self, tensordict: TensorDictBase):
+        obs = tensordict[("agents", "observation")]
+        true_action = self.actor(tensordict)[("agents", "action")]
+        true = self.discriminator(torch.cat([obs, true_action], dim=-1))
+        td = self.adaptation_module(tensordict.clone())
+        false_action = self.actor(td)[("agents", "action")].detach()
+        false = self.discriminator(torch.cat([obs, false_action], dim=-1))
+        loss = (
+            0.5 * F.mse_loss(true, torch.ones_like(true)) 
+            + 0.5 * F.mse_loss(false, torch.zeros_like(false))
+        )
+        return loss
+
+    def update(self, tensordict: TensorDictBase):
+        info = {"adapt_loss": [], "dis_loss": []}
+        with hold_out_net(self.actor):
+            for epoch in range(4):
+                for batch in make_batch(tensordict, 8):
+                    loss_discriminator = self.loss_discriminator(batch)
+                    self.opt_dis.zero_grad()
+                    loss_discriminator.backward()
+                    self.opt_dis.step()
+                    
+                    loss = self(batch).mean()
+                    self.opt.zero_grad()
+                    loss.backward()
+                    self.opt.step()
+                    info["adapt_loss"].append(loss)
+                    info["dis_loss"].append(loss_discriminator)
+        return {
+            "adapt_loss": torch.stack(info["adapt_loss"]).mean().item(), 
+            "dis_loss": torch.stack(info["dis_loss"]).mean().item()
+        }
+    
 
 def make_batch(tensordict: TensorDict, num_minibatches: int):
     tensordict = tensordict.reshape(-1)
