@@ -38,8 +38,7 @@ from torchrl.envs import CatTensors, TensorDictPrimer
 from torchrl.modules import ProbabilisticActor
 
 from ..modules.distributions import IndependentNormal
-
-from ..utils.gae import compute_gae
+from .common import Actor, GAE
 from ..utils.valuenorm import ValueNorm1
 
 
@@ -50,18 +49,6 @@ def make_mlp(num_units):
         layers.append(nn.LeakyReLU())
         layers.append(nn.LayerNorm(n))
     return nn.Sequential(*layers)
-
-
-class Actor(nn.Module):
-    def __init__(self, action_dim: int) -> None:
-        super().__init__()
-        self.actor_mean = nn.LazyLinear(action_dim)
-        self.actor_std = nn.Parameter(torch.zeros(action_dim))
-
-    def forward(self, features: torch.Tensor):
-        loc = self.actor_mean(features)
-        scale = torch.exp(self.actor_std).expand_as(loc)
-        return loc, scale
 
 
 class LSTM(nn.Module):
@@ -189,6 +176,7 @@ class PPORNNPolicy:
         self.entropy_coef = 0.001
         self.clip_param = 0.1
         self.critic_loss_fn = nn.HuberLoss(delta=10)
+        self.gae = GAE(0.99, 0.95)
         self.n_agents, self.action_dim = action_spec.shape[-2:]
 
         fake_input = observation_spec.zero()
@@ -318,9 +306,9 @@ class PPORNNPolicy:
         return tensordict
 
     def train_op(self, tensordict: TensorDict):
-        next_tensordict = tensordict["next"][:, [-1]]
+        next_tensordict = tensordict["next"]
         with torch.no_grad():
-            next_values = self.critic(next_tensordict)["state_value"].squeeze(1)
+            next_values = self.critic(next_tensordict)["state_value"]
         rewards = tensordict[("next", "agents", "reward")]
         dones = (
             tensordict[("next", "terminated")]
@@ -331,7 +319,7 @@ class PPORNNPolicy:
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
 
-        adv, ret = compute_gae(rewards, dones, values, next_values)
+        adv, ret = self.gae(rewards, dones, values, next_values)
         adv_mean = adv.mean()
         adv_std = adv.std()
         adv = (adv - adv_mean) / adv_std.clip(1e-7)

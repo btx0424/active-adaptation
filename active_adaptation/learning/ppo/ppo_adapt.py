@@ -40,7 +40,7 @@ from typing import Any, Mapping, Union, Sequence
 
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
-from .common import GAE, Duplicate, Chunk
+from .common import GAE, Duplicate, Chunk, Actor
 from .adaptation import Action, Value, ActionValue, MSE, Discriminator
 
 @dataclass
@@ -117,18 +117,6 @@ class DenseMLP(nn.Module):
         for layer in self.layers:
             x = layer(torch.cat([x, z], dim=-1))
         return x
-
-
-class Actor(nn.Module):
-    def __init__(self, action_dim: int) -> None:
-        super().__init__()
-        self.actor_mean = nn.LazyLinear(action_dim)
-        self.actor_std = nn.Parameter(torch.zeros(action_dim))
-    
-    def forward(self, features: torch.Tensor):
-        loc = self.actor_mean(features)
-        scale = torch.exp(self.actor_std).expand_as(loc)
-        return loc, scale
 
 
 class TConv(nn.Module):

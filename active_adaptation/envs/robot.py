@@ -24,10 +24,10 @@ class LeggedRobot(_LeggedRobot):
         base_prim = prim_utils.get_prim_at_path(prim_path + "/base")
         PhysxSchema.PhysxArticulationForceSensorAPI.Apply(base_prim)
         
-        for path in ["FL_calf", "FR_calf", "RL_calf", "RR_calf"]:
-            prim = prim_utils.get_prim_at_path(prim_path + "/" + path)
-            cr_api = PhysxSchema.PhysxContactReportAPI.Apply(prim)
-            cr_api.CreateThresholdAttr().Set(0)
+        # for path in ["FL_calf", "FR_calf", "RL_calf", "RR_calf"]:
+        #     prim = prim_utils.get_prim_at_path(prim_path + "/" + path)
+        #     cr_api = PhysxSchema.PhysxContactReportAPI.Apply(prim)
+        #     cr_api.CreateThresholdAttr().Set(0)
         
     def initialize(self, prim_paths_expr: str = None):
         super().initialize(prim_paths_expr)
@@ -50,30 +50,30 @@ class LeggedRobot(_LeggedRobot):
         
         n_sensors = self.articulations._physics_view.max_force_sensors
         self.force_sensor_forces = torch.zeros(self.count, n_sensors, 3, device=self.device)
-        self.contact_view = RigidContactView(
-            f"{self._prim_paths_expr}/.*_calf",
-            filter_paths_expr=[],
-            prepare_contact_sensors=False
-        )
-        self.contact_view.initialize()
+        # self.contact_view = RigidContactView(
+        #     f"{self._prim_paths_expr}/.*_calf",
+        #     filter_paths_expr=[],
+        #     prepare_contact_sensors=False
+        # )
+        # self.contact_view.initialize()
         self.contact_forces = torch.zeros(self.count, 4, 3, device=self.device)
     
     def update_buffers(self, dt: float):
         super().update_buffers(dt)
         self.heading[:] = quat_axis(self.data.root_quat_w, 0)
 
-        with disable_warnings(self.articulations._physics_sim_view):
-            force, torque = (
-                self.articulations._physics_view
-                .get_force_sensor_forces()
-                .clone()
-                .split([3, 3], dim=-1)
-            )
-        self.force_sensor_forces.lerp_(force, 0.5)
-        self.contact_forces[:] = (
-            self.contact_view.get_net_contact_forces()
-            .reshape(self.count, 4, 3)
-        )
+        # with disable_warnings(self.articulations._physics_sim_view):
+        #     force, torque = (
+        #         self.articulations._physics_view
+        #         .get_force_sensor_forces()
+        #         .clone()
+        #         .split([3, 3], dim=-1)
+        #     )
+        # self.force_sensor_forces.lerp_(force, 0.5)
+        # self.contact_forces[:] = (
+        #     self.contact_view.get_net_contact_forces()
+        #     .reshape(self.count, 4, 3)
+        # )
 
 
     def reset_buffers(self, env_ids):

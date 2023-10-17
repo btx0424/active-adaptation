@@ -41,6 +41,27 @@ class Duplicate(nn.Module):
         return tuple(x for _ in range(self.n))
 
 
+class Actor(nn.Module):
+    def __init__(self, action_dim: int, predict_std: bool=False) -> None:
+        super().__init__()
+        self.predict_std = predict_std
+        if predict_std:
+            self.actor_mean = nn.LazyLinear(action_dim * 2)
+        else:
+            self.actor_mean = nn.LazyLinear(action_dim)
+            self.actor_std = nn.Parameter(torch.zeros(action_dim))
+        self.scale_mapping = torch.exp
+    
+    def forward(self, features: torch.Tensor):
+        if self.predict_std:
+            loc, scale = self.actor_mean(features).chunk(2, dim=-1)
+        else:
+            loc = self.actor_mean(features)
+            scale = self.actor_std
+        scale = self.scale_mapping(scale).expand_as(loc)
+        return loc, scale
+
+
 class GAE(nn.Module):
     def __init__(self, gamma, lmbda):
         super().__init__()
