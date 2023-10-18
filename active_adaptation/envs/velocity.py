@@ -223,6 +223,7 @@ class Velocity(IsaacEnv):
             for key in self.cfg.task.priv_obs
         )
         self.priv_obs_manager = _Observation(self.cfg.task.priv_obs)
+        self.reward_manager = _Reward(self.cfg.task.reward)
         self.observation_spec = CompositeSpec(
             {
                 "agents": {
@@ -252,16 +253,12 @@ class Velocity(IsaacEnv):
         stats_spec = CompositeSpec({
             "return": UnboundedContinuousTensorSpec(1),
             "episode_len": UnboundedContinuousTensorSpec(1),
-            "lin_vel_error": UnboundedContinuousTensorSpec(1),
-            "base_height_error": UnboundedContinuousTensorSpec(1),
-            "energy": UnboundedContinuousTensorSpec(1),
-            "dof_torques": UnboundedContinuousTensorSpec(1),
-            "dof_acc": UnboundedContinuousTensorSpec(1),
-            "action_rate": UnboundedContinuousTensorSpec(1),
-            "feet_symmetry": UnboundedContinuousTensorSpec(1),
-            "feet_clearance": UnboundedContinuousTensorSpec(1),
-        }).expand(self.num_envs).to(self.device)
-        self.observation_spec["stats"] = stats_spec
+            **{
+                key: UnboundedContinuousTensorSpec(1) 
+                for key in self.reward_manager.reward_funcs.keys()
+            }
+        })
+        self.observation_spec["stats"] = stats_spec.expand(self.num_envs).to(self.device)
         self.stats = stats_spec.zero()
         self.observation_h = self.observation_spec[("agents", "observation_h")].zero()
 
@@ -427,58 +424,9 @@ class Velocity(IsaacEnv):
         }, self.num_envs)
 
     def _compute_reward_and_done(self):
-        # -- compute reward
-        lin_vel_w = self.robot.data.root_lin_vel_w
-        lin_vel_error = square_norm(self.commands[:, :2] - lin_vel_w[:, :2])
-        # ang_vel_error = torch.square(self.commands[:, 2] - self.robot.data.root_ang_vel_b[:, 2])
-        # lin_vel_proj = (lin_vel_w * self.commands).sum(-1, keepdim=True)
-        # lin_vel_error_projected = (
-        #     (self.commands.norm(dim=-1, keepdim=True) - lin_vel_proj).clip(0.)
-        # )
         
-        base_height_error = (
-            (self.robot.data.root_pos_w[:, [2]] - self.base_target_height)
-            .abs()
-        )
-        heading_projection = (
-            (normalize(self.robot.heading[:, :2]) * self.commands[:, :2])
-            .sum(-1, keepdim=True)
-        )
-        feet_symmetry_error = (
-            self.robot.feet_pos_b[:, [0, 1], 1].sum(dim=-1, keepdim=True).abs()
-            + self.robot.feet_pos_b[:, [2, 3], 1].sum(dim=-1, keepdim=True).abs()
-        )
-        feet_clearance = self.robot.feet_pos_w[:, :, 2].sum(dim=-1, keepdim=True)
-
-        # ang_vel_z_exp = torch.exp(-ang_vel_error / 0.25)
-        lin_vel_z_l2 = torch.square(self.robot.data.root_lin_vel_w[:, [2]])
-        ang_vel_xy_l2 = square_norm(self.robot.data.root_ang_vel_w[:, :2])
-        flat_orientation_l2 = square_norm(self.robot.data.projected_gravity_b[:, :2])
-        dof_torques_l2 = square_norm(self.robot.data.applied_torques)
-        dof_acc_l2 = square_norm(self.robot.data.dof_acc)
-        action_rate_l2 = square_norm(self.previous_actions - self.actions)
-        self.previous_actions[:] = self.actions
-        energy = (self.robot.data.dof_vel * self.robot.data.applied_torques).abs().sum(dim=-1, keepdim=True)
-        
-        reward_linvel = 1. / (1. + lin_vel_error / 0.25)
-        # reward_linvel = torch.exp(-lin_vel_error / 0.25)
-        reward = (
-            2.0  * reward_linvel    
-            + 0.25 * heading_projection
-            # + 0.5 * ang_vel_z_exp.unsqueeze(1)
-            + 0.5 / (1 + base_height_error / 0.25)
-            - 2.0 * lin_vel_z_l2
-            - 0.05 * ang_vel_xy_l2
-            - 2.0 * flat_orientation_l2
-            - 0.000025 * dof_torques_l2
-            - 2.5e-7 * dof_acc_l2
-            - 0.01 * action_rate_l2
-            - 0.0005 * energy
-            - 2. * reward_linvel * feet_symmetry_error
-            # + 0.5 * reward_linvel * feet_clearance
-        ).clip(min=0.)
-
-        self.base_height_error[:] = base_height_error
+        rewards = self.reward_manager.compute(self, self.robot)
+        reward = sum(rewards.values())
 
         truncated = (self.progress_buf >= self.max_episode_length).unsqueeze(-1)
         terminated = (
@@ -488,15 +436,8 @@ class Velocity(IsaacEnv):
         
         self.stats["return"].add_(reward)
         self.stats["episode_len"][:] = self.progress_buf.unsqueeze(1)
-
-        self.stats["energy"].add_(energy)
-        self.stats["lin_vel_error"].add_(lin_vel_error)
-        self.stats["base_height_error"].add_(base_height_error)
-        self.stats["dof_torques"].add_(dof_torques_l2)
-        self.stats["dof_acc"].add_(dof_acc_l2)
-        self.stats["action_rate"].add_(action_rate_l2)
-        self.stats["feet_symmetry"].add_(feet_symmetry_error)
-        self.stats["feet_clearance"].add_(feet_clearance)
+        for key, value in rewards.items():
+            self.stats[key].add_(value)
 
         # resample commands
         change_commands = ((self.progress_buf % self.command_interval) == 0).nonzero().squeeze(1)
@@ -589,3 +530,49 @@ class _Observation:
     def contact_forces(env: Velocity, robot: LeggedRobot):
         return robot.contact_forces.reshape(-1, 1, 12)
 
+from collections import OrderedDict
+class _Reward:
+    def __init__(self, cfg):
+        self.reward_funcs = OrderedDict()
+        for key, weight in cfg.items():
+            func = getattr(self, key)
+            self.reward_funcs[key] = (func, weight)
+    
+    def compute(self, env: Velocity, robot: LeggedRobot):
+        reward = {
+            key: func(env, robot) * weight
+            for key, (func, weight) in self.reward_funcs.items()
+        }
+        return reward
+
+    def linvel(self, env: Velocity, robot: LeggedRobot):
+        lin_vel_w = robot.data.root_lin_vel_w
+        lin_vel_error = square_norm(env.commands[:, :2] - lin_vel_w[:, :2])
+        reward_linvel = 1. / (1. + lin_vel_error / 0.25)
+        return reward_linvel
+
+    def heading(self, env: Velocity, robot: LeggedRobot):
+        heading_projection = (
+            (normalize(robot.heading[:, :2]) * env.commands[:, :2])
+            .sum(-1, keepdim=True)
+        )
+        return heading_projection
+
+    def base_height(self, env: Velocity, robot: LeggedRobot):
+        base_height_error = (
+            (robot.data.root_pos_w[:, [2]] - env.base_target_height)
+            .abs()
+        )
+        return 1. / (1 + base_height_error / 0.25)
+    
+    def energy(self, env: Velocity, robot: LeggedRobot):
+        energy = (
+            (robot.data.dof_vel * robot.data.applied_torques)
+            .abs()
+            .sum(dim=-1, keepdim=True)
+        )
+        return -energy
+
+    def flat_orientation_l2(self, env: Velocity, robot: LeggedRobot):
+        flat_orientation_l2 = square_norm(robot.data.projected_gravity_b[:, :2])
+        return -flat_orientation_l2
