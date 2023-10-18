@@ -306,9 +306,12 @@ class PPORNNPolicy:
         return tensordict
 
     def train_op(self, tensordict: TensorDict):
-        next_tensordict = tensordict["next"]
+        next_tensordict = tensordict["next"].reshape(-1).unsqueeze(1)
         with torch.no_grad():
-            next_values = self.critic(next_tensordict)["state_value"]
+            next_values = (
+                self.critic(next_tensordict)["state_value"]
+                .reshape(*tensordict.shape, 1, 1)
+            )
         rewards = tensordict[("next", "agents", "reward")]
         dones = (
             tensordict[("next", "terminated")]
