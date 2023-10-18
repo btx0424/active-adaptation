@@ -32,7 +32,6 @@ from omni.isaac.orbit.robots.config.unitree import UNITREE_A1_CFG
 from omni.isaac.orbit.actuators.model import IdealActuator
 from omni.isaac.orbit.utils.mdp import ObservationManager, RewardManager
 from omni.isaac.orbit.utils.dict import class_to_dict
-from omni.isaac.orbit_envs.locomotion.velocity.velocity_cfg import ISAAC_NUCLEUS_DIR
 
 from omni_drones.envs import IsaacEnv
 from omni_drones.views import RigidPrimView
@@ -185,20 +184,15 @@ class Velocity(IsaacEnv):
         self.robot.spawn("/World/envs/env_0/Robot")
         attach_payload("/World/envs/env_0/Robot")
 
-        if True:
-            kit_utils.create_ground_plane(
-                "/World/defaultGroundPlane",
-                static_friction=1.0,
-                dynamic_friction=1.0,
-                restitution=0.0,
-                improve_patch_friction=True,
-                combine_mode="max",
-            )
-        else:
-            prim_utils.create_prim(
-                "/World/defaultGroundPlane", 
-                usd_path=f"{ISAAC_NUCLEUS_DIR}/Environments/Terrains/rough_plane.usd"
-            )
+        kit_utils.create_ground_plane(
+            "/World/defaultGroundPlane",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+            restitution=0.0,
+            improve_patch_friction=True,
+            combine_mode="max",
+        )
+        
         return ["/World/defaultGroundPlane"]
     
     def _set_specs(self):
@@ -257,8 +251,8 @@ class Velocity(IsaacEnv):
                 key: UnboundedContinuousTensorSpec(1) 
                 for key in self.reward_manager.reward_funcs.keys()
             }
-        })
-        self.observation_spec["stats"] = stats_spec.expand(self.num_envs).to(self.device)
+        }).expand(self.num_envs).to(self.device)
+        self.observation_spec["stats"] = stats_spec
         self.stats = stats_spec.zero()
         self.observation_h = self.observation_spec[("agents", "observation_h")].zero()
 
@@ -427,6 +421,7 @@ class Velocity(IsaacEnv):
         
         rewards = self.reward_manager.compute(self, self.robot)
         reward = sum(rewards.values())
+        self.previous_actions[:] = self.actions
 
         truncated = (self.progress_buf >= self.max_episode_length).unsqueeze(-1)
         terminated = (
@@ -576,3 +571,17 @@ class _Reward:
     def flat_orientation_l2(self, env: Velocity, robot: LeggedRobot):
         flat_orientation_l2 = square_norm(robot.data.projected_gravity_b[:, :2])
         return -flat_orientation_l2
+    
+    def dof_acc_l2(self, env: Velocity, robot: LeggedRobot):
+        dof_acc_l2 = square_norm(robot.data.dof_acc)
+        return -dof_acc_l2
+
+    def action_rate_l2(self, env: Velocity, robot: LeggedRobot):
+        action_rate_l2 = square_norm(
+            (env.actions - env.previous_actions) / env.action_scaling
+        )
+        return -action_rate_l2
+
+    def dof_torques_l2(self, env: Velocity, robot: LeggedRobot):
+        dof_torques_l2 = square_norm(robot.data.applied_torques)
+        return -dof_torques_l2
