@@ -96,7 +96,7 @@ class PPOPolicy(TensorDictModuleBase):
         self.entropy_coef = 0.001
         self.clip_param = 0.1
         self.critic_loss_fn = nn.HuberLoss(delta=10)
-        self.n_agents, self.action_dim = action_spec.shape[-2:]
+        self.action_dim = action_spec.shape[-1]
         self.gae = GAE(0.99, 0.95)
 
         fake_input = observation_spec.zero()
@@ -176,7 +176,7 @@ class PPOPolicy(TensorDictModuleBase):
 
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=5e-4)
-        self.value_norm = ValueNorm1(reward_spec.shape[-2:]).to(self.device)
+        self.value_norm = ValueNorm1(input_shape=1).to(self.device)
     
     def __call__(self, tensordict: TensorDict):
         tensordict = self.actor(tensordict)
@@ -189,11 +189,7 @@ class PPOPolicy(TensorDictModuleBase):
         with torch.no_grad():
             next_values = self.critic(next_tensordict)["state_value"]
         rewards = tensordict[("next", "agents", "reward")]
-        dones = (
-            tensordict[("next", "terminated")]
-            .expand(-1, -1, self.n_agents)
-            .unsqueeze(-1)
-        )
+        dones = tensordict[("next", "terminated")]
         values = tensordict["state_value"]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
