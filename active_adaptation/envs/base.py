@@ -172,7 +172,7 @@ class Env(EnvBase):
             reward = weight * func(self)
             self.stats[key].add_(reward)
             rewards.append(reward)
-        reward = sum(rewards)
+        reward = sum(rewards).clip(0.)
         self.stats["return"].add_(reward)
         self.stats["episode_len"][:] = self.episode_length_buf.unsqueeze(1)
         return {("agents", "reward"): reward}
@@ -231,6 +231,7 @@ def termination_func(func):
     return func
 
 from omni_drones.envs.isaac_env import DebugDraw
+from omni.isaac.core.utils.torch.rotations import quat_rotate_inverse
 
 class LocomotionEnv(Env):
 
@@ -246,7 +247,7 @@ class LocomotionEnv(Env):
             self.scene.env_origins.cpu() - torch.tensor(self.cfg.viewer.lookat)
         ).norm(dim=-1).argmin()
 
-        self.target_base_height = 0.3 # self.cfg.target_base_height
+        self.target_base_height = self.cfg.target_base_height
 
         with torch.device(self.device):
             self._command = torch.zeros(self.num_envs, 3)
@@ -281,10 +282,9 @@ class LocomotionEnv(Env):
         ).to(self.device)
     
     def _reset_idx(self, env_ids: torch.Tensor):
-        self.robot.reset(env_ids)
         self.robot.write_root_state_to_sim(self.init_root_state[env_ids], env_ids)
         self.robot.write_joint_state_to_sim(
-            self.init_joint_pos[env_ids],
+            random_scale(self.init_joint_pos[env_ids], 0.8, 1.2),
             self.init_joint_vel[env_ids],
             env_ids=env_ids
         )
@@ -293,7 +293,7 @@ class LocomotionEnv(Env):
             torch.rand(len(env_ids), 4, 2, device=self.device) + self.offset,
             dim=1,
             index=torch.rand(len(env_ids), 4, 1, device=self.device).argsort(dim=1).expand(-1, -1, 2)
-        )
+        ) * 2.5
         self.scene.reset(env_ids)
         self.scene.update(dt=self.physics_dt)
 
@@ -315,29 +315,32 @@ class LocomotionEnv(Env):
             - self.robot.data.root_pos_w[:, :2]
             + self.scene.env_origins[:, :2]
         )
+        if self.enable_render:
+            self.debug_draw.clear()
+            robot_pos = (
+                self.robot.data.root_pos_w.cpu()
+                + torch.tensor([0., 0., 0.2])
+            )
+            self.debug_draw.clear()
+            self.debug_draw.vector(
+                robot_pos, 
+                self._command,
+                color=(1., 1., 1., 0)
+            )
+            self.debug_draw.vector(
+                robot_pos, 
+                self.robot.data.root_lin_vel_w,
+                color=(1., .5, .5, 0)
+            )
         return super()._compute_observation()
-    
-    def render(self, mode: str = "human"):
-        robot_pos = (
-            self.robot.data.root_pos_w[self.lookat_env_i].cpu()
-            + torch.tensor([0., 0., 0.2])
-        )
-        self.debug_draw.clear()
-        self.debug_draw.vector(
-            robot_pos, 
-            self._command[self.lookat_env_i],
-            color=(1., 1., 1., 0)
-        )
-        self.debug_draw.vector(
-            robot_pos, 
-            self.robot.data.root_lin_vel_w[self.lookat_env_i],
-            color=(1., .5, .5, 0)
-        )
-        return super().render(mode)
     
     @observation_func
     def command(self):
-        return self._command
+        command_b = quat_rotate_inverse(
+            self.robot.data.root_quat_w,
+            self._command
+        )
+        return command_b
     
     @observation_func
     def root_quat_w(self):
@@ -396,12 +399,16 @@ class LocomotionEnv(Env):
     
     @reward_func
     def joint_acc_l2(self):
-        return -square_norm(self.robot.data.joint_acc)
+        return - self.robot.data.joint_acc.square().mean(dim=-1, keepdim=True)
     
     @reward_func
     def joint_torques_l2(self):
-        return -square_norm(self.robot.data.applied_torque)
+        return - self.robot.data.applied_torque.square().mean(dim=-1, keepdim=True)
 
+    @reward_func
+    def survive(self):
+        return torch.ones(self.num_envs, 1, device=self.device)
+    
     @termination_func
     def crash(self):
         terminated = (
@@ -410,6 +417,8 @@ class LocomotionEnv(Env):
         ).unsqueeze(1)
         return terminated
 
+def random_scale(x: torch.Tensor, low: float, high: float):
+    return x * (torch.rand_like(x) * (high - low) + low)
 
 def square_norm(x: torch.Tensor):
     return x.square().sum(dim=-1, keepdim=True)

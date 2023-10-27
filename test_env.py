@@ -21,7 +21,7 @@ from helpers import EpisodeStats, Every
 def main(cfg):
     OmegaConf.resolve(cfg)
 
-    app_launcher = AppLauncher({"headless": True})
+    app_launcher = AppLauncher({"headless": True, "offscreen_render": True})
     simulation_app = app_launcher.app
 
     from omni.isaac.orbit.terrains import TerrainImporterCfg
@@ -37,13 +37,14 @@ def main(cfg):
     import omni.isaac.orbit.sim as sim_utils
 
     from active_adaptation.envs.base import LocomotionEnv
-    from active_adaptation.assets import UNITREE_A1_CFG, CASSIE_CFG
+    from active_adaptation.assets import UNITREE_A1_CFG, CASSIE_CFG, ANYMAL_C_CFG
 
     @configclass
     class EnvCfg:
 
         max_episode_length: int = 800
         decimation: int  = 4
+        target_base_height: float = 0.5
 
         viewer: ViewerCfg = ViewerCfg()
 
@@ -55,22 +56,32 @@ def main(cfg):
                 intensity=3000.0,
             ),
         )
-        scene.robot = UNITREE_A1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        scene.robot = CASSIE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         scene.terrain = TerrainImporterCfg(
             prim_path="/World/ground",
             terrain_type="plane",
+            physics_material = sim_utils.RigidBodyMaterialCfg(
+                friction_combine_mode="max",
+                restitution_combine_mode="max",
+                static_friction=1.0,
+                dynamic_friction=1.0,
+                improve_patch_friction=True
+            ),
         )
 
         sim = sim_utils.SimulationCfg(dt=0.005, disable_contact_processing=True)
         reward = {
             "linvel": 2.0,
             "heading": 0.5,
+            "base_height": 0.5,
             "energy": 0.0005,
             "joint_acc_l2": 2.5e-7,
             "joint_torques_l2": 2.5e-6,
+            "survive": 0.5,
         }
         observation = {
             ("agents", "observation"): [
+                "command",
                 "root_quat_w",
                 "root_angvel_b",
                 "projected_gravity_b",
@@ -91,6 +102,7 @@ def main(cfg):
     # setup environment
     base_env = LocomotionEnv(EnvCfg())
     env = base_env
+    env.set_seed(0)
 
     # setup policy
     policy = PPOPolicy(
@@ -110,7 +122,6 @@ def main(cfg):
         if isinstance(k, tuple) and k[0]=="stats"
     ]
     episode_stats = EpisodeStats(stats_keys)
-    env.set_seed(0)
     collector = SyncDataCollector(
         env,
         policy=policy,
@@ -142,7 +153,7 @@ def main(cfg):
         with set_exploration_type(exploration_type):
             trajs = env.rollout(
                 max_steps=base_env.max_episode_length,
-                policy=None,
+                policy=policy,
                 callback=Every(record_frame, 2),
                 auto_reset=True,
                 break_when_any_done=False,
@@ -173,7 +184,7 @@ def main(cfg):
         frames.clear()
         info["recording"] = wandb.Video(
             video_array, 
-            fps=0.5 / (cfg.sim.dt * cfg.decimation), 
+            fps=0.5 / (cfg.sim.dt * cfg.sim.substeps), 
             format="mp4"
         )
         

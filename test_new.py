@@ -21,6 +21,8 @@ def main():
     from omni.isaac.orbit.sim import schemas
 
     from active_adaptation.assets import UNITREE_A1_CFG, CASSIE_CFG
+    from active_adaptation.envs.utils import attach_payload
+
     from omni.isaac.orbit.terrains.config.rough import ROUGH_TERRAINS_CFG
 
 
@@ -83,7 +85,7 @@ def main():
     rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cpu")
     rgb_annotator.attach([render_product])
 
-    scene_cfg = SceneCfg(num_envs=4096, env_spacing=4)
+    scene_cfg = SceneCfg(num_envs=64, env_spacing=4)
     scene = InteractiveScene(scene_cfg)
     
     sim.reset()
