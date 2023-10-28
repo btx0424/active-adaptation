@@ -325,12 +325,12 @@ class LocomotionEnv(Env):
             self.debug_draw.vector(
                 robot_pos, 
                 self._command,
-                color=(1., 1., 1., 0)
+                color=(1., 1., 1., 1.)
             )
             self.debug_draw.vector(
                 robot_pos, 
                 self.robot.data.root_lin_vel_w,
-                color=(1., .5, .5, 0)
+                color=(1., .5, .5, 1.)
             )
         return super()._compute_observation()
     

@@ -1,5 +1,6 @@
 import hydra
 import yaml
+import torch
 import numpy as np
 from tqdm import tqdm
 from omni.isaac.orbit.app import AppLauncher
@@ -24,7 +25,7 @@ def main():
     from active_adaptation.envs.utils import attach_payload
 
     from omni.isaac.orbit.terrains.config.rough import ROUGH_TERRAINS_CFG
-
+    from omni_drones.envs.isaac_env import DebugDraw
 
     @configclass
     class SceneCfg(InteractiveSceneCfg):
@@ -49,9 +50,9 @@ def main():
         #     debug_vis=True,
         # )
         
-        robot = UNITREE_A1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-        robot.spawn.activate_contact_sensors = ".*_calf"
-        contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*_calf", debug_vis=False)
+        robot = CASSIE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        # robot.spawn.activate_contact_sensors = ".*_calf"
+        # contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*_calf", debug_vis=False)
 
         # robot.spawn.activate_contact_sensors = True
         # contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", debug_vis=True)
@@ -91,10 +92,11 @@ def main():
     sim.reset()
     for _ in range(4):
         sim.step(render=True)
+    debug_draw = DebugDraw()
     
     sim_dt = sim.get_physics_dt()
     robot = scene.articulations["robot"]
-    contact_forces = scene.sensors["contact_forces"]
+    # contact_forces = scene.sensors["contact_forces"]
 
     init_root_state = robot.data.default_root_state_w.clone()
     init_root_state[..., :3] += scene.env_origins
@@ -112,15 +114,19 @@ def main():
 
     frames = []
     for t in tqdm(range(2000)):
-        should_render = False # t % 2 == 0
+        should_render = t % 2 == 0
         robot.set_joint_position_target(init_joint_pos)
         scene.write_data_to_sim()
 
         sim.step(render=should_render)
         scene.update(sim_dt)
-        print(contact_forces.data)
 
         if should_render:
+            debug_draw.clear()
+            debug_draw.vector(
+                robot.data.root_pos_w.cpu() + torch.tensor([0.0, 0.0, 0.3]),
+                robot.data.root_lin_vel_w,
+            )
             rgb_data = rgb_annotator.get_data()
             rgb_data = np.frombuffer(rgb_data, dtype=np.uint8).reshape(rgb_data.shape)
             frames.append(rgb_data[:, :, :3])

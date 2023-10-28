@@ -24,83 +24,13 @@ def main(cfg):
     app_launcher = AppLauncher({"headless": True, "offscreen_render": True})
     simulation_app = app_launcher.app
 
-    from omni.isaac.orbit.terrains import TerrainImporterCfg
-    from omni.isaac.orbit.scene import InteractiveSceneCfg
-    from omni.isaac.orbit.envs import ViewerCfg
-    from omni.isaac.orbit.utils import (
-        configclass,
-        class_to_dict,
-        update_class_from_dict,
-    )
-
-    from omni.isaac.orbit.assets import AssetBaseCfg
-    import omni.isaac.orbit.sim as sim_utils
-
     from active_adaptation.envs.base import LocomotionEnv
-    from active_adaptation.assets import UNITREE_A1_CFG, CASSIE_CFG, ANYMAL_C_CFG
-
-    @configclass
-    class EnvCfg:
-
-        max_episode_length: int = 800
-        decimation: int  = 4
-        target_base_height: float = 0.5
-
-        viewer: ViewerCfg = ViewerCfg()
-
-        scene = InteractiveSceneCfg(num_envs=4096, env_spacing=4)
-        scene.light = AssetBaseCfg(
-            prim_path="/World/light",
-            spawn=sim_utils.DistantLightCfg(
-                color=(1.0, 1.0, 1.0),
-                intensity=3000.0,
-            ),
-        )
-        scene.robot = CASSIE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-        scene.terrain = TerrainImporterCfg(
-            prim_path="/World/ground",
-            terrain_type="plane",
-            physics_material = sim_utils.RigidBodyMaterialCfg(
-                friction_combine_mode="max",
-                restitution_combine_mode="max",
-                static_friction=1.0,
-                dynamic_friction=1.0,
-                improve_patch_friction=True
-            ),
-        )
-
-        sim = sim_utils.SimulationCfg(dt=0.005, disable_contact_processing=True)
-        reward = {
-            "linvel": 2.0,
-            "heading": 0.5,
-            "base_height": 0.5,
-            "energy": 0.0005,
-            "joint_acc_l2": 2.5e-7,
-            "joint_torques_l2": 2.5e-6,
-            "survive": 0.5,
-        }
-        observation = {
-            ("agents", "observation"): [
-                "command",
-                "root_quat_w",
-                "root_angvel_b",
-                "projected_gravity_b",
-                "joint_pos",
-                "joint_vel",
-            ],
-            ("agents", "observation_priv"): [
-                "root_linvel_b",
-                "applied_torques",
-            ]
-        }
-        termination = [
-            "crash"
-        ]
+    from configs import UNITREE_A1_ENV, CASSIE_ENV
 
     run = init_wandb(cfg)
 
     # setup environment
-    base_env = LocomotionEnv(EnvCfg())
+    base_env = LocomotionEnv(CASSIE_ENV)
     env = base_env
     env.set_seed(0)
 

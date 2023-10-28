@@ -1,12 +1,12 @@
 import os
-from omni.isaac.orbit.assets.config import UNITREE_A1_CFG, ANYMAL_C_CFG
+from omni.isaac.orbit.assets.config import ArticulationCfg, UNITREE_A1_CFG, ANYMAL_C_CFG
 from .cassie import CASSIE_CFG
 
 from omni.isaac.orbit.sim.utils import bind_physics_material, clone
 from omni.isaac.core.materials import PhysicsMaterial
 from pxr import PhysxSchema
 
-__all__ = ["UNITREE_A1_CFG", "CASSIE_CFG"]
+__all__ = ["UNITREE_A1_CFG", "CASSIE_CFG", "ArticulationCfg"]
 
 ASSET_PATH = os.path.dirname(__file__)
 
