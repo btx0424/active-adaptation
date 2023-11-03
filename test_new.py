@@ -18,7 +18,7 @@ def main():
     from omni.isaac.orbit.terrains import TerrainImporterCfg
     from omni.isaac.orbit.scene import InteractiveScene, InteractiveSceneCfg
     from omni.isaac.orbit.utils import configclass, class_to_dict
-    from omni.isaac.orbit.sensors import ContactSensorCfg, RayCasterCfg, patterns
+    from omni.isaac.orbit.sensors import ContactSensorCfg, ContactSensor, RayCasterCfg, patterns
     from omni.isaac.orbit.sim import schemas
 
     from active_adaptation.assets import UNITREE_A1_CFG, CASSIE_CFG
@@ -29,33 +29,35 @@ def main():
 
     @configclass
     class SceneCfg(InteractiveSceneCfg):
-        # terrain - flat terrain plane
-        terrain = TerrainImporterCfg(
-            prim_path="/World/ground",
-            terrain_type="plane",
-        )
-        # # terrain - rough terrain
+        lazy_sensor_update: bool = False
+
+        # # terrain - flat terrain plane
         # terrain = TerrainImporterCfg(
         #     prim_path="/World/ground",
-        #     terrain_type="generator",
-        #     terrain_generator=ROUGH_TERRAINS_CFG,
-        #     max_init_terrain_level=5,
-        #     collision_group=-1,
-        #     physics_material=sim_utils.RigidBodyMaterialCfg(
-        #         friction_combine_mode="multiply",
-        #         restitution_combine_mode="multiply",
-        #         static_friction=1.0,
-        #         dynamic_friction=1.0,
-        #     ),
-        #     debug_vis=True,
+        #     terrain_type="plane",
         # )
+        # terrain - rough terrain
+        terrain = TerrainImporterCfg(
+            prim_path="/World/ground",
+            terrain_type="generator",
+            terrain_generator=ROUGH_TERRAINS_CFG,
+            max_init_terrain_level=5,
+            collision_group=-1,
+            physics_material=sim_utils.RigidBodyMaterialCfg(
+                friction_combine_mode="multiply",
+                restitution_combine_mode="multiply",
+                static_friction=1.0,
+                dynamic_friction=1.0,
+            ),
+            debug_vis=False,
+        )
         
-        robot = CASSIE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        robot = UNITREE_A1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         # robot.spawn.activate_contact_sensors = ".*_calf"
         # contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*_calf", debug_vis=False)
 
-        # robot.spawn.activate_contact_sensors = True
-        # contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", debug_vis=True)
+        robot.spawn.activate_contact_sensors = True
+        contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", track_pose=True, debug_vis=True)
 
         light = AssetBaseCfg(
             prim_path="/World/light",
@@ -96,10 +98,10 @@ def main():
     
     sim_dt = sim.get_physics_dt()
     robot = scene.articulations["robot"]
-    # contact_forces = scene.sensors["contact_forces"]
+    contact_forces: ContactSensor = scene.sensors["contact_forces"]
 
     init_root_state = robot.data.default_root_state_w.clone()
-    init_root_state[..., :3] += scene.env_origins
+    init_root_state[..., :3] += scene._default_env_origins
     init_joint_pos = robot.data.default_joint_pos.clone()
     init_joint_vel = robot.data.default_joint_vel.clone()
 
@@ -126,6 +128,10 @@ def main():
             debug_draw.vector(
                 robot.data.root_pos_w.cpu() + torch.tensor([0.0, 0.0, 0.3]),
                 robot.data.root_lin_vel_w,
+            )
+            debug_draw.vector(
+                contact_forces.data.pos_w, 
+                contact_forces.data.net_forces_w,
             )
             rgb_data = rgb_annotator.get_data()
             rgb_data = np.frombuffer(rgb_data, dtype=np.uint8).reshape(rgb_data.shape)

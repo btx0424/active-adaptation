@@ -9,6 +9,7 @@ from omni.isaac.orbit.utils import configclass
 from omni.isaac.orbit.terrains import TerrainImporterCfg
 from omni.isaac.orbit.envs import ViewerCfg
 from omni.isaac.orbit.assets import AssetBaseCfg
+from omni.isaac.orbit.sensors import ContactSensorCfg
 import omni.isaac.orbit.sim as sim_utils
 
 from dataclasses import MISSING
@@ -21,6 +22,8 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
     env_spacing: float = 4.
 
     robot: ArticulationCfg = MISSING
+    contact_sensor = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
+    
     light: AssetBaseCfg = AssetBaseCfg(
         prim_path="/World/light",
         spawn=sim_utils.DistantLightCfg(
