@@ -25,12 +25,12 @@ def main(cfg):
     simulation_app = app_launcher.app
 
     from active_adaptation.envs.base import LocomotionEnv
-    from configs import UNITREE_A1_ENV, CASSIE_ENV
+    from configs import UNITREE_A1_ENV
 
     run = init_wandb(cfg)
 
     # setup environment
-    base_env = LocomotionEnv(CASSIE_ENV)
+    base_env = LocomotionEnv(UNITREE_A1_ENV)
     env = base_env
     env.set_seed(0)
 

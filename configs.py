@@ -16,6 +16,9 @@ from typing import Dict, List
 
 @configclass
 class LocomotionSceneCfg(InteractiveSceneCfg):
+    
+    num_envs: int = 4096
+    env_spacing: float = 4.
 
     robot: ArticulationCfg = MISSING
     light: AssetBaseCfg = AssetBaseCfg(
