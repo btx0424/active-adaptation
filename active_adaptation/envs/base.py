@@ -231,20 +231,37 @@ def termination_func(func):
     return func
 
 from omni_drones.envs.isaac_env import DebugDraw
-from omni.isaac.core.utils.torch.rotations import quat_rotate_inverse
+from omni.isaac.orbit.sensors import ContactSensor
+from omni.isaac.core.utils.torch.rotations import quat_rotate_inverse, quat_rotate
+from active_adaptation.utils.helpers import batchify
+
+quat_rotate = batchify(quat_rotate)
+quat_rotate_inverse = batchify(quat_rotate_inverse)
 
 class LocomotionEnv(Env):
 
     def __init__(self, cfg):
         super().__init__(cfg)
         self.robot = self.scene.articulations["robot"]
+        print(self.robot.body_names)
+        self.calf_indices = [i for i, name in enumerate(self.robot.body_names) if "calf" in name]
+        self.thigh_indices = [i for i, name in enumerate(self.robot.body_names) if "thigh" in name]
+
+        self.contact_sensor: ContactSensor = self.scene.sensors.get("contact_forces", None)
+        self.FEET_OFFSET = (
+            torch.tensor([0., 0., -0.2], device=self.device)
+            .reshape(1, 1, 3)
+            .expand(self.num_envs, 4, 3)
+        )
+
         self.init_root_state = self.robot.data.default_root_state_w.clone()
-        self.init_root_state[..., :3] += self.scene.env_origins
+        self.init_root_state[..., :3] += self.scene._default_env_origins
         self.init_joint_pos = self.robot.data.default_joint_pos.clone()
         self.init_joint_vel = self.robot.data.default_joint_vel.clone()
         self.debug_draw = DebugDraw()
         self.lookat_env_i = (
-            self.scene.env_origins.cpu() - torch.tensor(self.cfg.viewer.lookat)
+            self.scene._default_env_origins.cpu() 
+            - torch.tensor(self.cfg.viewer.lookat)
         ).norm(dim=-1).argmin()
 
         self.target_base_height = self.cfg.target_base_height
@@ -252,12 +269,15 @@ class LocomotionEnv(Env):
         with torch.device(self.device):
             self._command = torch.zeros(self.num_envs, 3)
             self.target_pos = torch.zeros(self.num_envs, 4, 3)
+            self.target_speed = torch.zeros(self.num_envs, 4, 1)
             self.offset = torch.tensor([
                 [-1., -1.],
                 [-1., 0.],
                 [0., -1.],
                 [0., 0.]
             ])
+            self._actions = torch.zeros(self.num_envs, 12)
+            self._prev_actions = torch.zeros(self.num_envs, 12)
         
         obs = self._compute_observation()
         reward = self._compute_reward()
@@ -289,19 +309,26 @@ class LocomotionEnv(Env):
             env_ids=env_ids
         )
         self.stats[env_ids] = 0.
+
         self.target_pos[env_ids, :, :2] = torch.gather(
             torch.rand(len(env_ids), 4, 2, device=self.device) + self.offset,
             dim=1,
             index=torch.rand(len(env_ids), 4, 1, device=self.device).argsort(dim=1).expand(-1, -1, 2)
         ) * 2.5
+        self.target_speed[env_ids] = sample_uniform((len(env_ids), 4, 1), 0.8, 1.2, device=self.device)
+
+        self._prev_actions[env_ids] = 0.
+        self._actions[env_ids] = 0.
+
         self.scene.reset(env_ids)
         self.scene.update(dt=self.physics_dt)
 
     def apply_action(self, tensordict: TensorDictBase, substep: int):
-        if substep == 0:    
+        if substep == 0:
+            self._prev_actions[:] = self._actions
             actions = tensordict[("agents", "action")]
-            actions = actions + self.init_joint_pos
-            self.robot.set_joint_position_target(actions)
+            self._actions[:] = actions + self.init_joint_pos
+            self.robot.set_joint_position_target(self._actions)
         self.robot.write_data_to_sim()
     
     def _compute_observation(self) -> TensorDictBase:
@@ -310,10 +337,24 @@ class LocomotionEnv(Env):
             index.reshape(-1, 1, 1),
             dim=1
         ).squeeze(1)
-        self._command[:, :2] = noarmalize(
+        current_target_speed = self.target_speed.take_along_dim(
+            index.reshape(-1, 1, 1),
+            dim=1
+        ).squeeze(1)
+        pos_diff_xy = (
             current_target_pos[:, :2] 
             - self.robot.data.root_pos_w[:, :2]
-            + self.scene.env_origins[:, :2]
+            + self.scene._default_env_origins[:, :2]
+        )
+        pos_error_xy = pos_diff_xy.norm(dim=-1, keepdim=True)
+        self._command[:, :2] = (
+            (pos_diff_xy / pos_error_xy)
+            * current_target_speed
+            * (pos_error_xy > 0.1).float()
+        )
+        self.feet_pos = (
+            self.robot.data.body_pos_w[:, self.calf_indices]
+            + quat_rotate(self.robot.data.body_quat_w[:, self.calf_indices], self.FEET_OFFSET)
         )
         if self.enable_render:
             self.debug_draw.clear()
@@ -332,6 +373,7 @@ class LocomotionEnv(Env):
                 self.robot.data.root_lin_vel_w,
                 color=(1., .5, .5, 1.)
             )
+            # self.contact_sensor.data.net_forces_w
         return super()._compute_observation()
     
     @observation_func
@@ -366,13 +408,25 @@ class LocomotionEnv(Env):
     def root_linvel_b(self):
         return self.robot.data.root_lin_vel_b
     
-    # @observation_func
-    # def prev_actions(self):
-    #     return self.actions
+    @observation_func
+    def prev_actions(self):
+        return self._actions
     
     @observation_func
     def applied_torques(self):
         return self.robot.data.applied_torque
+    
+    @observation_func
+    def contact_forces(self):
+        return self.contact_sensor.data.net_forces_w
+    
+    @observation_func
+    def feet_pos_b(self):
+        feet_pos_b = quat_rotate_inverse(
+            self.robot.data.root_quat_w.unsqueeze(1),
+            self.feet_pos - self.robot.data.root_pos_w
+        )
+        return feet_pos_b.reshape(self.num_envs, -1)
     
     @reward_func
     def linvel(self):
@@ -399,11 +453,15 @@ class LocomotionEnv(Env):
     
     @reward_func
     def joint_acc_l2(self):
-        return - self.robot.data.joint_acc.square().mean(dim=-1, keepdim=True)
+        return - self.robot.data.joint_acc.square().sum(dim=-1, keepdim=True)
     
     @reward_func
     def joint_torques_l2(self):
-        return - self.robot.data.applied_torque.square().mean(dim=-1, keepdim=True)
+        return - self.robot.data.applied_torque.square().sum(dim=-1, keepdim=True)
+
+    @reward_func
+    def action_rate_l2(self):
+        return - (self._actions - self._prev_actions).square().sum(dim=-1, keepdim=True)
 
     @reward_func
     def survive(self):
@@ -413,12 +471,15 @@ class LocomotionEnv(Env):
     def crash(self):
         terminated = (
             (self.robot.data.root_pos_w[:, 2] <= self.target_base_height * 0.5)
-            | (self.robot.data.projected_gravity_b[:, 2] >= -0.3)
+            | (self.robot.data.projected_gravity_b[:, 2] >= -0.5)
         ).unsqueeze(1)
         return terminated
 
 def random_scale(x: torch.Tensor, low: float, high: float):
     return x * (torch.rand_like(x) * (high - low) + low)
+
+def sample_uniform(size, low: float, high: float, device: torch.device = "cpu"):
+    return torch.rand(size, device=device) * (high - low) + low
 
 def square_norm(x: torch.Tensor):
     return x.square().sum(dim=-1, keepdim=True)

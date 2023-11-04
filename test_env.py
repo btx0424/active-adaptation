@@ -9,6 +9,7 @@ from omni_drones.utils.wandb import init_wandb
 from omni_drones.utils.torchrl import SyncDataCollector
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
+from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker
 from active_adaptation.learning import PPOPolicy
 
 import wandb
@@ -30,6 +31,7 @@ def main(cfg):
     run = init_wandb(cfg)
 
     # setup environment
+    UNITREE_A1_ENV.scene.num_envs = cfg.task.env.num_envs
     base_env = LocomotionEnv(UNITREE_A1_ENV)
     env = base_env
     env.set_seed(0)
@@ -144,7 +146,7 @@ def main(cfg):
         
         info.update(policy.train_op(data))
 
-        if eval_interval > 0 and i % eval_interval == 0:
+        if eval_interval > 0 and (i + 1) % eval_interval == 0:
             logging.info(f"Eval at {collector._frames} steps.")
             info.update(evaluate())
 

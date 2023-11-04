@@ -10,19 +10,40 @@ from omni.isaac.orbit.terrains import TerrainImporterCfg
 from omni.isaac.orbit.envs import ViewerCfg
 from omni.isaac.orbit.assets import AssetBaseCfg
 from omni.isaac.orbit.sensors import ContactSensorCfg
+from omni.isaac.orbit.terrains import HfRandomUniformTerrainCfg, TerrainGeneratorCfg
 import omni.isaac.orbit.sim as sim_utils
 
 from dataclasses import MISSING
 from typing import Dict, List
 
+ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
+    size=(8.0, 8.0),
+    border_width=20.0,
+    num_rows=20,
+    num_cols=20,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    difficulty_choices=(0.5, 0.75, 0.9),
+    use_cache=False,
+    sub_terrains={
+        "random_rough_hard": HfRandomUniformTerrainCfg(
+            proportion=0.5, noise_range=(0.02, 0.10), noise_step=0.02, border_width=0.4
+        ),
+        "random_rough_easy": HfRandomUniformTerrainCfg(
+            proportion=0.5, noise_range=(0.01, 0.05), noise_step=0.01, border_width=0.4
+        ),
+    },
+)
+
 @configclass
 class LocomotionSceneCfg(InteractiveSceneCfg):
     
     num_envs: int = 4096
-    env_spacing: float = 4.
+    env_spacing: float = 2.5
 
     robot: ArticulationCfg = MISSING
-    contact_sensor = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
+    contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
     
     light: AssetBaseCfg = AssetBaseCfg(
         prim_path="/World/light",
@@ -32,16 +53,31 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
         ),
     )
 
+    # terrain = TerrainImporterCfg(
+    #     prim_path="/World/ground",
+    #     terrain_type="plane",
+    #     physics_material = sim_utils.RigidBodyMaterialCfg(
+    #         friction_combine_mode="multiply",
+    #         restitution_combine_mode="multiply",
+    #         static_friction=1.0,
+    #         dynamic_friction=1.0,
+    #         improve_patch_friction=True
+    #     ),
+    # )
+
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
-        terrain_type="plane",
-        physics_material = sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="max",
-            restitution_combine_mode="max",
+        terrain_type="generator",
+        terrain_generator=ROUGH_TERRAINS_CFG,
+        max_init_terrain_level=5,
+        collision_group=-1,
+        physics_material=sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="multiply",
+            restitution_combine_mode="multiply",
             static_friction=1.0,
             dynamic_friction=1.0,
-            improve_patch_friction=True
         ),
+        debug_vis=False,
     )
 
 
@@ -76,6 +112,7 @@ UNITREE_A1_ENV = EnvCfg(
         "energy": 0.0005,
         "joint_acc_l2": 2.5e-7,
         "joint_torques_l2": 2.5e-6,
+        "action_rate_l2": 0.01,
     },
     observation = {
         ("agents", "observation"): [
@@ -85,6 +122,8 @@ UNITREE_A1_ENV = EnvCfg(
             "projected_gravity_b",
             "joint_pos",
             "joint_vel",
+            "prev_actions",
+            "root_linvel_b",
         ],
         ("agents", "observation_priv"): [
             "root_linvel_b",

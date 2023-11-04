@@ -20,11 +20,16 @@ def main():
     from omni.isaac.orbit.utils import configclass, class_to_dict
     from omni.isaac.orbit.sensors import ContactSensorCfg, ContactSensor, RayCasterCfg, patterns
     from omni.isaac.orbit.sim import schemas
+    from omni.isaac.core.utils.torch.rotations import quat_rotate
+
 
     from active_adaptation.assets import UNITREE_A1_CFG, CASSIE_CFG
     from active_adaptation.envs.utils import attach_payload
+    from active_adaptation.utils.helpers import batchify
 
-    from omni.isaac.orbit.terrains.config.rough import ROUGH_TERRAINS_CFG
+    quat_rotate = batchify(quat_rotate, broadcast=False)
+
+    from configs import ROUGH_TERRAINS_CFG
     from omni_drones.envs.isaac_env import DebugDraw
 
     @configclass
@@ -57,7 +62,7 @@ def main():
         # contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*_calf", debug_vis=False)
 
         robot.spawn.activate_contact_sensors = True
-        contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", track_pose=True, debug_vis=True)
+        contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*_calf", track_pose=True, debug_vis=False)
 
         light = AssetBaseCfg(
             prim_path="/World/light",
@@ -82,14 +87,17 @@ def main():
     sim = SimulationContext(sim_cfg)
     
     # use viewport camera for rendering
-    SimulationContext.set_camera_view(eye=[5., 5., 5.], target=[0.0, 0.0, 0.0])
     import omni.replicator.core as rep
     render_product = rep.create.render_product("/OmniverseKit_Persp", (960, 720))
     rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cpu")
     rgb_annotator.attach([render_product])
 
-    scene_cfg = SceneCfg(num_envs=64, env_spacing=4)
+    scene_cfg = SceneCfg(num_envs=64, env_spacing=2.5)
     scene = InteractiveScene(scene_cfg)
+    SimulationContext.set_camera_view(
+        eye=torch.tensor([5., 5., 5.]),
+        target=torch.tensor([0.0, 0.0, 0.0]),
+    )
     
     sim.reset()
     for _ in range(4):
@@ -99,6 +107,11 @@ def main():
     sim_dt = sim.get_physics_dt()
     robot = scene.articulations["robot"]
     contact_forces: ContactSensor = scene.sensors["contact_forces"]
+    feet_offset = (
+        torch.tensor([0., 0., -0.2], device=sim.device)
+        .reshape(1, 1, 3)
+        .expand_as(contact_forces.data.pos_w)
+    )
 
     init_root_state = robot.data.default_root_state_w.clone()
     init_root_state[..., :3] += scene._default_env_origins
@@ -122,15 +135,19 @@ def main():
 
         sim.step(render=should_render)
         scene.update(sim_dt)
+        feet_pos = (
+            contact_forces.data.pos_w
+            + quat_rotate(contact_forces.data.quat_w, feet_offset)
+        )
 
         if should_render:
             debug_draw.clear()
+            # debug_draw.vector(
+            #     robot.data.root_pos_w.cpu() + torch.tensor([0.0, 0.0, 0.3]),
+            #     robot.data.root_lin_vel_w,
+            # )
             debug_draw.vector(
-                robot.data.root_pos_w.cpu() + torch.tensor([0.0, 0.0, 0.3]),
-                robot.data.root_lin_vel_w,
-            )
-            debug_draw.vector(
-                contact_forces.data.pos_w, 
+                feet_pos,
                 contact_forces.data.net_forces_w,
             )
             rgb_data = rgb_annotator.get_data()
@@ -146,6 +163,7 @@ def main():
         write_video("test.mp4", frames, 1 / (sim_dt * 2))
 
     simulation_app.close()
+
 
 if __name__ == "__main__":
     main()

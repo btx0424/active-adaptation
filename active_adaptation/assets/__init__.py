@@ -29,4 +29,4 @@ def spawn(prim_path, cfg, translation, orientation):
     return prim
 
 
-UNITREE_A1_CFG.spawn.func = spawn
+# UNITREE_A1_CFG.spawn.func = spawn
