@@ -1,5 +1,5 @@
-import hydra
 import torch
+import hydra
 import numpy as np
 import einops
 from omegaconf import OmegaConf
@@ -10,7 +10,7 @@ from omni_drones.utils.torchrl import SyncDataCollector
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker
-from active_adaptation.learning import PPOPolicy
+from active_adaptation.learning import PPOPolicy, PPORNNPolicy
 
 import wandb
 import logging
@@ -25,7 +25,7 @@ def main(cfg):
     app_launcher = AppLauncher({"headless": True, "offscreen_render": True})
     simulation_app = app_launcher.app
 
-    from active_adaptation.envs.base import LocomotionEnv
+    from active_adaptation.envs import LocomotionEnv
     from configs import UNITREE_A1_ENV
 
     run = init_wandb(cfg)
@@ -33,7 +33,8 @@ def main(cfg):
     # setup environment
     UNITREE_A1_ENV.scene.num_envs = cfg.task.env.num_envs
     base_env = LocomotionEnv(UNITREE_A1_ENV)
-    env = base_env
+    transform = InitTracker()
+    env = TransformedEnv(base_env, transform)
     env.set_seed(0)
 
     # setup policy

@@ -1,447 +1,275 @@
-# MIT License
-# 
-# Copyright (c) 2023 Botian Xu, Tsinghua University
-# 
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-# 
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-# 
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-
-
-from typing import List, Optional
-
-from omni.isaac.core.utils.viewports import set_camera_view
-import omni.isaac.core.utils.prims as prim_utils
-import omni.isaac.orbit.utils.kit as kit_utils
-
-from omni.isaac.orbit.robots.config.unitree import UNITREE_A1_CFG
-from omni.isaac.orbit.actuators.model import IdealActuator
-from omni.isaac.orbit.utils.mdp import ObservationManager, RewardManager
-from omni.isaac.orbit.utils.dict import class_to_dict
-from omni.isaac.orbit_envs.locomotion.velocity.velocity_cfg import ObservationsCfg, RewardsCfg
-
-from omni_drones.envs import IsaacEnv
-from omni_drones.views import RigidPrimView, disable_warnings
-from omni_drones.utils.torch import quat_axis, normalize, quat_rotate_inverse
-
 import torch
-import torch.distributions as D
-import numpy as np
 
-from tensordict.tensordict import TensorDictBase, TensorDict
-from torchrl.data import UnboundedContinuousTensorSpec, CompositeSpec, BinaryDiscreteTensorSpec
+from omni_drones.envs.isaac_env import DebugDraw
+from omni.isaac.orbit.sensors import ContactSensor, RayCaster
 
-from omni.isaac.debug_draw import _debug_draw
-from .robot import LeggedRobot
+from active_adaptation.envs.base import Env, observation_func, reward_func, termination_func
+from active_adaptation.utils.helpers import batchify
+from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 
+from tensordict.tensordict import TensorDictBase
+from torchrl.data import (
+    CompositeSpec, 
+    UnboundedContinuousTensorSpec
+)
 
-def attach_payload(parent_path):
-    import omni.physx.scripts.utils as script_utils
-    import omni.isaac.core.utils.prims as prim_utils
-    from omni.isaac.core import objects
-    from pxr import UsdPhysics
-
-    payload_prim = objects.DynamicCuboid(
-        prim_path=parent_path + "/payload",
-        scale=torch.tensor([0.18, 0.16, 0.12]),
-        mass=0.0001,
-        translation=torch.tensor([0.0, 0.0, 0.1]),
-    ).prim
-
-    parent_prim = prim_utils.get_prim_at_path(parent_path + "/base")
-    stage = prim_utils.get_current_stage()
-    joint = script_utils.createJoint(stage, "Prismatic", payload_prim, parent_prim)
-    UsdPhysics.DriveAPI.Apply(joint, "linear")
-    joint.GetAttribute("physics:lowerLimit").Set(-0.15)
-    joint.GetAttribute("physics:upperLimit").Set(0.15)
-    joint.GetAttribute("physics:axis").Set("Z")
-    joint.GetAttribute("drive:linear:physics:damping").Set(10.0)
-    joint.GetAttribute("drive:linear:physics:stiffness").Set(10000.0)
+quat_rotate = batchify(quat_rotate)
+quat_rotate_inverse = batchify(quat_rotate_inverse)
 
 
-class VelocityV1(IsaacEnv):
-    def __init__(self, cfg, headless):
-        self.action_scaling = cfg.task.get("action_scaling", 1.0)
-        self.randomization = cfg.task.get("randomization", {})
+class LocomotionEnv(Env):
 
-        super().__init__(cfg, headless)
-        # -- history
-        self.actions = torch.zeros((self.num_envs, self.robot.num_actions), device=self.device)
-        self.previous_actions = torch.zeros((self.num_envs, self.robot.num_actions), device=self.device)
-        self.init_vel_dist = D.Uniform(
-            torch.tensor([-.5, -.5, 0.], device=self.device),
-            torch.tensor([.5, .5, 0.], device=self.device)
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        self.robot = self.scene.articulations["robot"]
+        print(self.robot.body_names)
+        self.calf_indices = [i for i, name in enumerate(self.robot.body_names) if "calf" in name]
+        self.thigh_indices = [i for i, name in enumerate(self.robot.body_names) if "thigh" in name]
+
+        self.contact_sensor: ContactSensor = self.scene.sensors.get("contact_forces", None)
+        self.FEET_OFFSET = (
+            torch.tensor([0., 0., -0.2], device=self.device)
+            .reshape(1, 1, 3)
+            .expand(self.num_envs, 4, 3)
         )
+        self.height_scanner: RayCaster = self.scene.sensors.get("height_scanner", None)
 
-        self.push_interval = 600
-        self.push_acc_dist = D.Uniform(
-            torch.tensor([-3, -3, -0.25], device=self.device) / (self.dt * self.substeps), 
-            torch.tensor([3., 3., 0.25], device=self.device) / (self.dt * self.substeps),
-        )
+        self.init_root_state = self.robot.data.default_root_state_w.clone()
+        self.init_root_state[..., :3] += self.scene._default_env_origins
+        self.init_joint_pos = self.robot.data.default_joint_pos.clone()
+        self.init_joint_vel = self.robot.data.default_joint_vel.clone()
+        self.debug_draw = DebugDraw()
+        self.lookat_env_i = (
+            self.scene._default_env_origins.cpu() 
+            - torch.tensor(self.cfg.viewer.lookat)
+        ).norm(dim=-1).argmin()
 
-        self.actuator_model = self.robot.actuator_groups["base_legs"].model
-        self.base_mass = self.robot.base.get_masses(clone=True)
-        self.base_inertia = self.robot.base.get_inertias(clone=True)[..., [0, 4, 8]]
+        self.target_base_height = self.cfg.target_base_height
+
+        with torch.device(self.device):
+            self._command = torch.zeros(self.num_envs, 3)
+            self.target_pos = torch.zeros(self.num_envs, 4, 3)
+            self.target_speed = torch.zeros(self.num_envs, 4, 1)
+            self.offset = torch.tensor([
+                [-1., -1.],
+                [-1., 0.],
+                [0., -1.],
+                [0., 0.]
+            ])
+            self._actions = torch.zeros(self.num_envs, 12)
+            self._prev_actions = torch.zeros(self.num_envs, 12)
         
-        # generate trajectory
-        t = torch.linspace(0, 2 * np.pi, 21, device=self.device) + torch.pi / 2
-        self.waypoints = lemniscate(t) * 2.0
-        self.next_waypoint_i = torch.zeros(self.num_envs, dtype=int, device=self.device)
-        self.commands = torch.zeros(self.num_envs, 3, device=self.device)
+        obs = self._compute_observation()
+        reward = self._compute_reward()
 
-        import pprint
-        randomization_cfg = self.randomization.get("train", {})
-        pprint.pprint(randomization_cfg)
-        if randomization_cfg.get("motor", None) is not None:
-            # randomization of motor parameters
-            cfg = randomization_cfg["motor"]
-            if isinstance(self.actuator_model, IdealActuator):
-                self.init_p_gains = self.actuator_model._p_gains.clone()
-                self.init_d_gains = self.actuator_model._d_gains.clone()
-                self.motor_p_gains_dist = D.Uniform(
-                    torch.ones(12, device=self.device) * cfg["p_gains"][0],
-                    torch.ones(12, device=self.device) * cfg["p_gains"][1],
-                )
-                self.motor_d_gains_dist = D.Uniform(
-                    torch.ones(12, device=self.device) * cfg["d_gains"][0],
-                    torch.ones(12, device=self.device) * cfg["d_gains"][1],
-                )
-        if randomization_cfg.get("base_mass", None) is not None:
-            self.base_mass_dist = D.Uniform(
-                torch.tensor([0.8], device=self.device),
-                torch.tensor([1.2], device=self.device)
-            )
-            self.legs_masses = self.robot.legs.get_masses(clone=True)
-            self.legs_mass_dist = D.Uniform(
-                torch.tensor([0.8], device=self.device),
-                torch.tensor([1.2], device=self.device)
-            )
+        self.action_spec = CompositeSpec(
+            {
+                ("agents", "action"): UnboundedContinuousTensorSpec((self.num_envs, 12))
+            }, 
+            shape=[self.num_envs]
+        ).to(self.device)
 
-        if randomization_cfg.get("payload_mass", None) is not None:
-            self.payload = RigidPrimView(
-                "/World/envs/env_*/Robot/payload",
-                reset_xform_properties=False,
-            )
-            self.payload.initialize()
-            self.payload_mass_dist = D.Uniform(
-                torch.tensor([0.05], device=self.device),
-                torch.tensor([0.6], device=self.device)
-            )
-
-        self.heading_target = torch.zeros(self.num_envs, device=self.device)
-
-        self.base_target_height = 0.3
-        self.base_height_error = torch.zeros(self.num_envs, 1, device=self.device)
-
-        self.draw = _debug_draw.acquire_debug_draw_interface()
-
-    def _design_scene(self):
-        # self.robot = LeggedRobot(ANYMAL_C_CFG)
-        # UNITREE_A1_CFG.actuator_groups["base_legs"].control_cfg.command_types=["p_rel"]
-        self.robot = LeggedRobot(UNITREE_A1_CFG)
-        self.robot.spawn("/World/envs/env_0/Robot")
-        attach_payload("/World/envs/env_0/Robot")
-
-        kit_utils.create_ground_plane(
-            "/World/defaultGroundPlane",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-            restitution=0.0,
-            improve_patch_friction=True,
-            combine_mode="max",
-        )
-        return ["/World/defaultGroundPlane"]
-    
-    def _set_specs(self):
-        self.robot.initialize("/World/envs/env_*/Robot")
-        observation_dim = (
-            31
-            + 3 + 3 # linvel_b, angvel_b
-            + 12 + 12 # dof_pos, dof_vel
-            + 2
-        )
-
-        self.observation_spec = CompositeSpec({
-            "agents": {
-                "observation": UnboundedContinuousTensorSpec((1, observation_dim)),
-                "intrinsics": CompositeSpec({
-                    "base_mass": UnboundedContinuousTensorSpec((1, 1)),
-                    "payload_mass": UnboundedContinuousTensorSpec((1, 1)),
-                    "legs_masses": UnboundedContinuousTensorSpec((1, 8)),
-                    "p_gains": UnboundedContinuousTensorSpec((1, 12)),
-                    "d_gains": UnboundedContinuousTensorSpec((1, 12)),
-                    "feet_pos": UnboundedContinuousTensorSpec((1, 4 * 3)),
-                    "feet_vel": UnboundedContinuousTensorSpec((1, 4 * 3)),
-                    # "normalized_forces": UnboundedContinuousTensorSpec((1, 3)),
-                    # "normalized_torques": UnboundedContinuousTensorSpec((1, 3)),
-                })
+        for key, value in obs.items(True, True):
+            if key not in self.observation_spec.keys(True, True):
+                self.observation_spec[key] = UnboundedContinuousTensorSpec(value.shape, device=self.device)
+        
+        self.reward_spec = CompositeSpec(
+            {
+                key: UnboundedContinuousTensorSpec(value.shape)
+                for key, value in reward.items()
             },
-        }).expand(self.num_envs).to(self.device)
-        self.action_spec = CompositeSpec({
-            "agents": CompositeSpec({
-                "action": UnboundedContinuousTensorSpec((1, self.robot.num_actions)),
-            })
-        }).expand(self.num_envs).to(self.device)
-        self.reward_spec = CompositeSpec({
-            "agents": CompositeSpec({
-                "reward": UnboundedContinuousTensorSpec((1, 1))
-            })
-        }).expand(self.num_envs).to(self.device)
-        self.done_spec = CompositeSpec({
-            "done": BinaryDiscreteTensorSpec(1, dtype=bool, device=self.device),
-            "truncated": BinaryDiscreteTensorSpec(1, dtype=bool, device=self.device)
-        }).expand(self.num_envs).to(self.device)
-
-        stats_spec = CompositeSpec({
-            "return": UnboundedContinuousTensorSpec(1),
-            "episode_len": UnboundedContinuousTensorSpec(1),
-            "lin_vel_error": UnboundedContinuousTensorSpec(1),
-            "base_height_error": UnboundedContinuousTensorSpec(1),
-            "energy": UnboundedContinuousTensorSpec(1),
-            "dof_torques": UnboundedContinuousTensorSpec(1),
-            "dof_acc": UnboundedContinuousTensorSpec(1),
-            "action_rate": UnboundedContinuousTensorSpec(1),
-            "feet_symmetry": UnboundedContinuousTensorSpec(1),
-        }).expand(self.num_envs).to(self.device)
-        self.observation_spec["stats"] = stats_spec
-        self.stats = stats_spec.zero()
-        self.intrinsics = self.observation_spec[("agents", "intrinsics")].zero()
-
-    def _reset_idx(self, env_ids: torch.Tensor):
-        # -- dof state (handled by the robot)
-        dof_pos, dof_vel = self.robot.get_random_dof_state(env_ids)
-        self.robot.set_dof_state(dof_pos, dof_vel, env_ids=env_ids)
-        # -- root state (custom)
-        root_state = self.robot.get_default_root_state(env_ids)
-        root_state[:, :3] += self.envs_positions[env_ids]
-        root_state[:, 7:10] = self.init_vel_dist.sample(env_ids.shape)
-        root_state[:, 10:13] = 0.
-        # set into robot
-        self.robot.set_root_state(root_state, env_ids=env_ids)
-        self.robot.reset_buffers(env_ids)
-        
-        # randomize motor parameters
-        if (
-            isinstance(self.actuator_model, IdealActuator)
-            and hasattr(self, "motor_p_gains_dist")
-        ):
-            p_gains = self.motor_p_gains_dist.sample(env_ids.shape)
-            d_gains = self.motor_d_gains_dist.sample(env_ids.shape)
-            self.actuator_model._p_gains[env_ids] = p_gains * self.init_p_gains[env_ids]
-            self.actuator_model._d_gains[env_ids] = d_gains * self.init_d_gains[env_ids]
-            self.intrinsics["p_gains"][env_ids] = (
-                (p_gains - self.motor_p_gains_dist.low)
-                / (self.motor_p_gains_dist.high - self.motor_p_gains_dist.low)
-            ).unsqueeze(1)
-            self.intrinsics["d_gains"][env_ids] = (
-                (d_gains - self.motor_d_gains_dist.low)
-                / (self.motor_d_gains_dist.high - self.motor_d_gains_dist.low)
-            ).unsqueeze(1)
-
-        if hasattr(self, "base_mass_dist"):
-            # randomize base mass
-            base_mass = self.base_mass_dist.sample(env_ids.shape)
-            self.intrinsics["base_mass"][env_ids] = (
-                (base_mass - self.base_mass_dist.low) 
-                / (self.base_mass_dist.high - self.base_mass_dist.low)
-            ).reshape(-1, 1, 1)
-            self.robot.base.set_masses(base_mass * self.base_mass[env_ids], env_indices=env_ids)
-
-            # randomize leg mass
-            legs_mass = self.legs_mass_dist.sample(env_ids.shape + (8,))
-            self.intrinsics["legs_masses"][env_ids] = (
-                (legs_mass - self.legs_mass_dist.low)
-                / (self.legs_mass_dist.high - self.legs_mass_dist.low)
-            ).reshape(-1, 1, 8)
-            self.robot.legs.set_masses(legs_mass * self.legs_masses[env_ids], env_indices=env_ids)
-
-        if hasattr(self, "payload_mass_dist"):
-            # randomize payload mass
-            payload_mass = self.payload_mass_dist.sample(env_ids.shape)
-            self.intrinsics["payload_mass"][env_ids] = (
-                (payload_mass.unsqueeze(-1) - self.payload_mass_dist.low)
-                / (self.payload_mass_dist.high - self.payload_mass_dist.low)
-            )
-            self.payload.set_masses(payload_mass * self.base_mass[env_ids], env_indices=env_ids)
+            shape=[self.num_envs]
+        ).to(self.device)
     
-        # -- reset history
-        self.previous_actions[env_ids] = 0.
+    def _reset_idx(self, env_ids: torch.Tensor):
+        self.robot.write_root_state_to_sim(self.init_root_state[env_ids], env_ids)
+        self.robot.write_joint_state_to_sim(
+            random_scale(self.init_joint_pos[env_ids], 0.8, 1.2),
+            self.init_joint_vel[env_ids],
+            env_ids=env_ids
+        )
         self.stats[env_ids] = 0.
 
-        self.next_waypoint_i[env_ids] = 0
+        self.target_pos[env_ids, :, :2] = torch.gather(
+            torch.rand(len(env_ids), 4, 2, device=self.device) + self.offset,
+            dim=1,
+            index=torch.rand(len(env_ids), 4, 1, device=self.device).argsort(dim=1).expand(-1, -1, 2)
+        ) * 2.5
+        self.target_speed[env_ids] = sample_uniform((len(env_ids), 4, 1), 0.8, 1.2, device=self.device)
 
-    def _step(self, tensordict: TensorDictBase) -> TensorDictBase:
-        self.actions[:] = tensordict[("agents", "action")].squeeze(1)
-        # push = ((self.progress_buf % self.push_interval) == 0).nonzero().squeeze(1)
-        # if len(push) > 0:
-        #     push_force = self.base_mass[push] * self.push_acc_dist.sample(push.shape)
-        actions = self.actions.clip(-100., 100.) * self.action_scaling
-        for substep in range(self.substeps):
-            self.robot.apply_action(actions)
-            # if len(push) > 0:
-            #     self.robot.base.apply_forces(push_force, indices=push)
-            self.sim.step(self._should_render(substep) and substep == self.substeps-1)
-        self._post_sim_step(tensordict)
-        self.progress_buf += 1
-        tensordict = TensorDict({}, self.batch_size, device=self.device)
-        tensordict.update(self._compute_state_and_obs())
-        tensordict.update(self._compute_reward_and_done())
-        return tensordict
+        self._prev_actions[env_ids] = 0.
+        self._actions[env_ids] = 0.
+
+        self.scene.reset(env_ids)
+        self.scene.update(dt=self.physics_dt)
+
+    def apply_action(self, tensordict: TensorDictBase, substep: int):
+        if substep == 0:
+            self._prev_actions[:] = self._actions
+            actions = tensordict[("agents", "action")]
+            self._actions[:] = actions + self.init_joint_pos
+            self.robot.set_joint_position_target(self._actions)
+        self.robot.write_data_to_sim()
     
-    def _compute_state_and_obs(self):
-        # compute current command
-        current_pos_diff = (
-            self.waypoints[self.next_waypoint_i] 
+    def _compute_observation(self) -> TensorDictBase:
+        index = (self.episode_length_buf) // 300
+        current_target_pos = self.target_pos.take_along_dim(
+            index.reshape(-1, 1, 1),
+            dim=1
+        ).squeeze(1)
+        current_target_speed = self.target_speed.take_along_dim(
+            index.reshape(-1, 1, 1),
+            dim=1
+        ).squeeze(1)
+        pos_diff_xy = (
+            current_target_pos[:, :2] 
             - self.robot.data.root_pos_w[:, :2]
-            + self.envs_positions[:, :2]
+            + self.scene._default_env_origins[:, :2]
         )
-        self.commands[:, :2] = normalize(current_pos_diff)
+        pos_error_xy = pos_diff_xy.norm(dim=-1, keepdim=True)
+        self._command[:, :2] = (
+            (pos_diff_xy / pos_error_xy)
+            * current_target_speed
+            * (pos_error_xy > 0.1).float()
+        )
+        self.feet_pos = (
+            self.robot.data.body_pos_w[:, self.calf_indices]
+            + quat_rotate(self.robot.data.body_quat_w[:, self.calf_indices], self.FEET_OFFSET)
+        )
+        # if self.enable_render:
+        #     self.debug_draw.clear()
+        #     robot_pos = (
+        #         self.robot.data.root_pos_w.cpu()
+        #         + torch.tensor([0., 0., 0.2])
+        #     )
+        #     self.debug_draw.clear()
+        #     self.debug_draw.vector(
+        #         robot_pos, 
+        #         self._command,
+        #         color=(1., 1., 1., 1.)
+        #     )
+        #     self.debug_draw.vector(
+        #         robot_pos, 
+        #         self.robot.data.root_lin_vel_w,
+        #         color=(1., .5, .5, 1.)
+        #     )
+            # self.contact_sensor.data.net_forces_w
+        return super()._compute_observation()
 
-        self.robot.update_buffers(dt=self.dt * self.substeps)
-        self.robot.data.heading = quat_axis(self.robot.data.root_quat_w, 0)
+    @observation_func
+    def command(self):
+        command_b = quat_rotate_inverse(
+            self.robot.data.root_quat_w,
+            self._command
+        )
+        return command_b
     
-        self.intrinsics["feet_pos"][:] = self.robot.feet_pos_b.reshape(-1, 1, 12)
-        self.intrinsics["feet_vel"][:] = self.robot.feet_vel_b.reshape(-1, 1, 12)
-        # self.intrinsics["normalized_forces"][:] = normalized_forces.reshape(-1, 1, 3)
-        # self.intrinsics["normalized_torques"][:] = normalized_torques.reshape(-1, 1, 3)
-
-        obs = [
-            # base orientation
-            self.robot.data.root_pos_w[:, [2]] - self.base_target_height,
-            self.robot.data.root_lin_vel_b,
-            self.robot.data.root_ang_vel_b,
-            self.robot.data.projected_gravity_b,
-            quat_rotate_inverse(self.robot.data.root_quat_w, self.commands[:, :2]),
-            self.robot.data.dof_pos - self.robot.data.actuator_pos_offset,
-            self.robot.data.dof_vel - self.robot.data.actuator_vel_offset,
-            self.actions, # a_{t-1}
-            self.previous_actions, # a_{t-2}
-        ]
-        
-        obs = torch.cat(obs, dim=-1)
-
-        if self._should_render(0):
-            self.draw.clear_lines()
-            colors = [(1.0, 1.0, 1.0, 1.0), (1.0, 0.5, 0.5, 1.0)]
-            sizes = [2, 2]
-            robot_pos = self.robot.data.root_pos_w[self.central_env_idx].cpu()
-            linvel_start = robot_pos + torch.tensor([0., 0., 0.5])
-            linvel_end = linvel_start + self.robot.data.root_lin_vel_w[self.central_env_idx].cpu()
-            target_linvel_end = linvel_start + self.commands[self.central_env_idx].cpu()
-            
-            point_list_0 = [ linvel_start.tolist(), linvel_start.tolist()]
-            point_list_1 = [target_linvel_end.tolist(), linvel_end.tolist()]
-            
-            self.draw.draw_lines(point_list_0, point_list_1, colors, sizes)
-            set_camera_view(
-                eye=robot_pos.numpy() + np.asarray(self.cfg.viewer.eye),
-                target=robot_pos.numpy() + np.asarray(self.cfg.viewer.lookat)                        
-            )
+    @observation_func
+    def root_quat_w(self):
+        return self.robot.data.root_quat_w
     
+    @observation_func
+    def root_angvel_b(self):
+        return self.robot.data.root_ang_vel_b
+    
+    @observation_func
+    def joint_pos(self):
+        return self.robot.data.joint_pos
+    
+    @observation_func
+    def joint_vel(self):
+        return self.robot.data.joint_vel
+    
+    @observation_func
+    def projected_gravity_b(self):
+        return self.robot.data.projected_gravity_b
+    
+    @observation_func
+    def root_linvel_b(self):
+        return self.robot.data.root_lin_vel_b
+    
+    @observation_func
+    def prev_actions(self):
+        return self._actions
+    
+    @observation_func
+    def applied_torques(self):
+        return self.robot.data.applied_torque / 30.
+    
+    @observation_func
+    def contact_forces(self):
+        return self.contact_sensor.data.net_forces_w
+    
+    @observation_func
+    def feet_pos_b(self):
+        feet_pos_b = quat_rotate_inverse(
+            self.robot.data.root_quat_w.unsqueeze(1),
+            self.feet_pos - self.robot.data.root_pos_w.unsqueeze(1)
+        )
+        return feet_pos_b.reshape(self.num_envs, -1)
+    
+    @reward_func
+    def linvel(self):
+        linvel_w = self.robot.data.root_lin_vel_w
+        linvel_error = square_norm(linvel_w - self._command)
+        return 1. / (1. + linvel_error / 0.25)
+    
+    @reward_func
+    def heading(self):
+        return noarmalize(self.robot.data.root_lin_vel_b)[:, [0]]
+    
+    @reward_func
+    def base_height(self):
+        return self.robot.data.root_pos_w[:, [2]] - self.target_base_height
 
-        return TensorDict({
-            "agents": {
-                "observation": obs.unsqueeze(1),
-                "intrinsics": self.intrinsics,
-            },
-            "stats": self.stats.clone(),
-        }, self.num_envs)
-
-    def _compute_reward_and_done(self):
-        # -- compute reward
-        lin_vel_error = square_norm(self.commands - self.robot.data.root_lin_vel_w[:, :2])
-        # ang_vel_error = torch.square(self.commands[:, 2] - self.robot.data.root_ang_vel_b[:, 2])
-        # lin_vel_proj = (self.robot.data.root_lin_vel_w[:, :2] * self.commands[:, :2]).sum(-1, keepdim=True)
-        
-        base_height_error = (
-            (self.robot.data.root_pos_w[:, [2]] - self.base_target_height)
+    @reward_func
+    def energy(self):
+        energy = (
+            (self.robot.data.joint_vel * self.robot.data.applied_torque)
             .abs()
+            .sum(dim=-1, keepdim=True)
         )
-        heading_projection = (
-            (normalize(self.robot.data.heading[:, :2]) * self.commands)
-            .sum(-1, keepdim=True)
-        )
-        feet_symmetry_error = (
-            self.robot.feet_pos_b[:, [0, 1], 1].sum(dim=-1, keepdim=True).abs()
-            + self.robot.feet_pos_b[:, [2, 3], 1].sum(dim=-1, keepdim=True).abs()
-        )
+        return - energy
+    
+    @reward_func
+    def joint_acc_l2(self):
+        return - self.robot.data.joint_acc.square().sum(dim=-1, keepdim=True)
+    
+    @reward_func
+    def joint_torques_l2(self):
+        return - self.robot.data.applied_torque.square().sum(dim=-1, keepdim=True)
 
-        # lin_vel_xy_exp = torch.exp(-lin_vel_error / 0.25)
-        # lin_vel_xy_exp = torch.exp(-lin_vel_error / 0.5)
-        # ang_vel_z_exp = torch.exp(-ang_vel_error / 0.25)
-        lin_vel_z_l2 = torch.square(self.robot.data.root_lin_vel_w[:, 2])
-        ang_vel_xy_l2 = square_norm(self.robot.data.root_ang_vel_w[:, :2])
-        flat_orientation_l2 = square_norm(self.robot.data.projected_gravity_b[:, :2])
-        dof_torques_l2 = square_norm(self.robot.data.applied_torques)
-        dof_acc_l2 = square_norm(self.robot.data.dof_acc)
-        action_rate_l2 = square_norm(self.previous_actions - self.actions)
-        self.previous_actions[:] = self.actions
-        energy = (self.robot.data.dof_vel * self.robot.data.applied_torques).abs().sum(dim=-1, keepdim=True)
-        
-        reward = (
-            # 2.0 * lin_vel_xy_exp
-            2.0 / (1. + lin_vel_error / 0.5)
-            # lin_vel_proj.clamp_max(self.commands[:, :2].norm(dim=-1, keepdim=True))
-            + 0.5 * heading_projection
-            # + 0.5 * ang_vel_z_exp.unsqueeze(1)
-            + 0.5 / (1 + base_height_error)
-            - 2.0 * lin_vel_z_l2.unsqueeze(1)
-            - 0.05 * ang_vel_xy_l2
-            - 2.0 * flat_orientation_l2
-            - 0.000025 * dof_torques_l2
-            - 2.5e-7 * dof_acc_l2
-            - 0.01 * action_rate_l2
-            - 0.0005 * energy
-            - 2 * feet_symmetry_error
-        ).clip(min=0.)
+    @reward_func
+    def action_rate_l2(self):
+        return - (self._actions - self._prev_actions).square().sum(dim=-1, keepdim=True)
 
-        self.base_height_error[:] = base_height_error
-
-        truncated = (self.progress_buf >= self.max_episode_length).unsqueeze(-1)
-        done = (
-            (self.robot.data.root_pos_w[:, 2] <= self.base_target_height * 0.5)
+    @reward_func
+    def survive(self):
+        return torch.ones(self.num_envs, 1, device=self.device)
+    
+    @reward_func
+    def orientation(self):
+        return self.robot.data.projected_gravity_b[:, [2]].square()
+    
+    @termination_func
+    def crash(self):
+        terminated = (
+            (self.robot.data.root_pos_w[:, 2] <= self.target_base_height * 0.5)
             | (self.robot.data.projected_gravity_b[:, 2] >= -0.5)
         ).unsqueeze(1)
-        
-        self.stats["return"].add_(reward)
-        self.stats["episode_len"][:] = self.progress_buf.unsqueeze(1)
+        return terminated
 
-        self.stats["energy"].add_(energy)
-        self.stats["lin_vel_error"].add_(lin_vel_error)
-        self.stats["base_height_error"].add_(base_height_error)
-        self.stats["dof_torques"].add_(dof_torques_l2)
-        self.stats["dof_acc"].add_(dof_acc_l2)
-        self.stats["action_rate"].add_(action_rate_l2)
-        self.stats["feet_symmetry"].add_(feet_symmetry_error)
+def random_scale(x: torch.Tensor, low: float, high: float):
+    return x * (torch.rand_like(x) * (high - low) + low)
 
-        return TensorDict({
-            "agents": {
-                "reward": reward.reshape(-1, 1, 1)
-            },
-            "done": done,
-            "truncated": truncated,
-        }, self.num_envs)
-
+def sample_uniform(size, low: float, high: float, device: torch.device = "cpu"):
+    return torch.rand(size, device=device) * (high - low) + low
 
 def square_norm(x: torch.Tensor):
     return x.square().sum(dim=-1, keepdim=True)
 
+def noarmalize(x: torch.Tensor):
+    return x / x.norm(dim=-1, keepdim=True).clamp_min(1e-6)
 
-def lemniscate(t: torch.Tensor):
-    sin_t = torch.sin(t)
-    cos_t = torch.cos(t)
-    return torch.stack([cos_t, sin_t * cos_t], dim=-1)
-
+def dot(a: torch.Tensor, b: torch.Tensor):
+    return (a * b).sum(dim=-1, keepdim=True)

@@ -13,9 +13,8 @@ def batchify(func, broadcast=True):
             if len(batch_shape) != 1:
                 raise ValueError()
             batch_shape = batch_shape.pop()
-        numel = batch_shape.numel()
         args = [
-            arg.reshape(-1, arg.shape[-1]).expand(numel, arg.shape[-1]) 
+            arg.expand(*batch_shape, arg.shape[-1]).reshape(-1, arg.shape[-1]) 
             for arg in args
         ]
         ret = func(*args, **kwargs)

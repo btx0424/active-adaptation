@@ -27,7 +27,7 @@ def main():
     from active_adaptation.envs.utils import attach_payload
     from active_adaptation.utils.helpers import batchify
 
-    quat_rotate = batchify(quat_rotate, broadcast=False)
+    quat_rotate = batchify(quat_rotate)
 
     from configs import ROUGH_TERRAINS_CFG
     from omni_drones.envs.isaac_env import DebugDraw
@@ -62,7 +62,7 @@ def main():
         # contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*_calf", debug_vis=False)
 
         robot.spawn.activate_contact_sensors = True
-        contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*_calf", track_pose=True, debug_vis=False)
+        contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", debug_vis=False)
 
         light = AssetBaseCfg(
             prim_path="/World/light",
@@ -106,11 +106,12 @@ def main():
     
     sim_dt = sim.get_physics_dt()
     robot = scene.articulations["robot"]
+    calf_indices = [i for i, name in enumerate(robot.body_names) if "calf" in name]
+
     contact_forces: ContactSensor = scene.sensors["contact_forces"]
     feet_offset = (
         torch.tensor([0., 0., -0.2], device=sim.device)
         .reshape(1, 1, 3)
-        .expand_as(contact_forces.data.pos_w)
     )
 
     init_root_state = robot.data.default_root_state_w.clone()
@@ -136,8 +137,8 @@ def main():
         sim.step(render=should_render)
         scene.update(sim_dt)
         feet_pos = (
-            contact_forces.data.pos_w
-            + quat_rotate(contact_forces.data.quat_w, feet_offset)
+            robot.data.body_pos_w[:, calf_indices]
+            + quat_rotate(robot.data.body_quat_w[:, calf_indices], feet_offset)
         )
 
         if should_render:
@@ -147,8 +148,8 @@ def main():
             #     robot.data.root_lin_vel_w,
             # )
             debug_draw.vector(
-                feet_pos,
-                contact_forces.data.net_forces_w,
+                feet_pos.reshape(-1, 3),
+                contact_forces.data.net_forces_w[:, calf_indices].reshape(-1, 3),
             )
             rgb_data = rgb_annotator.get_data()
             rgb_data = np.frombuffer(rgb_data, dtype=np.uint8).reshape(rgb_data.shape)

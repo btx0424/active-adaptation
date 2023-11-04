@@ -9,7 +9,7 @@ from omni.isaac.orbit.utils import configclass
 from omni.isaac.orbit.terrains import TerrainImporterCfg
 from omni.isaac.orbit.envs import ViewerCfg
 from omni.isaac.orbit.assets import AssetBaseCfg
-from omni.isaac.orbit.sensors import ContactSensorCfg
+from omni.isaac.orbit.sensors import ContactSensorCfg, RayCasterCfg, patterns
 from omni.isaac.orbit.terrains import HfRandomUniformTerrainCfg, TerrainGeneratorCfg
 import omni.isaac.orbit.sim as sim_utils
 
@@ -17,6 +17,7 @@ from dataclasses import MISSING
 from typing import Dict, List
 
 ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
+    seed=0,
     size=(8.0, 8.0),
     border_width=20.0,
     num_rows=20,
@@ -80,6 +81,16 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
         debug_vis=False,
     )
 
+    # height_scanner = RayCasterCfg(
+    #     prim_path="{ENV_REGEX_NS}/Robot/base",
+    #     offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+    #     attach_yaw_only=True,
+    #     pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
+    #     debug_vis=True,
+    #     mesh_prim_paths=["/World/ground"],
+    #     history_length=1
+    # )
+
 
 @configclass
 class EnvCfg:
@@ -113,6 +124,7 @@ UNITREE_A1_ENV = EnvCfg(
         "joint_acc_l2": 2.5e-7,
         "joint_torques_l2": 2.5e-6,
         "action_rate_l2": 0.01,
+        "orientation": 0.1
     },
     observation = {
         ("agents", "observation"): [
@@ -123,7 +135,9 @@ UNITREE_A1_ENV = EnvCfg(
             "joint_pos",
             "joint_vel",
             "prev_actions",
+            # privileged
             "root_linvel_b",
+            "feet_pos_b",
         ],
         ("agents", "observation_priv"): [
             "root_linvel_b",
