@@ -95,19 +95,19 @@ class PPODualPolicy(TensorDictModuleBase):
         # observation_priv_dim = observation_spec[self.OBS_PRIV_KEY].shape[-1]
         
         self.encoder = TensorDictModule(
-            make_mlp([256, 256, 128]),
-            [self.OBS_HIST_KEY], 
+            make_mlp([512, 256]),
+            [self.OBS_KEY], 
             ["_feature"]
         ).to(self.device)
         self.encoder_priv = TensorDictSequential(
-            CatTensors([self.OBS_KEY, self.OBS_PRIV_KEY], self.OBS_PRIV_KEY),
+            CatTensors([self.OBS_KEY, self.OBS_PRIV_KEY], "_obs", del_keys=False),
             TensorDictModule(
-                make_mlp([256, 256, 128]),
-                [self.OBS_PRIV_KEY], ["_feature"]
+                make_mlp([512, 256]),
+                ["_obs"], ["_feature"]
             )
         ).to(self.device)
         actor_module = TensorDictModule(
-            Actor(self.action_dim),
+            nn.Sequential(make_mlp([256]), Actor(self.action_dim)),
             ["_feature"], ["loc", "scale"]
         )
         self.actor: ProbabilisticActor = ProbabilisticActor(
@@ -119,11 +119,12 @@ class PPODualPolicy(TensorDictModuleBase):
         ).to(self.device)
 
         self.critic = TensorDictModule(
-            nn.LazyLinear(1),
+            nn.Sequential(make_mlp([256]), nn.LazyLinear(1)),
             ["_feature"], ["state_value"]
         ).to(self.device)
 
         self.encoder_priv(fake_input)
+        self.encoder(fake_input)
         self.actor(fake_input)
         self.critic(fake_input)
         
@@ -138,20 +139,39 @@ class PPODualPolicy(TensorDictModuleBase):
             
             self.actor.apply(init_)
             self.critic.apply(init_)
+            self.encoder_priv.apply(init_)
 
-        self.actor_opt = torch.optim.Adam(
-            list(self.actor.parameters()) + list(self.encoder_priv.parameters()), lr=5e-4)
-        self.critic_opt = torch.optim.Adam(
-            list(self.critic.parameters()) + list(self.encoder_priv.parameters()), lr=5e-4)
-
+        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
+        self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=5e-4)
+        self.encoder_priv_opt = torch.optim.Adam(self.encoder_priv.parameters(), lr=5e-4)
         self.encoder_opt = torch.optim.Adam(self.encoder.parameters(), lr=5e-4)
         self.value_norm = ValueNorm1(input_shape=1).to(self.device)
     
     def __call__(self, tensordict: TensorDict):
-        td = tensordict
-        self.encoder_priv(td)
-        self.actor(td)
-        self.critic(td)
+        td_priv = tensordict
+        # td_priv, td = tensordict.chunk(2)
+        self.encoder_priv(td_priv)
+        self.actor(td_priv)
+        self.critic(td_priv)
+
+        # self.encoder(td)
+        # self.actor(td)
+        # self.critic(td)
+
+        # tensordict.set(
+        #     "flag", 
+        #     torch.cat([
+        #         torch.ones(td_priv.shape[0], device=tensordict.device),
+        #         torch.zeros(td.shape[0], device=tensordict.device)
+        #     ])
+        # )
+        # tensordict.update(
+        #     torch.cat([
+        #         td_priv.select(*self.actor.out_keys, *self.critic.out_keys), 
+        #         td.select(*self.actor.out_keys, *self.critic.out_keys)
+        #     ], dim=0)
+        # )
+        tensordict.exclude("_feature", "loc", "scale", inplace=True)
         return tensordict
 
     def train_op(self, tensordict: TensorDict):
@@ -186,10 +206,15 @@ class PPODualPolicy(TensorDictModuleBase):
         return {k: v.item() for k, v in infos.items()}
 
     def _update(self, tensordict: TensorDict):
-        self.encoder_priv(tensordict)
-        dist = self.actor.get_dist(tensordict)
-        log_probs = dist.log_prob(tensordict[("agents", "action")])
-        entropy = dist.entropy()
+        tensordict_priv = self.encoder_priv(tensordict.clone())
+        tensordict_adapt = self.encoder(tensordict.clone())
+
+        dist_adapt = self.actor.get_dist(tensordict_adapt)
+
+        dist_params = self.actor.get_dist_params(tensordict_priv)
+        dist_target = self.actor.build_dist_from_params(dist_params)        
+        log_probs = dist_target.log_prob(tensordict[("agents", "action")])
+        entropy = dist_target.entropy()
 
         adv = tensordict["adv"]
         ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
@@ -200,7 +225,7 @@ class PPODualPolicy(TensorDictModuleBase):
 
         b_values = tensordict["state_value"]
         b_returns = tensordict["ret"]
-        values = self.critic(tensordict)["state_value"]
+        values = self.critic(tensordict_priv)["state_value"]
         values_clipped = b_values + (values - b_values).clamp(
             -self.clip_param, self.clip_param
         )
@@ -211,15 +236,27 @@ class PPODualPolicy(TensorDictModuleBase):
         loss = policy_loss + entropy_loss + value_loss
         self.actor_opt.zero_grad()
         self.critic_opt.zero_grad()
+        self.encoder_priv_opt.zero_grad()
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.actor.parameters(), 5)
         critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 5)
         self.actor_opt.step()
         self.critic_opt.step()
+        self.encoder_priv_opt.step()
+
+        loss_adapt = D.kl_divergence(
+            dist_adapt,
+            self.actor.build_dist_from_params(dist_params.detach())
+        ).mean()
+        self.encoder_opt.zero_grad()
+        loss_adapt.backward()
+        self.encoder_opt.step()
+
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
         return TensorDict({
             "policy_loss": policy_loss,
             "value_loss": value_loss,
+            "encoder_loss": loss_adapt,
             "entropy": entropy,
             "actor_grad_norm": actor_grad_norm,
             "critic_grad_norm": critic_grad_norm,

@@ -147,28 +147,31 @@ class LocomotionEnv(Env):
             self.robot.data.body_pos_w[:, self.calf_indices]
             + quat_rotate(self.robot.data.body_quat_w[:, self.calf_indices], self.FEET_OFFSET)
         )
-        # if self.enable_render:
-        #     self.debug_draw.clear()
-        #     robot_pos = (
-        #         self.robot.data.root_pos_w.cpu()
-        #         + torch.tensor([0., 0., 0.2])
-        #     )
-        #     self.debug_draw.clear()
-        #     self.debug_draw.vector(
-        #         robot_pos, 
-        #         self._command,
-        #         color=(1., 1., 1., 1.)
-        #     )
-        #     self.debug_draw.vector(
-        #         robot_pos, 
-        #         self.robot.data.root_lin_vel_w,
-        #         color=(1., .5, .5, 1.)
-        #     )
-            # self.contact_sensor.data.net_forces_w
         obs = super()._compute_observation()
         self._observation_h[:, :, :-1] = self._observation_h[:, :, 1:]
         self._observation_h[:, :, -1] = obs[("agents", "observation")]
+        obs[("agents", "observation_h")] = self._observation_h
         return obs
+
+    def render(self, mode: str="human"):
+        if self.enable_render:
+            self.debug_draw.clear()
+            robot_pos = (
+                self.robot.data.root_pos_w.cpu()
+                + torch.tensor([0., 0., 0.2])
+            )
+            self.debug_draw.clear()
+            self.debug_draw.vector(
+                robot_pos, 
+                self._command,
+                color=(1., 1., 1., 1.)
+            )
+            self.debug_draw.vector(
+                robot_pos, 
+                self.robot.data.root_lin_vel_w,
+                color=(1., .5, .5, 1.)
+            )
+        return super().render(mode)
 
     @observation_func
     def command(self):
