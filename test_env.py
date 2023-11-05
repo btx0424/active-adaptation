@@ -81,6 +81,7 @@ def main(cfg):
         base_env.eval()
         env.eval()
         env.set_seed(seed)
+        policy.eval()
 
         from tqdm import tqdm
         t = tqdm(total=base_env.max_episode_length)
@@ -157,6 +158,8 @@ def main(cfg):
         if eval_interval > 0 and (i + 1) % eval_interval == 0:
             logging.info(f"Eval at {collector._frames} steps.")
             info.update(evaluate())
+            env.train()
+            policy.train()
 
         run.log(info)
         print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, float)}))

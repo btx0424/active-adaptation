@@ -110,6 +110,7 @@ class LocomotionEnv(Env):
 
         self._prev_actions[env_ids] = 0.
         self._actions[env_ids] = 0.
+        self._observation_h[env_ids] = 0.
 
         self.scene.reset(env_ids)
         self.scene.update(dt=self.physics_dt)
@@ -150,7 +151,7 @@ class LocomotionEnv(Env):
         obs = super()._compute_observation()
         self._observation_h[:, :, :-1] = self._observation_h[:, :, 1:]
         self._observation_h[:, :, -1] = obs[("agents", "observation")]
-        obs[("agents", "observation_h")] = self._observation_h
+        obs[("agents", "observation_h")] = self._observation_h.clone()
         return obs
 
     def render(self, mode: str="human"):

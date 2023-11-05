@@ -25,6 +25,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as D
+import einops
 
 from torchrl.data import CompositeSpec, TensorSpec
 from torchrl.modules import ProbabilisticActor
@@ -65,6 +66,24 @@ class Actor(nn.Module):
         return loc, scale
 
 
+class TConv(nn.Module):
+    def __init__(self, out_dim: int, activation=nn.Mish) -> None:
+        super().__init__()
+        self.out_dim = out_dim
+        self.tconv = nn.Sequential(
+            nn.LazyConv1d(64, kernel_size=1), activation(),
+            nn.LazyConv1d(64, kernel_size=7, stride=2), activation(),
+            nn.LazyConv1d(64, kernel_size=5, stride=2), activation(),
+        )
+        self.mlp = make_mlp([256, out_dim])
+    
+    def forward(self, features: torch.Tensor):
+        features_tconv = einops.rearrange(self.tconv(features), "b d t -> b (t d)")
+        features = torch.cat([features_tconv, features[:, :, -1]], dim=1)
+        features = self.mlp(features)
+        return features
+
+
 class PPODualPolicy(TensorDictModuleBase):
 
     OBS_KEY = ("agents", "observation")
@@ -95,21 +114,24 @@ class PPODualPolicy(TensorDictModuleBase):
         # observation_priv_dim = observation_spec[self.OBS_PRIV_KEY].shape[-1]
         
         self.encoder = TensorDictModule(
-            make_mlp([512, 256]),
-            [self.OBS_KEY], 
+            TConv(256),
+            [self.OBS_HIST_KEY], 
             ["_feature"]
         ).to(self.device)
+
         self.encoder_priv = TensorDictSequential(
             CatTensors([self.OBS_KEY, self.OBS_PRIV_KEY], "_obs", del_keys=False),
             TensorDictModule(
-                make_mlp([512, 256]),
+                make_mlp([512, 256], nn.Mish),
                 ["_obs"], ["_feature"]
             )
         ).to(self.device)
+
         actor_module = TensorDictModule(
-            nn.Sequential(make_mlp([256]), Actor(self.action_dim)),
+            nn.Sequential(make_mlp([256], nn.Mish), Actor(self.action_dim)),
             ["_feature"], ["loc", "scale"]
         )
+
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=actor_module,
             in_keys=["loc", "scale"],
@@ -119,14 +141,15 @@ class PPODualPolicy(TensorDictModuleBase):
         ).to(self.device)
 
         self.critic = TensorDictModule(
-            nn.Sequential(make_mlp([256]), nn.LazyLinear(1)),
+            nn.Sequential(make_mlp([256], nn.Mish), nn.LazyLinear(1)),
             ["_feature"], ["state_value"]
         ).to(self.device)
 
+        self.actor_critic = TensorDictSequential(self.actor, self.critic)
+
         self.encoder_priv(fake_input)
         self.encoder(fake_input)
-        self.actor(fake_input)
-        self.critic(fake_input)
+        self.actor_critic(fake_input)
         
         if self.cfg.checkpoint_path is not None:
             state_dict = torch.load(self.cfg.checkpoint_path)
@@ -148,29 +171,33 @@ class PPODualPolicy(TensorDictModuleBase):
         self.value_norm = ValueNorm1(input_shape=1).to(self.device)
     
     def __call__(self, tensordict: TensorDict):
-        td_priv = tensordict
-        # td_priv, td = tensordict.chunk(2)
-        self.encoder_priv(td_priv)
-        self.actor(td_priv)
-        self.critic(td_priv)
+        if self.training:
+            td_priv = tensordict
+            # td_priv, td = tensordict.chunk(2)
+            self.encoder_priv(td_priv)
+            self.actor_critic(td_priv)
 
-        # self.encoder(td)
-        # self.actor(td)
-        # self.critic(td)
+            # self.encoder(td)
+            # self.actor(td)
+            # self.critic(td)
 
-        # tensordict.set(
-        #     "flag", 
-        #     torch.cat([
-        #         torch.ones(td_priv.shape[0], device=tensordict.device),
-        #         torch.zeros(td.shape[0], device=tensordict.device)
-        #     ])
-        # )
-        # tensordict.update(
-        #     torch.cat([
-        #         td_priv.select(*self.actor.out_keys, *self.critic.out_keys), 
-        #         td.select(*self.actor.out_keys, *self.critic.out_keys)
-        #     ], dim=0)
-        # )
+            # tensordict.set(
+            #     "flag", 
+            #     torch.cat([
+            #         torch.ones(td_priv.shape[0], device=tensordict.device),
+            #         torch.zeros(td.shape[0], device=tensordict.device)
+            #     ])
+            # )
+            # tensordict.update(
+            #     torch.cat([
+            #         td_priv.select(*self.actor.out_keys, *self.critic.out_keys), 
+            #         td.select(*self.actor.out_keys, *self.critic.out_keys)
+            #     ], dim=0)
+            # )
+        else:
+            # use adaptation module for testing
+            self.encoder(tensordict)
+            self.actor_critic(tensordict)
         tensordict.exclude("_feature", "loc", "scale", inplace=True)
         return tensordict
 
@@ -244,10 +271,11 @@ class PPODualPolicy(TensorDictModuleBase):
         self.critic_opt.step()
         self.encoder_priv_opt.step()
 
-        loss_adapt = D.kl_divergence(
-            dist_adapt,
-            self.actor.build_dist_from_params(dist_params.detach())
-        ).mean()
+        dist_target = self.actor.build_dist_from_params(dist_params.detach())
+        loss_adapt = (
+            D.kl_divergence(dist_adapt, dist_target).mean()
+            + F.mse_loss(self.critic(tensordict_adapt)["state_value"], b_returns)
+        )
         self.encoder_opt.zero_grad()
         loss_adapt.backward()
         self.encoder_opt.step()
