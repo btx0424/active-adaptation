@@ -10,13 +10,20 @@ from omni_drones.utils.torchrl import SyncDataCollector
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker
-from active_adaptation.learning import PPOPolicy, PPORNNPolicy
+from active_adaptation.learning import PPOPolicy, PPORNNPolicy, PPODualPolicy
 
 import wandb
 import logging
 from tqdm import tqdm
 from helpers import EpisodeStats, Every
 
+import os
+
+policies = {
+    "ppo": PPOPolicy,
+    "ppo_dual": PPODualPolicy,
+    "ppo_rnn": PPORNNPolicy,
+}
 
 @hydra.main(config_path="cfg", config_name="train")
 def main(cfg):
@@ -38,7 +45,7 @@ def main(cfg):
     env.set_seed(0)
 
     # setup policy
-    policy = PPORNNPolicy(
+    policy = policies[cfg.algo.name](
         cfg.algo,
         env.observation_spec, 
         env.action_spec, 
@@ -157,6 +164,21 @@ def main(cfg):
     
     info = evaluate()
     run.log(info)
+
+    try:
+        ckpt_path = os.path.join(run.dir, "checkpoint_final.pt")
+        torch.save(policy.state_dict(), ckpt_path)
+        artifact = wandb.Artifact(
+            f"{type(base_env).__name__}-{type(policy).__name__}", 
+            type="model"
+        )
+        artifact.add_file(ckpt_path)
+        run.log_artifact(artifact)
+        logging.info(f"Saved checkpoint to {str(ckpt_path)}")
+    except Exception as e:
+        logging.error(f"Failed to save checkpoint: {e}")
+
+    wandb.finish()
 
     simulation_app.close()
 

@@ -39,17 +39,8 @@ from torchrl.envs import CatTensors, TensorDictPrimer
 from torchrl.modules import ProbabilisticActor
 
 from ..modules.distributions import IndependentNormal
-from .common import Actor, GAE
+from .common import Actor, GAE, make_mlp
 from ..utils.valuenorm import ValueNorm1
-
-
-def make_mlp(num_units):
-    layers = []
-    for n in num_units:
-        layers.append(nn.LazyLinear(n))
-        layers.append(nn.LeakyReLU())
-        layers.append(nn.LayerNorm(n))
-    return nn.Sequential(*layers)
 
 
 class LSTM(nn.Module):

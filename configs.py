@@ -133,15 +133,16 @@ UNITREE_A1_ENV = EnvCfg(
             "root_angvel_b",
             "projected_gravity_b",
             "joint_pos",
-            "joint_vel",
             "prev_actions",
             # privileged
-            "root_linvel_b",
-            "feet_pos_b",
+            # "joint_vel",
+            # "root_linvel_b",
+            # "feet_pos_b",
         ],
         ("agents", "observation_priv"): [
+            "joint_vel",
             "root_linvel_b",
-            "applied_torques",
+            "feet_pos_b",
         ]
     }
 )

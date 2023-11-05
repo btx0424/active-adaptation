@@ -24,6 +24,16 @@
 import torch
 import torch.nn as nn
 
+
+def make_mlp(num_units, activation=nn.LeakyReLU):
+    layers = []
+    for n in num_units:
+        layers.append(nn.LazyLinear(n))
+        layers.append(activation())
+        layers.append(nn.LayerNorm(n))
+    return nn.Sequential(*layers)
+
+
 class Chunk(nn.Module):
     def __init__(self, n) -> None:
         super().__init__()

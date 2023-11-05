@@ -42,20 +42,15 @@ from .common import GAE, make_mlp
 
 @dataclass
 class PPOConfig:
-    name: str = "ppo"
+    name: str = "ppo_dual"
     train_every: int = 32
     ppo_epochs: int = 4
     num_minibatches: int = 16
 
-    priv_actor: bool = False
-    priv_critic: bool = False
-
     checkpoint_path: Union[str, None] = None
 
 cs = ConfigStore.instance()
-cs.store("ppo", node=PPOConfig, group="algo")
-cs.store("ppo_priv", node=PPOConfig(priv_actor=True, priv_critic=True), group="algo")
-cs.store("ppo_priv_critic", node=PPOConfig(priv_critic=True), group="algo")
+cs.store("ppo_dual", node=PPOConfig, group="algo")
 
 
 class Actor(nn.Module):
@@ -70,7 +65,11 @@ class Actor(nn.Module):
         return loc, scale
 
 
-class PPOPolicy(TensorDictModuleBase):
+class PPODualPolicy(TensorDictModuleBase):
+
+    OBS_KEY = ("agents", "observation")
+    OBS_HIST_KEY = ("agents", "observation_h")
+    OBS_PRIV_KEY = ("agents", "observation_priv")
 
     def __init__(
         self, 
@@ -91,32 +90,26 @@ class PPOPolicy(TensorDictModuleBase):
         self.gae = GAE(0.99, 0.95)
 
         fake_input = observation_spec.zero()
-        observation_dim = observation_spec[("agents", "observation")].shape[-1]
+
+        # observation_dim = observation_spec[self.OBS_KEY].shape[-1]
+        # observation_priv_dim = observation_spec[self.OBS_PRIV_KEY].shape[-1]
         
-        if self.cfg.priv_actor:
-            intrinsics_dim = observation_spec[("agents", "intrinsics")].shape[-1]
-            actor_module = TensorDictSequential(
-                TensorDictModule(make_mlp([512]), [("agents", "observation")], ["feature"]),
-                TensorDictModule(
-                    nn.Sequential(make_mlp([128, 128])), 
-                    [("agents", "intrinsics")], ["context"]
-                ),
-                CatTensors(["feature", "context"], "feature"),
-                TensorDictModule(
-                    nn.Sequential(make_mlp([256, 256]), Actor(self.action_dim)), 
-                    ["feature"], ["loc", "scale"]
-                )
+        self.encoder = TensorDictModule(
+            make_mlp([256, 256, 128]),
+            [self.OBS_HIST_KEY], 
+            ["_feature"]
+        ).to(self.device)
+        self.encoder_priv = TensorDictSequential(
+            CatTensors([self.OBS_KEY, self.OBS_PRIV_KEY], self.OBS_PRIV_KEY),
+            TensorDictModule(
+                make_mlp([256, 256, 128]),
+                [self.OBS_PRIV_KEY], ["_feature"]
             )
-        else:
-            actor_module=TensorDictModule(
-                nn.Sequential(
-                    # nn.LayerNorm(observation_dim),
-                    # nn.InstanceNorm1d(observation_dim),
-                    make_mlp([512, 256, 256]), 
-                    Actor(self.action_dim)
-                ),
-                [("agents", "observation")], ["loc", "scale"]
-            )
+        ).to(self.device)
+        actor_module = TensorDictModule(
+            Actor(self.action_dim),
+            ["_feature"], ["loc", "scale"]
+        )
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=actor_module,
             in_keys=["loc", "scale"],
@@ -125,31 +118,12 @@ class PPOPolicy(TensorDictModuleBase):
             return_log_prob=True
         ).to(self.device)
 
-        if self.cfg.priv_critic:
-            intrinsics_dim = observation_spec[("agents", "intrinsics")].shape[-1]
-            self.critic = TensorDictSequential(
-                TensorDictModule(make_mlp([512]), [("agents", "observation")], ["feature"]),
-                TensorDictModule(
-                    nn.Sequential(make_mlp([128, 128])), 
-                    [("agents", "intrinsics")], ["context"]
-                ),
-                CatTensors(["feature", "context"], "feature"),
-                TensorDictModule(
-                    nn.Sequential(make_mlp([256, 256]), nn.LazyLinear(1)),
-                    ["feature"], ["state_value"]
-                )
-            ).to(self.device)
-        else:
-            self.critic = TensorDictModule(
-                nn.Sequential(
-                    # nn.LayerNorm(observation_dim),
-                    # nn.InstanceNorm1d(observation_dim),
-                    make_mlp([512, 256, 256]), 
-                    nn.LazyLinear(1)
-                ),
-                [("agents", "observation")], ["state_value"]
-            ).to(self.device)
+        self.critic = TensorDictModule(
+            nn.LazyLinear(1),
+            ["_feature"], ["state_value"]
+        ).to(self.device)
 
+        self.encoder_priv(fake_input)
         self.actor(fake_input)
         self.critic(fake_input)
         
@@ -165,19 +139,25 @@ class PPOPolicy(TensorDictModuleBase):
             self.actor.apply(init_)
             self.critic.apply(init_)
 
-        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
-        self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=5e-4)
+        self.actor_opt = torch.optim.Adam(
+            list(self.actor.parameters()) + list(self.encoder_priv.parameters()), lr=5e-4)
+        self.critic_opt = torch.optim.Adam(
+            list(self.critic.parameters()) + list(self.encoder_priv.parameters()), lr=5e-4)
+
+        self.encoder_opt = torch.optim.Adam(self.encoder.parameters(), lr=5e-4)
         self.value_norm = ValueNorm1(input_shape=1).to(self.device)
     
     def __call__(self, tensordict: TensorDict):
-        tensordict = self.actor(tensordict)
-        tensordict = self.critic(tensordict)
-        tensordict = tensordict.exclude("loc", "scale", "feature")
+        td = tensordict
+        self.encoder_priv(td)
+        self.actor(td)
+        self.critic(td)
         return tensordict
 
     def train_op(self, tensordict: TensorDict):
         next_tensordict = tensordict["next"]
         with torch.no_grad():
+            self.encoder_priv(next_tensordict)
             next_values = self.critic(next_tensordict)["state_value"]
         rewards = tensordict[("next", "agents", "reward")]
         dones = tensordict[("next", "terminated")]
@@ -206,6 +186,7 @@ class PPOPolicy(TensorDictModuleBase):
         return {k: v.item() for k, v in infos.items()}
 
     def _update(self, tensordict: TensorDict):
+        self.encoder_priv(tensordict)
         dist = self.actor.get_dist(tensordict)
         log_probs = dist.log_prob(tensordict[("agents", "action")])
         entropy = dist.entropy()

@@ -58,8 +58,9 @@ class LocomotionEnv(Env):
             ])
             self._actions = torch.zeros(self.num_envs, 12)
             self._prev_actions = torch.zeros(self.num_envs, 12)
-        
-        obs = self._compute_observation()
+            self._feet_pos = torch.zeros(self.num_envs, 4, 3)
+
+        obs = super()._compute_observation()
         reward = self._compute_reward()
 
         self.action_spec = CompositeSpec(
@@ -68,6 +69,15 @@ class LocomotionEnv(Env):
             }, 
             shape=[self.num_envs]
         ).to(self.device)
+
+        self._observation_h = (
+            obs[("agents", "observation")]
+            .unsqueeze(-1)
+            .expand(self.num_envs, -1, 32)
+            .clone()
+            .zero_()
+        )
+        obs[("agents", "observation_h")] = self._observation_h
 
         for key, value in obs.items(True, True):
             if key not in self.observation_spec.keys(True, True):
@@ -80,6 +90,7 @@ class LocomotionEnv(Env):
             },
             shape=[self.num_envs]
         ).to(self.device)
+
     
     def _reset_idx(self, env_ids: torch.Tensor):
         self.robot.write_root_state_to_sim(self.init_root_state[env_ids], env_ids)
@@ -132,7 +143,7 @@ class LocomotionEnv(Env):
             * current_target_speed
             * (pos_error_xy > 0.1).float()
         )
-        self.feet_pos = (
+        self._feet_pos[:] = (
             self.robot.data.body_pos_w[:, self.calf_indices]
             + quat_rotate(self.robot.data.body_quat_w[:, self.calf_indices], self.FEET_OFFSET)
         )
@@ -154,7 +165,10 @@ class LocomotionEnv(Env):
         #         color=(1., .5, .5, 1.)
         #     )
             # self.contact_sensor.data.net_forces_w
-        return super()._compute_observation()
+        obs = super()._compute_observation()
+        self._observation_h[:, :, :-1] = self._observation_h[:, :, 1:]
+        self._observation_h[:, :, -1] = obs[("agents", "observation")]
+        return obs
 
     @observation_func
     def command(self):
@@ -204,7 +218,7 @@ class LocomotionEnv(Env):
     def feet_pos_b(self):
         feet_pos_b = quat_rotate_inverse(
             self.robot.data.root_quat_w.unsqueeze(1),
-            self.feet_pos - self.robot.data.root_pos_w.unsqueeze(1)
+            self._feet_pos - self.robot.data.root_pos_w.unsqueeze(1)
         )
         return feet_pos_b.reshape(self.num_envs, -1)
     
@@ -259,18 +273,24 @@ class LocomotionEnv(Env):
         ).unsqueeze(1)
         return terminated
 
-    def motor_params(self):
-        self.robot.actuators["base_legs"].stiffness
-        self.robot.actuators["base_legs"].damping
-        pass
+    def motor_params(self, env_ids: torch.Tensor):
+        if not hasattr(self, "base_legs"):
+            self.base_legs = self.robot.actuators["base_legs"]
+            self.base_legs.default_stifness = self.base_legs.stiffness.clone()
+            self.base_legs.default_damping = self.base_legs.damping.clone()
+        self.base_legs.stiffness[env_ids] = random_shift(self.base_legs.default_stifness[env_ids], -.2, .2)
+        self.base_legs.damping[env_ids] = random_shift(self.base_legs.default_damping[env_ids], -.2, .2)
 
     def body_masses(self):
-        self.robot.body_physx_view
+        self.robot.body_physx_view.get_masses()
         pass
 
 
 def random_scale(x: torch.Tensor, low: float, high: float):
     return x * (torch.rand_like(x) * (high - low) + low)
+
+def random_shift(x: torch.Tensor, low: float, high: float):
+    return x + x * (torch.rand_like(x) * (high - low) + low)
 
 def sample_uniform(size, low: float, high: float, device: torch.device = "cpu"):
     return torch.rand(size, device=device) * (high - low) + low
