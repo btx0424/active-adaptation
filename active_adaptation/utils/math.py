@@ -1,6 +1,6 @@
 import torch
 
-# @torch.compile
+@torch.compile
 def quat_rotate(q, v):
     shape = q.shape
     q_w = q[:, 0]
@@ -11,7 +11,7 @@ def quat_rotate(q, v):
     return a + b + c
 
 
-# @torch.compile
+@torch.compile
 def quat_rotate_inverse(q, v):
     shape = q.shape
     q_w = q[:, 0]

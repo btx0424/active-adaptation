@@ -259,6 +259,16 @@ class LocomotionEnv(Env):
         ).unsqueeze(1)
         return terminated
 
+    def motor_params(self):
+        self.robot.actuators["base_legs"].stiffness
+        self.robot.actuators["base_legs"].damping
+        pass
+
+    def body_masses(self):
+        self.robot.body_physx_view
+        pass
+
+
 def random_scale(x: torch.Tensor, low: float, high: float):
     return x * (torch.rand_like(x) * (high - low) + low)
 

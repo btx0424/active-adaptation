@@ -38,7 +38,7 @@ def main(cfg):
     env.set_seed(0)
 
     # setup policy
-    policy = PPOPolicy(
+    policy = PPORNNPolicy(
         cfg.algo,
         env.observation_spec, 
         env.action_spec, 

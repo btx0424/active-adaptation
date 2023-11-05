@@ -28,6 +28,7 @@ import torch
 import torch.distributions as D
 import torch.nn as nn
 import torch.nn.functional as F
+import einops
 
 from hydra.core.config_store import ConfigStore
 from tensordict import TensorDict
@@ -62,10 +63,6 @@ class LSTM(nn.Module):
         self, x: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor, cx: torch.Tensor
     ):
         T = x.shape[1]
-        # if hx is None:
-        #     hx = torch.zeros(*x.shape[:-1], self.lstm.hidden_size, device=x.device)
-        # if cx is None:
-        #     cx = torch.zeros(*x.shape[:-1], self.lstm.hidden_size, device=x.device)
         hx, cx = hx[:, 0], cx[:, 0]
         output = []
         for i in range(T):
@@ -110,14 +107,11 @@ class GRU(nn.Module):
 
     def forward(self, x: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor):
         T = x.shape[1]
-        # if is_init is None:
-        #     is_init = torch.ones(*x.shape[:-1], 1, device=x.device)
-        # if hx is None:
-        #     hx = torch.zeros(*x.shape[:-1], self.gru.hidden_size, device=x.device)
         hx = hx[:, 0]
         output = []
-        for i in range(T):
-            hx = self._forward(x[:, i], is_init[:, i], hx)
+        reset = 1. - is_init.float()
+        for x_t, reset_t in zip(x.unbind(1), reset.unbind(1)):
+            hx = self.gru(x_t, hx * reset_t)
             output.append(hx)
         output = torch.stack(output, dim=1)
         # output = self.ln(output)
@@ -125,19 +119,7 @@ class GRU(nn.Module):
             output = x + output
         elif self.skip_conn == "cat":
             output = torch.cat([x, output], dim=-1)
-        return output, hx.unsqueeze(1).expand(-1, T, *hx.shape[1:])
-
-    def _forward(self, x: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor):
-        batch_shape = x.shape[:-1]
-        reset = (
-            1 - is_init.reshape(is_init.shape + (1,) * (hx.ndim - is_init.ndim)).float()
-        )
-        hx = hx * reset
-        x = x.reshape(-1, x.shape[-1])
-        hx = hx.reshape(-1, hx.shape[-1])
-        hx = self.gru(x, hx)
-        hx = hx.reshape(*batch_shape, -1)
-        return hx
+        return output, einops.repeat(hx, "b h -> b t h", t=T)
 
 
 @dataclass
@@ -177,7 +159,7 @@ class PPORNNPolicy:
         self.clip_param = 0.1
         self.critic_loss_fn = nn.HuberLoss(delta=10)
         self.gae = GAE(0.99, 0.95)
-        self.n_agents, self.action_dim = action_spec.shape[-2:]
+        self.action_dim = action_spec.shape[-1]
 
         fake_input = observation_spec.zero()
 
@@ -276,7 +258,7 @@ class PPORNNPolicy:
 
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=5e-4)
-        self.value_norm = ValueNorm1(reward_spec.shape[-2:]).to(self.device)
+        self.value_norm = ValueNorm1(input_shape=1).to(self.device)
 
     def _maybe_init_state(self, tensordict: TensorDict):
         shape = tensordict.get(("agents", "observation")).shape[:-1]
@@ -310,14 +292,10 @@ class PPORNNPolicy:
         with torch.no_grad():
             next_values = (
                 self.critic(next_tensordict)["state_value"]
-                .reshape(*tensordict.shape, 1, 1)
+                .reshape(*tensordict.shape, 1)
             )
         rewards = tensordict[("next", "agents", "reward")]
-        dones = (
-            tensordict[("next", "terminated")]
-            .expand(-1, -1, self.n_agents)
-            .unsqueeze(-1)
-        )
+        dones = tensordict[("next", "terminated")]
         values = tensordict["state_value"]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
