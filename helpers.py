@@ -20,12 +20,14 @@ class EpisodeStats:
         self._episodes = 0
 
     def add(self, tensordict: TensorDictBase) -> TensorDictBase:
-        done = tensordict.get(("next", "done"))
+        next_tensordict = tensordict["next"]
+        done = next_tensordict["done"]
         if done.any():
             done = done.squeeze(-1)
             self._episodes += done.sum().item()
+            next_tensordict = next_tensordict.select(*self.in_keys)
             self._stats.extend(
-                tensordict["next"].select(*self.in_keys)[done].clone().unbind(0)
+                next_tensordict[done].clone().unbind(0)
             )
         return len(self)
     

@@ -26,6 +26,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as D
 import einops
+import time
 
 from torchrl.data import CompositeSpec, TensorSpec
 from torchrl.modules import ProbabilisticActor
@@ -39,7 +40,7 @@ from typing import Union
 
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
-from .common import GAE, make_mlp
+from .common import GAE, Actor, make_mlp
 
 @dataclass
 class PPOConfig:
@@ -48,22 +49,11 @@ class PPOConfig:
     ppo_epochs: int = 4
     num_minibatches: int = 16
 
+    adaptation_loss: str = "feature_mse"
     checkpoint_path: Union[str, None] = None
 
 cs = ConfigStore.instance()
 cs.store("ppo_dual", node=PPOConfig, group="algo")
-
-
-class Actor(nn.Module):
-    def __init__(self, action_dim: int) -> None:
-        super().__init__()
-        self.actor_mean = nn.LazyLinear(action_dim)
-        self.actor_std = nn.Parameter(torch.zeros(action_dim))
-    
-    def forward(self, features: torch.Tensor):
-        loc = self.actor_mean(features)
-        scale = torch.exp(self.actor_std).expand_as(loc)
-        return loc, scale
 
 
 class TConv(nn.Module):
@@ -75,7 +65,7 @@ class TConv(nn.Module):
             nn.LazyConv1d(64, kernel_size=7, stride=2), activation(),
             nn.LazyConv1d(64, kernel_size=5, stride=2), activation(),
         )
-        self.mlp = make_mlp([256, out_dim])
+        self.mlp = make_mlp([256, out_dim], activation=nn.Mish)
     
     def forward(self, features: torch.Tensor):
         features_tconv = einops.rearrange(self.tconv(features), "b d t -> b (t d)")
@@ -146,6 +136,10 @@ class PPODualPolicy(TensorDictModuleBase):
         ).to(self.device)
 
         self.actor_critic = TensorDictSequential(self.actor, self.critic)
+        self.classifier = nn.Sequential(
+            make_mlp([256, 256]),
+            nn.LazyLinear(1) 
+        ).to(self.device)
 
         self.encoder_priv(fake_input)
         self.encoder(fake_input)
@@ -168,40 +162,52 @@ class PPODualPolicy(TensorDictModuleBase):
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=5e-4)
         self.encoder_priv_opt = torch.optim.Adam(self.encoder_priv.parameters(), lr=5e-4)
         self.encoder_opt = torch.optim.Adam(self.encoder.parameters(), lr=5e-4)
+        self.classifier_opt = torch.optim.Adam(self.classifier.parameters(), lr=5e-4)
         self.value_norm = ValueNorm1(input_shape=1).to(self.device)
+
+        self.adaptation_loss = {
+            "feature_mse": self.feature_mse, 
+            "action_kl": self.action_kl
+        }[cfg.adaptation_loss]
+
+        self.train_adaptation = True
+        self.train_classifier = True
+    
+    def make_models(self):
+        TensorDictModule(
+
+            [self.OBS_PRIV_KEY],
+            ["_context_priv"]
+        )
+        TensorDictModule(
+
+            [self.OBS_KEY],
+            ["_feature_obs"]
+        )
+        CatTensors(["_context_priv", "_feature_obs"], "_feature", del_keys=False)
+
+        TensorDictModule(
+
+            [self.OBS_HIST_KEY],
+            ["_context_adapt"]
+        )
+
     
     def __call__(self, tensordict: TensorDict):
         if self.training:
             td_priv = tensordict
-            # td_priv, td = tensordict.chunk(2)
             self.encoder_priv(td_priv)
             self.actor_critic(td_priv)
-
-            # self.encoder(td)
-            # self.actor(td)
-            # self.critic(td)
-
-            # tensordict.set(
-            #     "flag", 
-            #     torch.cat([
-            #         torch.ones(td_priv.shape[0], device=tensordict.device),
-            #         torch.zeros(td.shape[0], device=tensordict.device)
-            #     ])
-            # )
-            # tensordict.update(
-            #     torch.cat([
-            #         td_priv.select(*self.actor.out_keys, *self.critic.out_keys), 
-            #         td.select(*self.actor.out_keys, *self.critic.out_keys)
-            #     ], dim=0)
-            # )
         else:
             # use adaptation module for testing
             self.encoder(tensordict)
             self.actor_critic(tensordict)
-        tensordict.exclude("_feature", "loc", "scale", inplace=True)
+        tensordict.exclude("_feature", "_obs", "loc", "scale", inplace=True)
         return tensordict
 
     def train_op(self, tensordict: TensorDict):
+        start = time.perf_counter()
+
         next_tensordict = tensordict["next"]
         with torch.no_grad():
             self.encoder_priv(next_tensordict)
@@ -228,18 +234,17 @@ class PPODualPolicy(TensorDictModuleBase):
             for minibatch in batch:
                 infos.append(self._update(minibatch))
         
+        end = time.perf_counter()
         infos: TensorDict = torch.stack(infos).to_tensordict()
-        infos = infos.apply(torch.mean, batch_size=[])
-        return {k: v.item() for k, v in infos.items()}
+        infos = {k: torch.mean(v).item() for k, v in infos.items()}
+        infos["training_time"] = end - start
+        return infos
 
     def _update(self, tensordict: TensorDict):
         tensordict_priv = self.encoder_priv(tensordict.clone())
         tensordict_adapt = self.encoder(tensordict.clone())
 
-        dist_adapt = self.actor.get_dist(tensordict_adapt)
-
-        dist_params = self.actor.get_dist_params(tensordict_priv)
-        dist_target = self.actor.build_dist_from_params(dist_params)        
+        dist_target = self.actor.get_dist(tensordict_priv)
         log_probs = dist_target.log_prob(tensordict[("agents", "action")])
         entropy = dist_target.entropy()
 
@@ -261,35 +266,63 @@ class PPODualPolicy(TensorDictModuleBase):
         value_loss = torch.max(value_loss_original, value_loss_clipped)
 
         loss = policy_loss + entropy_loss + value_loss
-        self.actor_opt.zero_grad()
-        self.critic_opt.zero_grad()
-        self.encoder_priv_opt.zero_grad()
+        self.actor_opt.zero_grad(set_to_none=True)
+        self.critic_opt.zero_grad(set_to_none=True)
+        self.encoder_priv_opt.zero_grad(set_to_none=True)
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.actor.parameters(), 5)
         critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 5)
         self.actor_opt.step()
         self.critic_opt.step()
         self.encoder_priv_opt.step()
-
-        dist_target = self.actor.build_dist_from_params(dist_params.detach())
-        loss_adapt = (
-            D.kl_divergence(dist_adapt, dist_target).mean()
-            + F.mse_loss(self.critic(tensordict_adapt)["state_value"], b_returns)
-        )
-        self.encoder_opt.zero_grad()
-        loss_adapt.backward()
-        self.encoder_opt.step()
-
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-        return TensorDict({
+
+        info = {
             "policy_loss": policy_loss,
             "value_loss": value_loss,
-            "encoder_loss": loss_adapt,
             "entropy": entropy,
             "actor_grad_norm": actor_grad_norm,
             "critic_grad_norm": critic_grad_norm,
             "explained_var": explained_var
-        }, [])
+        }
+
+        if self.train_adaptation:
+            loss_adapt = (
+                self.adaptation_loss(tensordict_priv, tensordict_adapt)
+                + F.mse_loss(self.critic(tensordict_adapt)["state_value"], b_returns)
+            )
+            self.encoder_opt.zero_grad()
+            loss_adapt.backward()
+            self.encoder_opt.step()
+            info["adaptation_loss"] = loss_adapt
+
+        if self.train_classifier:
+            with torch.no_grad():
+                action_expert = dist_target.sample().detach()
+                action_adapt = self.actor(tensordict_adapt)[("agents", "action")].detach()
+            obs = tensordict[self.OBS_KEY]
+            pred_expert = self.classifier(torch.cat([obs, action_expert], dim=-1))
+            pred_adapt = self.classifier(torch.cat([obs, action_adapt], dim=-1))
+            classifier_loss = (
+                F.binary_cross_entropy_with_logits(pred_expert, torch.ones_like(pred_expert))
+                + F.binary_cross_entropy_with_logits(pred_adapt, torch.zeros_like(pred_adapt))
+            )
+            self.classifier_opt.zero_grad()
+            classifier_loss.backward()
+            self.classifier_opt.step()
+            info["classifier_loss"] = classifier_loss
+
+        return TensorDict(info, [])
+
+    def feature_mse(self, tensordict_priv: TensorDict, tensordict_adapt: TensorDict):
+        loss = F.mse_loss(tensordict_adapt["_feature"], tensordict_priv["_feature"].detach())
+        return loss
+    
+    def action_kl(self, tensordict_priv: TensorDict, tensordict_adapt: TensorDict):
+        dist_target = self.actor.build_dist_from_params(tensordict_priv.detach())
+        dist_adapt = self.actor.get_dist(tensordict_adapt)
+        loss = D.kl_divergence(dist_adapt, dist_target).mean()
+        return loss
 
 
 def make_batch(tensordict: TensorDict, num_minibatches: int):

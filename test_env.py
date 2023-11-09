@@ -39,6 +39,14 @@ def main(cfg):
 
     # setup environment
     UNITREE_A1_ENV.scene.num_envs = cfg.task.env.num_envs
+    UNITREE_A1_ENV.sim.physx.gpu_max_rigid_contact_count = 2**21
+    UNITREE_A1_ENV.sim.physx.gpu_max_rigid_patch_count = 2**21
+    UNITREE_A1_ENV.sim.physx.gpu_found_lost_pairs_capacity = 2**20
+    UNITREE_A1_ENV.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**22
+    UNITREE_A1_ENV.sim.physx.gpu_total_aggregate_pairs_capacity = 2**19
+    UNITREE_A1_ENV.sim.physx.gpu_collision_stack_size = 2**24
+    UNITREE_A1_ENV.sim.physx.gpu_heap_capacity = 2**24
+
     base_env = LocomotionEnv(UNITREE_A1_ENV)
     transform = InitTracker()
     env = TransformedEnv(base_env, transform)
@@ -144,7 +152,7 @@ def main(cfg):
             "rollout_fps": collector._fps
         }
         pbar.set_postfix(info)
-        episode_stats.add(data.to_tensordict())
+        episode_stats.add(data)
 
         if len(episode_stats) >= base_env.num_envs:
             stats = {

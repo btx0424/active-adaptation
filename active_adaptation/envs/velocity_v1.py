@@ -192,7 +192,7 @@ class LocomotionEnv(Env):
     
     @observation_func
     def joint_pos(self):
-        return self.robot.data.joint_pos
+        return random_noise(self.robot.data.joint_pos, 0.05)
     
     @observation_func
     def joint_vel(self):
@@ -274,6 +274,7 @@ class LocomotionEnv(Env):
         terminated = (
             (self.robot.data.root_pos_w[:, 2] <= self.target_base_height * 0.5)
             | (self.robot.data.projected_gravity_b[:, 2] >= -0.5)
+            | (self.contact_sensor.data.net_forces_w[:, 0].norm(dim=-1) > 1.)
         ).unsqueeze(1)
         return terminated
 
@@ -295,6 +296,9 @@ def random_scale(x: torch.Tensor, low: float, high: float):
 
 def random_shift(x: torch.Tensor, low: float, high: float):
     return x + x * (torch.rand_like(x) * (high - low) + low)
+
+def random_noise(x: torch.Tensor, std: float):
+    return x + torch.randn_like(x).clamp(-3., 3.) * std
 
 def sample_uniform(size, low: float, high: float, device: torch.device = "cpu"):
     return torch.rand(size, device=device) * (high - low) + low

@@ -36,26 +36,26 @@ def main():
     class SceneCfg(InteractiveSceneCfg):
         lazy_sensor_update: bool = False
 
-        # # terrain - flat terrain plane
-        # terrain = TerrainImporterCfg(
-        #     prim_path="/World/ground",
-        #     terrain_type="plane",
-        # )
-        # terrain - rough terrain
+        # terrain - flat terrain plane
         terrain = TerrainImporterCfg(
             prim_path="/World/ground",
-            terrain_type="generator",
-            terrain_generator=ROUGH_TERRAINS_CFG,
-            max_init_terrain_level=5,
-            collision_group=-1,
-            physics_material=sim_utils.RigidBodyMaterialCfg(
-                friction_combine_mode="multiply",
-                restitution_combine_mode="multiply",
-                static_friction=1.0,
-                dynamic_friction=1.0,
-            ),
-            debug_vis=False,
+            terrain_type="plane",
         )
+        # terrain - rough terrain
+        # terrain = TerrainImporterCfg(
+        #     prim_path="/World/ground",
+        #     terrain_type="generator",
+        #     terrain_generator=ROUGH_TERRAINS_CFG,
+        #     max_init_terrain_level=5,
+        #     collision_group=-1,
+        #     physics_material=sim_utils.RigidBodyMaterialCfg(
+        #         friction_combine_mode="multiply",
+        #         restitution_combine_mode="multiply",
+        #         static_friction=1.0,
+        #         dynamic_friction=1.0,
+        #     ),
+        #     debug_vis=False,
+        # )
         
         robot = UNITREE_A1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         # robot.spawn.activate_contact_sensors = ".*_calf"
@@ -83,7 +83,16 @@ def main():
         dt=0.005, 
         disable_contact_processing=True
     )
-    sim_cfg.physx.gpu_total_aggregate_pairs_capacity = 2**22
+    sim_cfg.physx.gpu_max_rigid_contact_count = 2**21
+    sim_cfg.physx.gpu_max_rigid_patch_count = 2**15
+    sim_cfg.physx.gpu_found_lost_pairs_capacity = 2**20
+    sim_cfg.physx.gpu_found_lost_aggregate_pairs_capacity = 2**22
+    sim_cfg.physx.gpu_total_aggregate_pairs_capacity = 2**19
+    sim_cfg.physx.gpu_collision_stack_size = 2**24
+    sim_cfg.physx.gpu_max_soft_body_contacts = 0
+    sim_cfg.physx.gpu_max_particle_contacts = 0
+    sim_cfg.physx.gpu_heap_capacity = 2**24
+    sim_cfg.physx.gpu_temp_buffer_capacity = 2**22
     sim = SimulationContext(sim_cfg)
     
     # use viewport camera for rendering
@@ -92,7 +101,7 @@ def main():
     rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cpu")
     rgb_annotator.attach([render_product])
 
-    scene_cfg = SceneCfg(num_envs=64, env_spacing=2.5)
+    scene_cfg = SceneCfg(num_envs=2048, env_spacing=2.5)
     scene = InteractiveScene(scene_cfg)
     SimulationContext.set_camera_view(
         eye=torch.tensor([5., 5., 5.]),
@@ -151,9 +160,9 @@ def main():
                 feet_pos.reshape(-1, 3),
                 contact_forces.data.net_forces_w[:, calf_indices].reshape(-1, 3),
             )
-            rgb_data = rgb_annotator.get_data()
-            rgb_data = np.frombuffer(rgb_data, dtype=np.uint8).reshape(rgb_data.shape)
-            frames.append(rgb_data[:, :, :3])
+            # rgb_data = rgb_annotator.get_data()
+            # rgb_data = np.frombuffer(rgb_data, dtype=np.uint8).reshape(rgb_data.shape)
+            # frames.append(rgb_data[:, :, :3])
         
         if (t + 1) % 500 == 0:
            reset()
