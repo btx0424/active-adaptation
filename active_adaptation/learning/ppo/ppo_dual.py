@@ -49,11 +49,13 @@ class PPOConfig:
     ppo_epochs: int = 4
     num_minibatches: int = 16
 
+    version: str = "v0"
     adaptation_loss: str = "feature_mse"
     checkpoint_path: Union[str, None] = None
 
 cs = ConfigStore.instance()
-cs.store("ppo_dual", node=PPOConfig, group="algo")
+cs.store("ppo_dual_v0", node=PPOConfig(version="v0"), group="algo")
+cs.store("ppo_dual_v1", node=PPOConfig(version="v1"), group="algo")
 
 
 class TConv(nn.Module):
@@ -103,13 +105,57 @@ class PPODualPolicy(TensorDictModuleBase):
         # observation_dim = observation_spec[self.OBS_KEY].shape[-1]
         # observation_priv_dim = observation_spec[self.OBS_PRIV_KEY].shape[-1]
         
-        self.encoder = TensorDictModule(
+        if self.cfg.version == "v0":
+            self.make_models_v0()
+        elif self.cfg.version == "v1":
+            self.make_models_v1()
+
+        self.actor_critic = TensorDictSequential(self.actor, self.critic)
+        self.classifier = nn.Sequential(
+            make_mlp([256, 256]),
+            nn.LazyLinear(1) 
+        ).to(self.device)
+
+        self.encoder(fake_input)
+        self.adapt(fake_input)
+        self.actor_critic(fake_input)
+        
+        if self.cfg.checkpoint_path is not None:
+            state_dict = torch.load(self.cfg.checkpoint_path)
+            self.load_state_dict(state_dict, strict=False)
+        else:
+            def init_(module):
+                if isinstance(module, nn.Linear):
+                    nn.init.orthogonal_(module.weight, 0.01)
+                    nn.init.constant_(module.bias, 0.)
+            
+            self.actor.apply(init_)
+            self.critic.apply(init_)
+            self.encoder.apply(init_)
+
+        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
+        self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=5e-4)
+        self.adapt_opt = torch.optim.Adam(self.adapt.parameters(), lr=5e-4)
+        self.encoder_opt = torch.optim.Adam(self.encoder.parameters(), lr=5e-4)
+        self.classifier_opt = torch.optim.Adam(self.classifier.parameters(), lr=5e-4)
+        self.value_norm = ValueNorm1(input_shape=1).to(self.device)
+
+        self.adaptation_loss = {
+            "feature_mse": self.feature_mse, 
+            "action_kl": self.action_kl
+        }[cfg.adaptation_loss]
+
+        self.train_adaptation = True
+        self.train_classifier = True
+    
+    def make_models_v0(self):
+        self.adapt = TensorDictModule(
             TConv(256),
             [self.OBS_HIST_KEY], 
             ["_feature"]
         ).to(self.device)
 
-        self.encoder_priv = TensorDictSequential(
+        self.encoder = TensorDictSequential(
             CatTensors([self.OBS_KEY, self.OBS_PRIV_KEY], "_obs", del_keys=False),
             TensorDictModule(
                 make_mlp([512, 256], nn.Mish),
@@ -135,72 +181,55 @@ class PPODualPolicy(TensorDictModuleBase):
             ["_feature"], ["state_value"]
         ).to(self.device)
 
-        self.actor_critic = TensorDictSequential(self.actor, self.critic)
-        self.classifier = nn.Sequential(
-            make_mlp([256, 256]),
-            nn.LazyLinear(1) 
+    def make_models_v1(self):
+        condition = lambda: CatTensors(["_context", "_feature"], "_feature", del_keys=False)
+        
+        self.encoder = TensorDictModule(
+            make_mlp([256, 256], nn.Mish),
+            [self.OBS_PRIV_KEY],
+            ["_context"]
         ).to(self.device)
 
-        self.encoder_priv(fake_input)
-        self.encoder(fake_input)
-        self.actor_critic(fake_input)
-        
-        if self.cfg.checkpoint_path is not None:
-            state_dict = torch.load(self.cfg.checkpoint_path)
-            self.load_state_dict(state_dict, strict=False)
-        else:
-            def init_(module):
-                if isinstance(module, nn.Linear):
-                    nn.init.orthogonal_(module.weight, 0.01)
-                    nn.init.constant_(module.bias, 0.)
-            
-            self.actor.apply(init_)
-            self.critic.apply(init_)
-            self.encoder_priv.apply(init_)
-
-        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
-        self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=5e-4)
-        self.encoder_priv_opt = torch.optim.Adam(self.encoder_priv.parameters(), lr=5e-4)
-        self.encoder_opt = torch.optim.Adam(self.encoder.parameters(), lr=5e-4)
-        self.classifier_opt = torch.optim.Adam(self.classifier.parameters(), lr=5e-4)
-        self.value_norm = ValueNorm1(input_shape=1).to(self.device)
-
-        self.adaptation_loss = {
-            "feature_mse": self.feature_mse, 
-            "action_kl": self.action_kl
-        }[cfg.adaptation_loss]
-
-        self.train_adaptation = True
-        self.train_classifier = True
-    
-    def make_models(self):
-        TensorDictModule(
-
-            [self.OBS_PRIV_KEY],
-            ["_context_priv"]
-        )
-        TensorDictModule(
-
-            [self.OBS_KEY],
-            ["_feature_obs"]
-        )
-        CatTensors(["_context_priv", "_feature_obs"], "_feature", del_keys=False)
-
-        TensorDictModule(
-
+        self.adapt = TensorDictModule(
+            TConv(256, nn.Mish),
             [self.OBS_HIST_KEY],
-            ["_context_adapt"]
-        )
+            ["_context"]
+        ).to(self.device)
 
-    
+        self.actor = ProbabilisticActor(
+            TensorDictSequential(
+                TensorDictModule(make_mlp([256, 256], nn.Mish), [self.OBS_KEY], ["_feature"]),
+                condition(),
+                TensorDictModule(
+                    nn.Sequential(make_mlp([256], nn.Mish), Actor(self.action_dim)),
+                    ["_feature"], 
+                    ["loc", "scale"]
+                )
+            ),
+            in_keys=["loc", "scale"],
+            out_keys=[("agents", "action")],
+            distribution_class=IndependentNormal,
+            return_log_prob=True
+        ).to(self.device)
+
+        self.critic = TensorDictSequential(
+            TensorDictModule(make_mlp([256, 256], nn.Mish), [self.OBS_KEY], ["_feature"]),
+            condition(),
+            TensorDictModule(
+               nn.Sequential(make_mlp([256], nn.Mish), nn.LazyLinear(1)),
+                ["_feature"], 
+                ["state_value"]
+            )
+        ).to(self.device)
+
     def __call__(self, tensordict: TensorDict):
         if self.training:
             td_priv = tensordict
-            self.encoder_priv(td_priv)
+            self.encoder(td_priv)
             self.actor_critic(td_priv)
         else:
             # use adaptation module for testing
-            self.encoder(tensordict)
+            self.adapt(tensordict)
             self.actor_critic(tensordict)
         tensordict.exclude("_feature", "_obs", "loc", "scale", inplace=True)
         return tensordict
@@ -210,7 +239,7 @@ class PPODualPolicy(TensorDictModuleBase):
 
         next_tensordict = tensordict["next"]
         with torch.no_grad():
-            self.encoder_priv(next_tensordict)
+            self.encoder(next_tensordict)
             next_values = self.critic(next_tensordict)["state_value"]
         rewards = tensordict[("next", "agents", "reward")]
         dones = tensordict[("next", "terminated")]
@@ -241,8 +270,8 @@ class PPODualPolicy(TensorDictModuleBase):
         return infos
 
     def _update(self, tensordict: TensorDict):
-        tensordict_priv = self.encoder_priv(tensordict.clone())
-        tensordict_adapt = self.encoder(tensordict.clone())
+        tensordict_priv = self.encoder(tensordict.clone())
+        tensordict_adapt = self.adapt(tensordict.clone())
 
         dist_target = self.actor.get_dist(tensordict_priv)
         log_probs = dist_target.log_prob(tensordict[("agents", "action")])
@@ -268,13 +297,13 @@ class PPODualPolicy(TensorDictModuleBase):
         loss = policy_loss + entropy_loss + value_loss
         self.actor_opt.zero_grad(set_to_none=True)
         self.critic_opt.zero_grad(set_to_none=True)
-        self.encoder_priv_opt.zero_grad(set_to_none=True)
+        self.encoder.zero_grad(set_to_none=True)
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.actor.parameters(), 5)
         critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 5)
         self.actor_opt.step()
         self.critic_opt.step()
-        self.encoder_priv_opt.step()
+        self.encoder_opt.step()
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
 
         info = {
