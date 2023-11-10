@@ -181,6 +181,8 @@ class PPODualPolicy(TensorDictModuleBase):
             ["_feature"], ["state_value"]
         ).to(self.device)
 
+        self.ADAPT_KEY = "_feature"
+
     def make_models_v1(self):
         condition = lambda: CatTensors(["_context", "_feature"], "_feature", del_keys=False)
         
@@ -221,6 +223,8 @@ class PPODualPolicy(TensorDictModuleBase):
                 ["state_value"]
             )
         ).to(self.device)
+
+        self.ADAPT_KEY = "_context"
 
     def __call__(self, tensordict: TensorDict):
         if self.training:
@@ -320,9 +324,9 @@ class PPODualPolicy(TensorDictModuleBase):
                 self.adaptation_loss(tensordict_priv, tensordict_adapt)
                 + F.mse_loss(self.critic(tensordict_adapt)["state_value"], b_returns)
             )
-            self.encoder_opt.zero_grad()
+            self.adapt_opt.zero_grad()
             loss_adapt.backward()
-            self.encoder_opt.step()
+            self.adapt_opt.step()
             info["adaptation_loss"] = loss_adapt
 
         if self.train_classifier:
@@ -344,7 +348,7 @@ class PPODualPolicy(TensorDictModuleBase):
         return TensorDict(info, [])
 
     def feature_mse(self, tensordict_priv: TensorDict, tensordict_adapt: TensorDict):
-        loss = F.mse_loss(tensordict_adapt["_feature"], tensordict_priv["_feature"].detach())
+        loss = F.mse_loss(tensordict_adapt[self.ADAPT_KEY], tensordict_priv[self.ADAPT_KEY].detach())
         return loss
     
     def action_kl(self, tensordict_priv: TensorDict, tensordict_adapt: TensorDict):
