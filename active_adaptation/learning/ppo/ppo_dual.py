@@ -147,6 +147,7 @@ class PPODualPolicy(TensorDictModuleBase):
 
         self.train_adaptation = True
         self.train_classifier = True
+        self.adapt_ratio = 0.
     
     def make_models_v0(self):
         self.adapt = TensorDictModule(
@@ -228,9 +229,24 @@ class PPODualPolicy(TensorDictModuleBase):
 
     def __call__(self, tensordict: TensorDict):
         if self.training:
-            td_priv = tensordict
-            self.encoder(td_priv)
-            self.actor_critic(td_priv)
+            n_adapt = int(self.adapt_ratio * tensordict.shape[0])
+            n_priv = tensordict.shape[0] - n_adapt
+            if n_adapt > 0:
+                td_priv, td_adapt = tensordict.split([n_priv, n_adapt])
+                self.actor_critic(self.encoder(td_priv))
+                self.actor_critic(self.adapt(td_adapt))
+                tensordict[("agents", "action")] = torch.cat([
+                    td_priv[("agents", "action")], td_adapt[("agents", "action")]
+                ], dim=0)
+                tensordict["sample_log_prob"] = torch.cat([
+                    td_priv["sample_log_prob"], td_adapt["sample_log_prob"]
+                ], dim=0)
+                tensordict["state_value"] = torch.cat([
+                    td_priv["state_value"], td_adapt["state_value"]
+                ], dim=0)
+            else:
+                self.actor_critic(self.encoder(tensordict))
+            tensordict.set("is_adapt", torch.cat([torch.zeros(n_priv), torch.ones(n_adapt)]))
         else:
             # use adaptation module for testing
             self.adapt(tensordict)
@@ -276,7 +292,9 @@ class PPODualPolicy(TensorDictModuleBase):
     def _update(self, tensordict: TensorDict):
         tensordict_priv = self.encoder(tensordict.clone())
         tensordict_adapt = self.adapt(tensordict.clone())
+        is_adapt = tensordict["is_adapt"]
 
+        # torch.where(is_adapt, tensordict_adapt, tensordict_priv)
         dist_target = self.actor.get_dist(tensordict_priv)
         log_probs = dist_target.log_prob(tensordict[("agents", "action")])
         entropy = dist_target.entropy()
@@ -332,7 +350,8 @@ class PPODualPolicy(TensorDictModuleBase):
         if self.train_classifier:
             with torch.no_grad():
                 action_expert = dist_target.sample().detach()
-                action_adapt = self.actor(tensordict_adapt)[("agents", "action")].detach()
+                action_adapt = self.actor.build_dist_from_params(
+                    self.actor.get_dist_params(tensordict_adapt.detach())).sample()
             obs = tensordict[self.OBS_KEY]
             pred_expert = self.classifier(torch.cat([obs, action_expert], dim=-1))
             pred_adapt = self.classifier(torch.cat([obs, action_adapt], dim=-1))

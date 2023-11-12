@@ -168,6 +168,7 @@ def main(cfg):
             info.update(evaluate())
             env.train()
             policy.train()
+            policy.adapt_ratio = 0.05
 
         run.log(info)
         print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, float)}))
