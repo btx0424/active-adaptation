@@ -216,8 +216,15 @@ class LocomotionEnv(Env):
     
     @observation_func
     def contact_forces(self):
-        return self.contact_sensor.data.net_forces_w
+        forces = self.contact_sensor.data.net_forces_w[:, self.calf_indices]
+        forces_norm = forces.norm(dim=-1, keepdim=True)
+        return (forces / forces_norm.clamp_min(1e-6) * symlog(forces_norm)).reshape(self.num_envs, -1)
     
+    @observation_func
+    def contact_indicator(self):
+        forces = self.contact_sensor.data.net_forces_w_history.mean(dim=1)
+        return (forces.norm(dim=-1) > 1.).float()
+
     @observation_func
     def feet_pos_b(self):
         feet_pos_b = quat_rotate_inverse(
@@ -281,9 +288,9 @@ class LocomotionEnv(Env):
     def motor_params(self, env_ids: torch.Tensor):
         if not hasattr(self, "base_legs"):
             self.base_legs = self.robot.actuators["base_legs"]
-            self.base_legs.default_stifness = self.base_legs.stiffness.clone()
+            self.base_legs.default_stiffness = self.base_legs.stiffness.clone()
             self.base_legs.default_damping = self.base_legs.damping.clone()
-        self.base_legs.stiffness[env_ids] = random_shift(self.base_legs.default_stifness[env_ids], -.2, .2)
+        self.base_legs.stiffness[env_ids] = random_shift(self.base_legs.default_stiffness[env_ids], -.2, .2)
         self.base_legs.damping[env_ids] = random_shift(self.base_legs.default_damping[env_ids], -.2, .2)
 
     def body_masses(self):
@@ -311,3 +318,6 @@ def noarmalize(x: torch.Tensor):
 
 def dot(a: torch.Tensor, b: torch.Tensor):
     return (a * b).sum(dim=-1, keepdim=True)
+
+def symlog(x: torch.Tensor):
+    return x.sign() * torch.log(x.abs() + 1.)

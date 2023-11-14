@@ -143,6 +143,8 @@ UNITREE_A1_ENV = EnvCfg(
             "joint_vel",
             "root_linvel_b",
             "feet_pos_b",
+            # "contact_forces",
+            "contact_indicator",
         ]
     }
 )

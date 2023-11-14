@@ -1,4 +1,5 @@
 import os
+import copy
 from omni.isaac.orbit.assets.config import ArticulationCfg, UNITREE_A1_CFG, ANYMAL_C_CFG
 from .cassie import CASSIE_CFG
 
@@ -28,5 +29,5 @@ def spawn(prim_path, cfg, translation, orientation):
         bind_physics_material(prim_path + "/" + body_name, material.prim_path)
     return prim
 
-
-# UNITREE_A1_CFG.spawn.func = spawn
+UNITREE_A1_CFG = copy.deepcopy(UNITREE_A1_CFG)
+# UNITREE_A1_CFG.spawn.articulation_props.enable_self_collisions = True
