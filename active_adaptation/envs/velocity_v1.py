@@ -74,7 +74,7 @@ class LocomotionEnv(Env):
         self._observation_h = (
             obs[("agents", "observation")]
             .unsqueeze(-1)
-            .expand(self.num_envs, -1, 32)
+            .expand(self.num_envs, -1, self.cfg.history_length)
             .clone()
             .zero_()
         )

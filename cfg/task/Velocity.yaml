@@ -33,6 +33,7 @@ action_scaling: 1.0
 command_interval: 250
 command_speed: [0.4, 2.4]
 time_encoding: false
+history_length: 32
 
 priv_obs: 
   - base_mass

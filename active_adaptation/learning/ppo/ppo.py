@@ -38,7 +38,7 @@ from typing import Union
 
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
-from .common import GAE, make_mlp
+from .common import Actor, GAE, make_mlp
 
 @dataclass
 class PPOConfig:
@@ -56,18 +56,6 @@ cs = ConfigStore.instance()
 cs.store("ppo", node=PPOConfig, group="algo")
 cs.store("ppo_priv", node=PPOConfig(priv_actor=True, priv_critic=True), group="algo")
 cs.store("ppo_priv_critic", node=PPOConfig(priv_critic=True), group="algo")
-
-
-class Actor(nn.Module):
-    def __init__(self, action_dim: int) -> None:
-        super().__init__()
-        self.actor_mean = nn.LazyLinear(action_dim)
-        self.actor_std = nn.Parameter(torch.zeros(action_dim))
-    
-    def forward(self, features: torch.Tensor):
-        loc = self.actor_mean(features)
-        scale = torch.exp(self.actor_std).expand_as(loc)
-        return loc, scale
 
 
 class PPOPolicy(TensorDictModuleBase):
@@ -112,7 +100,7 @@ class PPOPolicy(TensorDictModuleBase):
                 nn.Sequential(
                     # nn.LayerNorm(observation_dim),
                     # nn.InstanceNorm1d(observation_dim),
-                    make_mlp([512, 256, 256]), 
+                    make_mlp([512, 256, 256], nn.Mish), 
                     Actor(self.action_dim)
                 ),
                 [("agents", "observation")], ["loc", "scale"]
@@ -144,7 +132,7 @@ class PPOPolicy(TensorDictModuleBase):
                 nn.Sequential(
                     # nn.LayerNorm(observation_dim),
                     # nn.InstanceNorm1d(observation_dim),
-                    make_mlp([512, 256, 256]), 
+                    make_mlp([512, 256, 256], nn.Mish), 
                     nn.LazyLinear(1)
                 ),
                 [("agents", "observation")], ["state_value"]

@@ -98,6 +98,7 @@ class EnvCfg:
     max_episode_length: int = 800
     decimation: int  = 2
     target_base_height: float = MISSING
+    history_length: int = 32
 
     viewer: ViewerCfg = ViewerCfg()
     scene: InteractiveSceneCfg = MISSING
@@ -147,7 +148,7 @@ UNITREE_A1_ENV = EnvCfg(
             "feet_pos_b",
             # "contact_forces",
             # "contact_indicator",
-            "applied_torques"
+            # "applied_torques"
         ]
     }
 )

@@ -48,6 +48,8 @@ def main(cfg):
     UNITREE_A1_ENV.sim.physx.gpu_collision_stack_size = 2**24
     UNITREE_A1_ENV.sim.physx.gpu_heap_capacity = 2**24
 
+    UNITREE_A1_ENV.history_length = cfg.task.history_length
+
     base_env = LocomotionEnv(UNITREE_A1_ENV)
     transform = InitTracker()
     env = TransformedEnv(base_env, transform)
@@ -176,6 +178,7 @@ def main(cfg):
 
     
     info = evaluate()
+    info["env_frames"] = collector._frames
     run.log(info)
 
     try:
