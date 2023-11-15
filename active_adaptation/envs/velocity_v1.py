@@ -59,6 +59,7 @@ class LocomotionEnv(Env):
             self._actions = torch.zeros(self.num_envs, 12)
             self._prev_actions = torch.zeros(self.num_envs, 12)
             self._feet_pos = torch.zeros(self.num_envs, 4, 3)
+            self._feet_vel = torch.zeros(self.num_envs, 4, 3)
 
         obs = super()._compute_observation()
         reward = self._compute_reward()
@@ -144,10 +145,15 @@ class LocomotionEnv(Env):
             * current_target_speed
             * (pos_error_xy > 0.1).float()
         )
-        self._feet_pos[:] = (
+        feet_pos = (
             self.robot.data.body_pos_w[:, self.calf_indices]
             + quat_rotate(self.robot.data.body_quat_w[:, self.calf_indices], self.FEET_OFFSET)
         )
+        # avoid problems upon reset
+        prev_feet_pos = torch.where(self.episode_length_buf.reshape(-1, 1, 1) > 0, self._feet_pos, feet_pos)
+        self._feet_vel[:] = (feet_pos - prev_feet_pos) / self.step_dt
+        self._feet_pos[:] = feet_pos
+
         obs = super()._compute_observation()
         self._observation_h[:, :, :-1] = self._observation_h[:, :, 1:]
         self._observation_h[:, :, -1] = obs[("agents", "observation")]
@@ -199,6 +205,10 @@ class LocomotionEnv(Env):
         return self.robot.data.joint_vel
     
     @observation_func
+    def joint_acc(self):
+        return self.robot.data.joint_acc / 30.
+
+    @observation_func
     def projected_gravity_b(self):
         return self.robot.data.projected_gravity_b
     
@@ -216,13 +226,13 @@ class LocomotionEnv(Env):
     
     @observation_func
     def contact_forces(self):
-        forces = self.contact_sensor.data.net_forces_w[:, self.calf_indices]
+        forces = self.contact_sensor.data.net_forces_w_history[:, :, self.calf_indices].mean(dim=1)
         forces_norm = forces.norm(dim=-1, keepdim=True)
         return (forces / forces_norm.clamp_min(1e-6) * symlog(forces_norm)).reshape(self.num_envs, -1)
     
     @observation_func
     def contact_indicator(self):
-        forces = self.contact_sensor.data.net_forces_w_history.mean(dim=1)
+        forces = self.contact_sensor.data.net_forces_w_history[:, :, self.calf_indices].mean(dim=1)
         return (forces.norm(dim=-1) > 1.).float()
 
     @observation_func
@@ -276,6 +286,11 @@ class LocomotionEnv(Env):
     def orientation(self):
         return self.robot.data.projected_gravity_b[:, [2]].square()
     
+    @reward_func
+    def feet_slip(self):
+        i = self.contact_indicator()
+        return - (i * self._feet_vel.norm(dim=-1)).sum(dim=1, keepdim=True)
+    
     @termination_func
     def crash(self):
         terminated = (
@@ -319,5 +334,5 @@ def noarmalize(x: torch.Tensor):
 def dot(a: torch.Tensor, b: torch.Tensor):
     return (a * b).sum(dim=-1, keepdim=True)
 
-def symlog(x: torch.Tensor):
-    return x.sign() * torch.log(x.abs() + 1.)
+def symlog(x: torch.Tensor, a: float=1.):
+    return x.sign() * torch.log(x.abs() * a + 1.) / a

@@ -44,7 +44,7 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
     env_spacing: float = 2.5
 
     robot: ArticulationCfg = MISSING
-    contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
+    contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=2, track_air_time=True)
     
     light: AssetBaseCfg = AssetBaseCfg(
         prim_path="/World/light",
@@ -96,13 +96,13 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
 class EnvCfg:
 
     max_episode_length: int = 800
-    decimation: int  = 4
+    decimation: int  = 2
     target_base_height: float = MISSING
 
     viewer: ViewerCfg = ViewerCfg()
     scene: InteractiveSceneCfg = MISSING
 
-    sim = sim_utils.SimulationCfg(dt=0.005, disable_contact_processing=True)
+    sim = sim_utils.SimulationCfg(dt=0.01, disable_contact_processing=True)
     
     reward: Dict[str, float] = MISSING
     observation: Dict[str, List] = MISSING
@@ -119,12 +119,13 @@ UNITREE_A1_ENV = EnvCfg(
     reward = {
         "linvel": 2.0,
         "heading": 0.5,
-        "base_height": 0.5,
+        # "base_height": 0.5,
         "energy": 0.0005,
         "joint_acc_l2": 2.5e-7,
         "joint_torques_l2": 2.5e-6,
         "action_rate_l2": 0.01,
-        "orientation": 0.1
+        "orientation": 0.1,
+        "feet_slip": 0.02,
     },
     observation = {
         ("agents", "observation"): [
@@ -134,17 +135,19 @@ UNITREE_A1_ENV = EnvCfg(
             "projected_gravity_b",
             "joint_pos",
             "prev_actions",
-            # privileged
+            # # privileged
             # "joint_vel",
             # "root_linvel_b",
             # "feet_pos_b",
         ],
         ("agents", "observation_priv"): [
             "joint_vel",
+            # "joint_acc",
             "root_linvel_b",
             "feet_pos_b",
             # "contact_forces",
-            "contact_indicator",
+            # "contact_indicator",
+            "applied_torques"
         ]
     }
 )

@@ -268,6 +268,11 @@ class PPODualPolicy(TensorDictModuleBase):
 
         next_tensordict = tensordict["next"]
         with torch.no_grad():
+            # next_tensordict = torch.where(
+            #     tensordict["is_adapt"],
+            #     self.adapt(next_tensordict),
+            #     self.encoder(next_tensordict)
+            # )
             self.encoder(next_tensordict)
             next_values = self.critic(next_tensordict)["state_value"]
         rewards = tensordict[("next", "agents", "reward")]
