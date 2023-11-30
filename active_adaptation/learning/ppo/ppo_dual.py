@@ -241,15 +241,8 @@ class PPODualPolicy(TensorDictModuleBase):
                 td_priv, td_adapt = tensordict.split([n_priv, n_adapt])
                 self.actor_critic(self.encoder(td_priv))
                 self.actor_critic(self.adapt(td_adapt))
-                tensordict[("agents", "action")] = torch.cat([
-                    td_priv[("agents", "action")], td_adapt[("agents", "action")]
-                ], dim=0)
-                tensordict["sample_log_prob"] = torch.cat([
-                    td_priv["sample_log_prob"], td_adapt["sample_log_prob"]
-                ], dim=0)
-                tensordict["state_value"] = torch.cat([
-                    td_priv["state_value"], td_adapt["state_value"]
-                ], dim=0)
+                for key in (("agents", "action"), "sample_log_prob", "state_value"):
+                    tensordict[key] = torch.cat([td_priv[key], td_adapt[key]])
             else:
                 self.actor_critic(self.encoder(tensordict))
             tensordict.set(

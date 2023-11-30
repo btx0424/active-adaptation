@@ -32,7 +32,7 @@ import einops
 
 from hydra.core.config_store import ConfigStore
 from tensordict import TensorDict
-from tensordict.nn import TensorDictModule, TensorDictSequential
+from tensordict.nn import TensorDictModule, TensorDictSequential, TensorDictModuleBase
 
 from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuousTensorSpec
 from torchrl.envs import CatTensors, TensorDictPrimer
@@ -134,7 +134,7 @@ cs.store("ppo_gru", node=PPOConfig, group="algo")
 cs.store("ppo_lstm", node=PPOConfig(rnn="lstm"), group="algo")
 
 
-class PPORNNPolicy:
+class PPORNNPolicy(TensorDictModuleBase):
     def __init__(
         self,
         cfg: PPOConfig,
@@ -143,6 +143,7 @@ class PPORNNPolicy:
         reward_spec: TensorSpec,
         device,
     ):
+        super().__init__()
         self.cfg = cfg
         self.device = device
 
