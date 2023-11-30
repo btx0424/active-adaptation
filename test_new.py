@@ -9,7 +9,7 @@ from omegaconf import OmegaConf
 
 def main():
     # launch omniverse app
-    app_launcher = AppLauncher({"headless": True})
+    app_launcher = AppLauncher({"headless": False})
     simulation_app = app_launcher.app
 
     from omni.isaac.orbit.sim import SimulationContext
@@ -123,7 +123,7 @@ def main():
         .reshape(1, 1, 3)
     )
 
-    init_root_state = robot.data.default_root_state_w.clone()
+    init_root_state = robot.data.default_root_state.clone()
     init_root_state[..., :3] += scene._default_env_origins
     init_joint_pos = robot.data.default_joint_pos.clone()
     init_joint_vel = robot.data.default_joint_vel.clone()

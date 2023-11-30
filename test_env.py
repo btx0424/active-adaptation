@@ -30,7 +30,7 @@ policies = {
 def main(cfg):
     OmegaConf.resolve(cfg)
 
-    app_launcher = AppLauncher({"headless": True, "offscreen_render": True})
+    app_launcher = AppLauncher({"headless": cfg.headless, "offscreen_render": True})
     simulation_app = app_launcher.app
 
     from active_adaptation.envs import LocomotionEnv

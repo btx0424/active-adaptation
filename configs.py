@@ -16,26 +16,54 @@ import omni.isaac.orbit.sim as sim_utils
 from dataclasses import MISSING
 from typing import Dict, List
 
-ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
-    seed=0,
-    size=(8.0, 8.0),
-    border_width=20.0,
-    num_rows=20,
-    num_cols=20,
-    horizontal_scale=0.1,
-    vertical_scale=0.005,
-    slope_threshold=0.75,
-    difficulty_choices=(0.5, 0.75, 0.9),
-    use_cache=False,
-    sub_terrains={
-        "random_rough_hard": HfRandomUniformTerrainCfg(
-            proportion=0.5, noise_range=(0.02, 0.10), noise_step=0.02, border_width=0.4
-        ),
-        "random_rough_easy": HfRandomUniformTerrainCfg(
-            proportion=0.5, noise_range=(0.01, 0.05), noise_step=0.01, border_width=0.4
-        ),
-    },
+
+ROUGH_TERRAIN_CFG = TerrainImporterCfg(
+    prim_path="/World/ground",
+    terrain_type="generator",
+    terrain_generator=TerrainGeneratorCfg(
+        seed=0,
+        size=(8.0, 8.0),
+        border_width=20.0,
+        num_rows=20,
+        num_cols=20,
+        horizontal_scale=0.1,
+        vertical_scale=0.005,
+        slope_threshold=0.75,
+        difficulty_choices=(0.5, 0.75, 0.9),
+        use_cache=False,
+        sub_terrains={
+            "random_rough_hard": HfRandomUniformTerrainCfg(
+                proportion=0.5, noise_range=(0.02, 0.10), noise_step=0.02, border_width=0.4
+            ),
+            "random_rough_easy": HfRandomUniformTerrainCfg(
+                proportion=0.5, noise_range=(0.01, 0.05), noise_step=0.01, border_width=0.4
+            ),
+        },
+    ),
+    max_init_terrain_level=5,
+    collision_group=-1,
+    physics_material=sim_utils.RigidBodyMaterialCfg(
+        friction_combine_mode="multiply",
+        restitution_combine_mode="multiply",
+        static_friction=1.0,
+        dynamic_friction=1.0,
+    ),
+    debug_vis=False,
 )
+
+
+FLAT_TERRAIN_CFG = TerrainImporterCfg(
+    prim_path="/World/ground",
+    terrain_type="plane",
+    physics_material = sim_utils.RigidBodyMaterialCfg(
+        friction_combine_mode="multiply",
+        restitution_combine_mode="multiply",
+        static_friction=1.0,
+        dynamic_friction=1.0,
+        improve_patch_friction=True
+    ),
+)
+
 
 @configclass
 class LocomotionSceneCfg(InteractiveSceneCfg):
@@ -54,32 +82,7 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
         ),
     )
 
-    # terrain = TerrainImporterCfg(
-    #     prim_path="/World/ground",
-    #     terrain_type="plane",
-    #     physics_material = sim_utils.RigidBodyMaterialCfg(
-    #         friction_combine_mode="multiply",
-    #         restitution_combine_mode="multiply",
-    #         static_friction=1.0,
-    #         dynamic_friction=1.0,
-    #         improve_patch_friction=True
-    #     ),
-    # )
-
-    terrain = TerrainImporterCfg(
-        prim_path="/World/ground",
-        terrain_type="generator",
-        terrain_generator=ROUGH_TERRAINS_CFG,
-        max_init_terrain_level=5,
-        collision_group=-1,
-        physics_material=sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="multiply",
-            restitution_combine_mode="multiply",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-        ),
-        debug_vis=False,
-    )
+    terrain: TerrainImporterCfg = MISSING
 
     # height_scanner = RayCasterCfg(
     #     prim_path="{ENV_REGEX_NS}/Robot/base",
@@ -116,6 +119,7 @@ UNITREE_A1_ENV = EnvCfg(
     target_base_height=0.3,
     scene = LocomotionSceneCfg(
         robot=UNITREE_A1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot"),
+        terrain=ROUGH_TERRAIN_CFG,
     ),
     reward = {
         "linvel": 2.0,

@@ -34,7 +34,7 @@ class LocomotionEnv(Env):
         )
         self.height_scanner: RayCaster = self.scene.sensors.get("height_scanner", None)
 
-        self.init_root_state = self.robot.data.default_root_state_w.clone()
+        self.init_root_state = self.robot.data.default_root_state.clone()
         self.init_root_state[..., :3] += self.scene._default_env_origins
         self.init_joint_pos = self.robot.data.default_joint_pos.clone()
         self.init_joint_vel = self.robot.data.default_joint_vel.clone()
@@ -55,7 +55,7 @@ class LocomotionEnv(Env):
                 [-1., 0.],
                 [0., -1.],
                 [0., 0.]
-            ])
+            ]) * 1.6
             self._actions = torch.zeros(self.num_envs, 12)
             self._prev_actions = torch.zeros(self.num_envs, 12)
             self._feet_pos = torch.zeros(self.num_envs, 4, 3)
@@ -107,11 +107,14 @@ class LocomotionEnv(Env):
             dim=1,
             index=torch.rand(len(env_ids), 4, 1, device=self.device).argsort(dim=1).expand(-1, -1, 2)
         ) * 2.5
-        self.target_speed[env_ids] = sample_uniform((len(env_ids), 4, 1), 0.8, 1.2, device=self.device)
+        self.target_speed[env_ids] = sample_uniform((len(env_ids), 4, 1), 0.7, 1.4, device=self.device)
 
         self._prev_actions[env_ids] = 0.
         self._actions[env_ids] = 0.
         self._observation_h[env_ids] = 0.
+        
+        self.motor_params(env_ids)
+        # self.body_masses(env_ids)
 
         self.scene.reset(env_ids)
         self.scene.update(dt=self.physics_dt)
@@ -140,10 +143,11 @@ class LocomotionEnv(Env):
             + self.scene._default_env_origins[:, :2]
         )
         pos_error_xy = pos_diff_xy.norm(dim=-1, keepdim=True)
+        cmd_speed = torch.minimum(current_target_speed, pos_error_xy)
         self._command[:, :2] = (
             (pos_diff_xy / pos_error_xy)
-            * current_target_speed
-            * (pos_error_xy > 0.1).float()
+            * cmd_speed
+            * (cmd_speed > 0.2).float()
         )
         feet_pos = (
             self.robot.data.body_pos_w[:, self.calf_indices]
@@ -305,12 +309,15 @@ class LocomotionEnv(Env):
             self.base_legs = self.robot.actuators["base_legs"]
             self.base_legs.default_stiffness = self.base_legs.stiffness.clone()
             self.base_legs.default_damping = self.base_legs.damping.clone()
-        self.base_legs.stiffness[env_ids] = random_shift(self.base_legs.default_stiffness[env_ids], -.2, .2)
-        self.base_legs.damping[env_ids] = random_shift(self.base_legs.default_damping[env_ids], -.2, .2)
+        self.base_legs.stiffness[env_ids] = random_shift(self.base_legs.default_stiffness[env_ids], -.3, .3)
+        self.base_legs.damping[env_ids] = random_shift(self.base_legs.default_damping[env_ids], -.3, .3)
 
-    def body_masses(self):
-        self.robot.body_physx_view.get_masses()
-        pass
+    def body_masses(self, env_ids: torch.Tensor):
+        if not hasattr(self, "default_masses"):
+            self.default_masses = self.robot.root_view.get_body_masses().clone()
+            self.default_inertias = self.robot.root_view.get_body_inertias().clone()
+        body_masses = random_shift(self.default_masses[env_ids], -0.2, 0.2)
+        self.robot.root_view.set_body_masses(body_masses, indices=env_ids)
 
 
 def random_scale(x: torch.Tensor, low: float, high: float):

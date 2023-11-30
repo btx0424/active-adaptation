@@ -194,16 +194,17 @@ class PPOPolicy(TensorDictModuleBase):
         return {k: v.item() for k, v in infos.items()}
 
     def _update(self, tensordict: TensorDict):
+        tensordict = tensordict[~tensordict["is_init"].squeeze(1)]
         dist = self.actor.get_dist(tensordict)
         log_probs = dist.log_prob(tensordict[("agents", "action")])
-        entropy = dist.entropy()
+        entropy = dist.entropy().mean()
 
         adv = tensordict["adv"]
         ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
         policy_loss = - torch.mean(torch.min(surr1, surr2)) * self.action_dim
-        entropy_loss = - self.entropy_coef * torch.mean(entropy)
+        entropy_loss = - self.entropy_coef * entropy
 
         b_values = tensordict["state_value"]
         b_returns = tensordict["ret"]
