@@ -51,7 +51,7 @@ def main(cfg):
     UNITREE_A1_ENV.history_length = cfg.task.history_length
 
     base_env = LocomotionEnv(UNITREE_A1_ENV)
-    transform = InitTracker()
+    transform = Compose(InitTracker())
     env = TransformedEnv(base_env, transform)
     env.set_seed(0)
 
@@ -63,6 +63,9 @@ def main(cfg):
         env.reward_spec, 
         device=base_env.device
     )
+
+    if hasattr(policy, "make_tensordict_primer"):
+        transform.append(policy.make_tensordict_primer())
 
     frames_per_batch = env.num_envs * cfg.algo.train_every
     eval_interval = cfg.get("eval_interval", -1)
@@ -85,7 +88,8 @@ def main(cfg):
     @torch.no_grad()
     def evaluate(
         seed: int=0, 
-        exploration_type: ExplorationType=ExplorationType.MODE
+        exploration_type: ExplorationType=ExplorationType.MODE,
+        render=False,
     ):
         frames = []
 
@@ -106,7 +110,7 @@ def main(cfg):
             trajs = env.rollout(
                 max_steps=base_env.max_episode_length,
                 policy=policy,
-                callback=Every(record_frame, 2),
+                callback=Every(record_frame, 2) if render else None,
                 auto_reset=True,
                 break_when_any_done=False,
                 return_contiguous=False,
@@ -132,13 +136,14 @@ def main(cfg):
         }
 
         # log video
-        video_array = einops.rearrange(np.stack(frames), "t h w c -> t c h w")
-        frames.clear()
-        info["recording"] = wandb.Video(
-            video_array, 
-            fps=0.5 / (cfg.sim.dt * cfg.sim.substeps), 
-            format="mp4"
-        )
+        if len(frames):
+            video_array = einops.rearrange(np.stack(frames), "t h w c -> t c h w")
+            frames.clear()
+            info["recording"] = wandb.Video(
+                video_array, 
+                fps=0.5 / (cfg.sim.dt * cfg.sim.substeps), 
+                format="mp4"
+            )
         
         # log distributions
         # df = pd.DataFrame(traj_stats)
@@ -171,13 +176,14 @@ def main(cfg):
             info.update(evaluate())
             env.train()
             policy.train()
-            # policy.adapt_ratio = 0.05
+            if hasattr(policy, "step_schedule"):
+                policy.step_schedule()
 
         run.log(info)
         print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, float)}))
 
     
-    info = evaluate()
+    info = evaluate(render=True)
     info["env_frames"] = collector._frames
     run.log(info)
 

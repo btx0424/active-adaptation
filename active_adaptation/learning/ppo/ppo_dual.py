@@ -41,6 +41,7 @@ from typing import Union
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
 from .common import GAE, Actor, make_mlp
+from .ppo_rnn import GRU
 
 @dataclass
 class PPOConfig:
@@ -56,6 +57,7 @@ class PPOConfig:
 cs = ConfigStore.instance()
 cs.store("ppo_dual_v0", node=PPOConfig(version="v0"), group="algo")
 cs.store("ppo_dual_v1", node=PPOConfig(version="v1"), group="algo")
+cs.store("ppo_dual_v2", node=PPOConfig(version="v2"), group="algo")
 
 
 class TConv(nn.Module):
@@ -107,10 +109,7 @@ class PPODualPolicy(TensorDictModuleBase):
         # observation_dim = observation_spec[self.OBS_KEY].shape[-1]
         # observation_priv_dim = observation_spec[self.OBS_PRIV_KEY].shape[-1]
         
-        if self.cfg.version == "v0":
-            self.make_models_v0()
-        elif self.cfg.version == "v1":
-            self.make_models_v1()
+        getattr(self, f"make_models_{cfg.version}")()
 
         self.actor_critic = TensorDictSequential(self.actor, self.critic)
         self.classifier = nn.Sequential(
@@ -151,10 +150,14 @@ class PPODualPolicy(TensorDictModuleBase):
             "action_kl": self.action_kl
         }[cfg.adaptation_loss]
 
-        self.train_adaptation = True
+        self.train_adaptation = False
         self.train_classifier = True
         self.adapt_ratio = 0.
     
+    def step_schedule(self):
+        self.train_adaptation = True
+        self.adapt_ratio = 0.05
+
     def make_models_v0(self):
         self.adapt = TensorDictModule(
             TConv(256),
@@ -191,6 +194,9 @@ class PPODualPolicy(TensorDictModuleBase):
         self.ADAPT_KEY = "_feature"
 
     def make_models_v1(self):
+        """
+        Concat conditioning.
+        """
         condition = lambda: CatTensors(["_context", "_feature"], "_feature", del_keys=False)
         
         self.encoder = TensorDictModule(
@@ -233,6 +239,53 @@ class PPODualPolicy(TensorDictModuleBase):
 
         self.ADAPT_KEY = "_context"
 
+    def make_models_v2(self):
+        """
+        FiLM conditioning.
+        """
+        self.encoder = TensorDictModule(
+            make_mlp([512], nn.Mish),
+            [self.OBS_PRIV_KEY],
+            ["_context"]
+        ).to(self.device)
+
+        self.adapt = TensorDictModule(
+            TConv(512, nn.Mish),
+            [self.OBS_HIST_KEY],
+            ["_context"]
+        ).to(self.device)
+
+        class Condition(nn.Module):
+            def __init__(self, ):
+                super().__init__()
+            
+            def forward(self, feature: torch.Tensor, context: torch.Tensor):
+                weight, bias = context.chunk(2, dim=-1)
+                feature = feature * weight + bias
+                return feature
+
+        actor = nn.Sequential(make_mlp([256], nn.Mish), Actor(self.action_dim))
+        self.actor = ProbabilisticActor(
+            TensorDictSequential(
+                TensorDictModule(make_mlp([256, 256], nn.Mish), [self.OBS_KEY], ["_feature"]),
+                TensorDictModule(Condition(), ["_feature", "_context"], ["_feature"]),
+                TensorDictModule(actor, ["_feature"], ["loc", "scale"])
+            ), 
+            in_keys=["loc", "scale"],
+            out_keys=[("agents", "action")],
+            distribution_class=IndependentNormal,
+            return_log_prob=True
+        ).to(self.device)
+
+        critic = nn.Sequential(make_mlp([256], nn.Mish), nn.LazyLinear(1))
+        self.critic = TensorDictSequential(
+            TensorDictModule(make_mlp([256, 256], nn.Mish), [self.OBS_KEY], ["_feature"]),
+            TensorDictModule(Condition(), ["_feature", "_context"], ["_feature"]),
+            TensorDictModule(critic, ["_feature"], ["state_value"])
+        ).to(self.device)
+
+        self.ADAPT_KEY = "_context"
+
     def __call__(self, tensordict: TensorDict):
         if self.training:
             n_adapt = int(self.adapt_ratio * tensordict.shape[0])
@@ -261,12 +314,10 @@ class PPODualPolicy(TensorDictModuleBase):
 
         next_tensordict = tensordict["next"]
         with torch.no_grad():
-            # next_tensordict = torch.where(
-            #     tensordict["is_adapt"],
-            #     self.adapt(next_tensordict),
-            #     self.encoder(next_tensordict)
-            # )
+            is_adapt = tensordict["is_adapt"]
             self.encoder(next_tensordict)
+            if is_adapt.any():
+                next_tensordict[self.ADAPT_KEY][is_adapt] = self.adapt(next_tensordict[is_adapt])[self.ADAPT_KEY]
             next_values = self.critic(next_tensordict)["state_value"]
         rewards = tensordict[("next", "agents", "reward")]
         dones = tensordict[("next", "terminated")]
@@ -294,6 +345,7 @@ class PPODualPolicy(TensorDictModuleBase):
         infos: TensorDict = torch.stack(infos).to_tensordict()
         infos = {k: torch.mean(v).item() for k, v in infos.items()}
         infos["training_time"] = end - start
+        infos["adapt_ratio"] = self.adapt_ratio
         return infos
 
     def _update(self, tensordict: TensorDict):
@@ -327,12 +379,14 @@ class PPODualPolicy(TensorDictModuleBase):
         self.actor_opt.zero_grad(set_to_none=True)
         self.critic_opt.zero_grad(set_to_none=True)
         self.encoder.zero_grad(set_to_none=True)
+        # self.adapt_opt.zero_grad()
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.actor.parameters(), 5)
         critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 5)
         self.actor_opt.step()
         self.critic_opt.step()
         self.encoder_opt.step()
+        # self.adapt_opt.step()
         explained_var = 1 - value_loss_original / b_returns.var()
 
         info = {

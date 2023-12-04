@@ -47,7 +47,7 @@ class LSTM(nn.Module):
     def __init__(self, input_size, hidden_size, skip_conn) -> None:
         super().__init__()
         self.lstm = nn.LSTMCell(input_size, hidden_size)
-        self.ln = nn.LayerNorm(hidden_size)
+        # self.ln = nn.LayerNorm(hidden_size)
         self.skip_conn = skip_conn
 
     def forward(
@@ -60,7 +60,7 @@ class LSTM(nn.Module):
             hx, cx = self._forward(x[:, i], is_init[:, i], hx, cx)
             output.append(hx)
         output = torch.stack(output, dim=1)
-        output = self.ln(output)
+        # output = self.ln(output)
         if self.skip_conn == "add":
             output = x + output
         elif self.skip_conn == "cat":
@@ -94,7 +94,7 @@ class GRU(nn.Module):
         super().__init__()
         self.gru = nn.GRUCell(input_size, hidden_size)
         self.skip_conn = skip_conn
-        # self.ln = nn.LayerNorm(hidden_size)
+        self.ln = nn.LayerNorm(hidden_size)
 
     def forward(self, x: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor):
         T = x.shape[1]
@@ -105,11 +105,11 @@ class GRU(nn.Module):
             hx = self.gru(x_t, hx * reset_t)
             output.append(hx)
         output = torch.stack(output, dim=1)
-        # output = self.ln(output)
-        if self.skip_conn == "add":
-            output = x + output
-        elif self.skip_conn == "cat":
-            output = torch.cat([x, output], dim=-1)
+        output = self.ln(output)
+        # if self.skip_conn == "add":
+        #     output = x + output
+        # elif self.skip_conn == "cat":
+        #     output = torch.cat([x, output], dim=-1)
         return output, einops.repeat(hx, "b h -> b t h", t=T)
 
 
@@ -146,6 +146,7 @@ class PPORNNPolicy(TensorDictModuleBase):
         super().__init__()
         self.cfg = cfg
         self.device = device
+        self.observation_spec = observation_spec
 
         self.entropy_coef = 0.001
         self.clip_param = 0.1
@@ -271,16 +272,27 @@ class PPORNNPolicy(TensorDictModuleBase):
         return tensordict
 
     def __call__(self, tensordict: TensorDict):
-        self._maybe_init_state(tensordict)
+        # self._maybe_init_state(tensordict)
         tensordict = tensordict.unsqueeze(1)  # dummy time dimension
         tensordict = self.actor(tensordict)
         tensordict = self.critic(tensordict)
         tensordict = tensordict.squeeze(1)
         tensordict = tensordict.exclude("loc", "scale", "feature", inplace=True)
         return tensordict
+    
+    def make_tensordict_primer(self):
+        from torchrl.envs.transforms.transforms import TensorDictPrimer
+
+        num_envs = self.observation_spec.shape[0]
+        return TensorDictPrimer({
+            "actor_hx": UnboundedContinuousTensorSpec((num_envs, 128)),
+            "critic_hx": UnboundedContinuousTensorSpec((num_envs, 128))
+        })
 
     def train_op(self, tensordict: TensorDict):
         next_tensordict = tensordict["next"].reshape(-1).unsqueeze(1)
+        assert not next_tensordict["is_init"].any()
+
         with torch.no_grad():
             next_values = (
                 self.critic(next_tensordict)["state_value"]
@@ -339,9 +351,7 @@ class PPORNNPolicy(TensorDictModuleBase):
         self.critic_opt.zero_grad()
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.actor.parameters(), 5)
-        critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(
-            self.critic.parameters(), 5
-        )
+        critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 5)
         self.actor_opt.step()
         self.critic_opt.step()
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()

@@ -152,7 +152,7 @@ UNITREE_A1_ENV = EnvCfg(
             "feet_pos_b",
             # "contact_forces",
             # "contact_indicator",
-            # "applied_torques"
+            "applied_torques"
         ]
     }
 )
