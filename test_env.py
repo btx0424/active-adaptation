@@ -201,7 +201,8 @@ def main(cfg):
         logging.error(f"Failed to save checkpoint: {e}")
 
     wandb.finish()
-
+    
+    base_env.close()
     simulation_app.close()
 
 

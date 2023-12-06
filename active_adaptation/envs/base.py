@@ -217,6 +217,17 @@ class Env(EnvBase):
             return rgb_data[:, :, :3]
         else:
             raise NotImplementedError
+    
+    def close(self):
+        super().close()
+        if not self._is_closed:
+            # destructor is order-sensitive
+            del self.scene
+            # clear callbacks and instance
+            self.sim.clear_all_callbacks()
+            self.sim.clear_instance()
+            # update closing status
+            self._is_closed = True
 
 
 def observation_func(func):
