@@ -43,6 +43,13 @@ from ..modules.distributions import IndependentNormal
 from .common import GAE, Actor, make_mlp
 from .ppo_rnn import GRU
 
+
+@dataclass
+class AdaptSchedule:
+    ratio_step: float = 0.05
+    ratio_max: float = 0.0
+
+
 @dataclass
 class PPOConfig:
     name: str = "ppo_dual"
@@ -53,6 +60,10 @@ class PPOConfig:
     version: str = "v0"
     adaptation_loss: str = "feature_mse"
     checkpoint_path: Union[str, None] = None
+
+    adapt_schedule: AdaptSchedule = AdaptSchedule()
+    adapt_reward: float = 0.0
+
 
 cs = ConfigStore.instance()
 cs.store("ppo_dual_v0", node=PPOConfig(version="v0"), group="algo")
@@ -150,13 +161,16 @@ class PPODualPolicy(TensorDictModuleBase):
             "action_kl": self.action_kl
         }[cfg.adaptation_loss]
 
-        self.train_adaptation = False
+        self.train_adaptation = True
         self.train_classifier = True
         self.adapt_ratio = 0.
     
     def step_schedule(self):
         self.train_adaptation = True
-        self.adapt_ratio = 0.05
+        self.adapt_ratio = min(
+            self.adapt_ratio + self.cfg.adapt_schedule.ratio_step,
+            self.cfg.adapt_schedule.ratio_max
+        )
 
     def make_models_v0(self):
         self.adapt = TensorDictModule(
@@ -319,6 +333,14 @@ class PPODualPolicy(TensorDictModuleBase):
             if is_adapt.any():
                 next_tensordict[self.ADAPT_KEY][is_adapt] = self.adapt(next_tensordict[is_adapt])[self.ADAPT_KEY]
             next_values = self.critic(next_tensordict)["state_value"]
+
+            if self.cfg.adapt_reward > 0:
+                adapt_reward = - self.adaptation_loss(
+                    self.encoder(tensordict.select()), 
+                    self.adapt(tensordict.select())
+                )
+                tensordict[("next", "agents", "reward")] += adapt_reward * self.cfg.adapt_reward
+
         rewards = tensordict[("next", "agents", "reward")]
         dones = tensordict[("next", "terminated")]
         values = tensordict["state_value"]
@@ -403,7 +425,7 @@ class PPODualPolicy(TensorDictModuleBase):
                 self.adaptation_loss(tensordict_priv, tensordict_adapt)
                 # should not match the value of the expert here
                 # + F.mse_loss(self.critic(tensordict_adapt)["state_value"], b_returns)
-            )
+            ).mean()
             self.adapt_opt.zero_grad()
             loss_adapt.backward()
             self.adapt_opt.step()
@@ -430,13 +452,15 @@ class PPODualPolicy(TensorDictModuleBase):
         return TensorDict(info, [])
 
     def feature_mse(self, tensordict_priv: TensorDict, tensordict_adapt: TensorDict):
-        loss = F.mse_loss(tensordict_adapt[self.ADAPT_KEY], tensordict_priv[self.ADAPT_KEY].detach())
+        pred = tensordict_adapt[self.ADAPT_KEY]
+        target = tensordict_priv[self.ADAPT_KEY].detach()
+        loss = F.mse_loss(pred, target, reduction="none")
         return loss
     
     def action_kl(self, tensordict_priv: TensorDict, tensordict_adapt: TensorDict):
         dist_target = self.actor.get_dist(tensordict_priv.detach())
         dist_adapt = self.actor.get_dist(tensordict_adapt)
-        loss = D.kl_divergence(dist_adapt, dist_target).mean()
+        loss = D.kl_divergence(dist_adapt, dist_target)
         return loss
 
 
