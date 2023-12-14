@@ -151,7 +151,7 @@ class PPODualPolicy(TensorDictModuleBase):
 
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=5e-4)
-        self.adapt_opt = torch.optim.Adam(self.adapt.parameters(), lr=5e-4)
+        self.adapt_opt = torch.optim.Adam(self.adapt.parameters())
         self.encoder_opt = torch.optim.Adam(self.encoder.parameters(), lr=5e-4)
         self.classifier_opt = torch.optim.Adam(self.classifier.parameters(), lr=5e-4)
         self.value_norm = ValueNorm1(input_shape=1).to(self.device)
@@ -327,23 +327,31 @@ class PPODualPolicy(TensorDictModuleBase):
         start = time.perf_counter()
 
         next_tensordict = tensordict["next"]
+        rewards = tensordict[("next", "agents", "reward")]
+        dones = tensordict[("next", "terminated")]
+        values = tensordict["state_value"]
+
         with torch.no_grad():
             is_adapt = tensordict["is_adapt"]
             self.encoder(next_tensordict)
             if is_adapt.any():
                 next_tensordict[self.ADAPT_KEY][is_adapt] = self.adapt(next_tensordict[is_adapt])[self.ADAPT_KEY]
+                
+                if self.cfg.adapt_reward > 0:
+                    adapt_reward = - self.adaptation_loss(
+                        self.encoder(tensordict[is_adapt]), 
+                        self.adapt(tensordict[is_adapt])
+                    )
+                    if not rewards[is_adapt].shape == adapt_reward.shape:
+                        raise RuntimeError(
+                            f"TensorDict shape: {tensordict.shape}\n"
+                            f"Adapt reward shape: {adapt_reward.shape}\n"
+                            f"Shape mismatch: {rewards[is_adapt].shape} != {adapt_reward.shape}"
+                        )
+                    rewards[is_adapt] += adapt_reward * self.cfg.adapt_reward
+
             next_values = self.critic(next_tensordict)["state_value"]
 
-            if self.cfg.adapt_reward > 0:
-                adapt_reward = - self.adaptation_loss(
-                    self.encoder(tensordict.select()), 
-                    self.adapt(tensordict.select())
-                )
-                tensordict[("next", "agents", "reward")] += adapt_reward * self.cfg.adapt_reward
-
-        rewards = tensordict[("next", "agents", "reward")]
-        dones = tensordict[("next", "terminated")]
-        values = tensordict["state_value"]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
 
@@ -454,13 +462,13 @@ class PPODualPolicy(TensorDictModuleBase):
     def feature_mse(self, tensordict_priv: TensorDict, tensordict_adapt: TensorDict):
         pred = tensordict_adapt[self.ADAPT_KEY]
         target = tensordict_priv[self.ADAPT_KEY].detach()
-        loss = F.mse_loss(pred, target, reduction="none")
+        loss = F.mse_loss(pred, target, reduction="none").mean(dim=-1, keepdim=True)
         return loss
     
     def action_kl(self, tensordict_priv: TensorDict, tensordict_adapt: TensorDict):
         dist_target = self.actor.get_dist(tensordict_priv.detach())
         dist_adapt = self.actor.get_dist(tensordict_adapt)
-        loss = D.kl_divergence(dist_adapt, dist_target)
+        loss = D.kl_divergence(dist_adapt, dist_target).unsqueeze(-1)
         return loss
 
 

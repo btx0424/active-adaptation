@@ -25,6 +25,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as D
+import einops
 
 from torchrl.data import CompositeSpec, TensorSpec
 from torchrl.envs.transforms import CatTensors
@@ -40,12 +41,16 @@ from typing import Any, Mapping, Union, Sequence
 
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
-from .common import GAE, Duplicate, Chunk, Actor
-from .adaptation import Action, Value, ActionValue, MSE, Discriminator
+from .common import GAE, Duplicate, Actor, make_mlp
+from .adaptation import Action, Value, ActionValue, MSE
+
+from functools import partial
+
+make_mlp = partial(make_mlp, activation=nn.Mish)
 
 @dataclass
 class PPOConfig:
-    name: str = "ppo_adaptive_separate"
+    name: str = "ppo_rma"
     train_every: int = 32
     ppo_epochs: int = 4
     num_minibatches: int = 16
@@ -57,66 +62,15 @@ class PPOConfig:
     encoder_mode: str = "separate" # shared, separate, seperate_heads
     # what the adaptation module learns to predict
     adaptation_key: Any = "context"
-    adaptation_loss: str = "mse"
+    adaptation_loss: str = "mse" # mse, action_kl
 
     def __post_init__(self):
         assert self.condition_mode.lower() in ("cat", "film")
         assert self.adaptation_key in ("context", ("agents", "observation_priv"), "_feature")
         assert self.phase in ("encoder", "adaptation", "joint", "finetune")
-        assert self.adaptation_loss.lower() in ("mse", "gan", "lsgan")
 
 cs = ConfigStore.instance()
-cs.store("ppo_adapt", node=PPOConfig, group="algo")
-cs.store("ppo_adapt_latent_mse", node=PPOConfig(adaptation_loss="mse"), group="algo")
-cs.store("ppo_adapt_latent_gan", node=PPOConfig(adaptation_loss="gan"), group="algo")
-cs.store("ppo_adapt_latent_lsgan", node=PPOConfig(adaptation_loss="lsgan"), group="algo")
-cs.store("ppo_adapt_raw", node=PPOConfig(adaptation_key=("agents", "observation_priv")), group="algo")
-
-
-def make_mlp(num_units):
-    layers = []
-    for n in num_units:
-        layers.append(nn.LazyLinear(n))
-        layers.append(nn.LeakyReLU())
-        layers.append(nn.LayerNorm(n))
-    return nn.Sequential(*layers)
-
-
-class MLP(nn.Module):
-    def __init__(self, num_units, residual=False):
-        super().__init__()
-        layers = []
-        for n in num_units:
-            layers.append(nn.LazyLinear(n))
-            layers.append(nn.LeakyReLU())
-            layers.append(nn.LayerNorm(n))
-        self.layers = nn.ModuleList(layers)
-        self.residual = residual
-
-    def forward(self, x: torch.Tensor):
-        x = self.layers[0](x)
-        for layer in self.layers[1:]:
-            x = x + layer(x) if self.residual else layer(x)
-        return x
-
-
-class DenseMLP(nn.Module):
-    def __init__(self, num_units) -> None:
-        super().__init__()
-        layers = []
-        for n in num_units:
-            layer = nn.Sequential(
-                nn.LazyLinear(n), 
-                nn.LeakyReLU(), 
-                nn.LayerNorm(n)
-            )
-            layers.append(layer)
-        self.layers = nn.ModuleList(layers)
-    
-    def forward(self, x: torch.Tensor, z: torch.Tensor):
-        for layer in self.layers:
-            x = layer(torch.cat([x, z], dim=-1))
-        return x
+cs.store("ppo_rma", node=PPOConfig, group="algo")
 
 
 class TConv(nn.Module):
@@ -128,8 +82,7 @@ class TConv(nn.Module):
             nn.LazyConv1d(64, kernel_size=7, stride=2), nn.ELU(),
             nn.LazyConv1d(64, kernel_size=5, stride=2), nn.ELU(),
         )
-        self.mlp = make_mlp([256, 256])
-        self.out = nn.LazyLinear(out_dim)
+        self.mlp = make_mlp([256, out_dim], activation=nn.LeakyReLU)
     
     def forward(self, features: torch.Tensor):
         batch_shape = features.shape[:-2]
@@ -137,23 +90,6 @@ class TConv(nn.Module):
         features_tconv = self.tconv(features).flatten(1)
         features = torch.cat([features_tconv, features[:, :, -1]], dim=1)
         features = self.mlp(features)
-        features = self.out(features)
-        return features.unflatten(0, batch_shape)
-
-class TConvG(TConv):
-    """
-    A stochastic generator version for the adversarial adaptation modules.
-    """
-    def forward(self, features: torch.Tensor):
-        batch_shape = features.shape[:-2]
-        features = features.flatten(0, -3) # [*, D, T]
-        features = torch.cat([
-            self.tconv(features).flatten(1), 
-            features[:, :, -1],
-            torch.randn(features.shape[0], 32, device=features.device)
-        ], dim=1)
-        features = self.mlp(features)
-        features = self.out(features)
         return features.unflatten(0, batch_shape)
 
 
@@ -243,7 +179,7 @@ def parse_path(path: Union[str, None]):
         return path
 
 
-class PPOAdaptivePolicy(TensorDictModuleBase):
+class PPORMAPolicy(TensorDictModuleBase):
     
     def __init__(self,
         cfg: PPOConfig, 
@@ -266,7 +202,7 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
             self.adaptation_key = tuple(self.adaptation_key)
         self.gae = GAE(0.99, 0.95)
         
-        self.n_agents, self.action_dim = action_spec.shape[-2:]
+        self.action_dim = action_spec.shape[-1]
 
         print(observation_spec)
         observation_priv_dim = observation_spec[("agents", "observation_priv")].shape[-1]
@@ -296,12 +232,6 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
                     ),
                     TensorDictModule(FiLM(128), ["_feature", "context"], ["_feature"])
                 )
-        elif self.cfg.condition_mode == "d2rl":
-            def condition():
-                return TensorDictModule(
-                    DenseMLP([256, 256]), [("agents", "observation"), "context"], ["_feature"]
-                )
-        else:
             raise NotImplementedError(self.cfg.condition_mode)
 
         actor_module = TensorDictSequential(
@@ -327,8 +257,8 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
             )
         ).to(self.device)
         
-        self.value_norm = ValueNorm1(reward_spec.shape[-2:]).to(self.device)
-        
+        self.value_norm = ValueNorm1(1).to(self.device)
+
         self.encoder(fake_input)
         self.actor(fake_input)
         self.critic(fake_input)
@@ -355,35 +285,15 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
                     self.adaptation_module, 
                     ["context_actor", "context_critic"], 
                 ).to(self.device)
-            elif self.cfg.adaptation_loss == "value":
-                self.adaptation_loss = Value(
-                    self.encoder,
-                    self.adaptation_module,
-                    self.critic
-                ).to(self.device)
-            elif self.cfg.adaptation_loss == "action":
+            elif self.cfg.adaptation_loss == "action_kl":
                 self.adaptation_module(fake_input)
                 self.adaptation_loss = Action(
                     self.encoder,
                     self.adaptation_module,
                     self.actor
                 ).to(self.device)
-            elif self.cfg.adaptation_loss == "action_value":
-                self.adaptation_loss = ActionValue(
-                    self.encoder,
-                    self.adaptation_module,
-                    self.actor,
-                    self.critic
-                ).to(self.device)
-            elif self.cfg.adaptation_loss == "gan":
-                self.adaptation_loss = Discriminator(
-                    self.encoder,
-                    self.adaptation_module,
-                    self.actor,
-                ).to(self.device)
             else:
                 raise ValueError(self.cfg.adaptation_loss)
-
 
         self.encoder_opt = torch.optim.Adam(self.encoder.parameters(), lr=5e-4)
         self.actor_opt = torch.optim.Adam(list(self.actor.parameters()) + list(self.encoder.parameters()), lr=5e-4)
@@ -393,14 +303,6 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         self._get_context(tensordict)
         self.actor(tensordict)
         self.critic(tensordict)
-        if self.phase in ("adaptation", "finetune"):
-            # label adaptation reward
-            td = self.encoder(tensordict.clone())
-            kl = D.kl_divergence(
-                self.actor.get_dist(tensordict),
-                self.actor.get_dist(td)
-            )
-            tensordict.set("reward_adaptation", -kl.unsqueeze(1) / self.action_dim)
         tensordict.exclude("_feature", inplace=True)
         return tensordict
 
@@ -429,16 +331,9 @@ class PPOAdaptivePolicy(TensorDictModuleBase):
         with torch.no_grad():
             self._get_context(next_tensordict)
             next_values = self.critic(next_tensordict)["state_value"]
-        rewards = tensordict[("next", "agents", "reward")]
-        # adaptation_reward = tensordict.get("reward_adaptation", None)
-        # if adaptation_reward is not None:
-        #     rewards = rewards + adaptation_reward
         
-        dones = (
-            tensordict[("next", "terminated")]
-            .expand(-1, -1, self.n_agents)
-            .unsqueeze(-1)
-        )
+        rewards = tensordict[("next", "agents", "reward")]
+        dones = tensordict[("next", "terminated")]
         values = tensordict["state_value"]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)

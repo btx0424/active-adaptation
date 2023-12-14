@@ -10,7 +10,13 @@ from omni_drones.utils.torchrl import SyncDataCollector
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker
-from active_adaptation.learning import PPOPolicy, PPORNNPolicy, PPODualPolicy, PPOTConvPolicy
+from active_adaptation.learning import (
+    PPOPolicy, 
+    PPORNNPolicy, 
+    PPODualPolicy, 
+    PPOTConvPolicy, 
+    PPORMAPolicy
+)
 
 import wandb
 import logging
@@ -23,7 +29,8 @@ policies = {
     "ppo": PPOPolicy,
     "ppo_dual": PPODualPolicy,
     "ppo_rnn": PPORNNPolicy,
-    "ppo_tconv": PPOTConvPolicy
+    "ppo_tconv": PPOTConvPolicy,
+    "ppo_rma": PPORMAPolicy
 }
 
 @hydra.main(config_path="cfg", config_name="train")
