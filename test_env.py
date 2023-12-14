@@ -97,6 +97,7 @@ def main(cfg):
         seed: int=0, 
         exploration_type: ExplorationType=ExplorationType.MODE,
         render=False,
+        expert=False,
     ):
         frames = []
 
@@ -104,6 +105,9 @@ def main(cfg):
         env.eval()
         env.set_seed(seed)
         policy.eval()
+
+        if expert and isinstance(policy, PPODualPolicy):
+            policy.mode = "expert"
 
         from tqdm import tqdm
         t = tqdm(total=base_env.max_episode_length)
@@ -190,7 +194,7 @@ def main(cfg):
         print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, float)}))
 
     
-    info = evaluate(render=True)
+    info = evaluate(render=True, expert=True)
     info["env_frames"] = collector._frames
     run.log(info)
 

@@ -31,6 +31,8 @@ import time
 from torchrl.data import CompositeSpec, TensorSpec
 from torchrl.modules import ProbabilisticActor
 from torchrl.envs.transforms import CatTensors
+from torchrl.objectives.utils import hold_out_net
+
 from tensordict import TensorDict
 from tensordict.nn import TensorDictModuleBase, TensorDictModule, TensorDictSequential
 
@@ -164,6 +166,8 @@ class PPODualPolicy(TensorDictModuleBase):
         self.train_adaptation = True
         self.train_classifier = True
         self.adapt_ratio = 0.
+        
+        self.mode = "dual"
     
     def step_schedule(self):
         self.train_adaptation = True
@@ -301,7 +305,7 @@ class PPODualPolicy(TensorDictModuleBase):
         self.ADAPT_KEY = "_context"
 
     def __call__(self, tensordict: TensorDict):
-        if self.training:
+        if self.mode == "dual":
             n_adapt = int(self.adapt_ratio * tensordict.shape[0])
             n_priv = tensordict.shape[0] - n_adapt
             if n_adapt > 0:
@@ -316,7 +320,9 @@ class PPODualPolicy(TensorDictModuleBase):
                 "is_adapt", 
                 torch.cat([torch.zeros(n_priv, dtype=bool), torch.ones(n_adapt, dtype=bool)])
             )
-        else:
+        elif self.mode == "expert":
+            self.actor_critic(self.encoder(tensordict))
+        elif self.mode == "adapt":
             # use adaptation module for testing
             self.adapt(tensordict)
             self.actor_critic(tensordict)
@@ -342,12 +348,6 @@ class PPODualPolicy(TensorDictModuleBase):
                         self.encoder(tensordict[is_adapt]), 
                         self.adapt(tensordict[is_adapt])
                     )
-                    if not rewards[is_adapt].shape == adapt_reward.shape:
-                        raise RuntimeError(
-                            f"TensorDict shape: {tensordict.shape}\n"
-                            f"Adapt reward shape: {adapt_reward.shape}\n"
-                            f"Shape mismatch: {rewards[is_adapt].shape} != {adapt_reward.shape}"
-                        )
                     rewards[is_adapt] += adapt_reward * self.cfg.adapt_reward
 
             next_values = self.critic(next_tensordict)["state_value"]
@@ -371,16 +371,51 @@ class PPODualPolicy(TensorDictModuleBase):
             for minibatch in batch:
                 infos.append(self._update(minibatch))
         
-        end = time.perf_counter()
         infos: TensorDict = torch.stack(infos).to_tensordict()
         infos = {k: torch.mean(v).item() for k, v in infos.items()}
+
+        if self.train_adaptation:
+            adaptation_loss = []
+
+            with torch.no_grad():
+                self.encoder(tensordict)
+
+            with hold_out_net(self.actor):
+                for epoch in range(4):
+                    for batch in make_batch(tensordict, 8):
+                        loss = self.adaptation_loss(batch).mean()
+                        self.adapt_opt.zero_grad()
+                        loss.backward()
+                        self.adapt_opt.step()
+                        adaptation_loss.append(loss)
+
+            infos["adaptation_loss"] = torch.mean(torch.stack(adaptation_loss)).item()
+
+        end = time.perf_counter()
         infos["training_time"] = end - start
         infos["adapt_ratio"] = self.adapt_ratio
         return infos
 
+    @property
+    def mode(self):
+        return self._mode
+    
+    @mode.setter
+    def mode(self, mode: str):
+        assert mode in ("dual", "expert", "adapt")
+        self._mode = mode
+        
+    def eval(self):
+        super().eval()
+        self.mode = "adapt"
+    
+    def train(self, mode: bool=True):
+        super().train(mode=mode)
+        self.mode = "dual"
+
     def _update(self, tensordict: TensorDict):
-        tensordict_priv = self.encoder(tensordict.clone()).exclude("_obs")
-        tensordict_adapt = self.adapt(tensordict.clone())
+        tensordict_priv = self.encoder(tensordict.to_tensordict())
+        tensordict_adapt = self.adapt(tensordict.to_tensordict())
         is_adapt = tensordict["is_adapt"]
 
         tensordict = torch.where(is_adapt, tensordict_adapt.detach(), tensordict_priv)
@@ -428,16 +463,16 @@ class PPODualPolicy(TensorDictModuleBase):
             "explained_var": explained_var
         }
 
-        if self.train_adaptation:
-            loss_adapt = (
-                self.adaptation_loss(tensordict_priv, tensordict_adapt)
-                # should not match the value of the expert here
-                # + F.mse_loss(self.critic(tensordict_adapt)["state_value"], b_returns)
-            ).mean()
-            self.adapt_opt.zero_grad()
-            loss_adapt.backward()
-            self.adapt_opt.step()
-            info["adaptation_loss"] = loss_adapt
+        # if self.train_adaptation:
+        #     loss_adapt = (
+        #         self.adaptation_loss(tensordict_priv, tensordict_adapt)
+        #         # should not match the value of the expert here
+        #         # + F.mse_loss(self.critic(tensordict_adapt)["state_value"], b_returns)
+        #     ).mean()
+        #     self.adapt_opt.zero_grad()
+        #     loss_adapt.backward()
+        #     self.adapt_opt.step()
+        #     info["adaptation_loss"] = loss_adapt
 
         if self.train_classifier:
             with torch.no_grad():
@@ -465,9 +500,15 @@ class PPODualPolicy(TensorDictModuleBase):
         loss = F.mse_loss(pred, target, reduction="none").mean(dim=-1, keepdim=True)
         return loss
     
-    def action_kl(self, tensordict_priv: TensorDict, tensordict_adapt: TensorDict):
-        dist_target = self.actor.get_dist(tensordict_priv.detach())
-        dist_adapt = self.actor.get_dist(tensordict_adapt)
+    # def action_kl(self, tensordict_priv: TensorDict, tensordict_adapt: TensorDict):
+    #     dist_target = self.actor.get_dist(tensordict_priv.detach())
+    #     dist_adapt = self.actor.get_dist(tensordict_adapt)
+    #     loss = D.kl_divergence(dist_adapt, dist_target).unsqueeze(-1)
+    #     return loss
+    
+    def action_kl(self, tensordict: TensorDict):
+        dist_target = self.actor.get_dist(tensordict.to_tensordict())
+        dist_adapt = self.actor.get_dist(self.adapt(tensordict))
         loss = D.kl_divergence(dist_adapt, dist_target).unsqueeze(-1)
         return loss
 
