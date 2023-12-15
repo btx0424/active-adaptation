@@ -36,7 +36,7 @@ from tensordict import TensorDict, TensorDictBase
 from tensordict.nn import TensorDictModule, TensorDictSequential, TensorDictModuleBase
 
 from hydra.core.config_store import ConfigStore
-from dataclasses import dataclass
+from dataclasses import dataclass, MISSING
 from typing import Any, Mapping, Union, Sequence
 
 from ..utils.valuenorm import ValueNorm1
@@ -71,6 +71,7 @@ class PPOConfig:
 
 cs = ConfigStore.instance()
 cs.store("ppo_rma", node=PPOConfig, group="algo")
+cs.store("ppo_rma_adapt", node=PPOConfig(phase="adaptation", checkpoint_path=MISSING), group="algo")
 
 
 class TConv(nn.Module):
