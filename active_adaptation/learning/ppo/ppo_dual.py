@@ -216,25 +216,26 @@ class PPODualPolicy(TensorDictModuleBase):
         Concat conditioning.
         """
         condition = lambda: CatTensors(["_context", "_feature"], "_feature", del_keys=False)
-        
+        context_dim = 128
+
         self.encoder = TensorDictModule(
-            make_mlp([256, 256], nn.Mish),
+            make_mlp([256, context_dim], nn.Mish),
             [self.OBS_PRIV_KEY],
             ["_context"]
         ).to(self.device)
 
         self.adapt = TensorDictModule(
-            TConv(256, nn.Mish),
+            TConv(context_dim, nn.Mish),
             [self.OBS_HIST_KEY],
             ["_context"]
         ).to(self.device)
 
         self.actor = ProbabilisticActor(
             TensorDictSequential(
-                TensorDictModule(make_mlp([256, 256], nn.Mish), [self.OBS_KEY], ["_feature"]),
+                TensorDictModule(make_mlp([512], nn.Mish), [self.OBS_KEY], ["_feature"]),
                 condition(),
                 TensorDictModule(
-                    nn.Sequential(make_mlp([256], nn.Mish), Actor(self.action_dim)),
+                    nn.Sequential(make_mlp([256, 256], nn.Mish), Actor(self.action_dim)),
                     ["_feature"], 
                     ["loc", "scale"]
                 )
@@ -246,10 +247,10 @@ class PPODualPolicy(TensorDictModuleBase):
         ).to(self.device)
 
         self.critic = TensorDictSequential(
-            TensorDictModule(make_mlp([256, 256], nn.Mish), [self.OBS_KEY], ["_feature"]),
+            TensorDictModule(make_mlp([512], nn.Mish), [self.OBS_KEY], ["_feature"]),
             condition(),
             TensorDictModule(
-               nn.Sequential(make_mlp([256], nn.Mish), nn.LazyLinear(1)),
+               nn.Sequential(make_mlp([256, 256], nn.Mish), nn.LazyLinear(1)),
                 ["_feature"], 
                 ["state_value"]
             )
