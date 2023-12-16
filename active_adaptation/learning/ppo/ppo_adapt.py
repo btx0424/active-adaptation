@@ -60,6 +60,7 @@ class PPOConfig:
     condition_mode: str = "cat"
 
     encoder_mode: str = "separate" # shared, separate, seperate_heads
+    adapt_mode: str = "tconv"
     # what the adaptation module learns to predict
     adaptation_key: Any = "context"
     adaptation_loss: str = "mse" # mse, action_kl
@@ -70,9 +71,9 @@ class PPOConfig:
         assert self.phase in ("encoder", "adaptation", "joint", "finetune")
 
 cs = ConfigStore.instance()
-cs.store("rma", node=PPOConfig, group="algo")
+cs.store("rma_train", node=PPOConfig, group="algo")
 cs.store("rma_adapt", node=PPOConfig(phase="adaptation", checkpoint_path=MISSING), group="algo")
-cs.store("rma_adapt_rnn", node=PPOConfig(phase="adaptation", checkpoint_path=None), group="algo")
+cs.store("rma_adapt_rnn", node=PPOConfig(adapt_mode="rnn", phase="adaptation", checkpoint_path=None), group="algo")
 
 
 class TConv(nn.Module):
@@ -142,27 +143,33 @@ def make_encoder(mode: str, num_units: Sequence[int]):
     return encoder
 
 
-def make_adaptation_module(encoder_mode: str, dim: int):
-    assert encoder_mode in ("shared", "separate", "rnn")
+def make_adaptation_module(encoder_mode: str, adapt_mode: str, dim: int):
     OBS_KEY = ("agents", "observation")
     OBS_HIST_KEY = ("agents", "observation_h")
+    if adapt_mode == "tconv":
+        def make(output_key: str):
+            return TensorDictModule(TConv(dim), [OBS_HIST_KEY], [output_key])
+    elif adapt_mode == "rnn":
+        def make(output_key: str):
+            in_keys = [f"_rnn_{output_key}", "is_init", f"{output_key}_hx"]
+            out_keys = [output_key, ("next", f"{output_key}_hx")]
+            gru = GRU(dim, dim, skip_conn=None, allow_none=True)
+            return TensorDictSequential(
+                TensorDictModule(nn.LazyLinear(dim), [OBS_KEY], [f"_rnn_{output_key}"]),
+                TensorDictModule(gru, in_keys, out_keys),
+            )
+    else:
+        raise NotImplementedError(adapt_mode)
+    
     if encoder_mode == "shared":
-        module = TensorDictModule(
-            nn.Sequential(TConv(dim), Duplicate(2)), 
-            [OBS_HIST_KEY], 
-            ["context_actor", "context_critic"]
+        module = TensorDictSequential(
+            make("context"),
+            TensorDictModule(Duplicate(2), ["context"], ["context_actor", "context_critic"])
         )
     elif encoder_mode == "separate":
         module = TensorDictSequential(
-            TensorDictModule(TConv(dim), [OBS_HIST_KEY], ["context_actor"]),
-            TensorDictModule(TConv(dim), [OBS_HIST_KEY], ["context_critic"])
-        )
-    elif encoder_mode == "rnn":
-        gru = GRU(128, 128, skip_conn=None, allow_none=True)
-        module = TensorDictModule(
-            TensorDictModule(nn.LazyLinear(128), [OBS_KEY, "_rnn",]),
-            TensorDictModule(gru, ["_rnn", "is_init", "hx"], ["context"]),
-            TensorDictModule(Duplicate(2), ["context_actor", "context_critic"])
+            make("context_actor"),
+            make("context_critic")
         )
     else:
         raise NotImplementedError(encoder_mode)
@@ -283,7 +290,9 @@ class PPORMAPolicy(TensorDictModuleBase):
             self.encoder.apply(init_)
 
         if self.phase in ("adaptation", "finetune"):
-            self.adaptation_module = make_adaptation_module(self.cfg.encoder_mode, 128).to(self.device)
+            self.adaptation_module = make_adaptation_module(
+                self.cfg.encoder_mode, self.cfg.adapt_mode, 128
+            ).to(self.device)
             self.adaptation_module(fake_input)
             if self.cfg.adaptation_loss == "mse":
                 self.adaptation_loss = MSE(
@@ -304,8 +313,24 @@ class PPORMAPolicy(TensorDictModuleBase):
         self.actor_opt = torch.optim.Adam(list(self.actor.parameters()) + list(self.encoder.parameters()), lr=5e-4)
         self.critic_opt = torch.optim.Adam(list(self.critic.parameters()) + list(self.encoder.parameters()), lr=5e-4)
         
-        seq_len = cfg.train_every if cfg.encoder_mode == "rnn" else -1
-        self.make_batch = functools.partial(make_batch, seq_len=seq_len)
+        if cfg.adapt_mode == "rnn":
+            from torchrl.envs.transforms.transforms import TensorDictPrimer
+            from torchrl.data import UnboundedContinuousTensorSpec
+            def make_tensordict_primer():
+                num_envs = observation_spec.shape[0]
+                if cfg.encoder_mode == "separate":
+                    return TensorDictPrimer({
+                        "context_actor_hx": UnboundedContinuousTensorSpec((num_envs, 128)),
+                        "context_critic_hx": UnboundedContinuousTensorSpec((num_envs, 128))
+                    })
+                else:
+                    return TensorDictPrimer({
+                        "context_hx": UnboundedContinuousTensorSpec((num_envs, 128))
+                    })
+            self.make_tensordict_primer = make_tensordict_primer
+            self.make_batch = functools.partial(make_batch, seq_len=cfg.train_every)
+        else:
+            self.make_batch = make_batch
 
     def forward(self, tensordict: TensorDict):
         self._get_context(tensordict)

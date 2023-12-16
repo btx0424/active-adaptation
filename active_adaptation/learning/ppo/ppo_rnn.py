@@ -105,23 +105,31 @@ class GRU(nn.Module):
         self.allow_none = allow_none
 
     def forward(self, x: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor):
-        N, T = x.shape[:2]
-        if hx is None and self.allow_none:
-            hx = torch.zeros(N, self.gru.hidden_size, device=x.device)
-        else:
-            hx = hx[:, 0]
-        output = []
-        reset = 1. - is_init.float()
-        for x_t, reset_t in zip(x.unbind(1), reset.unbind(1)):
-            hx = self.gru(x_t, hx * reset_t)
-            output.append(hx)
-        output = torch.stack(output, dim=1)
-        output = self.ln(output)
-        # if self.skip_conn == "add":
-        #     output = x + output
-        # elif self.skip_conn == "cat":
-        #     output = torch.cat([x, output], dim=-1)
-        return output, einops.repeat(hx, "b h -> b t h", t=T)
+        if x.ndim == 2: # single step
+
+            N = x.shape[0]
+            if hx is None and self.allow_none:
+                hx = torch.zeros(N, self.gru.hidden_size, device=x.device)
+            reset = 1. - is_init.float().reshape(N, 1)
+            hx = self.gru(x, hx * reset)
+            output = self.ln(hx)
+            return output, hx
+
+        elif x.ndim == 3: # multi-step
+
+            N, T = x.shape[:2]
+            if hx is None and self.allow_none:
+                hx = torch.zeros(N, self.gru.hidden_size, device=x.device)
+            else:
+                hx = hx[:, 0]
+            output = []
+            reset = 1. - is_init.float().reshape(N, T, 1)
+            for x_t, reset_t in zip(x.unbind(1), reset.unbind(1)):
+                hx = self.gru(x_t, hx * reset_t)
+                output.append(hx)
+            output = torch.stack(output, dim=1)
+            output = self.ln(output)
+            return output, einops.repeat(hx, "b h -> b t h", t=T)
 
 
 @dataclass
