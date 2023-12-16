@@ -27,6 +27,7 @@ import torch.nn.functional as F
 import torch.distributions as D
 import einops
 import time
+import functools
 
 from torchrl.data import CompositeSpec, TensorSpec
 from torchrl.modules import ProbabilisticActor
@@ -42,7 +43,7 @@ from typing import Union
 
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
-from .common import GAE, Actor, make_mlp
+from .common import GAE, Actor, make_mlp, make_batch
 from .ppo_rnn import GRU
 
 
@@ -71,6 +72,7 @@ cs = ConfigStore.instance()
 cs.store("ppo_dual_v0", node=PPOConfig(version="v0"), group="algo")
 cs.store("ppo_dual_v1", node=PPOConfig(version="v1"), group="algo")
 cs.store("ppo_dual_v2", node=PPOConfig(version="v2"), group="algo")
+cs.store("ppo_dual_v3", node=PPOConfig(version="v3"), group="algo")
 
 
 class TConv(nn.Module):
@@ -168,6 +170,10 @@ class PPODualPolicy(TensorDictModuleBase):
         self.adapt_ratio = 0.
         
         self.mode = "dual"
+        self.make_batch = functools.partial(
+            make_batch, 
+            seq_len=cfg.train_every if cfg.version=="v3" else -1
+        )
     
     def step_schedule(self):
         self.train_adaptation = True
@@ -304,6 +310,56 @@ class PPODualPolicy(TensorDictModuleBase):
         ).to(self.device)
 
         self.ADAPT_KEY = "_context"
+    
+    def make_models_v3(self):
+        """
+        Concat conditioning.
+        """
+        condition = lambda: CatTensors(["_context", "_feature"], "_feature", del_keys=False)
+        context_dim = 128
+
+        self.encoder = TensorDictModule(
+            make_mlp([256, context_dim], nn.Mish),
+            [self.OBS_PRIV_KEY],
+            ["_context"]
+        ).to(self.device)
+
+        self.adapt = TensorDictSequential(
+            TensorDictModule(nn.LazyLinear(context_dim), [self.OBS_KEY], ["_rnn_input"]),
+            TensorDictModule(
+                GRU(context_dim, context_dim, skip_conn=None),
+                ["_rnn_input", "is_init", "hx"],
+                ["_context", ("next", "hx")]
+            )
+        ).to(self.device)
+
+        self.actor = ProbabilisticActor(
+            TensorDictSequential(
+                TensorDictModule(make_mlp([512], nn.Mish), [self.OBS_KEY], ["_feature"]),
+                condition(),
+                TensorDictModule(
+                    nn.Sequential(make_mlp([256, 256], nn.Mish), Actor(self.action_dim)),
+                    ["_feature"], 
+                    ["loc", "scale"]
+                )
+            ),
+            in_keys=["loc", "scale"],
+            out_keys=[("agents", "action")],
+            distribution_class=IndependentNormal,
+            return_log_prob=True
+        ).to(self.device)
+
+        self.critic = TensorDictSequential(
+            TensorDictModule(make_mlp([512], nn.Mish), [self.OBS_KEY], ["_feature"]),
+            condition(),
+            TensorDictModule(
+               nn.Sequential(make_mlp([256, 256], nn.Mish), nn.LazyLinear(1)),
+                ["_feature"], 
+                ["state_value"]
+            )
+        ).to(self.device)
+
+        self.ADAPT_KEY = "_context"
 
     def __call__(self, tensordict: TensorDict):
         if self.mode == "dual":
@@ -340,6 +396,7 @@ class PPODualPolicy(TensorDictModuleBase):
 
         with torch.no_grad():
             is_adapt = tensordict["is_adapt"]
+            next_tensordict = next_tensordict.reshape(-1, 1)
             self.encoder(next_tensordict)
             if is_adapt.any():
                 next_tensordict[self.ADAPT_KEY][is_adapt] = self.adapt(next_tensordict[is_adapt])[self.ADAPT_KEY]
@@ -368,7 +425,7 @@ class PPODualPolicy(TensorDictModuleBase):
 
         infos = []
         for epoch in range(self.cfg.ppo_epochs):
-            batch = make_batch(tensordict, self.cfg.num_minibatches)
+            batch = self.make_batch(tensordict, self.cfg.num_minibatches)
             for minibatch in batch:
                 infos.append(self._update(minibatch))
         
@@ -383,7 +440,7 @@ class PPODualPolicy(TensorDictModuleBase):
 
             with hold_out_net(self.actor):
                 for epoch in range(4):
-                    for batch in make_batch(tensordict, 8):
+                    for batch in self.make_batch(tensordict, 8):
                         loss = self.adaptation_loss(batch).mean()
                         self.adapt_opt.zero_grad()
                         loss.backward()
@@ -513,12 +570,3 @@ class PPODualPolicy(TensorDictModuleBase):
         loss = D.kl_divergence(dist_adapt, dist_target).unsqueeze(-1)
         return loss
 
-
-def make_batch(tensordict: TensorDict, num_minibatches: int):
-    tensordict = tensordict.reshape(-1)
-    perm = torch.randperm(
-        (tensordict.shape[0] // num_minibatches) * num_minibatches,
-        device=tensordict.device,
-    ).reshape(num_minibatches, -1)
-    for indices in perm:
-        yield tensordict[indices]

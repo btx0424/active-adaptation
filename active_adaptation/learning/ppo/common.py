@@ -23,6 +23,7 @@
 
 import torch
 import torch.nn as nn
+from tensordict import TensorDict
 
 
 def make_mlp(num_units, activation=nn.LeakyReLU):
@@ -32,6 +33,27 @@ def make_mlp(num_units, activation=nn.LeakyReLU):
         layers.append(activation())
         layers.append(nn.LayerNorm(n))
     return nn.Sequential(*layers)
+
+
+def make_batch(tensordict: TensorDict, num_minibatches: int, seq_len: int = -1):
+    if seq_len > 1:
+        N, T = tensordict.shape
+        T = (T // seq_len) * seq_len
+        tensordict = tensordict[:, :T].reshape(-1, seq_len)
+        perm = torch.randperm(
+            (tensordict.shape[0] // num_minibatches) * num_minibatches,
+            device=tensordict.device,
+        ).reshape(num_minibatches, -1)
+        for indices in perm:
+            yield tensordict[indices]
+    else:
+        tensordict = tensordict.reshape(-1)
+        perm = torch.randperm(
+            (tensordict.shape[0] // num_minibatches) * num_minibatches,
+            device=tensordict.device,
+        ).reshape(num_minibatches, -1)
+        for indices in perm:
+            yield tensordict[indices]
 
 
 class Chunk(nn.Module):

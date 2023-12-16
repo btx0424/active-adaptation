@@ -26,6 +26,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as D
 import einops
+import functools
 
 from torchrl.data import CompositeSpec, TensorSpec
 from torchrl.envs.transforms import CatTensors
@@ -41,12 +42,11 @@ from typing import Any, Mapping, Union, Sequence
 
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
-from .common import GAE, Duplicate, Actor, make_mlp
+from .common import GAE, Duplicate, Actor, make_mlp, make_batch
 from .adaptation import Action, Value, ActionValue, MSE
+from .ppo_rnn import GRU
 
-from functools import partial
-
-make_mlp = partial(make_mlp, activation=nn.Mish)
+make_mlp = functools.partial(make_mlp, activation=nn.Mish)
 
 @dataclass
 class PPOConfig:
@@ -70,8 +70,9 @@ class PPOConfig:
         assert self.phase in ("encoder", "adaptation", "joint", "finetune")
 
 cs = ConfigStore.instance()
-cs.store("ppo_rma", node=PPOConfig, group="algo")
-cs.store("ppo_rma_adapt", node=PPOConfig(phase="adaptation", checkpoint_path=MISSING), group="algo")
+cs.store("rma", node=PPOConfig, group="algo")
+cs.store("rma_adapt", node=PPOConfig(phase="adaptation", checkpoint_path=MISSING), group="algo")
+cs.store("rma_adapt_rnn", node=PPOConfig(phase="adaptation", checkpoint_path=None), group="algo")
 
 
 class TConv(nn.Module):
@@ -108,6 +109,7 @@ class FiLM(nn.Module):
 
 
 def make_encoder(mode: str, num_units: Sequence[int]):
+    assert mode in ("shared", "separate", "separate_heads")
     if mode == "shared":
         encoder = TensorDictModule(
             nn.Sequential(
@@ -127,7 +129,7 @@ def make_encoder(mode: str, num_units: Sequence[int]):
                 [("agents", "observation_priv")], ["context_critic"]
             )
         )
-    elif mode == "seperate_heads":
+    elif mode == "separate_heads":
         encoder = TensorDictModule(
             nn.Sequential(
                 make_mlp(num_units),
@@ -136,32 +138,34 @@ def make_encoder(mode: str, num_units: Sequence[int]):
             [("agents", "observation_priv")], ["context_actor", "context_critic"]
         )
     else:
-        raise ValueError(mode)
+        raise NotImplementedError(mode)
     return encoder
 
 
 def make_adaptation_module(encoder_mode: str, dim: int):
+    assert encoder_mode in ("shared", "separate", "rnn")
+    OBS_KEY = ("agents", "observation")
+    OBS_HIST_KEY = ("agents", "observation_h")
     if encoder_mode == "shared":
         module = TensorDictModule(
             nn.Sequential(TConv(dim), Duplicate(2)), 
-            [("agents", "observation_h")], 
+            [OBS_HIST_KEY], 
             ["context_actor", "context_critic"]
         )
     elif encoder_mode == "separate":
         module = TensorDictSequential(
-            TensorDictModule(
-                nn.Sequential(TConv(dim)), 
-                [("agents", "observation_h")], 
-                ["context_actor"]
-            ),
-            TensorDictModule(
-                nn.Sequential(TConv(dim)), 
-                [("agents", "observation_h")], 
-                ["context_critic"]
-            )
+            TensorDictModule(TConv(dim), [OBS_HIST_KEY], ["context_actor"]),
+            TensorDictModule(TConv(dim), [OBS_HIST_KEY], ["context_critic"])
+        )
+    elif encoder_mode == "rnn":
+        gru = GRU(128, 128, skip_conn=None, allow_none=True)
+        module = TensorDictModule(
+            TensorDictModule(nn.LazyLinear(128), [OBS_KEY, "_rnn",]),
+            TensorDictModule(gru, ["_rnn", "is_init", "hx"], ["context"]),
+            TensorDictModule(Duplicate(2), ["context_actor", "context_critic"])
         )
     else:
-        raise ValueError(encoder_mode)
+        raise NotImplementedError(encoder_mode)
     return module
 
 
@@ -299,7 +303,10 @@ class PPORMAPolicy(TensorDictModuleBase):
         self.encoder_opt = torch.optim.Adam(self.encoder.parameters(), lr=5e-4)
         self.actor_opt = torch.optim.Adam(list(self.actor.parameters()) + list(self.encoder.parameters()), lr=5e-4)
         self.critic_opt = torch.optim.Adam(list(self.critic.parameters()) + list(self.encoder.parameters()), lr=5e-4)
-    
+        
+        seq_len = cfg.train_every if cfg.encoder_mode == "rnn" else -1
+        self.make_batch = functools.partial(make_batch, seq_len=seq_len)
+
     def forward(self, tensordict: TensorDict):
         self._get_context(tensordict)
         self.actor(tensordict)
@@ -328,10 +335,12 @@ class PPORMAPolicy(TensorDictModuleBase):
         return tensordict
 
     def _train_policy(self, tensordict: TensorDict):
-        next_tensordict = tensordict["next"]
+
         with torch.no_grad():
+            N, T = tensordict.shape[:2]
+            next_tensordict = tensordict["next"].reshape(-1, 1)
             self._get_context(next_tensordict)
-            next_values = self.critic(next_tensordict)["state_value"]
+            next_values = self.critic(next_tensordict)["state_value"].reshape(N, T)
         
         rewards = tensordict[("next", "agents", "reward")]
         dones = tensordict[("next", "terminated")]
@@ -351,7 +360,7 @@ class PPORMAPolicy(TensorDictModuleBase):
 
         infos = []
         for epoch in range(self.cfg.ppo_epochs):
-            batch = make_batch(tensordict, self.cfg.num_minibatches)
+            batch = self.make_batch(tensordict, self.cfg.num_minibatches)
             for minibatch in batch:
                 infos.append(self._update(minibatch))
         
@@ -407,9 +416,17 @@ class PPORMAPolicy(TensorDictModuleBase):
         with torch.no_grad():
             tensordict = self.encoder(tensordict)
         
-        info = self.adaptation_loss.update(tensordict)
-        
-        return {f"adaptation/{k}": v for k, v in info.items()}
+        info = []
+        with hold_out_net(self.actor):
+            for epoch in range(4):
+                for batch in self.make_batch(tensordict, 8):
+                    loss = self.adaptation_loss(batch).mean()
+                    self.adaptation_loss.opt.zero_grad()
+                    loss.backward()
+                    self.adaptation_loss.opt.step()
+                    info.append(loss)
+
+        return {"adaptation_loss": torch.stack(info).mean().item()}
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
         return super().load_state_dict(state_dict, strict)
@@ -436,12 +453,3 @@ class PPORMAPolicy(TensorDictModuleBase):
     def __str__(self) -> str:
         return f"PPOAdapt-{self.cfg.phase}"
 
-
-def make_batch(tensordict: TensorDict, num_minibatches: int):
-    tensordict = tensordict.reshape(-1)
-    perm = torch.randperm(
-        (tensordict.shape[0] // num_minibatches) * num_minibatches,
-        device=tensordict.device,
-    ).reshape(num_minibatches, -1)
-    for indices in perm:
-        yield tensordict[indices]

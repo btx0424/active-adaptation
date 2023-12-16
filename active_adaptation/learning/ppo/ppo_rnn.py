@@ -90,15 +90,26 @@ class LSTM(nn.Module):
 
 
 class GRU(nn.Module):
-    def __init__(self, input_size, hidden_size, skip_conn, bptt_len: int = 8) -> None:
+    def __init__(
+        self, 
+        input_size, 
+        hidden_size, 
+        skip_conn, 
+        bptt_len: int = 8,
+        allow_none: bool = False
+    ) -> None:
         super().__init__()
         self.gru = nn.GRUCell(input_size, hidden_size)
         self.skip_conn = skip_conn
         self.ln = nn.LayerNorm(hidden_size)
+        self.allow_none = allow_none
 
     def forward(self, x: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor):
-        T = x.shape[1]
-        hx = hx[:, 0]
+        N, T = x.shape[:2]
+        if hx is None and self.allow_none:
+            hx = torch.zeros(N, self.gru.hidden_size, device=x.device)
+        else:
+            hx = hx[:, 0]
         output = []
         reset = 1. - is_init.float()
         for x_t, reset_t in zip(x.unbind(1), reset.unbind(1)):
