@@ -23,14 +23,21 @@ def main():
     from omni.isaac.core.utils.torch.rotations import quat_rotate
 
 
-    from active_adaptation.assets import UNITREE_A1_CFG, CASSIE_CFG
+    from active_adaptation.assets import (
+        UNITREE_A1_CFG,
+        UNITREE_GO2_CFG,
+        CASSIE_CFG, 
+        spawn_with_payload
+    )
     from active_adaptation.envs.utils import attach_payload
     from active_adaptation.utils.helpers import batchify
 
     quat_rotate = batchify(quat_rotate)
 
-    from configs import ROUGH_TERRAINS_CFG
+    from configs import ROUGH_TERRAIN_CFG
     from omni_drones.envs.isaac_env import DebugDraw
+
+    robot_cfg = UNITREE_GO2_CFG
 
     @configclass
     class SceneCfg(InteractiveSceneCfg):
@@ -57,7 +64,8 @@ def main():
         #     debug_vis=False,
         # )
         
-        robot = UNITREE_A1_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        robot = robot_cfg.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        robot.spawn.func = spawn_with_payload
         # robot.spawn.activate_contact_sensors = ".*_calf"
         # contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*_calf", debug_vis=False)
 
@@ -101,7 +109,7 @@ def main():
     rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cpu")
     rgb_annotator.attach([render_product])
 
-    scene_cfg = SceneCfg(num_envs=2048, env_spacing=2.5)
+    scene_cfg = SceneCfg(num_envs=1024, env_spacing=2.5)
     scene = InteractiveScene(scene_cfg)
     SimulationContext.set_camera_view(
         eye=torch.tensor([5., 5., 5.]),

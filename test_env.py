@@ -41,23 +41,24 @@ def main(cfg):
     simulation_app = app_launcher.app
 
     from active_adaptation.envs import LocomotionEnv
-    from configs import UNITREE_A1_ENV
+    from configs import LocomotionEnvCfg
 
     run = init_wandb(cfg)
 
     # setup environment
-    UNITREE_A1_ENV.scene.num_envs = cfg.task.env.num_envs
-    UNITREE_A1_ENV.sim.physx.gpu_max_rigid_contact_count = 2**21
-    UNITREE_A1_ENV.sim.physx.gpu_max_rigid_patch_count = 2**21
-    UNITREE_A1_ENV.sim.physx.gpu_found_lost_pairs_capacity = 2**20
-    UNITREE_A1_ENV.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**22
-    UNITREE_A1_ENV.sim.physx.gpu_total_aggregate_pairs_capacity = 2**19
-    UNITREE_A1_ENV.sim.physx.gpu_collision_stack_size = 2**24
-    UNITREE_A1_ENV.sim.physx.gpu_heap_capacity = 2**24
+    env_cfg = LocomotionEnvCfg(cfg.task.robot)
+    env_cfg.scene.num_envs = cfg.task.env.num_envs
+    env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21
+    env_cfg.sim.physx.gpu_max_rigid_patch_count = 2**21
+    env_cfg.sim.physx.gpu_found_lost_pairs_capacity = 2**20
+    env_cfg.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**22
+    env_cfg.sim.physx.gpu_total_aggregate_pairs_capacity = 2**19
+    env_cfg.sim.physx.gpu_collision_stack_size = 2**24
+    env_cfg.sim.physx.gpu_heap_capacity = 2**24
 
-    UNITREE_A1_ENV.history_length = cfg.task.history_length
+    env_cfg.history_length = cfg.task.history_length
 
-    base_env = LocomotionEnv(UNITREE_A1_ENV)
+    base_env = LocomotionEnv(env_cfg)
     transform = Compose(InitTracker())
     env = TransformedEnv(base_env, transform)
     env.set_seed(0)

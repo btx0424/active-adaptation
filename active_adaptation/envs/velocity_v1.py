@@ -22,7 +22,9 @@ class LocomotionEnv(Env):
     def __init__(self, cfg):
         super().__init__(cfg)
         self.robot = self.scene.articulations["robot"]
-        print(self.robot.body_names)
+        body_masses = self.robot.root_physx_view
+        for name, mass in zip(self.robot.body_names, body_masses):
+            print(name, mass)
         self.calf_indices = [i for i, name in enumerate(self.robot.body_names) if "calf" in name]
         self.thigh_indices = [i for i, name in enumerate(self.robot.body_names) if "thigh" in name]
 
