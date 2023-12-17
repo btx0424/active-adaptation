@@ -153,7 +153,7 @@ def make_adaptation_module(encoder_mode: str, adapt_mode: str, dim: int):
         def make(output_key: str):
             in_keys = [f"_rnn_{output_key}", "is_init", f"{output_key}_hx"]
             out_keys = [output_key, ("next", f"{output_key}_hx")]
-            gru = GRU(dim, dim, skip_conn=None, allow_none=True)
+            gru = GRU(dim, dim, skip_conn=None, layer_norm=False, allow_none=True)
             return TensorDictSequential(
                 TensorDictModule(nn.LazyLinear(dim), [OBS_KEY], [f"_rnn_{output_key}"]),
                 TensorDictModule(gru, in_keys, out_keys),
@@ -297,7 +297,7 @@ class PPORMAPolicy(TensorDictModuleBase):
             if self.cfg.adaptation_loss == "mse":
                 self.adaptation_loss = MSE(
                     self.adaptation_module, 
-                    ["context_actor", "context_critic"], 
+                    ["context_actor"], 
                 ).to(self.device)
             elif self.cfg.adaptation_loss == "action_kl":
                 self.adaptation_module(fake_input)
@@ -362,10 +362,9 @@ class PPORMAPolicy(TensorDictModuleBase):
     def _train_policy(self, tensordict: TensorDict):
 
         with torch.no_grad():
-            N, T = tensordict.shape[:2]
-            next_tensordict = tensordict["next"].reshape(-1, 1)
+            next_tensordict = tensordict["next"]
             self._get_context(next_tensordict)
-            next_values = self.critic(next_tensordict)["state_value"].reshape(N, T)
+            next_values = self.critic(next_tensordict)["state_value"]
         
         rewards = tensordict[("next", "agents", "reward")]
         dones = tensordict[("next", "terminated")]

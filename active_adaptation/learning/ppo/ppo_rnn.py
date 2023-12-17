@@ -94,14 +94,17 @@ class GRU(nn.Module):
         self, 
         input_size, 
         hidden_size, 
-        skip_conn, 
+        skip_conn: str = None, 
         bptt_len: int = 8,
+        layer_norm: bool = False,
         allow_none: bool = False
     ) -> None:
         super().__init__()
         self.gru = nn.GRUCell(input_size, hidden_size)
+        self.out = nn.LazyLinear(hidden_size)
         self.skip_conn = skip_conn
-        self.ln = nn.LayerNorm(hidden_size)
+        if layer_norm:
+            self.ln = nn.LayerNorm(hidden_size)
         self.allow_none = allow_none
 
     def forward(self, x: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor):
@@ -111,8 +114,10 @@ class GRU(nn.Module):
             if hx is None and self.allow_none:
                 hx = torch.zeros(N, self.gru.hidden_size, device=x.device)
             reset = 1. - is_init.float().reshape(N, 1)
-            hx = self.gru(x, hx * reset)
-            output = self.ln(hx)
+            output = hx = self.gru(x, hx * reset)
+            output = self.out(output)
+            if hasattr(self, "ln"):
+                output = self.ln(hx)
             return output, hx
 
         elif x.ndim == 3: # multi-step
@@ -128,7 +133,9 @@ class GRU(nn.Module):
                 hx = self.gru(x_t, hx * reset_t)
                 output.append(hx)
             output = torch.stack(output, dim=1)
-            output = self.ln(output)
+            output = self.out(output)
+            if hasattr(self, "ln"):
+                output = self.ln(output)
             return output, einops.repeat(hx, "b h -> b t h", t=T)
 
 
@@ -292,10 +299,8 @@ class PPORNNPolicy(TensorDictModuleBase):
 
     def __call__(self, tensordict: TensorDict):
         # self._maybe_init_state(tensordict)
-        tensordict = tensordict.unsqueeze(1)  # dummy time dimension
         tensordict = self.actor(tensordict)
         tensordict = self.critic(tensordict)
-        tensordict = tensordict.squeeze(1)
         tensordict = tensordict.exclude("loc", "scale", "feature", inplace=True)
         return tensordict
     
@@ -309,14 +314,15 @@ class PPORNNPolicy(TensorDictModuleBase):
         })
 
     def train_op(self, tensordict: TensorDict):
-        next_tensordict = tensordict["next"].reshape(-1).unsqueeze(1)
-        assert not next_tensordict["is_init"].any()
 
         with torch.no_grad():
+            next_tensordict = tensordict["next"].reshape(-1)
+            assert not next_tensordict["is_init"].any()
             next_values = (
                 self.critic(next_tensordict)["state_value"]
                 .reshape(*tensordict.shape, 1)
             )
+
         rewards = tensordict[("next", "agents", "reward")]
         dones = tensordict[("next", "terminated")]
         values = tensordict["state_value"]

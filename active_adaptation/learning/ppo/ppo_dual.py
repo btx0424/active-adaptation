@@ -166,7 +166,7 @@ class PPODualPolicy(TensorDictModuleBase):
         }[cfg.adaptation_loss]
 
         self.train_adaptation = True
-        self.train_classifier = True
+        self.train_classifier = False
         self.adapt_ratio = 0.
         
         self.mode = "dual"
@@ -177,6 +177,7 @@ class PPODualPolicy(TensorDictModuleBase):
     
     def step_schedule(self):
         self.train_adaptation = True
+        self.train_classifier = True
         self.adapt_ratio = min(
             self.adapt_ratio + self.cfg.adapt_schedule.ratio_step,
             self.cfg.adapt_schedule.ratio_max
@@ -396,16 +397,16 @@ class PPODualPolicy(TensorDictModuleBase):
 
         with torch.no_grad():
             is_adapt = tensordict["is_adapt"]
-            next_tensordict = next_tensordict.reshape(-1, 1)
-            self.encoder(next_tensordict)
+            next_tensordict = self.encoder(next_tensordict.to_tensordict())
             if is_adapt.any():
                 next_tensordict[self.ADAPT_KEY][is_adapt] = self.adapt(next_tensordict[is_adapt])[self.ADAPT_KEY]
                 
                 if self.cfg.adapt_reward > 0:
-                    adapt_reward = - self.adaptation_loss(
-                        self.encoder(tensordict[is_adapt]), 
-                        self.adapt(tensordict[is_adapt])
-                    )
+                    # adapt_reward = - self.adaptation_loss(
+                    #     self.encoder(tensordict[is_adapt]), 
+                    #     self.adapt(tensordict[is_adapt])
+                    # )
+                    adapt_reward = - self.adaptation_loss(self.encoder(tensordict[is_adapt]))
                     rewards[is_adapt] += adapt_reward * self.cfg.adapt_reward
 
             next_values = self.critic(next_tensordict)["state_value"]
@@ -566,7 +567,7 @@ class PPODualPolicy(TensorDictModuleBase):
     
     def action_kl(self, tensordict: TensorDict):
         dist_target = self.actor.get_dist(tensordict.to_tensordict())
-        dist_adapt = self.actor.get_dist(self.adapt(tensordict))
+        dist_adapt = self.actor.get_dist(self.adapt(tensordict.to_tensordict()))
         loss = D.kl_divergence(dist_adapt, dist_target).unsqueeze(-1)
         return loss
 
