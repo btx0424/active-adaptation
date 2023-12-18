@@ -25,15 +25,11 @@ class LocomotionEnv(Env):
         body_masses = self.robot.root_physx_view.get_masses()
         for name, mass in zip(self.robot.body_names, body_masses):
             print(name, mass)
+        self.foot_indices = [i for i, name in enumerate(self.robot.body_names) if "foot" in name]
         self.calf_indices = [i for i, name in enumerate(self.robot.body_names) if "calf" in name]
         self.thigh_indices = [i for i, name in enumerate(self.robot.body_names) if "thigh" in name]
 
         self.contact_sensor: ContactSensor = self.scene.sensors.get("contact_forces", None)
-        self.FEET_OFFSET = (
-            torch.tensor([0., 0., -0.2], device=self.device)
-            .reshape(1, 1, 3)
-            .expand(self.num_envs, 4, 3)
-        )
         self.height_scanner: RayCaster = self.scene.sensors.get("height_scanner", None)
 
         self.init_root_state = self.robot.data.default_root_state.clone()
@@ -60,8 +56,6 @@ class LocomotionEnv(Env):
             ]) * 1.6
             self._actions = torch.zeros(self.num_envs, 12)
             self._prev_actions = torch.zeros(self.num_envs, 12)
-            self._feet_pos = torch.zeros(self.num_envs, 4, 3)
-            self._feet_vel = torch.zeros(self.num_envs, 4, 3)
 
         obs = super()._compute_observation()
         reward = self._compute_reward()
@@ -151,14 +145,6 @@ class LocomotionEnv(Env):
             * cmd_speed
             * (cmd_speed > 0.2).float()
         )
-        feet_pos = (
-            self.robot.data.body_pos_w[:, self.calf_indices]
-            + quat_rotate(self.robot.data.body_quat_w[:, self.calf_indices], self.FEET_OFFSET)
-        )
-        # avoid problems upon reset
-        prev_feet_pos = torch.where(self.episode_length_buf.reshape(-1, 1, 1) > 0, self._feet_pos, feet_pos)
-        self._feet_vel[:] = (feet_pos - prev_feet_pos) / self.step_dt
-        self._feet_pos[:] = feet_pos
 
         obs = super()._compute_observation()
         self._observation_h[:, :, :-1] = self._observation_h[:, :, 1:]
@@ -232,20 +218,22 @@ class LocomotionEnv(Env):
     
     @observation_func
     def contact_forces(self):
-        forces = self.contact_sensor.data.net_forces_w_history[:, :, self.calf_indices].mean(dim=1)
+        forces = self.contact_sensor.data.net_forces_w_history[:, :, self.foot_indices].mean(dim=1)
+        return forces * self.physics_dt
         forces_norm = forces.norm(dim=-1, keepdim=True)
         return (forces / forces_norm.clamp_min(1e-6) * symlog(forces_norm)).reshape(self.num_envs, -1)
     
     @observation_func
     def contact_indicator(self):
-        forces = self.contact_sensor.data.net_forces_w_history[:, :, self.calf_indices].mean(dim=1)
+        forces = self.contact_sensor.data.net_forces_w_history[:, :, self.foot_indices].mean(dim=1)
         return (forces.norm(dim=-1) > 1.).float()
 
     @observation_func
     def feet_pos_b(self):
+        feet_pos_w = self.robot.data.body_pos_w[:, self.foot_indices]
         feet_pos_b = quat_rotate_inverse(
             self.robot.data.root_quat_w.unsqueeze(1),
-            self._feet_pos - self.robot.data.root_pos_w.unsqueeze(1)
+            feet_pos_w - self.robot.data.root_pos_w.unsqueeze(1)
         )
         return feet_pos_b.reshape(self.num_envs, -1)
     
@@ -295,7 +283,8 @@ class LocomotionEnv(Env):
     @reward_func
     def feet_slip(self):
         i = self.contact_indicator()
-        return - (i * self._feet_vel.norm(dim=-1)).sum(dim=1, keepdim=True)
+        feet_vel = self.robot.data.body_lin_vel_w[:, self.foot_indices]
+        return - (i * feet_vel.norm(dim=-1)).sum(dim=1, keepdim=True)
     
     @termination_func
     def crash(self):

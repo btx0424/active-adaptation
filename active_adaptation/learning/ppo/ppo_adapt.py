@@ -48,6 +48,11 @@ from .ppo_rnn import GRU
 
 make_mlp = functools.partial(make_mlp, activation=nn.Mish)
 
+
+OBS_KEY = ("agents", "observation")
+OBS_HIST_KEY = ("agents", "observation_h")
+
+
 @dataclass
 class PPOConfig:
     name: str = "ppo_rma"
@@ -67,7 +72,7 @@ class PPOConfig:
 
     def __post_init__(self):
         assert self.condition_mode.lower() in ("cat", "film")
-        assert self.adaptation_key in ("context", ("agents", "observation_priv"), "_feature")
+        assert self.adaptation_key in ("context", OBS_HIST_KEY, "_feature")
         assert self.phase in ("encoder", "adaptation", "joint", "finetune")
 
 cs = ConfigStore.instance()
@@ -117,17 +122,15 @@ def make_encoder(mode: str, num_units: Sequence[int]):
                 make_mlp(num_units),
                 Duplicate(2),
             ),
-            [("agents", "observation_priv")], ["context_actor", "context_critic"]
+            [OBS_HIST_KEY], ["context_actor", "context_critic"]
         )
     elif mode == "separate":
         encoder = TensorDictSequential(
             TensorDictModule(
-                make_mlp(num_units),
-                [("agents", "observation_priv")], ["context_actor"]
+                make_mlp(num_units), [OBS_HIST_KEY], ["context_actor"]
             ),
             TensorDictModule(
-                make_mlp(num_units),
-                [("agents", "observation_priv")], ["context_critic"]
+                make_mlp(num_units), [OBS_HIST_KEY], ["context_critic"]
             )
         )
     elif mode == "separate_heads":
@@ -136,7 +139,7 @@ def make_encoder(mode: str, num_units: Sequence[int]):
                 make_mlp(num_units),
                 Duplicate(2),
             ),
-            [("agents", "observation_priv")], ["context_actor", "context_critic"]
+            [OBS_HIST_KEY], ["context_actor", "context_critic"]
         )
     else:
         raise NotImplementedError(mode)
@@ -144,8 +147,6 @@ def make_encoder(mode: str, num_units: Sequence[int]):
 
 
 def make_adaptation_module(encoder_mode: str, adapt_mode: str, dim: int):
-    OBS_KEY = ("agents", "observation")
-    OBS_HIST_KEY = ("agents", "observation_h")
     if adapt_mode == "tconv":
         def make(output_key: str):
             return TensorDictModule(TConv(dim), [OBS_HIST_KEY], [output_key])
@@ -217,7 +218,7 @@ class PPORMAPolicy(TensorDictModuleBase):
         self.action_dim = action_spec.shape[-1]
 
         print(observation_spec)
-        observation_priv_dim = observation_spec[("agents", "observation_priv")].shape[-1]
+        observation_priv_dim = observation_spec[OBS_HIST_KEY].shape[-1]
         observation_dim = observation_spec[("agents", "observation")].shape[-1]
 
         fake_input = observation_spec.zero()

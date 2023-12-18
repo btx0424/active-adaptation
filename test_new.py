@@ -65,7 +65,7 @@ def main():
         # )
         
         robot = robot_cfg.replace(prim_path="{ENV_REGEX_NS}/Robot")
-        robot.spawn.func = spawn_with_payload
+        # robot.spawn.func = spawn_with_payload
         # robot.spawn.activate_contact_sensors = ".*_calf"
         # contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*_calf", debug_vis=False)
 
@@ -123,6 +123,7 @@ def main():
     
     sim_dt = sim.get_physics_dt()
     robot = scene.articulations["robot"]
+    foot_indices = [i for i, name in enumerate(robot.body_names) if "foot" in name]
     calf_indices = [i for i, name in enumerate(robot.body_names) if "calf" in name]
 
     contact_forces: ContactSensor = scene.sensors["contact_forces"]
@@ -153,10 +154,12 @@ def main():
 
         sim.step(render=should_render)
         scene.update(sim_dt)
-        feet_pos = (
-            robot.data.body_pos_w[:, calf_indices]
-            + quat_rotate(robot.data.body_quat_w[:, calf_indices], feet_offset)
-        )
+        # feet_pos = (
+        #     robot.data.body_pos_w[:, calf_indices]
+        #     + quat_rotate(robot.data.body_quat_w[:, calf_indices], feet_offset)
+        # )
+        feet_pos = robot.data.body_pos_w[:, foot_indices]
+        contact_forces.update(sim_dt, force_recompute=True)
 
         if should_render:
             debug_draw.clear()
@@ -166,7 +169,7 @@ def main():
             # )
             debug_draw.vector(
                 feet_pos.reshape(-1, 3),
-                contact_forces.data.net_forces_w[:, calf_indices].reshape(-1, 3),
+                contact_forces.data.net_forces_w[:, foot_indices].reshape(-1, 3) * sim_dt,
             )
             # rgb_data = rgb_annotator.get_data()
             # rgb_data = np.frombuffer(rgb_data, dtype=np.uint8).reshape(rgb_data.shape)
