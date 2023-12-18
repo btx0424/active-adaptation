@@ -50,6 +50,7 @@ make_mlp = functools.partial(make_mlp, activation=nn.Mish)
 
 
 OBS_KEY = ("agents", "observation")
+OBS_PRIV_KEY = ("agents", "observation_priv")
 OBS_HIST_KEY = ("agents", "observation_h")
 
 
@@ -118,28 +119,18 @@ def make_encoder(mode: str, num_units: Sequence[int]):
     assert mode in ("shared", "separate", "separate_heads")
     if mode == "shared":
         encoder = TensorDictModule(
-            nn.Sequential(
-                make_mlp(num_units),
-                Duplicate(2),
-            ),
-            [OBS_HIST_KEY], ["context_actor", "context_critic"]
+            nn.Sequential(make_mlp(num_units), Duplicate(2)),
+            [OBS_PRIV_KEY], 
+            ["context_actor", "context_critic"]
         )
     elif mode == "separate":
         encoder = TensorDictSequential(
             TensorDictModule(
-                make_mlp(num_units), [OBS_HIST_KEY], ["context_actor"]
+                make_mlp(num_units), [OBS_PRIV_KEY], ["context_actor"]
             ),
             TensorDictModule(
-                make_mlp(num_units), [OBS_HIST_KEY], ["context_critic"]
+                make_mlp(num_units), [OBS_PRIV_KEY], ["context_critic"]
             )
-        )
-    elif mode == "separate_heads":
-        encoder = TensorDictModule(
-            nn.Sequential(
-                make_mlp(num_units),
-                Duplicate(2),
-            ),
-            [OBS_HIST_KEY], ["context_actor", "context_critic"]
         )
     else:
         raise NotImplementedError(mode)
@@ -223,7 +214,7 @@ class PPORMAPolicy(TensorDictModuleBase):
 
         fake_input = observation_spec.zero()
 
-        self.encoder = make_encoder("separate", [128, 128]).to(self.device)
+        self.encoder = make_encoder(cfg.encoder_mode, [128, 128]).to(self.device)
 
         if self.cfg.condition_mode == "cat":
             def condition(branch: str):
