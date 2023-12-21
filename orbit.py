@@ -17,6 +17,10 @@ class OrbitWrapper(GymWrapper):
         return self._env.num_envs
     
     @property
+    def max_peisode_length(self):
+        return self._env.max_episode_length
+    
+    @property
     def _is_batched(self):
         return True
     
@@ -29,6 +33,8 @@ class OrbitWrapper(GymWrapper):
 
             reward = reward + _reward
 
+            terminated = terminated.reshape(self.num_envs, -1)
+            truncated = truncated.reshape(self.num_envs, -1)
             done = terminated | truncated
 
         reward = reward.reshape(self.num_envs, -1) # self.read_reward(reward)
@@ -56,5 +62,5 @@ class OrbitWrapper(GymWrapper):
 class OrbitEnv(OrbitWrapper):
 
     def __init__(self, env_name, cfg, **kwargs):
-        env = gym.make(env_name, cfg=cfg)
+        env = gym.make(env_name, cfg=cfg, render_mode="rgb_array")
         super().__init__(env)

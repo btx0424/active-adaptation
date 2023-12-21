@@ -63,6 +63,7 @@ class PPOPolicy(TensorDictModuleBase):
     OBS_KEY = "policy" # ("agents", "observation")
     ACTION_KEY = "action" # ("agents", "action")
     REWARD_KEY = ("next", "reward") # ("agents", "reward")
+    DONE_KEY = ("next", "done") # ("next", "terminates")
 
     def __init__(
         self, 
@@ -172,7 +173,7 @@ class PPOPolicy(TensorDictModuleBase):
         with torch.no_grad():
             next_values = self.critic(next_tensordict)["state_value"]
         rewards = tensordict[self.REWARD_KEY]
-        dones = tensordict[("next", "terminated")]
+        dones = tensordict[self.DONE_KEY]
         values = tensordict["state_value"]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
