@@ -2,6 +2,7 @@ import gymnasium as gym
 
 from tensordict.tensordict import TensorDictBase, TensorDict
 from torchrl.envs.libs import GymWrapper, GymEnv
+from copy import deepcopy
 
 class OrbitWrapper(GymWrapper):
     
@@ -20,6 +21,10 @@ class OrbitWrapper(GymWrapper):
     def max_peisode_length(self):
         return self._env.max_episode_length
     
+    @property
+    def extras(self):
+        return deepcopy(self._env.extras)
+
     @property
     def _is_batched(self):
         return True

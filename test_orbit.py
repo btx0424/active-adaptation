@@ -59,10 +59,20 @@ def main(cfg):
     import omni.isaac.orbit_tasks  # noqa: F401
     from omni.isaac.orbit_tasks.utils import parse_env_cfg
 
-    # task_name = "Isaac-Velocity-Rough-Unitree-Go2-v0"
-    task_name = "Isaac-Velocity-Flat-Unitree-Go2-v0"
+    task_name = "Isaac-Velocity-Rough-Unitree-Go2-v0"
+    # task_name = "Isaac-Velocity-Flat-Unitree-Go2-v0"
     # task_name = "Isaac-Velocity-Flat-Unitree-A1-v0"
-    env_cfg = parse_env_cfg(task_name, use_gpu=True, num_envs=2048)
+    env_cfg = parse_env_cfg(task_name, use_gpu=True, num_envs=cfg.task.num_envs)
+    
+    def follow(env):
+        asset = env.scene["robot"]
+        pos = asset.data.root_pos_w[0].cpu()
+        return torch.as_tensor(env.cfg.viewer.eye) + pos, pos
+    env_cfg.viewer.func = follow
+
+    if hasattr(env_cfg.scene, "height_scanner"):
+        env_cfg.scene.height_scanner = None
+        env_cfg.observations.policy.height_scan = None
     
     # create TorchRL environment
     env = OrbitEnv(task_name, cfg=env_cfg)
@@ -169,6 +179,8 @@ def main(cfg):
                     result[k] = children
             elif isinstance(v, float):
                 result[k] = v
+            elif isinstance(v, torch.Tensor) and v.numel() == 1:
+                result[k] = v.item()
         return result
 
     t = tqdm(collector, total=total_frames//frames_per_batch)
@@ -187,7 +199,8 @@ def main(cfg):
         
         info["env_frames"] = collector._frames
         info["rollout_fps"] = collector._fps
-        
+        info["extras"] = find_numerics(env.base_env.extras)
+
         run.log(info)
 
         print()
