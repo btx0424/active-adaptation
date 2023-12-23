@@ -57,18 +57,21 @@ def main(cfg):
     )
 
     import omni.isaac.orbit_tasks  # noqa: F401
+    from configs import UnitreeGo2RecoveryEnvCfg
     from omni.isaac.orbit_tasks.utils import parse_env_cfg
 
-    task_name = "Isaac-Velocity-Rough-Unitree-Go2-v0"
+    # task_name = "Isaac-Velocity-Rough-Unitree-Go2-v0"
     # task_name = "Isaac-Velocity-Flat-Unitree-Go2-v0"
     # task_name = "Isaac-Velocity-Flat-Unitree-A1-v0"
-    env_cfg = parse_env_cfg(task_name, use_gpu=True, num_envs=cfg.task.num_envs)
+    task_name = "Go2-Recovery"
+    env_cfg = parse_env_cfg(task_name, use_gpu=True, num_envs=cfg.task.env.num_envs)
     
-    def follow(env):
-        asset = env.scene["robot"]
-        pos = asset.data.root_pos_w[0].cpu()
-        return torch.as_tensor(env.cfg.viewer.eye) + pos, pos
-    env_cfg.viewer.func = follow
+    if cfg.get("camera_follow", False):
+        def follow(env):
+            asset = env.scene["robot"]
+            pos = asset.data.root_pos_w[0].cpu()
+            return torch.as_tensor(env.cfg.viewer.eye) + pos, pos
+        env_cfg.viewer.func = follow
 
     if hasattr(env_cfg.scene, "height_scanner"):
         env_cfg.scene.height_scanner = None
