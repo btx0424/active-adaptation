@@ -13,9 +13,19 @@ import einops
 from omni.isaac.orbit.envs import RLTaskEnv
 
 
-def upright(env: RLTaskEnv):
+def upright_l2(env: RLTaskEnv):
     asset = env.scene.articulations["robot"]
     return - (-1. - asset.data.projected_gravity_b[:, 2]).square()
+
+
+def upright_l1(env: RLTaskEnv):
+    asset = env.scene.articulations["robot"]
+    return (asset.data.projected_gravity_b[:, 2] -1.)
+
+
+def base_height_l1(env: RLTaskEnv):
+    asset = env.scene.articulations["robot"]
+    return (asset.data.root_pos_w[:, 2] - 0.30).clamp_max(0.)
 
 
 def joint_deviation_l2(env: RLTaskEnv):
@@ -40,18 +50,24 @@ def reset_joints_uniform(env: RLTaskEnv, env_ids: torch.Tensor, eps=.05):
     asset.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids)
 
 
-def time(env: RLTaskEnv):
+def time(env: RLTaskEnv): # obs
     if hasattr(env, "episode_length_buf"):
-        t = env.episode_length_buf / env.max_episode_length
+        t = (env.episode_length_buf / env.max_episode_length) * 2. - 1.
         return einops.repeat(t, "n -> n 4")
     else:
         return torch.zeros(env.num_envs, 4, device=env.device)
 
 
+def root_quat(env: RLTaskEnv): # obs
+    asset = env.scene.articulations["robot"]
+    return asset.data.root_quat_w
+
+
 @configclass
 class RewardsCfg:
     
-    upright = RewTerm(func=upright, weight=2.0)
+    upright = RewTerm(func=upright_l1, weight=2.0)
+    base_height = RewTerm(func=base_height_l1, weight=1.0)
     joint_pos = RewTerm(func=joint_deviation_l2, weight=-0.1)
     joint_vel = RewTerm(func=joint_vel_l1, weight=-0.001)
 
@@ -79,6 +95,7 @@ class UnitreeGo2RecoveryEnvCfg(LocomotionVelocityRoughEnvCfg):
         # reduce action scale
         self.actions.joint_pos.scale = 0.25
 
+        self.observations.policy.root_quat = ObsTerm(func=root_quat)
         self.observations.policy.time = ObsTerm(func=time)
 
         self.randomization.reset_base.params = {
