@@ -76,7 +76,7 @@ class RewardsCfg:
     
     upright = RewTerm(func=upright_l1, weight=2.0)
     base_height = RewTerm(func=base_height_l1, weight=1.0)
-    joint_pos = RewTerm(func=joint_deviation_l2, weight=-0.1)
+    # joint_pos = RewTerm(func=joint_deviation_l2, weight=-0.1)
     joint_vel = RewTerm(func=joint_vel_l1, weight=-0.001)
     undesired_contact = RewTerm(func=undesired_contact, weight=1.)
 

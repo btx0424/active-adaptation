@@ -57,15 +57,16 @@ def main(cfg):
     )
 
     import omni.isaac.orbit_tasks  # noqa: F401
-    from configs import UnitreeGo2RecoveryEnvCfg
+    from configs import UnitreeGo2RecoveryEnvCfg, ObservationsCfg
     from omni.isaac.orbit_tasks.utils import parse_env_cfg
 
-    # task_name = "Isaac-Velocity-Rough-Unitree-Go2-v0"
+    task_name = "Isaac-Velocity-Rough-Unitree-Go2-v0"
     # task_name = "Isaac-Velocity-Flat-Unitree-Go2-v0"
     # task_name = "Isaac-Velocity-Flat-Unitree-A1-v0"
-    task_name = "Go2-Recovery"
+    # task_name = "Go2-Recovery"
     env_cfg = parse_env_cfg(task_name, use_gpu=True, num_envs=cfg.task.env.num_envs)
-    
+    env_cfg.observations = ObservationsCfg()
+
     if cfg.get("camera_follow", False):
         def follow(env):
             asset = env.scene["robot"]
