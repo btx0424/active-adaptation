@@ -90,7 +90,7 @@ def main(cfg):
     env.set_info_dict_reader(reader)
     env = TransformedEnv(env, transform)
 
-    policy = PPOPolicy(
+    policy = policies[cfg.algo.name](
         cfg.algo,
         env.observation_spec, 
         env.action_spec, 

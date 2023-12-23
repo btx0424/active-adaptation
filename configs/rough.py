@@ -6,7 +6,10 @@ import omni.isaac.orbit_tasks.locomotion.velocity.mdp as mdp
 from omni.isaac.orbit.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
 from omni.isaac.orbit.assets import Articulation
-from omni.isaac.orbit.envs import RLTaskEnv
+from omni.isaac.orbit.envs import RLTaskEnv, BaseEnv
+
+from omni.isaac.orbit.assets import Articulation, RigidObject
+from omni.isaac.orbit.managers import SceneEntityCfg
 
 import torch
 
@@ -23,6 +26,13 @@ def joint_params(env: RLTaskEnv):
     return torch.cat([base_legs.stiffness, base_legs.damping], dim=-1) 
 
 
+def base_quat(env: BaseEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Root orientation in the simulation world frame."""
+    # extract the used quantities (to enable type-hinting)
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return asset.data.root_quat_w
+
+
 @configclass
 class ObservationsCfg:
     """Observation specifications for the MDP."""
@@ -32,7 +42,7 @@ class ObservationsCfg:
         """Observations for policy group."""
 
         # observation terms (order preserved)
-        base_quat = ObsTerm(func=mdp.base_quat)
+        base_quat = ObsTerm(func=base_quat)
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2))
         projected_gravity = ObsTerm(
             func=mdp.projected_gravity,
