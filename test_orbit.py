@@ -10,7 +10,6 @@ from tqdm import tqdm
 from omegaconf import OmegaConf
 from omni.isaac.orbit.app import AppLauncher
 
-from orbit import OrbitEnv
 from helpers import EpisodeStats, Every
 
 from torchrl.envs.gym_like import default_info_dict_reader
@@ -79,15 +78,11 @@ def main(cfg):
         env_cfg.observations.policy.height_scan = None
     
     # create TorchRL environment
+    from orbit import OrbitEnv
     env = OrbitEnv(task_name, cfg=env_cfg)
+    episode_stats = EpisodeStats(["episode_reward", *env.info_spec.keys(True, True)])
 
     transform = Compose(InitTracker(), RewardSum())
-    reader = default_info_dict_reader(
-        ["episode_len"], 
-        [UnboundedDiscreteTensorSpec([env.num_envs, 1], device=env.device)]
-    )
-
-    env.set_info_dict_reader(reader)
     env = TransformedEnv(env, transform)
 
     policy = policies[cfg.algo.name](
@@ -100,7 +95,6 @@ def main(cfg):
 
     run = init_wandb(cfg)
 
-    episode_stats = EpisodeStats(["episode_reward", "episode_len"])
     
     eval_interval = cfg.get("eval_interval", -1)
     eval_render = cfg.get("eval_render", False)
@@ -195,6 +189,8 @@ def main(cfg):
         if len(episode_stats) >= env.num_envs:
             info_log = {}
             for k, v in episode_stats.pop().items(True, True):
+                if isinstance(k, tuple):
+                    k = "/".join(k)
                 info_log[k] = v.mean().item()
             info["train"] = info_log
         
