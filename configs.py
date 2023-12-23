@@ -20,12 +20,12 @@ def upright_l2(env: RLTaskEnv):
 
 def upright_l1(env: RLTaskEnv):
     asset = env.scene.articulations["robot"]
-    return (asset.data.projected_gravity_b[:, 2] -1.)
+    return - (asset.data.projected_gravity_b[:, 2] + 1.)
 
 
 def base_height_l1(env: RLTaskEnv):
     asset = env.scene.articulations["robot"]
-    return (asset.data.root_pos_w[:, 2] - 0.30).clamp_max(0.)
+    return (asset.data.root_pos_w[:, 2] - 0.30).clamp_max(0.) / 0.3
 
 
 def joint_deviation_l2(env: RLTaskEnv):
@@ -37,6 +37,14 @@ def joint_deviation_l2(env: RLTaskEnv):
 def joint_vel_l1(env: RLTaskEnv):
     asset = env.scene.articulations["robot"]
     return asset.data.joint_vel.abs().sum(dim=-1)
+
+
+def undesired_contact(env: RLTaskEnv):
+    senser = env.scene["contact_forces"]
+    contact_forces = senser.data.net_forces_w_history.clone()
+    contact_forces[:, :, [4, 8, 14, 18]] = 0.
+    undesired_contact_forces = contact_forces.norm(dim=-1).sum((1,2))
+    return - undesired_contact_forces * env.physics_dt
 
 
 def reset_joints_uniform(env: RLTaskEnv, env_ids: torch.Tensor, eps=.05):
@@ -70,6 +78,7 @@ class RewardsCfg:
     base_height = RewTerm(func=base_height_l1, weight=1.0)
     joint_pos = RewTerm(func=joint_deviation_l2, weight=-0.1)
     joint_vel = RewTerm(func=joint_vel_l1, weight=-0.001)
+    undesired_contact = RewTerm(func=undesired_contact, weight=1.)
 
 
 @configclass
