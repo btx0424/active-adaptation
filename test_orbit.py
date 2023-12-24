@@ -10,7 +10,6 @@ from tqdm import tqdm
 from omegaconf import OmegaConf
 from omni.isaac.orbit.app import AppLauncher
 
-from orbit import OrbitEnv
 from helpers import EpisodeStats, Every
 
 from torchrl.envs.gym_like import default_info_dict_reader
@@ -57,36 +56,36 @@ def main(cfg):
     )
 
     import omni.isaac.orbit_tasks  # noqa: F401
+    from configs import UnitreeGo2RecoveryEnvCfg, ObservationsCfg
     from omni.isaac.orbit_tasks.utils import parse_env_cfg
 
     task_name = "Isaac-Velocity-Rough-Unitree-Go2-v0"
     # task_name = "Isaac-Velocity-Flat-Unitree-Go2-v0"
     # task_name = "Isaac-Velocity-Flat-Unitree-A1-v0"
-    env_cfg = parse_env_cfg(task_name, use_gpu=True, num_envs=cfg.task.num_envs)
-    
-    def follow(env):
-        asset = env.scene["robot"]
-        pos = asset.data.root_pos_w[0].cpu()
-        return torch.as_tensor(env.cfg.viewer.eye) + pos, pos
-    env_cfg.viewer.func = follow
+    # task_name = "Go2-Recovery"
+    env_cfg = parse_env_cfg(task_name, use_gpu=True, num_envs=cfg.task.env.num_envs)
+    env_cfg.observations = ObservationsCfg()
+
+    if cfg.get("camera_follow", False):
+        def follow(env):
+            asset = env.scene["robot"]
+            pos = asset.data.root_pos_w[0].cpu()
+            return torch.as_tensor(env.cfg.viewer.eye) + pos, pos
+        env_cfg.viewer.func = follow
 
     if hasattr(env_cfg.scene, "height_scanner"):
         env_cfg.scene.height_scanner = None
         env_cfg.observations.policy.height_scan = None
     
     # create TorchRL environment
+    from orbit import OrbitEnv
     env = OrbitEnv(task_name, cfg=env_cfg)
+    episode_stats = EpisodeStats(["episode_reward", *env.info_spec.keys(True, True)])
 
     transform = Compose(InitTracker(), RewardSum())
-    reader = default_info_dict_reader(
-        ["episode_len"], 
-        [UnboundedDiscreteTensorSpec([env.num_envs, 1], device=env.device)]
-    )
-
-    env.set_info_dict_reader(reader)
     env = TransformedEnv(env, transform)
 
-    policy = PPOPolicy(
+    policy = policies[cfg.algo.name](
         cfg.algo,
         env.observation_spec, 
         env.action_spec, 
@@ -96,7 +95,6 @@ def main(cfg):
 
     run = init_wandb(cfg)
 
-    episode_stats = EpisodeStats(["episode_reward", "episode_len"])
     
     eval_interval = cfg.get("eval_interval", -1)
     eval_render = cfg.get("eval_render", False)
@@ -191,6 +189,8 @@ def main(cfg):
         if len(episode_stats) >= env.num_envs:
             info_log = {}
             for k, v in episode_stats.pop().items(True, True):
+                if isinstance(k, tuple):
+                    k = "/".join(k)
                 info_log[k] = v.mean().item()
             info["train"] = info_log
         

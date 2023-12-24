@@ -2,7 +2,6 @@
 
 headless: true
 
-sim: ${task.sim}
 env: ${task.env}
 
 total_frames: 150_000_000
@@ -11,10 +10,7 @@ eval_interval: -1
 save_interval: -1
 seed: 0
 
-viewer:
-  resolution: [960, 720]
-  eye: [6, 0., 4.]
-  lookat: [0., 0., 1.]
+camera_follow: true
 
 wandb:
   group: ${oc.select:..task.name}

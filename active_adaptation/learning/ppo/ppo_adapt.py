@@ -49,10 +49,15 @@ from .ppo_rnn import GRU
 make_mlp = functools.partial(make_mlp, activation=nn.Mish)
 
 
-OBS_KEY = ("agents", "observation")
-OBS_PRIV_KEY = ("agents", "observation_priv")
+# OBS_KEY = ("agents", "observation")
+# OBS_PRIV_KEY = ("agents", "observation_priv")
 OBS_HIST_KEY = ("agents", "observation_h")
 
+OBS_KEY = "policy" # ("agents", "observation")
+OBS_PRIV_KEY = "priv"
+ACTION_KEY = "action" # ("agents", "action")
+REWARD_KEY = ("next", "reward") # ("agents", "reward")
+DONE_KEY = ("next", "done") # ("next", "terminates")
 
 @dataclass
 class PPOConfig:
@@ -209,8 +214,8 @@ class PPORMAPolicy(TensorDictModuleBase):
         self.action_dim = action_spec.shape[-1]
 
         print(observation_spec)
-        observation_priv_dim = observation_spec[OBS_HIST_KEY].shape[-1]
-        observation_dim = observation_spec[("agents", "observation")].shape[-1]
+        # observation_priv_dim = observation_spec[OBS_PRIV_KEY].shape[-1]
+        # observation_dim = observation_spec[OBS_KEY].shape[-1]
 
         fake_input = observation_spec.zero()
 
@@ -220,9 +225,7 @@ class PPORMAPolicy(TensorDictModuleBase):
             def condition(branch: str):
                 return TensorDictSequential(
                     TensorDictModule(
-                        nn.Sequential(make_mlp([512])), 
-                        [("agents", "observation")], 
-                        ["_feature"]
+                        nn.Sequential(make_mlp([512])), [OBS_KEY], ["_feature"]
                     ),
                     CatTensors(["_feature", f"context_{branch}"], "_feature", del_keys=False)
                 )
@@ -230,9 +233,7 @@ class PPORMAPolicy(TensorDictModuleBase):
             def condition():
                 return TensorDictSequential(
                     TensorDictModule(
-                        nn.Sequential(nn.LayerNorm(observation_dim), make_mlp([256, 256])), 
-                        [("agents", "observation")], 
-                        ["_feature"]
+                        nn.Sequential(make_mlp([256, 256])), [OBS_KEY], ["_feature"]
                     ),
                     TensorDictModule(FiLM(128), ["_feature", "context"], ["_feature"])
                 )
@@ -248,7 +249,7 @@ class PPORMAPolicy(TensorDictModuleBase):
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=actor_module,
             in_keys=["loc", "scale"],
-            out_keys=[("agents", "action")],
+            out_keys=[ACTION_KEY],
             distribution_class=IndependentNormal,
             return_log_prob=True
         ).to(self.device)
@@ -358,8 +359,8 @@ class PPORMAPolicy(TensorDictModuleBase):
             self._get_context(next_tensordict)
             next_values = self.critic(next_tensordict)["state_value"]
         
-        rewards = tensordict[("next", "agents", "reward")]
-        dones = tensordict[("next", "terminated")]
+        rewards = tensordict[REWARD_KEY]
+        dones = tensordict[DONE_KEY]
         values = tensordict["state_value"]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
@@ -388,7 +389,7 @@ class PPORMAPolicy(TensorDictModuleBase):
         # self.encoder(tensordict)
         self._get_context(tensordict)
         dist = self.actor.get_dist(tensordict)
-        log_probs = dist.log_prob(tensordict[("agents", "action")])
+        log_probs = dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy()
 
         adv = tensordict["adv"]
