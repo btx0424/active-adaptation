@@ -48,13 +48,9 @@ from .ppo_rnn import GRU
 
 make_mlp = functools.partial(make_mlp, activation=nn.Mish)
 
-
-# OBS_KEY = ("agents", "observation")
-# OBS_PRIV_KEY = ("agents", "observation_priv")
-OBS_HIST_KEY = ("agents", "observation_h")
-
 OBS_KEY = "policy" # ("agents", "observation")
 OBS_PRIV_KEY = "priv"
+OBS_HIST_KEY = "history"
 ACTION_KEY = "action" # ("agents", "action")
 REWARD_KEY = ("next", "reward") # ("agents", "reward")
 DONE_KEY = ("next", "done") # ("next", "terminates")
@@ -223,20 +219,19 @@ class PPORMAPolicy(TensorDictModuleBase):
 
         if self.cfg.condition_mode == "cat":
             def condition(branch: str):
+                module = nn.Sequential(make_mlp([512]))
                 return TensorDictSequential(
-                    TensorDictModule(
-                        nn.Sequential(make_mlp([512])), [OBS_KEY], ["_feature"]
-                    ),
+                    TensorDictModule(module, [OBS_KEY], ["_feature"]),
                     CatTensors(["_feature", f"context_{branch}"], "_feature", del_keys=False)
                 )
         elif self.cfg.condition_mode == "film":
-            def condition():
+            def condition(branch: str):
+                module = nn.Sequential(make_mlp([256, 256]))
                 return TensorDictSequential(
-                    TensorDictModule(
-                        nn.Sequential(make_mlp([256, 256])), [OBS_KEY], ["_feature"]
-                    ),
-                    TensorDictModule(FiLM(128), ["_feature", "context"], ["_feature"])
+                    TensorDictModule(module, [OBS_KEY], ["_feature"]),
+                    TensorDictModule(FiLM(128), ["_feature", f"context_{branch}"], ["_feature"])
                 )
+        else:
             raise NotImplementedError(self.cfg.condition_mode)
 
         actor_module = TensorDictSequential(
@@ -329,7 +324,7 @@ class PPORMAPolicy(TensorDictModuleBase):
         self._get_context(tensordict)
         self.actor(tensordict)
         self.critic(tensordict)
-        tensordict.exclude("_feature", inplace=True)
+        tensordict.exclude("_feature", "context_actor", "context_critic", inplace=True)
         return tensordict
 
     def train_op(self, tensordict: TensorDict):

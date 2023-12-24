@@ -176,7 +176,7 @@ class Env(EnvBase):
         reward = sum(rewards).clip(0.)
         self.stats["return"].add_(reward)
         self.stats["episode_len"][:] = self.episode_length_buf.unsqueeze(1)
-        return {("agents", "reward"): reward}
+        return {"reward": reward}
     
     def _compute_termination(self) -> TensorDictBase:
         flags = torch.cat([func(self) for func in self.termination_funcs.values()], dim=-1)

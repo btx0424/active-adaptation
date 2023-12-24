@@ -40,6 +40,7 @@ class LocomotionEnv(Env):
         try:
             from omni_drones.envs.isaac_env import DebugDraw
             self.debug_draw = DebugDraw()
+            print("[INFO] Debug Draw API enabled.")
         except ModuleNotFoundError:
             pass
         
@@ -59,7 +60,7 @@ class LocomotionEnv(Env):
                 [-1., 0.],
                 [0., -1.],
                 [0., 0.]
-            ]) * 1.6
+            ]) * 2.0
             self._actions = torch.zeros(self.num_envs, 12)
             self._prev_actions = torch.zeros(self.num_envs, 12)
 
@@ -68,19 +69,19 @@ class LocomotionEnv(Env):
 
         self.action_spec = CompositeSpec(
             {
-                ("agents", "action"): UnboundedContinuousTensorSpec((self.num_envs, 12))
+                "action": UnboundedContinuousTensorSpec((self.num_envs, 12))
             }, 
             shape=[self.num_envs]
         ).to(self.device)
 
         self._observation_h = (
-            obs[("agents", "observation")]
+            obs["policy"]
             .unsqueeze(-1)
             .expand(self.num_envs, -1, self.cfg.history_length)
             .clone()
             .zero_()
         )
-        obs[("agents", "observation_h")] = self._observation_h
+        obs["history"] = self._observation_h
 
         for key, value in obs.items(True, True):
             if key not in self.observation_spec.keys(True, True):
@@ -115,7 +116,7 @@ class LocomotionEnv(Env):
             dim=1,
             index=torch.rand(len(env_ids), 4, 1, device=self.device).argsort(dim=1).expand(-1, -1, 2)
         ) * 2.5
-        self.target_speed[env_ids] = sample_uniform((len(env_ids), 4, 1), 0.7, 1.4, device=self.device)
+        self.target_speed[env_ids] = sample_uniform((len(env_ids), 4, 1), 0.7, 1.6, device=self.device)
 
         self._prev_actions[env_ids] = 0.
         self._actions[env_ids] = 0.
@@ -130,7 +131,7 @@ class LocomotionEnv(Env):
     def apply_action(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
             self._prev_actions[:] = self._actions
-            actions = tensordict[("agents", "action")]
+            actions = tensordict["action"]
             self._actions[:] = actions * self.action_scaling + self.init_joint_pos
             self.robot.set_joint_position_target(self._actions)
         self.robot.write_data_to_sim()
@@ -148,7 +149,7 @@ class LocomotionEnv(Env):
         pos_diff_xy = (
             current_target_pos[:, :2] 
             - self.robot.data.root_pos_w[:, :2]
-            + self.scene._default_env_origins[:, :2]
+            + self.scene.env_origins[:, :2]
         )
         pos_error_xy = pos_diff_xy.norm(dim=-1, keepdim=True)
         cmd_speed = torch.minimum(current_target_speed, pos_error_xy)
@@ -160,12 +161,12 @@ class LocomotionEnv(Env):
 
         obs = super()._compute_observation()
         self._observation_h[:, :, :-1] = self._observation_h[:, :, 1:]
-        self._observation_h[:, :, -1] = obs[("agents", "observation")]
-        obs[("agents", "observation_h")] = self._observation_h.clone()
+        self._observation_h[:, :, -1] = obs["policy"]
+        obs["history"] = self._observation_h.clone()
         return obs
 
     def render(self, mode: str="human"):
-        if self.enable_render and hasattr(self, "debug_draw"):
+        if hasattr(self, "debug_draw"):
             self.debug_draw.clear()
             robot_pos = (
                 self.robot.data.root_pos_w.cpu()
@@ -252,7 +253,7 @@ class LocomotionEnv(Env):
     @reward_func
     def linvel(self):
         linvel_w = self.robot.data.root_lin_vel_w
-        linvel_error = square_norm(linvel_w - self._command)
+        linvel_error = square_norm(linvel_w[:, :2] - self._command[:, :2])
         return 1. / (1. + linvel_error / 0.25)
     
     @reward_func
@@ -274,7 +275,7 @@ class LocomotionEnv(Env):
     
     @reward_func
     def joint_acc_l2(self):
-        return - self.robot.data.joint_acc.square().sum(dim=-1, keepdim=True)
+        return - self.robot.data.joint_acc.square().sum(dim=-1, keepdim=True) * self.step_dt
     
     @reward_func
     def joint_torques_l2(self):

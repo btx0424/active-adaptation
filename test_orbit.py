@@ -57,6 +57,7 @@ def main(cfg):
 
     import omni.isaac.orbit_tasks  # noqa: F401
     from configs.orbit import UnitreeGo2RecoveryEnvCfg, ObservationsCfg
+    from configs.rough import ROUGH_EASY
     from omni.isaac.orbit_tasks.utils import parse_env_cfg
 
     task_name = "Isaac-Velocity-Rough-Unitree-Go2-v0"
@@ -65,6 +66,8 @@ def main(cfg):
     # task_name = "Go2-Recovery"
     env_cfg = parse_env_cfg(task_name, use_gpu=True, num_envs=cfg.task.env.num_envs)
     env_cfg.observations = ObservationsCfg()
+    env_cfg.scene.terrain.terrain_generator = ROUGH_EASY
+    env_cfg.scene.terrain.curriculum = False
 
     if cfg.get("camera_follow", False):
         def follow(env):

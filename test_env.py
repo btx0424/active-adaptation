@@ -24,6 +24,7 @@ from tqdm import tqdm
 from helpers import EpisodeStats, Every
 
 import os
+import time
 
 policies = {
     "ppo": PPOPolicy,
@@ -126,7 +127,6 @@ def main(cfg):
             frames.append(frame)
             t.update(2)
         
-        base_env.enable_render = True
         with set_exploration_type(exploration_type):
             trajs = env.rollout(
                 max_steps=base_env.max_episode_length,
@@ -136,7 +136,6 @@ def main(cfg):
                 break_when_any_done=False,
                 return_contiguous=False,
             )
-        base_env.enable_render = False
         env.reset()
 
         done = trajs.get(("next", "done"))
@@ -174,13 +173,12 @@ def main(cfg):
 
         return info
     
-    pbar = tqdm(collector)
+    pbar = tqdm(collector, total=total_frames//frames_per_batch)
     for i, data in enumerate(pbar):
-        info = {
-            "env_frames": collector._frames, 
-            "rollout_fps": collector._fps
-        }
-        pbar.set_postfix(info)
+        start = time.perf_counter()
+        
+        info = {}
+
         episode_stats.add(data)
 
         if len(episode_stats) >= base_env.num_envs:
@@ -192,6 +190,10 @@ def main(cfg):
         
         info.update(policy.train_op(data))
 
+        info["env_frames"] = collector._frames
+        info["rollout_fps"] = collector._fps
+        info["training_time"] = time.perf_counter() - start
+        
         if eval_interval > 0 and (i + 1) % eval_interval == 0:
             logging.info(f"Eval at {collector._frames} steps.")
             info.update(evaluate())
@@ -201,6 +203,8 @@ def main(cfg):
                 policy.step_schedule()
 
         run.log(info)
+
+        print()
         print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, float)}))
 
     

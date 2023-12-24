@@ -164,7 +164,7 @@ def LocomotionEnvCfg(robot: str, terrain: str="hard"):
             "feet_slip": 0.02,
         },
         observation = {
-            ("agents", "observation"): [
+            "policy": [
                 "command",
                 "root_quat_w",
                 "root_angvel_b",
@@ -172,7 +172,7 @@ def LocomotionEnvCfg(robot: str, terrain: str="hard"):
                 "joint_pos",
                 "prev_actions",
             ],
-            ("agents", "observation_priv"): [
+            "priv": [
                 "joint_vel",
                 # "joint_acc",
                 "root_linvel_b",

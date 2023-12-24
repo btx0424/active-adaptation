@@ -60,15 +60,10 @@ cs.store("ppo_priv_critic", node=PPOConfig(priv_critic=True), group="algo")
 
 class PPOPolicy(TensorDictModuleBase):
 
-    # OBS_KEY = "policy"
-    # ACTION_KEY = "action"
-    # REWARD_KEY = ("next", "reward")
-    # DONE_KEY = ("next", "done")
-
-    OBS_KEY = ("agents", "observation")
-    ACTION_KEY = ("agents", "action")
-    REWARD_KEY = ("next", "agents", "reward")
-    DONE_KEY = ("next", "terminated")
+    OBS_KEY = "policy"
+    ACTION_KEY = "action"
+    REWARD_KEY = ("next", "reward")
+    DONE_KEY = ("next", "done")
 
     def __init__(
         self, 
