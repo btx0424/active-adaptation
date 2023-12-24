@@ -1,68 +1,217 @@
+from active_adaptation.assets import (
+    ArticulationCfg,
+    UNITREE_A1_CFG,
+    UNITREE_GO1_CFG,
+    UNITREE_GO2_CFG,
+    CASSIE_CFG, 
+    ANYMAL_C_CFG
+)
+from omni.isaac.orbit.scene import InteractiveSceneCfg
 from omni.isaac.orbit.utils import configclass
-from omni.isaac.orbit.managers import ObservationGroupCfg as ObsGroup
-from omni.isaac.orbit.managers import ObservationTermCfg as ObsTerm
+from omni.isaac.orbit.terrains import TerrainImporterCfg
+from omni.isaac.orbit.envs import ViewerCfg
+from omni.isaac.orbit.assets import AssetBaseCfg
+from omni.isaac.orbit.sensors import ContactSensorCfg, RayCasterCfg, patterns
+from omni.isaac.orbit.terrains import (
+    HfRandomUniformTerrainCfg,
+    HfPyramidSlopedTerrainCfg,
+    HfInvertedPyramidSlopedTerrainCfg,
+    TerrainGeneratorCfg
+)
+import omni.isaac.orbit.sim as sim_utils
 
-import omni.isaac.orbit_tasks.locomotion.velocity.mdp as mdp
-from omni.isaac.orbit.utils.noise import AdditiveUniformNoiseCfg as Unoise
+from dataclasses import MISSING
+from typing import Dict, List
 
-from omni.isaac.orbit.assets import Articulation
-from omni.isaac.orbit.envs import RLTaskEnv, BaseEnv
+from omni.isaac.orbit.terrains.config.rough import ROUGH_TERRAINS_CFG as ROUGH_HARD
 
-from omni.isaac.orbit.assets import Articulation, RigidObject
-from omni.isaac.orbit.managers import SceneEntityCfg
+ROUGH_EASY = TerrainGeneratorCfg(
+    seed=0,
+    size=(8.0, 8.0),
+    border_width=20.0,
+    num_rows=20,
+    num_cols=20,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    difficulty_choices=(0.5, 0.75, 0.9),
+    use_cache=False,
+    sub_terrains={
+        "random_rough_hard": HfRandomUniformTerrainCfg(
+            proportion=0.35, noise_range=(0.02, 0.05), noise_step=0.01, border_width=0.4
+        ),
+        "random_rough_easy": HfRandomUniformTerrainCfg(
+            proportion=0.35, noise_range=(0.01, 0.05), noise_step=0.01, border_width=0.4
+        ),
+         "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
+            proportion=0.15, slope_range=(0.0, 0.3), platform_width=1.0, border_width=0.25
+        ),
+        "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
+            proportion=0.15, slope_range=(0.0, 0.3), platform_width=1.0, border_width=0.25
+        ),
+    },
+)
 
-import torch
 
+ROUGH_TERRAIN_CFG = TerrainImporterCfg(
+    prim_path="/World/ground",
+    terrain_type="generator",
+    terrain_generator=MISSING,
+    max_init_terrain_level=None,
+    collision_group=-1,
+    physics_material=sim_utils.RigidBodyMaterialCfg(
+        friction_combine_mode="multiply",
+        restitution_combine_mode="multiply",
+        static_friction=1.0,
+        dynamic_friction=1.0,
+    ),
+    visual_material=sim_utils.MdlFileCfg(
+        mdl_path="{NVIDIA_NUCLEUS_DIR}/Materials/Base/Architecture/Shingles_01.mdl",
+        project_uvw=True,
+    ),
+    debug_vis=True,
+)
 
-def joint_torques(env: RLTaskEnv):
-    asset: Articulation = env.scene["robot"]
-    base_legs = asset.actuators["base_legs"]
-    return base_legs.applied_effort / base_legs.effort_limit
-
-
-def joint_params(env: RLTaskEnv):
-    asset: Articulation = env.scene["robot"]
-    base_legs = asset.actuators["base_legs"]
-    return torch.cat([base_legs.stiffness, base_legs.damping], dim=-1) 
-
-
-def base_quat(env: BaseEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
-    """Root orientation in the simulation world frame."""
-    # extract the used quantities (to enable type-hinting)
-    asset: RigidObject = env.scene[asset_cfg.name]
-    return asset.data.root_quat_w
+FLAT_TERRAIN_CFG = TerrainImporterCfg(
+    prim_path="/World/ground",
+    terrain_type="plane",
+    physics_material = sim_utils.RigidBodyMaterialCfg(
+        friction_combine_mode="multiply",
+        restitution_combine_mode="multiply",
+        static_friction=1.0,
+        dynamic_friction=1.0,
+        improve_patch_friction=True
+    ),
+)
 
 
 @configclass
-class ObservationsCfg:
-    """Observation specifications for the MDP."""
+class LocomotionSceneCfg(InteractiveSceneCfg):
+    
+    num_envs: int = 4096
+    env_spacing: float = 2.5
 
-    @configclass
-    class PolicyCfg(ObsGroup):
-        """Observations for policy group."""
+    robot: ArticulationCfg = MISSING
+    contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=2, track_air_time=True)
+    
+    light: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/light",
+        spawn=sim_utils.DistantLightCfg(
+            color=(1.0, 1.0, 1.0),
+            intensity=3000.0,
+        ),
+    )
 
-        # observation terms (order preserved)
-        base_quat = ObsTerm(func=base_quat)
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2))
-        projected_gravity = ObsTerm(
-            func=mdp.projected_gravity,
-            noise=Unoise(n_min=-0.05, n_max=0.05),
-        )
-        velocity_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_velocity"})
-        joint_pos = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
-        joint_vel = ObsTerm(func=mdp.joint_vel_rel, noise=Unoise(n_min=-1.5, n_max=1.5))
-        actions = ObsTerm(func=mdp.last_action)
+    terrain: TerrainImporterCfg = MISSING
 
-    @configclass
-    class PrivCfg(ObsGroup):
-
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1))
-        feet_pos = ObsTerm(func=mdp.body_pos_rel)
-        joint_acc = ObsTerm(func=mdp.joint_acc, scale=0.01)
-        joint_torques = ObsTerm(func=joint_torques)
+    # height_scanner = RayCasterCfg(
+    #     prim_path="{ENV_REGEX_NS}/Robot/base",
+    #     offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+    #     attach_yaw_only=True,
+    #     pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
+    #     debug_vis=True,
+    #     mesh_prim_paths=["/World/ground"],
+    #     history_length=1
+    # )
 
 
-    # observation groups
-    policy: PolicyCfg = PolicyCfg(concatenate_terms=True)
-    priv: PrivCfg = PrivCfg(concatenate_terms=True)
+@configclass
+class EnvCfg:
 
+    max_episode_length: int = 800
+    decimation: int  = 2
+    target_base_height: float = MISSING
+    history_length: int = 32
+
+    viewer: ViewerCfg = ViewerCfg()
+    scene: InteractiveSceneCfg = MISSING
+
+    sim = sim_utils.SimulationCfg(dt=0.01, disable_contact_processing=True)
+    
+    reward: Dict[str, float] = MISSING
+    observation: Dict[str, List] = MISSING
+    termination: List = [
+        "crash"
+    ]
+
+def LocomotionEnvCfg(robot: str, terrain: str="hard"):
+
+    robot_cfg = {
+        "a1": UNITREE_A1_CFG,
+        "go2": UNITREE_GO2_CFG,
+    }[robot.lower()]
+
+    ROUGH_TERRAIN_CFG.terrain_generator = {
+        "easy": ROUGH_EASY,
+        "hard": ROUGH_HARD
+    }[terrain.lower()]
+    
+    env_cfg = EnvCfg(
+        target_base_height=0.3,
+        scene = LocomotionSceneCfg(
+            robot=robot_cfg.replace(prim_path="{ENV_REGEX_NS}/Robot"),
+            terrain=ROUGH_TERRAIN_CFG,
+        ),
+        reward = {
+            "linvel": 2.0,
+            "heading": 0.5,
+            # "base_height": 0.5,
+            "energy": 0.0005,
+            "joint_acc_l2": 2.5e-7,
+            "joint_torques_l2": 2.5e-6,
+            "action_rate_l2": 0.01,
+            "orientation": 0.1,
+            "feet_slip": 0.02,
+        },
+        observation = {
+            ("agents", "observation"): [
+                "command",
+                "root_quat_w",
+                "root_angvel_b",
+                "projected_gravity_b",
+                "joint_pos",
+                "prev_actions",
+            ],
+            ("agents", "observation_priv"): [
+                "joint_vel",
+                # "joint_acc",
+                "root_linvel_b",
+                "feet_pos_b",
+                # "contact_forces",
+                # "contact_indicator",
+                "applied_torques"
+            ]
+        }
+    )
+    return env_cfg
+
+
+CASSIE_ENV = EnvCfg(
+    target_base_height=0.7,
+    scene = LocomotionSceneCfg(
+        robot=CASSIE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot"),
+    ),
+    reward = {
+        "linvel": 2.0,
+        "heading": 0.5,
+        "base_height": 0.5,
+        "energy": 0.0005,
+        "joint_acc_l2": 2.5e-7,
+        "joint_torques_l2": 2.5e-6,
+        "survive": 0.5,
+    },
+    observation = {
+        ("agents", "observation"): [
+            "command",
+            "root_quat_w",
+            "root_angvel_b",
+            "projected_gravity_b",
+            "joint_pos",
+            "joint_vel",
+        ],
+        ("agents", "observation_priv"): [
+            "root_linvel_b",
+            "applied_torques",
+        ]
+    },
+)

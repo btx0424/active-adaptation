@@ -186,8 +186,11 @@ class Env(EnvBase):
         for substep in range(self.cfg.decimation):
             self.apply_action(tensordict, substep)
             self.scene.write_data_to_sim()
-            self.sim.step(self.enable_render and substep == self.cfg.decimation - 1)
-        self.scene.update(self.physics_dt * self.cfg.decimation)
+            self.sim.step(render=False)
+        self.scene.update(self.step_dt)
+        if self.sim.has_gui():
+            self.sim.render()
+
         self.episode_length_buf.add_(1)
         tensordict = TensorDict({}, self.num_envs, device=self.device)
         tensordict.update(self._compute_observation())

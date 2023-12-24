@@ -1,6 +1,5 @@
 import torch
 
-from omni_drones.envs.isaac_env import DebugDraw
 from omni.isaac.orbit.sensors import ContactSensor, RayCaster
 
 from active_adaptation.envs.base import Env, observation_func, reward_func, termination_func
@@ -21,6 +20,7 @@ class LocomotionEnv(Env):
 
     def __init__(self, cfg):
         super().__init__(cfg)
+        self.action_scaling = 0.25
         self.robot = self.scene.articulations["robot"]
         body_masses = self.robot.root_physx_view.get_masses()
         for name, mass in zip(self.robot.body_names, body_masses):
@@ -33,10 +33,16 @@ class LocomotionEnv(Env):
         self.height_scanner: RayCaster = self.scene.sensors.get("height_scanner", None)
 
         self.init_root_state = self.robot.data.default_root_state.clone()
-        self.init_root_state[..., :3] += self.scene._default_env_origins
         self.init_joint_pos = self.robot.data.default_joint_pos.clone()
         self.init_joint_vel = self.robot.data.default_joint_vel.clone()
-        self.debug_draw = DebugDraw()
+        self.init_joint_friction = self.robot.root_physx_view.get_dof_friction_coefficients().clone()
+        
+        try:
+            from omni_drones.envs.isaac_env import DebugDraw
+            self.debug_draw = DebugDraw()
+        except ModuleNotFoundError:
+            pass
+        
         self.lookat_env_i = (
             self.scene._default_env_origins.cpu() 
             - torch.tensor(self.cfg.viewer.lookat)
@@ -90,7 +96,13 @@ class LocomotionEnv(Env):
 
     
     def _reset_idx(self, env_ids: torch.Tensor):
-        self.robot.write_root_state_to_sim(self.init_root_state[env_ids], env_ids)
+        init_root_state = self.init_root_state[env_ids]
+        init_root_state[:, :3] += self.scene.env_origins[env_ids]
+        
+        self.robot.write_root_state_to_sim(
+            init_root_state, 
+            env_ids=env_ids
+        )
         self.robot.write_joint_state_to_sim(
             random_scale(self.init_joint_pos[env_ids], 0.8, 1.2),
             self.init_joint_vel[env_ids],
@@ -119,7 +131,7 @@ class LocomotionEnv(Env):
         if substep == 0:
             self._prev_actions[:] = self._actions
             actions = tensordict[("agents", "action")]
-            self._actions[:] = actions + self.init_joint_pos
+            self._actions[:] = actions * self.action_scaling + self.init_joint_pos
             self.robot.set_joint_position_target(self._actions)
         self.robot.write_data_to_sim()
     
@@ -153,7 +165,7 @@ class LocomotionEnv(Env):
         return obs
 
     def render(self, mode: str="human"):
-        if self.enable_render:
+        if self.enable_render and hasattr(self, "debug_draw"):
             self.debug_draw.clear()
             robot_pos = (
                 self.robot.data.root_pos_w.cpu()
@@ -289,8 +301,7 @@ class LocomotionEnv(Env):
     @termination_func
     def crash(self):
         terminated = (
-            (self.robot.data.root_pos_w[:, 2] <= self.target_base_height * 0.5)
-            | (self.robot.data.projected_gravity_b[:, 2] >= -0.5)
+            (self.robot.data.projected_gravity_b[:, 2] >= -0.5)
             | (self.contact_sensor.data.net_forces_w[:, 0].norm(dim=-1) > 1.)
         ).unsqueeze(1)
         return terminated

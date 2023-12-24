@@ -37,16 +37,25 @@ policies = {
 def main(cfg):
     OmegaConf.resolve(cfg)
 
-    app_launcher = AppLauncher({"headless": cfg.headless, "offscreen_render": True})
+    # load cheaper kit config in headless
+    if cfg.headless:
+        app_experience = f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.gym.headless.kit"
+    else:
+        app_experience = f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.kit"
+    
+    app_launcher = AppLauncher(
+        {"headless": cfg.headless, "offscreen_render": True},
+        experience=app_experience
+    )
     simulation_app = app_launcher.app
 
     from active_adaptation.envs import LocomotionEnv
-    from configs import LocomotionEnvCfg
+    from configs.rough import LocomotionEnvCfg
 
     run = init_wandb(cfg)
 
     # setup environment
-    env_cfg = LocomotionEnvCfg(cfg.task.robot)
+    env_cfg = LocomotionEnvCfg(cfg.task.robot, terrain="easy")
     env_cfg.scene.num_envs = cfg.task.env.num_envs
     env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21
     env_cfg.sim.physx.gpu_max_rigid_patch_count = 2**21

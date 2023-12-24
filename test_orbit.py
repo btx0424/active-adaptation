@@ -56,7 +56,7 @@ def main(cfg):
     )
 
     import omni.isaac.orbit_tasks  # noqa: F401
-    from configs import UnitreeGo2RecoveryEnvCfg, ObservationsCfg
+    from configs.orbit import UnitreeGo2RecoveryEnvCfg, ObservationsCfg
     from omni.isaac.orbit_tasks.utils import parse_env_cfg
 
     task_name = "Isaac-Velocity-Rough-Unitree-Go2-v0"

@@ -2,6 +2,7 @@
 
 headless: true
 
+sim: ${task.sim}
 env: ${task.env}
 
 total_frames: 150_000_000
