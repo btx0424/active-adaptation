@@ -1,6 +1,7 @@
 # hydra.job.chdir: false
 
 headless: true
+offscreen_render: ${eval_render}
 
 sim: ${task.sim}
 env: ${task.env}
@@ -8,7 +9,8 @@ env: ${task.env}
 total_frames: 150_000_000
 max_iters: -1
 eval_interval: -1
-save_interval: -1
+eval_render: false
+save_interval: 300
 seed: 0
 
 camera_follow: true

@@ -43,6 +43,7 @@ from .common import GAE, Actor, make_mlp
 @dataclass
 class PPOConfig:
     name: str = "ppo_tconv"
+    lr: float = 1e-3
     train_every: int = 32
     ppo_epochs: int = 4
     num_minibatches: int = 16
@@ -74,6 +75,13 @@ class TConv(nn.Module):
         return features.reshape(*batch_shape, *features.shape[1:])
 
 
+OBS_KEY = "policy"
+OBS_HIST_KEY = "policy_h"
+ACTION_KEY = "action"
+REWARD_KEY = ("next", "reward")
+DONE_KEY = ("next", "done")
+
+
 class PPOTConvPolicy(TensorDictModuleBase):
 
     def __init__(
@@ -97,7 +105,7 @@ class PPOTConvPolicy(TensorDictModuleBase):
         fake_input = observation_spec.zero()
 
         actor = TensorDictSequential(
-            TensorDictModule(TConv(256), [("agents", "observation_h")], ["_feature"]),
+            TensorDictModule(TConv(256), [OBS_HIST_KEY], ["_feature"]),
             TensorDictModule(
                 nn.Sequential(make_mlp([256]), Actor(self.action_dim)), 
                 ["_feature"], ["loc", "scale"]
@@ -107,13 +115,13 @@ class PPOTConvPolicy(TensorDictModuleBase):
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=actor,
             in_keys=["loc", "scale"],
-            out_keys=[("agents", "action")],
+            out_keys=[ACTION_KEY],
             distribution_class=IndependentNormal,
             return_log_prob=True
         ).to(self.device)
 
         self.critic = TensorDictSequential(
-            TensorDictModule(TConv(256), [("agents", "observation_h")], ["_feature"]),
+            TensorDictModule(TConv(256), [OBS_HIST_KEY], ["_feature"]),
             TensorDictModule(
                 nn.Sequential(make_mlp([256]), nn.LazyLinear(1)), 
                 ["_feature"], ["state_value"]
@@ -131,8 +139,8 @@ class PPOTConvPolicy(TensorDictModuleBase):
         self.actor.apply(init_)
         self.critic.apply(init_)
 
-        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
-        self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=5e-4)
+        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=cfg.lr)
+        self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=cfg.lr)
         # self.encoder_opt = torch.optim.Adam(self.history_encoder.parameters(), lr=5e-4)
         self.value_norm = ValueNorm1(1).to(self.device)
     
@@ -147,8 +155,8 @@ class PPOTConvPolicy(TensorDictModuleBase):
         next_tensordict = tensordict["next"]
         with torch.no_grad():
             next_values = self.critic(next_tensordict)["state_value"]
-        rewards = tensordict[("next", "agents", "reward")]
-        dones = tensordict[("next", "terminated")]
+        rewards = tensordict[REWARD_KEY]
+        dones = tensordict[DONE_KEY]
         values = tensordict["state_value"]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
@@ -176,7 +184,7 @@ class PPOTConvPolicy(TensorDictModuleBase):
     def _update(self, tensordict: TensorDict):
         # self.history_encoder(tensordict)
         dist = self.actor.get_dist(tensordict)
-        log_probs = dist.log_prob(tensordict[("agents", "action")])
+        log_probs = dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy()
 
         adv = tensordict["adv"]

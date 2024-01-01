@@ -16,13 +16,13 @@ quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
 
 
-class LocomotionV1(Env):
+class LocomotionV2(Env):
 
     def __init__(self, cfg):
         super().__init__(cfg)
         self.action_scaling = 0.25
         self.robot = self.scene.articulations["robot"]
-        body_masses = self.robot.root_physx_view.get_masses()
+        body_masses = self.robot.root_physx_view.get_masses()[0]
         for name, mass in zip(self.robot.body_names, body_masses):
             print(name, mass)
         self.foot_indices = [i for i, name in enumerate(self.robot.body_names) if "foot" in name]
@@ -74,15 +74,6 @@ class LocomotionV1(Env):
             shape=[self.num_envs]
         ).to(self.device)
 
-        self._observation_h = (
-            obs["policy"]
-            .unsqueeze(-1)
-            .expand(self.num_envs, -1, self.cfg.history_length)
-            .clone()
-            .zero_()
-        )
-        obs["history"] = self._observation_h
-
         for key, value in obs.items(True, True):
             if key not in self.observation_spec.keys(True, True):
                 self.observation_spec[key] = UnboundedContinuousTensorSpec(value.shape, device=self.device)
@@ -120,7 +111,6 @@ class LocomotionV1(Env):
 
         self._prev_actions[env_ids] = 0.
         self._actions[env_ids] = 0.
-        self._observation_h[env_ids] = 0.
         
         self.motor_params(env_ids)
         # self.body_masses(env_ids)
@@ -160,9 +150,6 @@ class LocomotionV1(Env):
         )
 
         obs = super()._compute_observation()
-        self._observation_h[:, :, :-1] = self._observation_h[:, :, 1:]
-        self._observation_h[:, :, -1] = obs["policy"]
-        obs["policy_h"] = self._observation_h.clone()
         return obs
 
     def render(self, mode: str="human"):

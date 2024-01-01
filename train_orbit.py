@@ -5,6 +5,7 @@ import torch
 import logging
 import numpy as np
 import einops
+import time
 
 from tqdm import tqdm
 from omegaconf import OmegaConf
@@ -18,7 +19,8 @@ from torchrl.envs.transforms import (
     TransformedEnv, 
     InitTracker, 
     RewardSum, 
-    Compose
+    Compose,
+    History
 )
 from torchrl.data import UnboundedDiscreteTensorSpec
 
@@ -51,21 +53,20 @@ def main(cfg):
     else:
         app_experience = f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.kit"
     app = AppLauncher(
-        {"headless": cfg.headless, "offscreen_render": True}, 
+        {"headless": cfg.headless, "offscreen_render": cfg.offscreen_render}, 
         experience=app_experience
     )
 
     import omni.isaac.orbit_tasks  # noqa: F401
-    from configs.orbit import UnitreeGo2RecoveryEnvCfg, ObservationsCfg
+    from configs.orbit import UnitreeGo2RecoveryEnvCfg
     from configs.rough import ROUGH_EASY
     from omni.isaac.orbit_tasks.utils import parse_env_cfg
 
-    task_name = "Isaac-Velocity-Rough-Unitree-Go2-v0"
-    # task_name = "Isaac-Velocity-Flat-Unitree-Go2-v0"
-    # task_name = "Isaac-Velocity-Flat-Unitree-A1-v0"
+    task_name = "Isaac-Velocity-Flat-Unitree-Go2-v0"
     # task_name = "Go2-Recovery"
+    # task_name = "Go2-Rough"
     env_cfg = parse_env_cfg(task_name, use_gpu=True, num_envs=cfg.task.env.num_envs)
-    env_cfg.observations = ObservationsCfg()
+    env_cfg.scene.terrain.terrain_type = "generator"
     env_cfg.scene.terrain.terrain_generator = ROUGH_EASY
     env_cfg.scene.terrain.curriculum = False
 
@@ -85,7 +86,11 @@ def main(cfg):
     env = OrbitEnv(task_name, cfg=env_cfg)
     episode_stats = EpisodeStats(["episode_reward", *env.info_spec.keys(True, True)])
 
-    transform = Compose(InitTracker(), RewardSum())
+    transform = Compose(
+        InitTracker(), 
+        History(["policy"], steps=16, include_last=False), 
+        RewardSum()
+    )
     env = TransformedEnv(env, transform)
 
     policy = policies[cfg.algo.name](
@@ -117,7 +122,7 @@ def main(cfg):
     @torch.no_grad()
     def evaluate(
         seed: int=0, 
-        exploration_type: ExplorationType=ExplorationType.MODE,
+        exploration_type: ExplorationType=ExplorationType.RANDOM,
         render=False,
         expert=False,
     ):
@@ -153,11 +158,14 @@ def main(cfg):
 
         def take_first_episode(tensor: torch.Tensor):
             indices = first_done.reshape(first_done.shape+(1,)*(tensor.ndim-2))
-            return torch.take_along_dim(tensor, indices, dim=1).reshape(-1)
+            return torch.take_along_dim(tensor.cpu(), indices, dim=1).reshape(-1)
 
         info = {}
         for key in episode_stats.in_keys:
-            info[key] = take_first_episode(trajs["next"][key]).float().mean().item()
+            value = take_first_episode(trajs["next"][key]).float().mean().item()
+            if isinstance(key, tuple):
+                key = "/".join(key)
+            info[key] = value
 
         # log video
         if len(frames):
@@ -187,8 +195,11 @@ def main(cfg):
     t = tqdm(collector, total=total_frames//frames_per_batch)
     for i, data in enumerate(t):
         episode_stats.add(data)
-
+        
+        update_start = time.perf_counter()
         info = policy.train_op(data)
+        info["training_time"] = time.perf_counter() - update_start
+
         if len(episode_stats) >= env.num_envs:
             info_log = {}
             for k, v in episode_stats.pop().items(True, True):

@@ -60,7 +60,8 @@ class PPOConfig:
     name: str = "ppo_rma"
     train_every: int = 32
     ppo_epochs: int = 4
-    num_minibatches: int = 16
+    num_minibatches: int = 8
+    lr: float = 1e-3
 
     checkpoint_path: Union[str, None] = None
     phase: str = "encoder"
@@ -298,8 +299,8 @@ class PPORMAPolicy(TensorDictModuleBase):
                 raise ValueError(self.cfg.adaptation_loss)
 
         self.encoder_opt = torch.optim.Adam(self.encoder.parameters(), lr=5e-4)
-        self.actor_opt = torch.optim.Adam(list(self.actor.parameters()) + list(self.encoder.parameters()), lr=5e-4)
-        self.critic_opt = torch.optim.Adam(list(self.critic.parameters()) + list(self.encoder.parameters()), lr=5e-4)
+        self.actor_opt = torch.optim.Adam(list(self.actor.parameters()) + list(self.encoder.parameters()), lr=cfg.lr)
+        self.critic_opt = torch.optim.Adam(list(self.critic.parameters()) + list(self.encoder.parameters()), lr=cfg.lr)
         
         if cfg.adapt_mode == "rnn":
             from torchrl.envs.transforms.transforms import TensorDictPrimer

@@ -9,7 +9,12 @@ from omni_drones.utils.wandb import init_wandb
 from omni_drones.utils.torchrl import SyncDataCollector
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
-from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker
+from torchrl.envs.transforms import (
+    TransformedEnv, 
+    Compose, 
+    InitTracker,
+    History,
+)
 from active_adaptation.learning import (
     PPOPolicy, 
     PPORNNPolicy, 
@@ -45,12 +50,12 @@ def main(cfg):
         app_experience = f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.kit"
     
     app_launcher = AppLauncher(
-        {"headless": cfg.headless, "offscreen_render": True},
+        {"headless": cfg.headless, "offscreen_render": cfg.offscreen_render},
         experience=app_experience
     )
     simulation_app = app_launcher.app
 
-    from active_adaptation.envs import LocomotionEnv
+    from active_adaptation.envs import LocomotionV1, LocomotionV2
     from configs.rough import LocomotionEnvCfg
 
     run = init_wandb(cfg)
@@ -68,8 +73,11 @@ def main(cfg):
 
     env_cfg.history_length = cfg.task.history_length
 
-    base_env = LocomotionEnv(env_cfg)
-    transform = Compose(InitTracker())
+    base_env = LocomotionV2(env_cfg)
+    transform = Compose(
+        InitTracker(),
+        History(["policy"], steps=cfg.task.history_length)
+    )
     env = TransformedEnv(base_env, transform)
     env.set_seed(0)
 
@@ -87,6 +95,7 @@ def main(cfg):
 
     frames_per_batch = env.num_envs * cfg.algo.train_every
     eval_interval = cfg.get("eval_interval", -1)
+    save_interval = cfg.get("save_interval", -1)
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
 
     stats_keys = [
@@ -173,7 +182,23 @@ def main(cfg):
 
         return info
     
+    def save(policy, checkpoint_name: str, artifact: bool=False):
+        try:
+            ckpt_path = os.path.join(run.dir, f"{checkpoint_name}.pt")
+            torch.save(policy.state_dict(), ckpt_path)
+            if artifact:
+                artifact = wandb.Artifact(
+                    f"{type(base_env).__name__}-{type(policy).__name__}", 
+                    type="model"
+                )
+                artifact.add_file(ckpt_path)
+                run.log_artifact(artifact)
+            logging.info(f"Saved checkpoint to {str(ckpt_path)}")
+        except Exception as e:
+            logging.error(f"Failed to save checkpoint: {e}")
+
     pbar = tqdm(collector, total=total_frames//frames_per_batch)
+    
     for i, data in enumerate(pbar):
         start = time.perf_counter()
         
@@ -196,34 +221,25 @@ def main(cfg):
         
         if eval_interval > 0 and (i + 1) % eval_interval == 0:
             logging.info(f"Eval at {collector._frames} steps.")
-            info.update(evaluate())
+            info.update(evaluate(render=cfg.eval_render))
             env.train()
             policy.train()
             if hasattr(policy, "step_schedule"):
                 policy.step_schedule()
+        
+        if save_interval > 0  and i % save_interval == 0:
+            save(policy, f"checkpoint_{i}")
 
         run.log(info)
 
         print()
         print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, float)}))
-
     
-    info = evaluate(render=True, expert=True)
+    info = evaluate(render=cfg.eval_render, expert=True)
     info["env_frames"] = collector._frames
     run.log(info)
 
-    try:
-        ckpt_path = os.path.join(run.dir, "checkpoint_final.pt")
-        torch.save(policy.state_dict(), ckpt_path)
-        artifact = wandb.Artifact(
-            f"{type(base_env).__name__}-{type(policy).__name__}", 
-            type="model"
-        )
-        artifact.add_file(ckpt_path)
-        run.log_artifact(artifact)
-        logging.info(f"Saved checkpoint to {str(ckpt_path)}")
-    except Exception as e:
-        logging.error(f"Failed to save checkpoint: {e}")
+    save(policy, "checkpoint_final")
 
     wandb.finish()
     

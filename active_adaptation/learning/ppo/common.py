@@ -95,12 +95,13 @@ class Actor(nn.Module):
 
 
 class GAE(nn.Module):
-    def __init__(self, gamma, lmbda):
+    def __init__(self, gamma, lmbda, fake_bootstrap=False):
         super().__init__()
         self.register_buffer("gamma", torch.tensor(gamma))
         self.register_buffer("lmbda", torch.tensor(lmbda))
         self.gamma: torch.Tensor
         self.lmbda: torch.Tensor
+        self.fake_bootstrap = fake_bootstrap
     
     def forward(
         self, 
@@ -114,11 +115,11 @@ class GAE(nn.Module):
         not_done = 1 - terminated.float()
         gae = 0
         for step in reversed(range(num_steps)):
-            delta = (
-                reward[:, step] 
-                + self.gamma * next_value[:, step] * not_done[:, step] 
-                - value[:, step]
-            )
+            if self.fake_bootstrap:
+                next_value_t = torch.where(terminated[:, step], value[:, step], next_value[:, step])
+            else:
+                next_value_t = next_value[:, step] * not_done[:, step]
+            delta = reward[:, step] + self.gamma * next_value_t - value[:, step]
             advantages[:, step] = gae = delta + (self.gamma * self.lmbda * not_done[:, step] * gae)
         returns = advantages + value
         return advantages, returns
