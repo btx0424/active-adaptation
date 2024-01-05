@@ -15,6 +15,7 @@ from omni.isaac.orbit.utils.timer import Timer
 from collections import OrderedDict
 
 from abc import abstractmethod
+import time
 
 class Env(EnvBase):
 
@@ -144,6 +145,7 @@ class Env(EnvBase):
         self._reset_idx(env_ids)
         self.sim._physics_sim_view.flush()
         self.episode_length_buf[env_ids] = 0
+        self.scene.update(self.step_dt)
         tensordict = TensorDict(
             self._compute_observation(), 
             self.num_envs,
@@ -182,16 +184,22 @@ class Env(EnvBase):
         flags = torch.cat([func(self) for func in self.termination_funcs.values()], dim=-1)
         return flags.any(dim=-1, keepdim=True)
 
+    def _update(self):
+        self.scene.update(self.step_dt)
+        if self.sim.has_gui():
+            self.sim.render()
+        self.episode_length_buf.add_(1)
+
     def _step(self, tensordict: TensorDictBase) -> TensorDictBase:
+        # start = time.perf_counter()
         for substep in range(self.cfg.decimation):
             self.apply_action(tensordict, substep)
             self.scene.write_data_to_sim()
             self.sim.step(render=False)
-        self.scene.update(self.step_dt)
-        if self.sim.has_gui():
-            self.sim.render()
-
-        self.episode_length_buf.add_(1)
+        # end = time.perf_counter()
+        # print(end - start, self.cfg.decimation)
+        self._update()
+        
         tensordict = TensorDict({}, self.num_envs, device=self.device)
         tensordict.update(self._compute_observation())
         tensordict.update(self._compute_reward())

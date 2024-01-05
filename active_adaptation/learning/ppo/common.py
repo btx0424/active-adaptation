@@ -26,7 +26,7 @@ import torch.nn as nn
 from tensordict import TensorDict
 
 
-def make_mlp(num_units, activation=nn.LeakyReLU):
+def make_mlp(num_units, activation=nn.Mish):
     layers = []
     for n in num_units:
         layers.append(nn.LazyLinear(n))

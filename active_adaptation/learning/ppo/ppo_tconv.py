@@ -35,6 +35,7 @@ from tensordict.nn import TensorDictModule, TensorDictSequential, TensorDictModu
 
 from hydra.core.config_store import ConfigStore
 from dataclasses import dataclass
+from typing import Union
 
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
@@ -48,7 +49,7 @@ class PPOConfig:
     ppo_epochs: int = 4
     num_minibatches: int = 16
 
-    condition_mode: str = "cat"
+    checkpoint_path: Union[str, None] = None
 
 
 cs = ConfigStore.instance()
@@ -69,8 +70,7 @@ class TConv(nn.Module):
     def forward(self, features: torch.Tensor):
         batch_shape = features.shape[:-2]
         features = features.reshape(-1, *features.shape[-2:])
-        features_tconv = einops.rearrange(self.tconv(features), "b d t -> b (t d)")
-        features = torch.cat([features_tconv, features[:, :, -1]], dim=1)
+        features = einops.rearrange(self.tconv(features), "b d t -> b (t d)")
         features = self.mlp(features)
         return features.reshape(*batch_shape, *features.shape[1:])
 
@@ -79,8 +79,8 @@ OBS_KEY = "policy"
 OBS_HIST_KEY = "policy_h"
 ACTION_KEY = "action"
 REWARD_KEY = ("next", "reward")
-DONE_KEY = ("next", "done")
-
+# DONE_KEY = ("next", "done")
+DONE_KEY = ("next", "terminated")
 
 class PPOTConvPolicy(TensorDictModuleBase):
 
@@ -105,7 +105,9 @@ class PPOTConvPolicy(TensorDictModuleBase):
         fake_input = observation_spec.zero()
 
         actor = TensorDictSequential(
-            TensorDictModule(TConv(256), [OBS_HIST_KEY], ["_feature"]),
+            TensorDictModule(TConv(256), [OBS_HIST_KEY], ["_feature_hist"]),
+            TensorDictModule(make_mlp([256, 256]), [OBS_KEY], ["_feature"]),
+            CatTensors(["_feature_hist", "_feature"], "_feature"),
             TensorDictModule(
                 nn.Sequential(make_mlp([256]), Actor(self.action_dim)), 
                 ["_feature"], ["loc", "scale"]
@@ -121,7 +123,9 @@ class PPOTConvPolicy(TensorDictModuleBase):
         ).to(self.device)
 
         self.critic = TensorDictSequential(
-            TensorDictModule(TConv(256), [OBS_HIST_KEY], ["_feature"]),
+            TensorDictModule(TConv(256), [OBS_HIST_KEY], ["_feature_hist"]),
+            TensorDictModule(make_mlp([256, 256]), [OBS_KEY], ["_feature"]),
+            CatTensors(["_feature_hist", "_feature"], "_feature"),
             TensorDictModule(
                 nn.Sequential(make_mlp([256]), nn.LazyLinear(1)), 
                 ["_feature"], ["state_value"]
@@ -131,13 +135,17 @@ class PPOTConvPolicy(TensorDictModuleBase):
         self.actor(fake_input)
         self.critic(fake_input)
         
-        def init_(module):
-            if isinstance(module, nn.Linear):
-                nn.init.orthogonal_(module.weight, 0.01)
-                nn.init.constant_(module.bias, 0.)
-        
-        self.actor.apply(init_)
-        self.critic.apply(init_)
+        if self.cfg.checkpoint_path is not None:
+            state_dict = torch.load(self.cfg.checkpoint_path)
+            self.load_state_dict(state_dict, strict=False)
+        else:
+            def init_(module):
+                if isinstance(module, nn.Linear):
+                    nn.init.orthogonal_(module.weight, 0.01)
+                    nn.init.constant_(module.bias, 0.)
+            
+            self.actor.apply(init_)
+            self.critic.apply(init_)
 
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=cfg.lr)
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=cfg.lr)

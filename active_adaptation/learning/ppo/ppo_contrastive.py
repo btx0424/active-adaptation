@@ -39,6 +39,7 @@ from typing import Union
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
 from .common import Actor, GAE, make_mlp
+from .ppo_adapt import make_priv_encoder
 
 @dataclass
 class PPOConfig:
@@ -55,11 +56,10 @@ class PPOConfig:
 
 cs = ConfigStore.instance()
 cs.store("ppo", node=PPOConfig, group="algo")
-cs.store("ppo_priv", node=PPOConfig(priv_actor=True, priv_critic=True), group="algo")
-cs.store("ppo_priv_critic", node=PPOConfig(priv_critic=True), group="algo")
+cs.store("ppo_contra", node=PPOConfig(priv_actor=True, priv_critic=True), group="algo")
 
 
-class PPOPolicy(TensorDictModuleBase):
+class PPOContraPolicy(TensorDictModuleBase):
 
     OBS_KEY = "policy"
     ACTION_KEY = "action"
@@ -87,30 +87,19 @@ class PPOPolicy(TensorDictModuleBase):
         fake_input = observation_spec.zero()
         observation_dim = observation_spec[self.OBS_KEY].shape[-1]
         
-        if self.cfg.priv_actor:
-            intrinsics_dim = observation_spec[("agents", "intrinsics")].shape[-1]
-            actor_module = TensorDictSequential(
-                TensorDictModule(make_mlp([512]), [self.OBS_KEY], ["feature"]),
-                TensorDictModule(
-                    nn.Sequential(make_mlp([128, 128])), 
-                    [("agents", "intrinsics")], ["context"]
-                ),
-                CatTensors(["feature", "context"], "feature"),
-                TensorDictModule(
-                    nn.Sequential(make_mlp([256, 256]), Actor(self.action_dim)), 
-                    ["feature"], ["loc", "scale"]
-                )
-            )
-        else:
-            actor_module=TensorDictModule(
-                nn.Sequential(
-                    # nn.LayerNorm(observation_dim),
-                    # nn.InstanceNorm1d(observation_dim),
-                    make_mlp([512, 256, 256], nn.Mish), 
-                    Actor(self.action_dim)
-                ),
-                [self.OBS_KEY], ["loc", "scale"]
-            )
+        self.encoder = make_priv_encoder(
+            "shared",
+            num_units=[128, 128],
+        ).to(self.device)
+        
+        actor_module=TensorDictModule(
+            nn.Sequential(
+                # nn.LayerNorm(observation_dim),
+                make_mlp([512, 256, 256], nn.Mish), 
+                Actor(self.action_dim)
+            ),
+            [self.OBS_KEY], ["loc", "scale"]
+        )
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=actor_module,
             in_keys=["loc", "scale"],
@@ -119,30 +108,14 @@ class PPOPolicy(TensorDictModuleBase):
             return_log_prob=True
         ).to(self.device)
 
-        if self.cfg.priv_critic:
-            intrinsics_dim = observation_spec[("agents", "intrinsics")].shape[-1]
-            self.critic = TensorDictSequential(
-                TensorDictModule(make_mlp([512]), [self.OBS_KEY], ["feature"]),
-                TensorDictModule(
-                    nn.Sequential(make_mlp([128, 128])), 
-                    [("agents", "intrinsics")], ["context"]
-                ),
-                CatTensors(["feature", "context"], "feature"),
-                TensorDictModule(
-                    nn.Sequential(make_mlp([256, 256]), nn.LazyLinear(1)),
-                    ["feature"], ["state_value"]
-                )
-            ).to(self.device)
-        else:
-            self.critic = TensorDictModule(
-                nn.Sequential(
-                    # nn.LayerNorm(observation_dim),
-                    # nn.InstanceNorm1d(observation_dim),
-                    make_mlp([512, 256, 256], nn.Mish), 
-                    nn.LazyLinear(1)
-                ),
-                [self.OBS_KEY], ["state_value"]
-            ).to(self.device)
+        self.critic = TensorDictModule(
+            nn.Sequential(
+                # nn.LayerNorm(observation_dim),
+                make_mlp([512, 256, 256], nn.Mish), 
+                nn.LazyLinear(1)
+            ),
+            [self.OBS_KEY], ["state_value"]
+        ).to(self.device)
 
         self.actor(fake_input)
         self.critic(fake_input)

@@ -44,49 +44,59 @@ from ..utils.valuenorm import ValueNorm1
 
 
 class LSTM(nn.Module):
-    def __init__(self, input_size, hidden_size, skip_conn) -> None:
+    def __init__(
+        self, 
+        input_size, 
+        hidden_size, 
+        skip_conn, 
+        allow_none=False
+    ) -> None:
         super().__init__()
         self.lstm = nn.LSTMCell(input_size, hidden_size)
-        # self.ln = nn.LayerNorm(hidden_size)
+        self.out = nn.Sequential(nn.LazyLinear(hidden_size), nn.Mish())
         self.skip_conn = skip_conn
+        self.allow_none = allow_none
 
     def forward(
         self, x: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor, cx: torch.Tensor
     ):
-        T = x.shape[1]
-        hx, cx = hx[:, 0], cx[:, 0]
-        output = []
-        for i in range(T):
-            hx, cx = self._forward(x[:, i], is_init[:, i], hx, cx)
-            output.append(hx)
-        output = torch.stack(output, dim=1)
-        # output = self.ln(output)
-        if self.skip_conn == "add":
-            output = x + output
-        elif self.skip_conn == "cat":
-            output = torch.cat([x, output], dim=-1)
-        return (
-            output,
-            hx.unsqueeze(1).expand(-1, T, *hx.shape[1:]),
-            cx.unsqueeze(1).expand(-1, T, *cx.shape[1:]),
-        )
+        if x.ndim == 2:
 
-    def _forward(
-        self, x: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor, cx: torch.Tensor
-    ):
-        batch_shape = x.shape[:-1]
-        reset = (
-            1 - is_init.reshape(is_init.shape + (1,) * (hx.ndim - is_init.ndim)).float()
-        )
-        hx = hx * reset
-        cx = cx * reset
-        x = x.reshape(-1, self.lstm.input_size)
-        hx = hx.reshape(-1, self.lstm.hidden_size)
-        cx = cx.reshape(-1, self.lstm.hidden_size)
-        hx, cx = self.lstm(x, (hx, cx))
-        hx = hx.reshape(*batch_shape, -1)
-        cx = cx.reshape(*batch_shape, -1)
-        return hx, cx
+            N = x.shape[0]
+            if hx is None and self.allow_none:
+                hx = torch.zeros(N, self.lstm.hidden_size, device=x.device)
+            if cx is None and self.allow_none:
+                cx = torch.zeros(N, self.lstm.hidden_size, device=x.device)
+            reset = 1. - is_init.float().reshape(N, 1)
+            hx, cx = self.lstm(x, (hx * reset, cx * reset))
+            output = self.out(hx)
+            return output, hx, cx
+        
+        elif x.ndim == 3:
+
+            N, T = x.shape[:2]
+            if hx is None and self.allow_none:
+                hx = torch.zeros(N, self.lstm.hidden_size, device=x.device)
+            else:
+                hx = hx[:, 0]
+            if cx is None and self.allow_none:
+                cx = torch.zeros(N, self.lstm.hidden_size, device=x.device)
+            else:
+                cx = cx[:, 0]
+            output = []
+            reset = 1. - is_init.float().reshape(N, T, 1)
+            for i, x_t, reset_t in zip(range(T), x.unbind(1), reset.unbind(1)):
+                hx, cx = self.lstm(x_t, (hx * reset_t, cx * reset_t))
+                if i < T // 4: # burn-in
+                    hx, cx = hx.detach(), cx.detach()
+                output.append(hx)
+            output = torch.stack(output, dim=1)
+            output = self.out(output)
+            return (
+                output,
+                einops.repeat(hx, "b h -> b t h", t=T),
+                einops.repeat(cx, "b h -> b t h", t=T)
+            )
 
 
 class GRU(nn.Module):
@@ -145,7 +155,8 @@ class PPOConfig:
     train_every: int = 32
     ppo_epochs: int = 4
     num_minibatches: int = 16
-    seq_len: int = 16
+    seq_len: int = train_every
+    lr: float = 5e-4
 
     # whether to take in priviledged infomation
     priv: bool = False
@@ -154,11 +165,20 @@ class PPOConfig:
     skip_conn: Union[str, None] = None
     hidden_size: int = 128
 
+    checkpoint_path: Union[str, None] = None
+
 
 cs = ConfigStore.instance()
 cs.store("ppo_gru", node=PPOConfig, group="algo")
 cs.store("ppo_lstm", node=PPOConfig(rnn="lstm"), group="algo")
 
+OBS_KEY = "policy" # OBS_KEY
+OBS_PRIV_KEY = "priv"
+OBS_HIST_KEY = "history"
+ACTION_KEY = "action" # ACTION_KEY
+REWARD_KEY = ("next", "reward") # ("agents", "reward")
+# DONE_KEY = ("next", "done")
+DONE_KEY = ("next", "terminated")
 
 class PPORNNPolicy(TensorDictModuleBase):
     def __init__(
@@ -217,7 +237,7 @@ class PPORNNPolicy(TensorDictModuleBase):
 
             actor = TensorDictSequential(
                 TensorDictModule(
-                    make_mlp([256, 256]), [("agents", "observation")], ["feature"]
+                    make_mlp([256, 256]), [OBS_KEY], ["feature"]
                 ),
                 make_rnn(branch="actor"),
                 make_encoder(),
@@ -228,7 +248,7 @@ class PPORNNPolicy(TensorDictModuleBase):
             ).to(self.device)
             self.critic = TensorDictSequential(
                 TensorDictModule(
-                    make_mlp([256, 256]), [("agents", "observation")], ["feature"]
+                    make_mlp([256, 256]), [OBS_KEY], ["feature"]
                 ),
                 make_rnn(branch="critic"),
                 make_encoder(),
@@ -240,14 +260,14 @@ class PPORNNPolicy(TensorDictModuleBase):
         else:
             actor = TensorDictSequential(
                 TensorDictModule(
-                    make_mlp([256, 256]), [("agents", "observation")], ["feature"]
+                    make_mlp([512, 256]), [OBS_KEY], ["feature"]
                 ),
                 make_rnn(branch="actor"),
                 TensorDictModule(Actor(self.action_dim), ["feature"], ["loc", "scale"]),
             ).to(self.device)
             self.critic = TensorDictSequential(
                 TensorDictModule(
-                    make_mlp([256, 256]), [("agents", "observation")], ["feature"]
+                    make_mlp([512, 256]), [OBS_KEY], ["feature"]
                 ),
                 make_rnn(branch="critic"),
                 TensorDictModule(nn.LazyLinear(1), ["feature"], ["state_value"]),
@@ -256,7 +276,7 @@ class PPORNNPolicy(TensorDictModuleBase):
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=actor,
             in_keys=["loc", "scale"],
-            out_keys=[("agents", "action")],
+            out_keys=[ACTION_KEY],
             distribution_class=IndependentNormal,
             return_log_prob=True,
         ).to(self.device)
@@ -265,22 +285,26 @@ class PPORNNPolicy(TensorDictModuleBase):
         self.actor(fake_input.unsqueeze(1))
         self.critic(fake_input.unsqueeze(1))
 
-        def init_(module):
-            if isinstance(module, nn.Linear):
-                nn.init.orthogonal_(module.weight, 0.01)
-                nn.init.constant_(module.bias, 0.0)
-            elif isinstance(module, (nn.GRUCell, nn.LSTMCell)):
-                nn.init.orthogonal_(module.weight_hh)
+        if self.cfg.checkpoint_path is not None:
+            state_dict = torch.load(self.cfg.checkpoint_path)
+            self.load_state_dict(state_dict, strict=False)
+        else:
+            def init_(module):
+                if isinstance(module, nn.Linear):
+                    nn.init.orthogonal_(module.weight, 0.01)
+                    nn.init.constant_(module.bias, 0.0)
+                elif isinstance(module, (nn.GRUCell, nn.LSTMCell)):
+                    nn.init.orthogonal_(module.weight_hh)
 
-        self.actor.apply(init_)
-        self.critic.apply(init_)
+            self.actor.apply(init_)
+            self.critic.apply(init_)
 
-        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
-        self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=5e-4)
+        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=cfg.lr)
+        self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=cfg.lr)
         self.value_norm = ValueNorm1(input_shape=1).to(self.device)
 
     def _maybe_init_state(self, tensordict: TensorDict):
-        shape = tensordict.get(("agents", "observation")).shape[:-1]
+        shape = tensordict.get(OBS_KEY).shape[:-1]
         if self.cfg.rnn == "gru":
             for key in ("actor_hx", "critic_hx"):
                 if key not in tensordict.keys():
@@ -308,10 +332,18 @@ class PPORNNPolicy(TensorDictModuleBase):
         from torchrl.envs.transforms.transforms import TensorDictPrimer
 
         num_envs = self.observation_spec.shape[0]
-        return TensorDictPrimer({
-            "actor_hx": UnboundedContinuousTensorSpec((num_envs, 128)),
-            "critic_hx": UnboundedContinuousTensorSpec((num_envs, 128))
-        })
+        if self.cfg.rnn == "gru":
+            return TensorDictPrimer({
+                "actor_hx": UnboundedContinuousTensorSpec((num_envs, 128)),
+                "critic_hx": UnboundedContinuousTensorSpec((num_envs, 128))
+            })
+        else:
+            return TensorDictPrimer({
+                "actor_hx": UnboundedContinuousTensorSpec((num_envs, 128)),
+                "actor_cx": UnboundedContinuousTensorSpec((num_envs, 128)),
+                "critic_hx": UnboundedContinuousTensorSpec((num_envs, 128)),
+                "critic_cx": UnboundedContinuousTensorSpec((num_envs, 128))
+            })
 
     def train_op(self, tensordict: TensorDict):
 
@@ -323,8 +355,8 @@ class PPORNNPolicy(TensorDictModuleBase):
                 .reshape(*tensordict.shape, 1)
             )
 
-        rewards = tensordict[("next", "agents", "reward")]
-        dones = tensordict[("next", "terminated")]
+        rewards = tensordict[REWARD_KEY]
+        dones = tensordict[DONE_KEY]
         values = tensordict["state_value"]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
@@ -351,7 +383,7 @@ class PPORNNPolicy(TensorDictModuleBase):
 
     def _update(self, tensordict: TensorDict):
         dist = self.actor.get_dist(tensordict)
-        log_probs = dist.log_prob(tensordict[("agents", "action")])
+        log_probs = dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy()
 
         adv = tensordict["adv"]

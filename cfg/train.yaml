@@ -4,7 +4,7 @@ headless: true
 offscreen_render: ${eval_render}
 
 sim: ${task.sim}
-env: ${task.env}
+# env: ${task.env}
 
 total_frames: 150_000_000
 max_iters: -1

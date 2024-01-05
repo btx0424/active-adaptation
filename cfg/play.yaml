@@ -3,7 +3,7 @@
 headless: false
 
 sim: ${task.sim}
-env: ${task.env}
+# env: ${task.env}
 
 total_frames: -1
 max_iters: -1
@@ -24,7 +24,11 @@ wandb:
   monitor_gym: True
   tags: 
 
+
 defaults:
   - task: Velocity
   - algo: ppo
   - _self_
+
+task:
+  num_envs: 64

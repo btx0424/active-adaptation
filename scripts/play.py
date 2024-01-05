@@ -9,7 +9,9 @@ from omni_drones.utils.wandb import init_wandb
 from omni_drones.utils.torchrl import SyncDataCollector
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
-from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker
+from torchrl.envs.transforms import (
+    TransformedEnv, Compose, InitTracker, History
+)
 from active_adaptation.learning import (
     PPOPolicy, 
     PPORNNPolicy, 
@@ -34,7 +36,7 @@ policies = {
     "ppo_rma": PPORMAPolicy
 }
 
-@hydra.main(config_path="cfg", config_name="play")
+@hydra.main(config_path="../cfg", config_name="play")
 def main(cfg):
     OmegaConf.resolve(cfg)
 
@@ -50,12 +52,11 @@ def main(cfg):
     )
     simulation_app = app_launcher.app
 
-    from active_adaptation.envs import LocomotionEnv
+    from active_adaptation.envs import TASKS
     from configs.rough import LocomotionEnvCfg
 
     # setup environment
-    env_cfg = LocomotionEnvCfg(cfg.task.robot, terrain="easy")
-    env_cfg.scene.num_envs = cfg.task.env.num_envs
+    env_cfg = LocomotionEnvCfg(cfg.task)
     env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21
     env_cfg.sim.physx.gpu_max_rigid_patch_count = 2**21
     env_cfg.sim.physx.gpu_found_lost_pairs_capacity = 2**20
@@ -66,8 +67,11 @@ def main(cfg):
 
     env_cfg.history_length = cfg.task.history_length
 
-    base_env = LocomotionEnv(env_cfg)
-    transform = Compose(InitTracker())
+    base_env = TASKS[cfg.task.task](env_cfg)
+    transform = Compose(
+        InitTracker(),
+        History(["policy"], steps=cfg.task.history_length)
+    )
     env = TransformedEnv(base_env, transform)
     env.set_seed(0)
 

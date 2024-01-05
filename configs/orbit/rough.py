@@ -102,6 +102,8 @@ class UnitreeGo2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
         # reduce action scale
         self.actions.joint_pos.scale = 0.25
+        # self.sim.dt = 0.01
+        self.decimation = 2
 
         # randomization
         self.randomization.push_robot = None

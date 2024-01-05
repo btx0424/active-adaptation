@@ -35,10 +35,7 @@ def reset(self: RewardManager, env_ids: torch.Tensor) -> dict[str, torch.Tensor]
     # store information
     extras = {}
     for key in self._episode_sums.keys():
-        extras["episode_reward/" + key] = (
-            self._episode_sums[key].clone() 
-            / self._env.max_episode_length_s
-        )
+        extras["episode_reward/" + key] = self._episode_sums[key].clone() 
         # reset episodic sum
         self._episode_sums[key][env_ids] = 0.0
     # reset all the reward terms

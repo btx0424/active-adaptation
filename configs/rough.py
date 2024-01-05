@@ -134,35 +134,55 @@ class EnvCfg:
         "crash"
     ]
 
-def LocomotionEnvCfg(robot: str, terrain: str="hard"):
+REWARD_VELOCITY = {
+    "linvel_projection": 1.0,
+    "linvel_exp": 0.5,
+    "heading": 0.5,
+    "base_height": 0.5,
+    "energy_l2": 0.00005,
+    "joint_acc_l2": 2.5e-7,
+    # "joint_torques_l2": 2e-4,
+    "action_rate_l2": 0.01,
+    "orientation": 0.5,
+    "feet_slip": 0.02,
+}
+
+REWARD_RECOVER = {
+    "orientation": 1.0,
+    "base_height": 0.2,
+    "stand_on_feet": 0.2,
+    "action_rate_l2": 0.01,
+}
+
+def LocomotionEnvCfg(cfg):
 
     robot_cfg = {
         "a1": UNITREE_A1_CFG,
         "go2": UNITREE_GO2_CFG,
-    }[robot.lower()]
+    }[cfg.robot.lower()]
 
-    ROUGH_TERRAIN_CFG.terrain_generator = {
-        "easy": ROUGH_EASY,
-        "hard": ROUGH_HARD
-    }[terrain.lower()]
+    if cfg.terrain == "plane":
+        terrain_cfg = FLAT_TERRAIN_CFG
+    elif cfg.terrain == "easy":
+        terrain_cfg = ROUGH_TERRAIN_CFG
+        terrain_cfg.terrain_generator = ROUGH_EASY
+    else:
+        raise ValueError(cfg.terrain)
     
+    reward_cfg = {
+        "Velocity": REWARD_VELOCITY,
+        "Recover": REWARD_RECOVER
+    }[cfg.task]
+
     env_cfg = EnvCfg(
+        max_episode_length=cfg.max_episode_length,
         target_base_height=0.3,
         scene = LocomotionSceneCfg(
+            num_envs=cfg.num_envs,
             robot=robot_cfg.replace(prim_path="{ENV_REGEX_NS}/Robot"),
-            terrain=ROUGH_TERRAIN_CFG,
+            terrain=terrain_cfg,
         ),
-        reward = {
-            "linvel": 2.0,
-            "heading": 0.5,
-            # "base_height": 0.5,
-            "energy": 0.0005,
-            "joint_acc_l2": 2.5e-7,
-            "joint_torques_l2": 2.5e-6,
-            "action_rate_l2": 0.01,
-            "orientation": 0.1,
-            "feet_slip": 0.02,
-        },
+        reward = reward_cfg,
         observation = {
             "policy": [
                 "command",

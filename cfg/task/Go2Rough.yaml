@@ -1,0 +1,10 @@
+name: Go2Rough
+task: Velocity
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/Velocity@_here_
+  - _self_
+
+robot: go2
+terrain: easy

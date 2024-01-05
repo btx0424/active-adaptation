@@ -14,6 +14,8 @@ from torchrl.envs.transforms import (
     Compose, 
     InitTracker,
     History,
+    RewardSum,
+    CatFrames
 )
 from active_adaptation.learning import (
     PPOPolicy, 
@@ -39,10 +41,10 @@ policies = {
     "ppo_rma": PPORMAPolicy
 }
 
-@hydra.main(config_path="cfg", config_name="train")
+@hydra.main(config_path="../cfg", config_name="train")
 def main(cfg):
     OmegaConf.resolve(cfg)
-
+    
     # load cheaper kit config in headless
     if cfg.headless:
         app_experience = f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.gym.headless.kit"
@@ -55,14 +57,13 @@ def main(cfg):
     )
     simulation_app = app_launcher.app
 
-    from active_adaptation.envs import LocomotionV1, LocomotionV2
+    from active_adaptation.envs import TASKS
     from configs.rough import LocomotionEnvCfg
 
     run = init_wandb(cfg)
 
     # setup environment
-    env_cfg = LocomotionEnvCfg(cfg.task.robot, terrain="easy")
-    env_cfg.scene.num_envs = cfg.task.env.num_envs
+    env_cfg = LocomotionEnvCfg(cfg.task)
     env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21
     env_cfg.sim.physx.gpu_max_rigid_patch_count = 2**21
     env_cfg.sim.physx.gpu_found_lost_pairs_capacity = 2**20
@@ -70,13 +71,14 @@ def main(cfg):
     env_cfg.sim.physx.gpu_total_aggregate_pairs_capacity = 2**19
     env_cfg.sim.physx.gpu_collision_stack_size = 2**24
     env_cfg.sim.physx.gpu_heap_capacity = 2**24
-
+    
     env_cfg.history_length = cfg.task.history_length
 
-    base_env = LocomotionV2(env_cfg)
+    base_env = TASKS[cfg.task.task](env_cfg)
     transform = Compose(
         InitTracker(),
-        History(["policy"], steps=cfg.task.history_length)
+        CatFrames(4, -1, ["policy"])
+        # History(["policy"], steps=cfg.task.history_length)
     )
     env = TransformedEnv(base_env, transform)
     env.set_seed(0)
