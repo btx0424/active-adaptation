@@ -134,14 +134,15 @@ class Action(AdaptationModule):
         self.opt = torch.optim.Adam(self.adaptation_module.parameters())
     
     def forward(self, tensordict: TensorDictBase):
-        target = self.actor.get_dist(tensordict)
+        target_dist = self.actor.get_dist(tensordict)
         td = self.adaptation_module(tensordict)
         if self.closed_kl:
-            pred = self.actor.get_dist(td)
-            loss = D.kl_divergence(pred, target)
+            pred_dist = self.actor.get_dist(td)
+            loss = D.kl_divergence(pred_dist, target_dist)
         else:
-            pred = self.actor(td)[("agents", "action")]
-            loss = -target.log_prob(pred)
+            pred_dist = self.actor.get_dist(td)
+            pred_action = pred_dist.sample()
+            loss = pred_dist.log_prob(pred_action)-target_dist.log_prob(pred_action)
         return loss
     
     def update(self, tensordict: TensorDictBase):

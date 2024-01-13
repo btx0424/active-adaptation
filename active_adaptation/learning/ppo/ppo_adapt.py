@@ -50,7 +50,7 @@ make_mlp = functools.partial(make_mlp, activation=nn.Mish)
 
 OBS_KEY = "policy" # ("agents", "observation")
 OBS_PRIV_KEY = "priv"
-OBS_HIST_KEY = "history"
+OBS_HIST_KEY = "policy_h"
 ACTION_KEY = "action" # ("agents", "action")
 REWARD_KEY = ("next", "reward") # ("agents", "reward")
 # DONE_KEY = ("next", "done")
@@ -61,7 +61,7 @@ class PPOConfig:
     name: str = "ppo_rma"
     train_every: int = 32
     ppo_epochs: int = 4
-    num_minibatches: int = 8
+    num_minibatches: int = 16
     lr: float = 1e-3
 
     checkpoint_path: Union[str, None] = None
@@ -77,13 +77,13 @@ class PPOConfig:
     def __post_init__(self):
         assert self.condition_mode.lower() in ("cat", "film")
         assert self.adaptation_key in ("context", OBS_HIST_KEY, "_feature")
-        assert self.phase in ("train", "adapt")
+        assert self.phase in ("train", "adapt", "finetune")
 
 cs = ConfigStore.instance()
 cs.store("rma_train", node=PPOConfig, group="algo")
 cs.store("rma_adapt", node=PPOConfig(phase="adapt", checkpoint_path=MISSING), group="algo")
 cs.store("rma_adapt_rnn", node=PPOConfig(adapt_arch="rnn", phase="adapt", checkpoint_path=None), group="algo")
-
+cs.store("rma_finetune", node=PPOConfig(phase="finetune", checkpoint_path=MISSING), group="algo")
 
 class TConv(nn.Module):
     def __init__(self, out_dim: int) -> None:
@@ -173,9 +173,8 @@ def make_adaptation_module(encoder_mode: str, adapt_arch: str, dim: int):
 
 def make_state_estimator(arch: str, dim: int):
     if arch == "tconv":
-        module = TensorDictModule(
-            TConv(dim), [OBS_HIST_KEY], [OBS_PRIV_KEY]
-        )
+        module = nn.Sequential(TConv(dim), nn.LazyLinear(dim))
+        module = TensorDictModule(module, [OBS_HIST_KEY], [OBS_PRIV_KEY])
     elif arch == "rnn":
         in_keys = ["_rnn_feature", "is_init", "_hx"]
         out_keys = [OBS_PRIV_KEY, ("next", f"_hx")]
@@ -233,24 +232,16 @@ class PPORMAPolicy(TensorDictModuleBase):
 
         fake_input = observation_spec.zero()
 
-        if self.cfg.adaptation_key == "context":
-            self.encoder = make_priv_encoder(
-                cfg.encoder_mode, 
-                [128, 128]
-            ).to(self.device)
-            def condition(branch: str):
-                module = nn.Sequential(make_mlp([512]))
-                return TensorDictSequential(
-                    TensorDictModule(module, [OBS_KEY], ["_feature"]),
-                    CatTensors(["_feature", f"context_{branch}"], "_feature", del_keys=False)
-                )
-        elif self.cfg.adaptation_key == "raw":
-            self.encoder = CatTensors([OBS_KEY, OBS_PRIV_KEY], "obs_full", del_keys=False)
-            def condition(branch: str):
-                module = nn.Sequential(make_mlp([512]))
-                return TensorDictModule(module, ["full_obs"], ["_feature"])
-        else:
-            raise ValueError(self.cfg.adaptation_key)
+        self.encoder = make_priv_encoder(
+            cfg.encoder_mode, 
+            [128, 128]
+        ).to(self.device)
+        def condition(branch: str):
+            module = nn.Sequential(make_mlp([512]))
+            return TensorDictSequential(
+                TensorDictModule(module, [OBS_KEY], ["_feature"]),
+                CatTensors(["_feature", f"context_{branch}"], "_feature", del_keys=False)
+            )
 
         actor_module = TensorDictSequential(
             condition("actor"),
@@ -302,7 +293,7 @@ class PPORMAPolicy(TensorDictModuleBase):
                 ).to(self.device)
             elif self.adaptation_key == "raw":
                 self.adaptation_module = make_state_estimator(
-                    self.cfg.adapt_arch, [128, 128]
+                    self.cfg.adapt_arch, fake_input[OBS_PRIV_KEY].shape[-1]
                 ).to(self.device)
             self.adaptation_module(fake_input)
             if self.cfg.adaptation_loss == "mse":
@@ -349,34 +340,46 @@ class PPORMAPolicy(TensorDictModuleBase):
     
     @phase.setter
     def phase(self, value: str):
-        assert value in ("train", "adapt")
+        if value == "train":
+            self.train_policy = True
+            self.train_adapt = False
+        elif value == "adapt":
+            self.train_policy = False
+            self.train_adapt = True
+        elif value == "finetune":
+            self.train_policy = True
+            self.train_adapt = True
+        else:
+            raise ValueError(value)
         self._phase = value
 
     def forward(self, tensordict: TensorDict):
-        self._get_context(tensordict)
+        tensordict = self._get_context(tensordict)
         self.actor(tensordict)
         self.critic(tensordict)
         tensordict.exclude("_feature", "context_actor", "context_critic", inplace=True)
         return tensordict
 
     def train_op(self, tensordict: TensorDict):
-        if self.phase == "train":
-            info = self._train_policy(tensordict)
-        elif self.phase == "adapt":
-            info = self._train_adaptation(tensordict)
-        elif self.phase == "finetune":
-            with hold_out_net(self.encoder):
-                info = self._train_policy(tensordict.clone())
-            info.update(self._train_adaptation(tensordict.clone()))
-        else:
-            raise RuntimeError()
+        info = {}
+        if self.train_policy:
+            info.update(self._train_policy(tensordict))
+        if self.train_adapt:
+            info.update(self._train_adaptation(tensordict))
         return info
     
     def _get_context(self, tensordict: TensorDict):
         if self.phase == "train":
             self.encoder(tensordict)
         elif self.phase == "adapt":
-            self.adaptation_module(tensordict)
+            if self.adaptation_key == "raw":
+                tensordict.rename_key_(OBS_PRIV_KEY, "tmp")
+                self.adaptation_module(tensordict)
+                self.encoder(tensordict)
+                tensordict.exclude(OBS_PRIV_KEY, inplace=True)
+                tensordict.rename_key_("tmp", OBS_PRIV_KEY)
+            else:
+                self.adaptation_module(tensordict)
         return tensordict
 
     def _train_policy(self, tensordict: TensorDict):
@@ -440,8 +443,8 @@ class PPORMAPolicy(TensorDictModuleBase):
         self.critic_opt.zero_grad()
         # self.encoder_opt.zero_grad()
         loss.backward()
-        actor_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.actor.parameters(), 5)
-        critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 5)
+        actor_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.actor.parameters(), 10)
+        critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 10)
         self.actor_opt.step()
         self.critic_opt.step()
         # self.encoder_opt.step()
@@ -460,7 +463,7 @@ class PPORMAPolicy(TensorDictModuleBase):
             tensordict = self.encoder(tensordict)
         
         info = []
-        with hold_out_net(self.actor):
+        with hold_out_net(self.actor), hold_out_net(self.encoder):
             for epoch in range(4):
                 for batch in self.make_batch(tensordict, 8):
                     loss = self.adaptation_loss(batch).mean()
@@ -473,25 +476,6 @@ class PPORMAPolicy(TensorDictModuleBase):
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
         return super().load_state_dict(state_dict, strict)
-
-    def adaptation_loss_traj(self, traj: TensorDictBase):
-        """
-        Computes the changes of the adaptation loss in an episode. Not for training.
-        """
-        
-        td_target = self.critic(self.encoder(traj.exclude(self.adaptation_key)))
-        td_pred = self.critic(self.adaptation_module(traj.exclude(self.adaptation_key)))
-        mse = F.mse_loss(
-            td_target.get(self.adaptation_key),
-            td_pred.get(self.adaptation_key),
-            reduction="none"
-        ).mean((1, 2))
-        value_error = F.mse_loss(
-            td_target.get("state_value"),
-            td_pred.get("state_value"),
-            reduction="none"
-        ).mean((1, 2))
-        return {"mse": mse.cpu(), "value_error": value_error.cpu()}
 
     def __str__(self) -> str:
         return f"PPOAdapt-{self.cfg.phase}"

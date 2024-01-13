@@ -22,13 +22,14 @@ from active_adaptation.learning import (
     PPORNNPolicy, 
     PPODualPolicy, 
     PPOTConvPolicy, 
-    PPORMAPolicy
+    PPORMAPolicy,
+    PPOContraPolicy
 )
+from helpers import EpisodeStats, Every
 
 import wandb
 import logging
 from tqdm import tqdm
-from helpers import EpisodeStats, Every
 
 import os
 import time
@@ -38,6 +39,7 @@ policies = {
     "ppo_dual": PPODualPolicy,
     "ppo_rnn": PPORNNPolicy,
     "ppo_tconv": PPOTConvPolicy,
+    "ppo_contra": PPOContraPolicy,
     "ppo_rma": PPORMAPolicy
 }
 
@@ -53,7 +55,8 @@ def main(cfg):
     
     app_launcher = AppLauncher(
         {"headless": cfg.headless, "offscreen_render": cfg.offscreen_render},
-        experience=app_experience
+        experience=app_experience,
+        # experience=f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.kit"
     )
     simulation_app = app_launcher.app
 
@@ -77,8 +80,8 @@ def main(cfg):
     base_env = TASKS[cfg.task.task](env_cfg)
     transform = Compose(
         InitTracker(),
-        CatFrames(4, -1, ["policy"])
-        # History(["policy"], steps=cfg.task.history_length)
+        # CatFrames(4, -1, ["policy"], ["priv"]),
+        History(["policy"], steps=16)
     )
     env = TransformedEnv(base_env, transform)
     env.set_seed(0)

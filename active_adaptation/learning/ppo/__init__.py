@@ -25,4 +25,5 @@ from .ppo import PPOPolicy
 from .ppo_adapt import PPORMAPolicy
 from .ppo_rnn import PPORNNPolicy
 from .ppo_tconv import PPOTConvPolicy
+from .ppo_contrastive import PPOTConvPolicy as PPOContraPolicy
 from .ppo_dual import PPODualPolicy

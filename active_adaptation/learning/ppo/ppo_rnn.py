@@ -224,13 +224,10 @@ class PPORNNPolicy(TensorDictModuleBase):
             raise NotImplementedError(self.cfg.rnn)
 
         if cfg.priv:
-            intrinsics_dim = observation_spec[("agents", "intrinsics")].shape[-1]
-
             def make_encoder():
                 return TensorDictSequential(
                     TensorDictModule(
-                        nn.Sequential(nn.LayerNorm(intrinsics_dim), make_mlp([64, 64])), 
-                        [("agents", "intrinsics")], ["context"]
+                        make_mlp([128, 128]), [OBS_PRIV_KEY], ["context"]
                     ),
                     CatTensors(["feature", "context"], "feature", del_keys=False),
                 )
@@ -242,7 +239,7 @@ class PPORNNPolicy(TensorDictModuleBase):
                 make_rnn(branch="actor"),
                 make_encoder(),
                 TensorDictModule(
-                    nn.Sequential(make_mlp([256, 256]), Actor(self.action_dim)),
+                    nn.Sequential(make_mlp([256]), Actor(self.action_dim)),
                     ["feature"], ["loc", "scale"]
                 ),
             ).to(self.device)
@@ -253,7 +250,7 @@ class PPORNNPolicy(TensorDictModuleBase):
                 make_rnn(branch="critic"),
                 make_encoder(),
                 TensorDictModule(
-                    nn.Sequential(make_mlp([256, 256]), nn.LazyLinear(1)),
+                    nn.Sequential(make_mlp([256]), nn.LazyLinear(1)),
                     ["feature"], ["state_value"]
                 ),
             ).to(self.device)
