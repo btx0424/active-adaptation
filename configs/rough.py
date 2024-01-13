@@ -16,7 +16,9 @@ from omni.isaac.orbit.terrains import (
     HfRandomUniformTerrainCfg,
     HfPyramidSlopedTerrainCfg,
     HfInvertedPyramidSlopedTerrainCfg,
-    TerrainGeneratorCfg
+    TerrainGeneratorCfg,
+    MeshInvertedPyramidStairsTerrainCfg,
+    MeshPyramidStairsTerrainCfg
 )
 import omni.isaac.orbit.sim as sim_utils
 
@@ -48,6 +50,49 @@ ROUGH_EASY = TerrainGeneratorCfg(
         ),
         "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
             proportion=0.15, slope_range=(0.0, 0.3), platform_width=1.0, border_width=0.25
+        ),
+    },
+)
+
+ROUGH_MEDIUM = TerrainGeneratorCfg(
+    seed=0,
+    size=(8.0, 8.0),
+    border_width=20.0,
+    num_rows=20,
+    num_cols=20,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    difficulty_choices=(0.5, 0.75, 0.9),
+    use_cache=False,
+    sub_terrains={
+        "random_rough_hard": HfRandomUniformTerrainCfg(
+            proportion=0.35, noise_range=(0.02, 0.05), noise_step=0.01, border_width=0.4
+        ),
+        "random_rough_easy": HfRandomUniformTerrainCfg(
+            proportion=0.35, noise_range=(0.01, 0.02), noise_step=0.01, border_width=0.4
+        ),
+         "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
+            proportion=0.15, slope_range=(0.0, 0.3), platform_width=1.0, border_width=0.25
+        ),
+        "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
+            proportion=0.15, slope_range=(0.0, 0.3), platform_width=1.0, border_width=0.25
+        ),
+        # "pyramid_stairs_inv": MeshInvertedPyramidStairsTerrainCfg(
+        #     proportion=0.15,
+        #     step_height_range=(0.05, 0.23),
+        #     step_width=0.3,
+        #     platform_width=3.0,
+        #     border_width=1.0,
+        #     holes=False,
+        # ),
+        "pyramid_stairs": MeshPyramidStairsTerrainCfg(
+            proportion=0.2,
+            step_height_range=(0.05, 0.23),
+            step_width=0.3,
+            platform_width=3.0,
+            border_width=1.0,
+            holes=False,
         ),
     },
 )
@@ -118,7 +163,7 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
 @configclass
 class EnvCfg:
 
-    max_episode_length: int = 800
+    max_episode_length: int = 1000
     decimation: int  = 2
     target_base_height: float = MISSING
     history_length: int = 32
@@ -139,10 +184,13 @@ REWARD_VELOCITY = {
     "linvel_exp": 0.5,
     "heading": 0.5,
     "base_height": 0.5,
-    "energy_l2": 0.00005,
+    # "energy_l2": 0.00005,
+    "energy_l1": 0.0001,
     "joint_acc_l2": 2.5e-7,
+    "joint_state_l2": 1e-3,
     # "joint_torques_l2": 2e-4,
     "action_rate_l2": 0.01,
+    "action_rate2_l2": 0.01,
     "orientation": 0.5,
     "feet_slip": 0.02,
 }
@@ -166,6 +214,9 @@ def LocomotionEnvCfg(cfg):
     elif cfg.terrain == "easy":
         terrain_cfg = ROUGH_TERRAIN_CFG
         terrain_cfg.terrain_generator = ROUGH_EASY
+    elif cfg.terrain == "medium":
+        terrain_cfg = ROUGH_TERRAIN_CFG
+        terrain_cfg.terrain_generator = ROUGH_MEDIUM
     else:
         raise ValueError(cfg.terrain)
     
@@ -185,6 +236,7 @@ def LocomotionEnvCfg(cfg):
         reward = reward_cfg,
         observation = {
             "policy": [
+                "root_linvel_b",
                 "command",
                 "root_quat_w",
                 "root_angvel_b",
@@ -192,14 +244,19 @@ def LocomotionEnvCfg(cfg):
                 "joint_pos",
                 "prev_actions",
             ],
+            # "priv": [
+            #     "joint_vel",
+            #     # "joint_acc",
+            #     "root_linvel_b",
+            #     "feet_pos_b",
+            #     # "contact_forces",
+            #     # "contact_indicator",
+            #     "applied_torques"
+            # ]
             "priv": [
-                "joint_vel",
-                # "joint_acc",
-                "root_linvel_b",
-                "feet_pos_b",
-                # "contact_forces",
-                # "contact_indicator",
-                "applied_torques"
+                "motor_params",
+                "body_masses",
+                "body_materials"
             ]
         }
     )

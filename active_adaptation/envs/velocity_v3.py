@@ -1,7 +1,7 @@
 import torch
 
 from omni.isaac.orbit.sensors import ContactSensor, RayCaster
-
+from omni.isaac.orbit.actuators import DCMotor
 from active_adaptation.envs.base import Env, observation_func, reward_func, termination_func
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
@@ -38,7 +38,6 @@ class LocomotionV3(Env):
         self.init_root_state = self.robot.data.default_root_state.clone()
         self.init_joint_pos = self.robot.data.default_joint_pos.clone()
         self.init_joint_vel = self.robot.data.default_joint_vel.clone()
-        self.default_joint_friction = self.robot.root_physx_view.get_dof_friction_coefficients().clone()
         
         try:
             from omni_drones.envs.isaac_env import DebugDraw
@@ -55,6 +54,7 @@ class LocomotionV3(Env):
         self.target_base_height = self.cfg.target_base_height
 
         with torch.device(self.device):
+            self._command_stand = torch.zeros(self.num_envs, 1)
             self._command = torch.zeros(self.num_envs, 3 + 3)
             self._command_linvel = self._command[:, :3]
             self._command_heading = self._command[:, 3:6]
@@ -64,6 +64,16 @@ class LocomotionV3(Env):
             self._actions_t = torch.zeros(self.num_envs, 12)
             self._actions_tm1 = torch.zeros_like(self._actions_t)
             self._actions_tm2 = torch.zeros_like(self._actions_t)
+
+        from .mdp import BodyMasses, BodyMaterial, MotorParams, JointFriction
+        self.randomizations = {
+            "body_masses": BodyMasses(self),
+            "body_material": BodyMaterial(self, self.foot_indices),
+            "motor_params": MotorParams(self, (0.7, 1.3), (0.6, 1.4)),
+        }
+        for _, randomization in self.randomizations.items():
+            randomization.startup()
+        self.sim.physics_sim_view.flush()
 
         obs = super()._compute_observation()
         reward = self._compute_reward()
@@ -87,7 +97,10 @@ class LocomotionV3(Env):
             shape=[self.num_envs]
         ).to(self.device)
 
-        self.rigig_body_material()
+        self.packet_loss = 0.0
+
+        self.resample_interval = 300
+        self.resample_prob = 0.6
 
     def _reset_idx(self, env_ids: torch.Tensor):
         init_root_state = self.init_root_state[env_ids]
@@ -107,18 +120,21 @@ class LocomotionV3(Env):
         self._actions_t[env_ids] = 0.
         self._actions_tm1[env_ids] = 0.
         self._actions_tm2[env_ids] = 0.
-        
-        self.motor_params(env_ids)
-        # self.body_masses(env_ids)
 
         self.scene.reset(env_ids)
         self.scene.update(dt=self.physics_dt)
+        for _, randomization in self.randomizations.items():
+            randomization.reset(env_ids)
+        
         self._sample_commands(env_ids=env_ids)
     
     def _update(self):
         super()._update()
-        resample_cmd = (self.episode_length_buf % 250 == 0).nonzero().squeeze(-1)
-        self._sample_commands(resample_cmd)
+        should_resample = (
+            (self.episode_length_buf % self.resample_interval == 0)
+            & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
+        )
+        self._sample_commands(should_resample.nonzero().squeeze(-1))
         if self.sim.has_gui() and hasattr(self, "debug_draw"):
             self.debug_draw.clear()
             robot_pos = (
@@ -132,6 +148,11 @@ class LocomotionV3(Env):
                 color=(1., 1., 1., 1.)
             )
             self.debug_draw.vector(
+                robot_pos,
+                self._command_heading,
+                color=(.2, .2, 1., 1.)
+            )
+            self.debug_draw.vector(
                 robot_pos, 
                 self.robot.data.root_lin_vel_w,
                 color=(1., .5, .5, 1.)
@@ -140,9 +161,13 @@ class LocomotionV3(Env):
 
     def apply_action(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
+            # random packet loss: repeat previous actions
+            packet_loss = torch.rand(self.num_envs, 1, device=self.device) < self.packet_loss
+            actions = torch.where(packet_loss, self._actions_t, tensordict["action"])
+
             self._actions_tm2[:] = self._actions_tm1
             self._actions_tm1[:] = self._actions_t
-            self._actions_t.lerp_(tensordict["action"], self.action_alpha)
+            self._actions_t.lerp_(actions, self.action_alpha)
             pos_target = self._actions_t * self.action_scaling + self.init_joint_pos
             self.robot.set_joint_position_target(pos_target)
         self.robot.write_data_to_sim()
@@ -211,6 +236,23 @@ class LocomotionV3(Env):
         )
         return feet_pos_b.reshape(self.num_envs, -1)
     
+    @observation_func
+    def motor_params(self):
+        motor: DCMotor = self.robot.actuators["base_legs"]
+        stiffness = motor.stiffness / 30.
+        damping = motor.damping / 0.5
+        return torch.cat([damping, stiffness], dim=-1).reshape(self.num_envs, -1)
+
+    @observation_func
+    def body_masses(self):
+        rand = self.randomizations["body_masses"]
+        return rand.body_masses.reshape(self.num_envs, -1)
+
+    @observation_func
+    def body_materials(self):
+        rand = self.randomizations["body_material"]
+        return rand.material_properties.reshape(self.num_envs, -1)
+    
     @reward_func
     def linvel_projection(self):
         linvel_w = self.robot.data.root_lin_vel_w
@@ -231,13 +273,22 @@ class LocomotionV3(Env):
     def base_height(self):
         height = self.robot.data.root_pos_w[:, [2]]
         height = height - self.robot.data.body_pos_w[:, self.foot_indices, 2].mean(1, keepdim=True)
-        return (height / self.target_base_height).square().clamp_max(1.1)
+        return (height / self.target_base_height).square().clamp_max(1.)
 
     @reward_func
     def energy_l2(self):
         energy = (
             (self.robot.data.joint_vel * self.robot.data.applied_torque)
             .square()
+            .sum(dim=-1, keepdim=True)
+        )
+        return - energy
+    
+    @reward_func
+    def energy_l1(self):
+        energy = (
+            (self.robot.data.joint_vel * self.robot.data.applied_torque)
+            .abs()
             .sum(dim=-1, keepdim=True)
         )
         return - energy
@@ -256,7 +307,7 @@ class LocomotionV3(Env):
 
     @reward_func
     def action_rate2_l2(self):
-        return (
+        return - (
             (self._actions_t - self._actions_tm1 - self._actions_tm1 + self._actions_tm2)
             .square()
             .sum(dim=-1, keepdim=True)
@@ -276,58 +327,29 @@ class LocomotionV3(Env):
         feet_vel = self.robot.data.body_lin_vel_w[:, self.foot_indices]
         return - (i * feet_vel.norm(dim=-1)).sum(dim=1, keepdim=True)
     
+    @reward_func
+    def joint_state_l2(self):
+        cost = - (
+            square_norm(self.robot.data.joint_pos - self.robot.data.default_joint_pos)
+            + square_norm(self.robot.data.joint_vel - self.robot.data.default_joint_vel)
+        ) * self._command_stand
+        return cost
+
     @termination_func
     def crash(self):
-        fall_over = (self.robot.data.projected_gravity_b[:, 2] >= -0.4)
+        fall_over = (self.robot.data.projected_gravity_b[:, 2] >= -0.3)
         contact_forces = self.contact_sensor.data.net_forces_w[:, self.main_body_indices]
         undesired_contact = (contact_forces.norm(dim=-1) > 1.).any(dim=1)
         terminated = (fall_over | undesired_contact).unsqueeze(1)
         return terminated
 
-    def motor_params(self, env_ids: torch.Tensor):
-        if not hasattr(self, "base_legs"):
-            self.base_legs = self.robot.actuators["base_legs"]
-            self.base_legs.default_stiffness = self.base_legs.stiffness.clone()
-            self.base_legs.default_damping = self.base_legs.damping.clone()
-        self.base_legs.stiffness[env_ids] = random_shift(self.base_legs.default_stiffness[env_ids], -.3, .3)
-        self.base_legs.damping[env_ids] = random_shift(self.base_legs.default_damping[env_ids], -.3, .3)
-
-    def body_masses(self, env_ids: torch.Tensor):
-        if not hasattr(self, "default_masses"):
-            self.default_masses = self.robot.root_view.get_body_masses().clone()
-            self.default_inertias = self.robot.root_view.get_body_inertias().clone()
-        body_masses = random_shift(self.default_masses[env_ids], -0.2, 0.2)
-        self.robot.root_view.set_body_masses(body_masses, indices=env_ids)
-
-    def rigig_body_material(
-        self, 
-        num_buckets=64, 
-        static_friction_range=(0.8, 1.0),
-        dynamic_friction_range=(0.6, 0.8),
-        restitution_range=(0.0, 0.0)
-    ):
-        asset = self.robot
-        material_buckets = torch.zeros(num_buckets, 3)
-        material_buckets[:, 0].uniform_(*static_friction_range)
-        material_buckets[:, 1].uniform_(*dynamic_friction_range)
-        material_buckets[:, 2].uniform_(*restitution_range)
-        material_ids = torch.randint(0, num_buckets, (asset.body_physx_view.count, asset.body_physx_view.max_shapes))
-        materials = material_buckets[material_ids]
-        # resolve the global body indices from the env_ids and the env_body_ids
-        bodies_per_env = asset.body_physx_view.count // self.num_envs  # - number of bodies per spawned asset
-        indices = torch.tensor(self.foot_indices, dtype=torch.int).repeat(self.num_envs, 1)
-        indices += torch.arange(self.num_envs).unsqueeze(1) * bodies_per_env
-
-        # set the material properties into the physics simulation
-        # TODO: Need to use CPU tensors for now. Check if this changes in the new release
-        asset.body_physx_view.set_material_properties(materials, indices)
-
     def _sample_commands(self, env_ids):
         a = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
         s = torch.zeros(len(env_ids), device=self.device).uniform_(0.7, 2.4)
-        s = s * (torch.rand_like(s) > 0.1).float()
-
-        self._command_speed[env_ids] = s.unsqueeze(1)
+        stand = torch.rand(len(env_ids), device=self.device) < 0.1
+        
+        self._command_stand[env_ids] = stand.float().unsqueeze(1)
+        self._command_speed[env_ids] = (s * (~stand).float()).unsqueeze(1)
         self._command_linvel[env_ids, 0] = s * a.cos()
         self._command_linvel[env_ids, 1] = s * a.sin()
         
