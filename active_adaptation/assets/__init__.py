@@ -2,7 +2,7 @@ import os
 import copy
 import torch
 
-from omni.isaac.orbit.assets.config import (
+from omni.isaac.orbit_assets import (
     ArticulationCfg,
     UNITREE_A1_CFG,
     UNITREE_GO1_CFG,

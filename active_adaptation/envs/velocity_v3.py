@@ -265,6 +265,10 @@ class LocomotionV3(Env):
         return 1. / (1. + linvel_error / 0.25)
     
     @reward_func
+    def linvel_z_l2(self):
+        return -self.robot.data.root_lin_vel_b[:, [2]].square()
+    
+    @reward_func
     def heading(self):
         heading_b = quat_rotate_inverse(self.robot.data.root_quat_w, self._command_heading)
         return heading_b[:, [0]]
@@ -345,13 +349,14 @@ class LocomotionV3(Env):
 
     def _sample_commands(self, env_ids):
         a = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
-        s = torch.zeros(len(env_ids), device=self.device).uniform_(0.7, 2.4)
-        stand = torch.rand(len(env_ids), device=self.device) < 0.1
+        stand = torch.rand(len(env_ids), device=self.device) < 0.2
+        speed = torch.zeros(len(env_ids), device=self.device).uniform_(0.7, 2.0)
+        speed = speed * (~stand).float()
         
         self._command_stand[env_ids] = stand.float().unsqueeze(1)
-        self._command_speed[env_ids] = (s * (~stand).float()).unsqueeze(1)
-        self._command_linvel[env_ids, 0] = s * a.cos()
-        self._command_linvel[env_ids, 1] = s * a.sin()
+        self._command_speed[env_ids] = speed.unsqueeze(1)
+        self._command_linvel[env_ids, 0] = speed * a.cos()
+        self._command_linvel[env_ids, 1] = speed * a.sin()
         
         b = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
         self._command_heading[env_ids, 0] = b.cos()
