@@ -236,15 +236,22 @@ class PPORMAPolicy(TensorDictModuleBase):
             cfg.encoder_mode, 
             [128, 128]
         ).to(self.device)
-        def condition(branch: str):
+
+        def condition(branch: str, mode: str):
             module = nn.Sequential(make_mlp([512]))
-            return TensorDictSequential(
-                TensorDictModule(module, [OBS_KEY], ["_feature"]),
-                CatTensors(["_feature", f"context_{branch}"], "_feature", del_keys=False)
-            )
+            if mode == "cat":
+                return TensorDictSequential(
+                    TensorDictModule(module, [OBS_KEY], ["_feature"]),
+                    CatTensors(["_feature", f"context_{branch}"], "_feature", del_keys=False)
+                )
+            elif mode == "film":
+                return TensorDictSequential(
+                    TensorDictModule(module, [OBS_KEY], ["_feature"]),
+                    TensorDictModule(FiLM(256), ["_feature", f"context_{branch}"], ["_feature"])
+                )
 
         actor_module = TensorDictSequential(
-            condition("actor"),
+            condition("actor", cfg.condition_mode),
             TensorDictModule(
                 nn.Sequential(make_mlp([256, 256]), Actor(self.action_dim)), 
                 ["_feature"], ["loc", "scale"]
@@ -259,7 +266,7 @@ class PPORMAPolicy(TensorDictModuleBase):
         ).to(self.device)
 
         self.critic = TensorDictSequential(
-            condition("critic"),
+            condition("critic", cfg.condition_mode),
             TensorDictModule(
                 nn.Sequential(make_mlp([256, 256]), nn.LazyLinear(1)), 
                 ["_feature"], ["state_value"]
