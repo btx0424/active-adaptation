@@ -110,6 +110,37 @@ class BodyMasses(Randomization):
         self.default_masses = default_masses.to(self.env.device)
         self.randomized_masses = randomized_masses.to(self.env.device)
 
+class BodyInertias(Randomization):
+    def __init__(
+        self,
+        env,
+        inertia_range=(0.7, 1.3),
+        body_indices=None
+    ):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.inertia_range = inertia_range
+
+        self.default_inertias: torch.Tensor = None
+        self.body_inertias: torch.Tensor = None
+        if body_indices is None:
+            body_indices = slice(None)
+        self.body_indices = body_indices
+
+    def startup(self):
+        logging.info("Randomize body inertias upon starup.")
+        shape = (self.env.num_envs, self.asset.num_bodies)
+        default_inertias_all = self.asset.body_physx_view.get_inertias().reshape(*shape, -1).clone()
+        default_inertias = default_inertias_all[:, self.body_indices]
+        randomized_inertias = random_scale(default_inertias, *self.inertia_range)
+        
+        indices = torch.arange(self.asset.body_physx_view.count).reshape(shape)[:, self.body_indices]
+        default_inertias_all[:, self.body_indices] = randomized_inertias
+        self.asset.root_physx_view.set_inertias(default_inertias_all.flatten(), indices.flatten())
+        
+        self.default_inertias = default_inertias.to(self.env.device)
+        self.randomized_inertias = randomized_inertias.to(self.env.device)
+
 class JointFriction(Randomization):
     def __init__(
         self,

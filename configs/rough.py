@@ -191,7 +191,7 @@ REWARD_VELOCITY = {
     "linvel_exp": 1.0,
     "heading": 0.5,
     "base_height": 0.5,
-    "linvel_z_l2": 2.0,
+    "linvel_z_l2": 4.0,
     # "energy_l2": 0.00005,
     # "energy_l1": 0.0001,
     "joint_acc_l2": 2.5e-7,
@@ -200,7 +200,7 @@ REWARD_VELOCITY = {
     "action_rate_l2": 0.01,
     # "action_rate2_l2": 0.01,
     "orientation": 0.5,
-    "feet_slip": 0.1,
+    # "feet_slip": 0.1,
 }
 
 REWARD_RECOVER = {

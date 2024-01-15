@@ -65,6 +65,7 @@ class PPOConfig:
     checkpoint_path: Union[str, None] = None
 
     adapt_reward: float = 0.0
+    regularize: bool = True
 
 
 cs = ConfigStore.instance()
@@ -318,6 +319,10 @@ class PPOROAPolicy(TensorDictModuleBase):
     def feature_mse(self, tensordict_priv: TensorDict, tensordict_adapt: TensorDict):
         pred = tensordict_adapt["_context"]
         target = tensordict_priv["_context"]
-        loss = F.mse_loss(pred, target.detach()) + self.lmbda * F.mse_loss(target, pred.detach())
+        loss = F.mse_loss(pred, target.detach())
+        if self.cfg.regularize:
+            loss += self.lmbda * F.mse_loss(target, pred.detach())
+        else:
+            loss += self.lmbda * F.mse_loss(target.detach(), pred.detach())
         return loss
 

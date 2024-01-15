@@ -67,10 +67,11 @@ class LocomotionV3(Env):
             self._actions_tm1 = torch.zeros_like(self._actions_t)
             self._actions_tm2 = torch.zeros_like(self._actions_t)
 
-        from .mdp import BodyMasses, BodyMaterial, MotorParams, JointFriction
+        from .mdp import BodyMasses, BodyMaterial, MotorParams, JointFriction, BodyInertias
         self.randomizations = {
             "body_masses": BodyMasses(self, (0.7, 1.3), body_indices=torch.arange(19)),
-            "payload_mass": BodyMasses(self, (0.01, 1.), body_indices=torch.tensor([19])),
+            "payload_mass": BodyMasses(self, (0.01, 4.), body_indices=torch.tensor([19])),
+            "payload_inertia": BodyInertias(self, (0.01, 4.0), body_indices=torch.tensor([19])),
             "body_material": BodyMaterial(self, self.foot_indices),
             "motor_params": MotorParams(self, (0.7, 1.3), (0.6, 1.4)),
         }
@@ -258,6 +259,12 @@ class LocomotionV3(Env):
     def payload_mass(self):
         rand = self.randomizations["payload_mass"]
         return rand.randomized_masses.reshape(self.num_envs, -1)
+    
+    @observation_func
+    def payload_inertia(self):
+        rand = self.randomizations["payload_inertia"]
+        inertia = rand.randomized_inertias.reshape(self.num_envs, -1)[:, [0, 4, 8]]
+        return inertia
     
     @observation_func
     def body_materials(self):

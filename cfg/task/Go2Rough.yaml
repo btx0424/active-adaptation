@@ -24,3 +24,5 @@ observation:
     - "root_linvel_b"
     - "feet_pos_b"
     - "applied_torques"
+    - "payload_mass"
+    - "payload_inertia"

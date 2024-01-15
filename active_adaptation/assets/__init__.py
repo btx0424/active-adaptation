@@ -35,7 +35,7 @@ def spawn_with_payload(
     parent_prim = prim_utils.get_prim_at_path(prim_path + "/base")
     path = prim_path + "/payload"
     payload = objects.DynamicCylinder(
-        path, radius=0.1, height=0.05, translation=(0., 0., 0.1), mass=3.)
+        path, radius=0.1, height=0.05, translation=(0., 0., 0.1), mass=1.)
 
     stage = prim_utils.get_current_stage()
     # joint = script_utils.createJoint(stage, "Prismatic", payload.prim, parent_prim)
