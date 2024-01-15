@@ -4,7 +4,8 @@ from active_adaptation.assets import (
     UNITREE_GO1_CFG,
     UNITREE_GO2_CFG,
     CASSIE_CFG, 
-    ANYMAL_C_CFG
+    ANYMAL_C_CFG,
+    spawn_with_payload
 )
 from omni.isaac.orbit.scene import InteractiveSceneCfg
 from omni.isaac.orbit.utils import configclass
@@ -166,10 +167,12 @@ class EnvCfg:
     max_episode_length: int = 1000
     decimation: int  = 2
     target_base_height: float = MISSING
+    payload: bool = False
+
     history_length: int = 32
 
     viewer: ViewerCfg = ViewerCfg()
-    scene: InteractiveSceneCfg = MISSING
+    scene: LocomotionSceneCfg = MISSING
 
     sim = sim_utils.SimulationCfg(dt=0.01, disable_contact_processing=True)
     
@@ -179,20 +182,25 @@ class EnvCfg:
         "crash"
     ]
 
+    def __post_init__(self):
+        if self.payload:
+            self.scene.robot.spawn.func = spawn_with_payload
+
 REWARD_VELOCITY = {
     "linvel_projection": 1.0,
-    "linvel_exp": 0.5,
+    "linvel_exp": 1.0,
     "heading": 0.5,
     "base_height": 0.5,
+    "linvel_z_l2": 2.0,
     # "energy_l2": 0.00005,
-    "energy_l1": 0.0001,
+    # "energy_l1": 0.0001,
     "joint_acc_l2": 2.5e-7,
-    "joint_state_l2": 1e-3,
-    # "joint_torques_l2": 2e-4,
+    "stand": 0.5,
+    "joint_torques_l2": 2e-4,
     "action_rate_l2": 0.01,
-    "action_rate2_l2": 0.01,
+    # "action_rate2_l2": 0.01,
     "orientation": 0.5,
-    "feet_slip": 0.02,
+    "feet_slip": 0.1,
 }
 
 REWARD_RECOVER = {
@@ -202,93 +210,44 @@ REWARD_RECOVER = {
     "action_rate_l2": 0.01,
 }
 
-def LocomotionEnvCfg(cfg):
+def LocomotionEnvCfg(task_cfg):
 
     robot_cfg = {
         "a1": UNITREE_A1_CFG,
         "go2": UNITREE_GO2_CFG,
-    }[cfg.robot.lower()]
+    }[task_cfg.robot.lower()]
 
-    if cfg.terrain == "plane":
+    robot_cfg.actuators["base_legs"].friction = 0.05
+    # robot_cfg.actuators["base_legs"].stiffness = 40.0
+    # robot_cfg.actuators["base_legs"].damping = 1.0
+
+    if task_cfg.terrain == "plane":
         terrain_cfg = FLAT_TERRAIN_CFG
-    elif cfg.terrain == "easy":
+    elif task_cfg.terrain == "easy":
         terrain_cfg = ROUGH_TERRAIN_CFG
         terrain_cfg.terrain_generator = ROUGH_EASY
-    elif cfg.terrain == "medium":
+    elif task_cfg.terrain == "medium":
         terrain_cfg = ROUGH_TERRAIN_CFG
         terrain_cfg.terrain_generator = ROUGH_MEDIUM
     else:
-        raise ValueError(cfg.terrain)
+        raise ValueError(task_cfg.terrain)
     
     reward_cfg = {
         "Velocity": REWARD_VELOCITY,
         "Recover": REWARD_RECOVER
-    }[cfg.task]
+    }[task_cfg.task]
 
     env_cfg = EnvCfg(
-        max_episode_length=cfg.max_episode_length,
+        max_episode_length=task_cfg.max_episode_length,
+        payload=task_cfg.payload,
         target_base_height=0.3,
         scene = LocomotionSceneCfg(
-            num_envs=cfg.num_envs,
+            num_envs=task_cfg.num_envs,
             robot=robot_cfg.replace(prim_path="{ENV_REGEX_NS}/Robot"),
             terrain=terrain_cfg,
         ),
         reward = reward_cfg,
-        observation = {
-            "policy": [
-                "root_linvel_b",
-                "command",
-                "root_quat_w",
-                "root_angvel_b",
-                "projected_gravity_b",
-                "joint_pos",
-                "prev_actions",
-            ],
-            # "priv": [
-            #     "joint_vel",
-            #     # "joint_acc",
-            #     "root_linvel_b",
-            #     "feet_pos_b",
-            #     # "contact_forces",
-            #     # "contact_indicator",
-            #     "applied_torques"
-            # ]
-            "priv": [
-                "motor_params",
-                "body_masses",
-                "body_materials"
-            ]
-        }
+        observation = task_cfg.observation
     )
     return env_cfg
 
-
-CASSIE_ENV = EnvCfg(
-    target_base_height=0.7,
-    scene = LocomotionSceneCfg(
-        robot=CASSIE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot"),
-    ),
-    reward = {
-        "linvel": 2.0,
-        "heading": 0.5,
-        "base_height": 0.5,
-        "energy": 0.0005,
-        "joint_acc_l2": 2.5e-7,
-        "joint_torques_l2": 2.5e-6,
-        "survive": 0.5,
-    },
-    observation = {
-        ("agents", "observation"): [
-            "command",
-            "root_quat_w",
-            "root_angvel_b",
-            "projected_gravity_b",
-            "joint_pos",
-            "joint_vel",
-        ],
-        ("agents", "observation_priv"): [
-            "root_linvel_b",
-            "applied_torques",
-        ]
-    },
-)

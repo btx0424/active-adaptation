@@ -8,3 +8,19 @@ defaults:
 
 robot: go2
 terrain: plane
+payload: true
+
+observation:
+  policy:
+    - "command"
+    - "root_quat_w"
+    - "root_angvel_b"
+    - "projected_gravity_b"
+    - "joint_pos"
+    - "prev_actions"
+  priv:
+    - "joint_vel"
+    # - "joint_acc"
+    - "root_linvel_b"
+    - "feet_pos_b"
+    - "applied_torques"

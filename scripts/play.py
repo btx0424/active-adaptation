@@ -12,13 +12,7 @@ from torchrl.envs.utils import set_exploration_type, ExplorationType
 from torchrl.envs.transforms import (
     TransformedEnv, Compose, InitTracker, History
 )
-from active_adaptation.learning import (
-    PPOPolicy, 
-    PPORNNPolicy, 
-    PPODualPolicy, 
-    PPOTConvPolicy, 
-    PPORMAPolicy
-)
+from active_adaptation.learning import ALGOS
 
 import wandb
 import logging
@@ -27,14 +21,6 @@ from helpers import EpisodeStats, Every
 
 import os
 import time
-
-policies = {
-    "ppo": PPOPolicy,
-    "ppo_dual": PPODualPolicy,
-    "ppo_rnn": PPORNNPolicy,
-    "ppo_tconv": PPOTConvPolicy,
-    "ppo_rma": PPORMAPolicy
-}
 
 @hydra.main(config_path="../cfg", config_name="play")
 def main(cfg):
@@ -70,19 +56,23 @@ def main(cfg):
     base_env = TASKS[cfg.task.task](env_cfg)
     transform = Compose(
         InitTracker(),
-        History(["policy"], steps=cfg.task.history_length)
+        History(["policy"], steps=16)
     )
     env = TransformedEnv(base_env, transform)
     env.set_seed(0)
 
     # setup policy
-    policy = policies[cfg.algo.name](
+    policy = ALGOS[cfg.algo.name](
         cfg.algo,
         env.observation_spec, 
         env.action_spec, 
         env.reward_spec, 
         device=base_env.device
     )
+
+    path = os.path.join(os.path.dirname(__file__), "policy.pt")
+    torch.save(policy.cpu(), path)
+    logging.info(F"Export policy to {path}")
 
     if hasattr(policy, "make_tensordict_primer"):
         transform.append(policy.make_tensordict_primer())
@@ -102,6 +92,7 @@ def main(cfg):
         total_frames=total_frames,
         device=cfg.sim.device,
         return_same_td=True,
+        exploration_type=ExplorationType.MODE
     )
     
     pbar = tqdm(collector, total=total_frames//frames_per_batch)

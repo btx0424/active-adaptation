@@ -84,6 +84,7 @@ class BodyMasses(Randomization):
         self,
         env,
         mass_range=(0.7, 1.3),
+        body_indices=None
     ):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
@@ -91,16 +92,23 @@ class BodyMasses(Randomization):
 
         self.default_masses: torch.Tensor = None
         self.body_masses: torch.Tensor = None
+        if body_indices is None:
+            body_indices = slice(None)
+        self.body_indices = body_indices
 
     def startup(self):
         logging.info("Randomize body masses upon starup.")
-        default_masses = self.asset.root_physx_view.get_masses()
-        body_masses = random_scale(default_masses, *self.mass_range)
-        indices = self.asset._ALL_INDICES.cpu()
-        self.asset.root_physx_view.set_masses(body_masses, indices=indices)
+        shape = (self.env.num_envs, self.asset.num_bodies)
+        default_masses_all = self.asset.body_physx_view.get_masses().reshape(shape).clone()
+        default_masses = default_masses_all[:, self.body_indices]
+        randomized_masses = random_scale(default_masses, *self.mass_range)
+        
+        indices = torch.arange(self.asset.body_physx_view.count).reshape(shape)[:, self.body_indices]
+        default_masses_all[:, self.body_indices] = randomized_masses
+        self.asset.root_physx_view.set_masses(default_masses_all.flatten(), indices.flatten())
         
         self.default_masses = default_masses.to(self.env.device)
-        self.body_masses = body_masses.to(self.env.device)
+        self.randomized_masses = randomized_masses.to(self.env.device)
 
 class JointFriction(Randomization):
     def __init__(

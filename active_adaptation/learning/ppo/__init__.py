@@ -27,3 +27,14 @@ from .ppo_rnn import PPORNNPolicy
 from .ppo_tconv import PPOTConvPolicy
 from .ppo_contrastive import PPOTConvPolicy as PPOContraPolicy
 from .ppo_dual import PPODualPolicy
+from .ppo_roa import PPOROAPolicy
+
+ALGOS = {
+    "ppo": PPOPolicy,
+    "ppo_dual": PPODualPolicy,
+    "ppo_rnn": PPORNNPolicy,
+    "ppo_tconv": PPOTConvPolicy,
+    "ppo_contra": PPOContraPolicy,
+    "ppo_rma": PPORMAPolicy,
+    "ppo_roa": PPOROAPolicy
+}

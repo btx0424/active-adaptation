@@ -23,13 +23,12 @@ class LocomotionV3(Env):
         self.action_scaling = 0.5
 
         self.robot = self.scene.articulations["robot"]
-        body_masses = self.robot.root_physx_view.get_masses()[0]
+        body_masses = self.robot.body_physx_view.get_masses().reshape(self.num_envs, -1)[0]
         for name, mass in zip(self.robot.body_names, body_masses):
             print(name, mass)
-        
-        self.foot_indices = [i for i, name in enumerate(self.robot.body_names) if "foot" in name]
-        self.calf_indices = [i for i, name in enumerate(self.robot.body_names) if "calf" in name]
-        self.thigh_indices = [i for i, name in enumerate(self.robot.body_names) if "thigh" in name]
+        self.foot_indices = self.robot.find_bodies(".*_foot")[0]
+        self.calf_indices = self.robot.find_bodies(".*_calf")[0]
+        self.thigh_indices = self.robot.find_bodies(".*_thigh")[0]
         self.main_body_indices = list(set(range(self.robot.num_bodies)) - set(self.calf_indices) - set(self.foot_indices))
 
         self.contact_sensor: ContactSensor = self.scene.sensors.get("contact_forces", None)
@@ -38,6 +37,9 @@ class LocomotionV3(Env):
         self.init_root_state = self.robot.data.default_root_state.clone()
         self.init_joint_pos = self.robot.data.default_joint_pos.clone()
         self.init_joint_vel = self.robot.data.default_joint_vel.clone()
+        
+        self.motor_joint_indices = self.robot.actuators["base_legs"].joint_indices
+        self.default_joint_pos = self.robot.data.default_joint_pos[:, self.motor_joint_indices]
         
         try:
             from omni_drones.envs.isaac_env import DebugDraw
@@ -67,7 +69,8 @@ class LocomotionV3(Env):
 
         from .mdp import BodyMasses, BodyMaterial, MotorParams, JointFriction
         self.randomizations = {
-            "body_masses": BodyMasses(self),
+            "body_masses": BodyMasses(self, (0.7, 1.3), body_indices=torch.arange(19)),
+            "payload_mass": BodyMasses(self, (0.01, 1.), body_indices=torch.tensor([19])),
             "body_material": BodyMaterial(self, self.foot_indices),
             "motor_params": MotorParams(self, (0.7, 1.3), (0.6, 1.4)),
         }
@@ -168,8 +171,8 @@ class LocomotionV3(Env):
             self._actions_tm2[:] = self._actions_tm1
             self._actions_tm1[:] = self._actions_t
             self._actions_t.lerp_(actions, self.action_alpha)
-            pos_target = self._actions_t * self.action_scaling + self.init_joint_pos
-            self.robot.set_joint_position_target(pos_target)
+            pos_target = self._actions_t * self.action_scaling + self.default_joint_pos
+            self.robot.set_joint_position_target(pos_target, self.motor_joint_indices)
         self.robot.write_data_to_sim()
 
     @observation_func
@@ -189,11 +192,13 @@ class LocomotionV3(Env):
     
     @observation_func
     def joint_pos(self):
-        return random_noise(self.robot.data.joint_pos, 0.05)
+        all_joint_pos = self.robot.data.joint_pos
+        return random_noise(all_joint_pos[:, self.motor_joint_indices], 0.05)
     
     @observation_func
     def joint_vel(self):
-        return self.robot.data.joint_vel
+        all_joint_vel = self.robot.data.joint_vel
+        return all_joint_vel[:, self.motor_joint_indices]
     
     @observation_func
     def joint_acc(self):
@@ -224,8 +229,9 @@ class LocomotionV3(Env):
     
     @observation_func
     def contact_indicator(self):
-        forces = self.contact_sensor.data.net_forces_w_history[:, :, self.foot_indices].mean(dim=1)
-        return (forces.norm(dim=-1) > 1.).float()
+        force_history = self.contact_sensor.data.net_forces_w_history[:, :, self.foot_indices]
+        force_norm = force_history.norm(dim=-1)
+        return (force_norm.mean(dim=1) > 1.).float()
 
     @observation_func
     def feet_pos_b(self):
@@ -246,8 +252,13 @@ class LocomotionV3(Env):
     @observation_func
     def body_masses(self):
         rand = self.randomizations["body_masses"]
-        return rand.body_masses.reshape(self.num_envs, -1)
+        return rand.randomized_masses.reshape(self.num_envs, -1)
 
+    @observation_func
+    def payload_mass(self):
+        rand = self.randomizations["payload_mass"]
+        return rand.randomized_masses.reshape(self.num_envs, -1)
+    
     @observation_func
     def body_materials(self):
         rand = self.randomizations["body_material"]
@@ -270,7 +281,8 @@ class LocomotionV3(Env):
     
     @reward_func
     def heading(self):
-        heading_b = quat_rotate_inverse(self.robot.data.root_quat_w, self._command_heading)
+        root_quat = self.robot.data.root_quat_w
+        heading_b = quat_rotate_inverse(root_quat, self._command_heading)
         return heading_b[:, [0]]
     
     @reward_func
@@ -332,11 +344,9 @@ class LocomotionV3(Env):
         return - (i * feet_vel.norm(dim=-1)).sum(dim=1, keepdim=True)
     
     @reward_func
-    def joint_state_l2(self):
-        cost = - (
-            square_norm(self.robot.data.joint_pos - self.robot.data.default_joint_pos)
-            + square_norm(self.robot.data.joint_vel - self.robot.data.default_joint_vel)
-        ) * self._command_stand
+    def stand(self):
+        jpos_error = square_norm(self.robot.data.joint_pos - self.robot.data.default_joint_pos)
+        cost = - jpos_error * self._command_stand
         return cost
 
     @termination_func

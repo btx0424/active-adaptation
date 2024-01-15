@@ -17,14 +17,7 @@ from torchrl.envs.transforms import (
     RewardSum,
     CatFrames
 )
-from active_adaptation.learning import (
-    PPOPolicy, 
-    PPORNNPolicy, 
-    PPODualPolicy, 
-    PPOTConvPolicy, 
-    PPORMAPolicy,
-    PPOContraPolicy
-)
+from active_adaptation.learning import ALGOS, PPODualPolicy
 from helpers import EpisodeStats, Every
 
 import wandb
@@ -34,14 +27,6 @@ from tqdm import tqdm
 import os
 import time
 
-policies = {
-    "ppo": PPOPolicy,
-    "ppo_dual": PPODualPolicy,
-    "ppo_rnn": PPORNNPolicy,
-    "ppo_tconv": PPOTConvPolicy,
-    "ppo_contra": PPOContraPolicy,
-    "ppo_rma": PPORMAPolicy
-}
 
 @hydra.main(config_path="../cfg", config_name="train")
 def main(cfg):
@@ -87,7 +72,7 @@ def main(cfg):
     env.set_seed(0)
 
     # setup policy
-    policy = policies[cfg.algo.name](
+    policy = ALGOS[cfg.algo.name](
         cfg.algo,
         env.observation_spec, 
         env.action_spec, 
@@ -99,9 +84,10 @@ def main(cfg):
         transform.append(policy.make_tensordict_primer())
 
     frames_per_batch = env.num_envs * cfg.algo.train_every
+    total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
+    total_iters = total_frames // frames_per_batch
     eval_interval = cfg.get("eval_interval", -1)
     save_interval = cfg.get("save_interval", -1)
-    total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
 
     stats_keys = [
         k for k in env.observation_spec.keys(True, True) 
@@ -202,7 +188,7 @@ def main(cfg):
         except Exception as e:
             logging.error(f"Failed to save checkpoint: {e}")
 
-    pbar = tqdm(collector, total=total_frames//frames_per_batch)
+    pbar = tqdm(collector, total=total_iters)
     
     for i, data in enumerate(pbar):
         start = time.perf_counter()
@@ -219,6 +205,8 @@ def main(cfg):
             info.update(stats)
         
         info.update(policy.train_op(data))
+        if hasattr(policy, "step_schedule"):
+            policy.step_schedule(i / total_iters)
 
         info["env_frames"] = collector._frames
         info["rollout_fps"] = collector._fps
@@ -229,8 +217,6 @@ def main(cfg):
             info.update(evaluate(render=cfg.eval_render))
             env.train()
             policy.train()
-            if hasattr(policy, "step_schedule"):
-                policy.step_schedule()
         
         if save_interval > 0  and i % save_interval == 0:
             save(policy, f"checkpoint_{i}")
