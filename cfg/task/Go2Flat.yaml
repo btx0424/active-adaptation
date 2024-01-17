@@ -28,6 +28,7 @@ observation:
 
 reward:
   linvel_exp: 1.0
+  linvel_projection: 1.0
   heading: 0.5
   base_height: 0.5
   linvel_z_l2: 4.0

@@ -26,9 +26,9 @@ class LocomotionV3(Env):
         body_masses = self.robot.body_physx_view.get_masses().reshape(self.num_envs, -1)[0]
         for name, mass in zip(self.robot.body_names, body_masses):
             print(name, mass)
-        self.foot_indices = self.robot.find_bodies(".*_foot")[0]
-        self.calf_indices = self.robot.find_bodies(".*_calf")[0]
-        self.thigh_indices = self.robot.find_bodies(".*_thigh")[0]
+        self.foot_indices, _ = self.robot.find_bodies(".*_foot")
+        self.calf_indices, _ = self.robot.find_bodies(".*_calf")
+        self.thigh_indices, _ = self.robot.find_bodies(".*_thigh")
         self.main_body_indices = list(set(range(self.robot.num_bodies)) - set(self.calf_indices) - set(self.foot_indices))
 
         self.contact_sensor: ContactSensor = self.scene.sensors.get("contact_forces", None)
@@ -240,11 +240,11 @@ class LocomotionV3(Env):
     @observation_func
     def feet_pos_b(self):
         feet_pos_w = self.robot.data.body_pos_w[:, self.foot_indices]
-        feet_pos_b = quat_rotate_inverse(
+        self._feet_pos_b = quat_rotate_inverse(
             self.robot.data.root_quat_w.unsqueeze(1),
             feet_pos_w - self.robot.data.root_pos_w.unsqueeze(1)
         )
-        return feet_pos_b.reshape(self.num_envs, -1)
+        return self._feet_pos_b.reshape(self.num_envs, -1)
     
     @observation_func
     def motor_params(self):
@@ -292,8 +292,8 @@ class LocomotionV3(Env):
     @reward_func
     def heading(self):
         root_quat = self.robot.data.root_quat_w
-        heading_b = quat_rotate_inverse(root_quat, self._command_heading)
-        return heading_b[:, [0]]
+        heading_b_x = quat_rotate_inverse(root_quat, self._command_heading)[:, [0]]
+        return 0.5 * (heading_b_x + heading_b_x.sign() * heading_b_x.square())
     
     @reward_func
     def base_height(self):
@@ -356,7 +356,9 @@ class LocomotionV3(Env):
     @reward_func
     def stand(self):
         jpos_error = square_norm(self.robot.data.joint_pos - self.robot.data.default_joint_pos)
-        cost = - jpos_error * self._command_stand
+        front_symmetry = self._feet_pos_b[:, [0, 1], 1].sum(dim=1, keepdim=True).abs()
+        back_symmetry = self._feet_pos_b[:, [2, 3], 1].sum(dim=1, keepdim=True).abs()
+        cost = - (jpos_error + front_symmetry + back_symmetry) * self._command_stand
         return cost
 
     @termination_func
