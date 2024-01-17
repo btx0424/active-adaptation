@@ -57,9 +57,9 @@ class LocomotionV3(Env):
 
         with torch.device(self.device):
             self._command_stand = torch.zeros(self.num_envs, 1)
-            self._command = torch.zeros(self.num_envs, 3 + 3)
-            self._command_linvel = self._command[:, :3]
-            self._command_heading = self._command[:, 3:6]
+            self._command_linvel = torch.zeros(self.num_envs, 3)
+            self._command_yaw = torch.zeros(self.num_envs)
+            self._command_heading = torch.zeros(self.num_envs, 3)
             self._command_speed = torch.zeros(self.num_envs, 1)
             # self.action_scale = torch.ones(self.num_envs, 1)
             self.action_alpha = torch.ones(self.num_envs, 1)
@@ -67,13 +67,14 @@ class LocomotionV3(Env):
             self._actions_tm1 = torch.zeros_like(self._actions_t)
             self._actions_tm2 = torch.zeros_like(self._actions_t)
 
-        from .mdp import BodyMasses, BodyMaterial, MotorParams, JointFriction, BodyInertias
+        from .mdp import BodyMasses, BodyMaterial, MotorParams, BodyInertias, MotorFailure
         self.randomizations = {
             "body_masses": BodyMasses(self, (0.7, 1.3), body_indices=torch.arange(19)),
             "payload_mass": BodyMasses(self, (0.01, 4.), body_indices=torch.tensor([19])),
             "payload_inertia": BodyInertias(self, (0.01, 4.0), body_indices=torch.tensor([19])),
-            "body_material": BodyMaterial(self, self.foot_indices),
+            "body_material": BodyMaterial(self, self.foot_indices, (0.6, 2.0), (0.6, 2.0)),
             "motor_params": MotorParams(self, (0.7, 1.3), (0.6, 1.4)),
+            "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.2),
         }
         for _, randomization in self.randomizations.items():
             randomization.startup()
@@ -139,6 +140,8 @@ class LocomotionV3(Env):
             & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
         )
         self._sample_commands(should_resample.nonzero().squeeze(-1))
+        self._update_commands()
+
         if self.sim.has_gui() and hasattr(self, "debug_draw"):
             self.debug_draw.clear()
             robot_pos = (
@@ -337,7 +340,7 @@ class LocomotionV3(Env):
         )
 
     @reward_func
-    def survive(self):
+    def survival(self):
         return torch.ones(self.num_envs, 1, device=self.device)
     
     @reward_func
@@ -364,10 +367,15 @@ class LocomotionV3(Env):
         terminated = (fall_over | undesired_contact).unsqueeze(1)
         return terminated
 
+    def _update_commands(self):
+        self._command_heading[:, 0] = self._command_yaw.cos()
+        self._command_heading[:, 1] = self._command_yaw.sin()
+        self._command_heading[:, 2] = 0.
+
     def _sample_commands(self, env_ids):
         a = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
         stand = torch.rand(len(env_ids), device=self.device) < 0.2
-        speed = torch.zeros(len(env_ids), device=self.device).uniform_(0.7, 2.0)
+        speed = torch.zeros(len(env_ids), device=self.device).uniform_(0.5, 2.0)
         speed = speed * (~stand).float()
         
         self._command_stand[env_ids] = stand.float().unsqueeze(1)
@@ -375,10 +383,9 @@ class LocomotionV3(Env):
         self._command_linvel[env_ids, 0] = speed * a.cos()
         self._command_linvel[env_ids, 1] = speed * a.sin()
         
-        b = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
-        self._command_heading[env_ids, 0] = b.cos()
-        self._command_heading[env_ids, 1] = b.sin()
-        
+        yaw = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
+        self._command_yaw[env_ids] = yaw
+
 
 def random_scale(x: torch.Tensor, low: float, high: float):
     return x * (torch.rand_like(x) * (high - low) + low)

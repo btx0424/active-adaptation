@@ -186,23 +186,6 @@ class EnvCfg:
         if self.payload:
             self.scene.robot.spawn.func = spawn_with_payload
 
-REWARD_VELOCITY = {
-    "linvel_projection": 1.0,
-    "linvel_exp": 1.0,
-    "heading": 0.5,
-    "base_height": 0.5,
-    "linvel_z_l2": 4.0,
-    # "energy_l2": 0.00005,
-    # "energy_l1": 0.0001,
-    "joint_acc_l2": 2.5e-7,
-    "stand": 0.5,
-    "joint_torques_l2": 2e-4,
-    "action_rate_l2": 0.01,
-    # "action_rate2_l2": 0.01,
-    "orientation": 0.5,
-    # "feet_slip": 0.1,
-}
-
 REWARD_RECOVER = {
     "orientation": 1.0,
     "base_height": 0.2,
@@ -217,9 +200,7 @@ def LocomotionEnvCfg(task_cfg):
         "go2": UNITREE_GO2_CFG,
     }[task_cfg.robot.lower()]
 
-    robot_cfg.actuators["base_legs"].friction = 0.05
-    # robot_cfg.actuators["base_legs"].stiffness = 40.0
-    # robot_cfg.actuators["base_legs"].damping = 1.0
+    robot_cfg.actuators["base_legs"].friction = 0.02
 
     if task_cfg.terrain == "plane":
         terrain_cfg = FLAT_TERRAIN_CFG
@@ -232,11 +213,6 @@ def LocomotionEnvCfg(task_cfg):
     else:
         raise ValueError(task_cfg.terrain)
     
-    reward_cfg = {
-        "Velocity": REWARD_VELOCITY,
-        "Recover": REWARD_RECOVER
-    }[task_cfg.task]
-
     env_cfg = EnvCfg(
         max_episode_length=task_cfg.max_episode_length,
         payload=task_cfg.payload,
@@ -246,7 +222,7 @@ def LocomotionEnvCfg(task_cfg):
             robot=robot_cfg.replace(prim_path="{ENV_REGEX_NS}/Robot"),
             terrain=terrain_cfg,
         ),
-        reward = reward_cfg,
+        reward = task_cfg.reward,
         observation = task_cfg.observation
     )
     return env_cfg

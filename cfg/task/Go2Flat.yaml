@@ -18,9 +18,21 @@ observation:
     - "projected_gravity_b"
     - "joint_pos"
     - "prev_actions"
+    - "motor_params"
   priv:
     - "joint_vel"
     # - "joint_acc"
     - "root_linvel_b"
     - "feet_pos_b"
     - "applied_torques"
+
+reward:
+  linvel_exp: 1.0
+  heading: 0.5
+  base_height: 0.5
+  linvel_z_l2: 4.0
+  energy_l1: 0.0001
+  joint_acc_l2: 2.5e-7
+  stand: 0.5
+  orientation: 0.5
+  survival: 0.5
