@@ -20,6 +20,7 @@ class LocomotionV3(Env):
 
     def __init__(self, cfg):
         super().__init__(cfg)
+        self.permute_actions = True
         self.action_scaling = 0.5
 
         self.robot = self.scene.articulations["robot"]
@@ -66,7 +67,9 @@ class LocomotionV3(Env):
             self._actions_t = torch.zeros(self.num_envs, 12)
             self._actions_tm1 = torch.zeros_like(self._actions_t)
             self._actions_tm2 = torch.zeros_like(self._actions_t)
-            self._flip_lr = torch.randn(self.num_envs, 1) > 0.
+            if self.permute_actions:
+                self._flip_lr = torch.randn(self.num_envs, 1) > 0.
+                self._flip_fb = torch.randn(self.num_envs, 1) > 0.
 
         from .mdp import BodyMasses, BodyMaterial, MotorParams, BodyInertias, MotorFailure
         self.randomizations = {
@@ -170,14 +173,17 @@ class LocomotionV3(Env):
     def apply_action(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
             # random packet loss: repeat previous actions
-            packet_loss = torch.rand(self.num_envs, 1, device=self.device) < self.packet_loss
-            actions = torch.where(packet_loss, self._actions_t, tensordict["action"])
+            actions = tensordict["action"]
 
             self._actions_tm2[:] = self._actions_tm1
             self._actions_tm1[:] = self._actions_t
             self._actions_t.lerp_(actions, self.action_alpha)
-            pos_target = self._actions_t * self.action_scaling + self.default_joint_pos
-            pos_target = torch.where(self._flip_lr, flip_lr(pos_target), pos_target)
+
+            if self.permute_actions:
+                actions = torch.where(self._flip_lr, flip_lr(actions), actions)
+                actions = torch.where(self._flip_fb, flip_fb(actions), actions)
+
+            pos_target = actions * self.action_scaling + self.default_joint_pos
             self.robot.set_joint_position_target(pos_target, self.motor_joint_indices)
         self.robot.write_data_to_sim()
 
@@ -277,8 +283,8 @@ class LocomotionV3(Env):
         return rand.material_properties.reshape(self.num_envs, -1)
     
     @observation_func
-    def flip_lr(self):
-        return self._flip_lr.float()
+    def action_flip(self):
+        return self._flip_lr.long() * 2 + self._flip_fb.long()
     
     @reward_func
     def linvel_projection(self):
@@ -421,3 +427,7 @@ def symlog(x: torch.Tensor, a: float=1.):
 
 def flip_lr(joints: torch.Tensor):
     return joints.reshape(-1, 3, 2, 2).flip(-1).reshape(-1, 12)
+
+def flip_fb(joints: torch.Tensor):
+    return joints.reshape(-1, 3, 2, 2).flip(-2).reshape(-1, 12)
+

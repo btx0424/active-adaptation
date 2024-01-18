@@ -19,13 +19,17 @@ observation:
     - "joint_pos"
     - "prev_actions"
     # - "motor_params"
-    - "flip_lr"
+    # - "flip_lr"
   priv:
     - "joint_vel"
     # - "joint_acc"
     - "root_linvel_b"
     - "feet_pos_b"
     - "applied_torques"
+    # - "payload_mass"
+    # - "payload_inertia"
+  static_embed:
+    - "action_flip"
 
 reward:
   linvel_exp: 1.0

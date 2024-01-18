@@ -27,6 +27,8 @@ observation:
     - "applied_torques"
     # - "payload_mass"
     # - "payload_inertia"
+  static_embed:
+    - "action_flip"
 
 reward:
   linvel_exp: 1.0

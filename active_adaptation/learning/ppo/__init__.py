@@ -29,6 +29,8 @@ from .ppo_contrastive import PPOTConvPolicy as PPOContraPolicy
 from .ppo_dual import PPODualPolicy
 from .ppo_roa import PPOROAPolicy
 from .ppo_model import PPOModelPolicy
+from .ppo_guided import PPOGuidedPolicy
+from .ppo_static import PPOStaticPolicy
 
 ALGOS = {
     "ppo": PPOPolicy,
@@ -38,5 +40,7 @@ ALGOS = {
     "ppo_contra": PPOContraPolicy,
     "ppo_rma": PPORMAPolicy,
     "ppo_roa": PPOROAPolicy,
-    "ppo_model": PPOModelPolicy
+    "ppo_model": PPOModelPolicy,
+    "ppo_guided": PPOGuidedPolicy,
+    "ppo_static": PPOStaticPolicy,
 }
