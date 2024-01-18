@@ -19,6 +19,7 @@ observation:
     - "joint_pos"
     - "prev_actions"
     # - "motor_params"
+    - "flip_lr"
   priv:
     - "joint_vel"
     # - "joint_acc"

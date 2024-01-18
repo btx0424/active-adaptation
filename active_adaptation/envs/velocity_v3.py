@@ -66,6 +66,7 @@ class LocomotionV3(Env):
             self._actions_t = torch.zeros(self.num_envs, 12)
             self._actions_tm1 = torch.zeros_like(self._actions_t)
             self._actions_tm2 = torch.zeros_like(self._actions_t)
+            self._flip_lr = torch.randn(self.num_envs, 1) > 0.
 
         from .mdp import BodyMasses, BodyMaterial, MotorParams, BodyInertias, MotorFailure
         self.randomizations = {
@@ -176,6 +177,7 @@ class LocomotionV3(Env):
             self._actions_tm1[:] = self._actions_t
             self._actions_t.lerp_(actions, self.action_alpha)
             pos_target = self._actions_t * self.action_scaling + self.default_joint_pos
+            pos_target = torch.where(self._flip_lr, flip_lr(pos_target), pos_target)
             self.robot.set_joint_position_target(pos_target, self.motor_joint_indices)
         self.robot.write_data_to_sim()
 
@@ -273,6 +275,10 @@ class LocomotionV3(Env):
     def body_materials(self):
         rand = self.randomizations["body_material"]
         return rand.material_properties.reshape(self.num_envs, -1)
+    
+    @observation_func
+    def flip_lr(self):
+        return self._flip_lr.float()
     
     @reward_func
     def linvel_projection(self):
@@ -412,3 +418,6 @@ def dot(a: torch.Tensor, b: torch.Tensor):
 
 def symlog(x: torch.Tensor, a: float=1.):
     return x.sign() * torch.log(x.abs() * a + 1.) / a
+
+def flip_lr(joints: torch.Tensor):
+    return joints.reshape(-1, 3, 2, 2).flip(-1).reshape(-1, 12)
