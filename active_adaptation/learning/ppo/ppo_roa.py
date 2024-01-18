@@ -201,6 +201,9 @@ class PPOROAPolicy(TensorDictModuleBase):
             )
         ).to(self.device)
 
+        self.classifier_latent = nn.LazyLinear(1).to(self.device)
+        self.classifier_latent_opt = torch.optim.Adam(self.classifier_latent.parameters(), lr=5e-4)
+
     def __call__(self, tensordict: TensorDict):
         if self.mode == "expert":
             self.actor_critic(self.encoder(tensordict))
@@ -287,11 +290,22 @@ class PPOROAPolicy(TensorDictModuleBase):
 
         loss = policy_loss + entropy_loss + value_loss
         if self.train_adapt:
-            adapt_loss = self.feature_mse(tensordict, self.adapt(tensordict.exclude("_context")))
-            loss += adapt_loss
+            _td = tensordict.exclude("_context")
+            adapt_loss = self.feature_mse(tensordict, self.adapt(_td))
+            true = self.classifier_latent(tensordict["_context"].detach())
+            false = self.classifier_latent(_td["_context"].detach())
+            classifier_loss = (
+                F.binary_cross_entropy_with_logits(true, torch.ones_like(true))
+                + F.binary_cross_entropy_with_logits(false, torch.zeros_like(false))
+            )
+            classifier_acc = ((true > 0).float().mean() + (false < 0).float().mean()) / 2
+            loss = loss + adapt_loss + classifier_loss
             self.adapt_opt.zero_grad(set_to_none=True)
+            self.classifier_latent.zero_grad(set_to_none=True)
         else:
             adapt_loss = torch.tensor(0., device=self.device)
+            classifier_loss = torch.tensor(0., device=self.device)
+            classifier_acc = torch.tensor(0., device=self.device)
         self.actor_opt.zero_grad(set_to_none=True)
         self.critic_opt.zero_grad(set_to_none=True)
         self.encoder.zero_grad(set_to_none=True)
@@ -303,6 +317,7 @@ class PPOROAPolicy(TensorDictModuleBase):
         self.encoder_opt.step()
         if self.train_adapt:
             self.adapt_opt.step()
+            self.classifier_latent_opt.step()
 
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
         info = {
@@ -312,7 +327,9 @@ class PPOROAPolicy(TensorDictModuleBase):
             "entropy": entropy,
             "actor_grad_norm": actor_grad_norm,
             "critic_grad_norm": critic_grad_norm,
-            "explained_var": explained_var
+            "explained_var": explained_var,
+            "classifier_loss": classifier_loss,
+            "classifier_acc": classifier_acc,
         }
         return TensorDict(info, [])
 

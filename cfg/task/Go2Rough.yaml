@@ -18,7 +18,7 @@ observation:
     - "projected_gravity_b"
     - "joint_pos"
     - "prev_actions"
-    - "motor_params"
+    # - "motor_params"
   priv:
     - "joint_vel"
     # - "joint_acc"
