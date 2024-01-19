@@ -94,15 +94,15 @@ class TConv(nn.Module):
             nn.LazyConv1d(64, kernel_size=7, stride=2), activation(),
             nn.LazyConv1d(64, kernel_size=5, stride=2), activation(),
         )
-        self.mlp = make_mlp([256, out_dim], activation=nn.LeakyReLU)
+        self.mlp = make_mlp([256, out_dim], activation=nn.Mish)
     
     def forward(self, features: torch.Tensor):
         batch_shape = features.shape[:-2]
-        features = features.flatten(0, -3) # [*, D, T]
-        features_tconv = self.tconv(features).flatten(1)
+        features = features.reshape(-1, *features.shape[-2:])
+        features_tconv = einops.rearrange(self.tconv(features), "b d t -> b (t d)")
         features = torch.cat([features_tconv, features[:, :, -1]], dim=1)
         features = self.mlp(features)
-        return features.unflatten(0, batch_shape)
+        return features.reshape(*batch_shape, *features.shape[1:])
 
 
 class FiLM(nn.Module):
@@ -234,7 +234,7 @@ class PPORMAPolicy(TensorDictModuleBase):
 
         self.encoder = make_priv_encoder(
             cfg.encoder_mode, 
-            [128, 128]
+            [256, 128]
         ).to(self.device)
 
         def condition(branch: str, mode: str):

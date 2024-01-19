@@ -27,6 +27,8 @@ observation:
     - "applied_torques"
     # - "payload_mass"
     # - "payload_inertia"
+    - "flip_lr"
+    - "flip_fb"
   static_embed:
     - "action_flip"
 
