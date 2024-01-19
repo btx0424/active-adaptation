@@ -97,25 +97,17 @@ class MSE(AdaptationModule):
         self.keys = keys
         self.opt = torch.optim.Adam(self.adaptation_module.parameters())
     
-    def forward(self, tensordict):
+    def forward(self, tensordict: TensorDictBase, out: TensorDictBase, mean: bool=False):
         target = tensordict.select(*self.keys)
         pred = self.adaptation_module(tensordict).select(*self.keys)
         loss = sum([
             F.mse_loss(pred[k], target[k], reduction="none") 
             for k in self.keys
         ])
-        return loss
-
-    def update(self, tensordict):
-        info = []
-        for epoch in range(4):
-            for batch in make_batch(tensordict, 8):
-                loss = self(batch).mean()
-                self.opt.zero_grad()
-                loss.backward()
-                self.opt.step()
-                info.append(loss)
-        return {"adapt_loss": torch.stack(info).mean().item()}
+        if mean:
+            loss = loss.mean()
+        out.set("adaptation_loss", loss)
+        return out
 
 
 class Action(AdaptationModule):
@@ -133,7 +125,7 @@ class Action(AdaptationModule):
         self.closed_kl = closed_kl
         self.opt = torch.optim.Adam(self.adaptation_module.parameters())
     
-    def forward(self, tensordict: TensorDictBase):
+    def forward(self, tensordict: TensorDictBase, out: TensorDictBase, mean: bool=False):
         target_dist = self.actor.get_dist(tensordict)
         td = self.adaptation_module(tensordict)
         if self.closed_kl:
@@ -144,19 +136,10 @@ class Action(AdaptationModule):
             pred_action = pred_dist.rsample()
             # loss = pred_dist.log_prob(pred_action)-target_dist.log_prob(pred_action)
             loss = -target_dist.log_prob(pred_action)
-        return loss
-    
-    def update(self, tensordict: TensorDictBase):
-        info = []
-        with hold_out_net(self.actor):
-            for epoch in range(4):
-                for batch in make_batch(tensordict, 8):
-                    loss = self(batch).mean()
-                    self.opt.zero_grad()
-                    loss.backward()
-                    self.opt.step()
-                    info.append(loss)
-        return {"adapt_loss": torch.stack(info).mean().item()}
+        if mean:
+            loss = loss.mean()
+        out.set("adaptation_loss", loss)
+        return out
 
 
 class Value(AdaptationModule):

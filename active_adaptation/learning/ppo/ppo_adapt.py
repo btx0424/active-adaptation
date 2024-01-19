@@ -86,13 +86,13 @@ cs.store("rma_adapt_rnn", node=PPOConfig(adapt_arch="rnn", phase="adapt", checkp
 cs.store("rma_finetune", node=PPOConfig(phase="finetune", checkpoint_path=MISSING), group="algo")
 
 class TConv(nn.Module):
-    def __init__(self, out_dim: int) -> None:
+    def __init__(self, out_dim: int, activation=nn.Mish) -> None:
         super().__init__()
         self.out_dim = out_dim
         self.tconv = nn.Sequential(
-            nn.LazyConv1d(64, kernel_size=1), nn.ELU(),
-            nn.LazyConv1d(64, kernel_size=7, stride=2), nn.ELU(),
-            nn.LazyConv1d(64, kernel_size=5, stride=2), nn.ELU(),
+            nn.LazyConv1d(64, kernel_size=1), activation(),
+            nn.LazyConv1d(64, kernel_size=7, stride=2), activation(),
+            nn.LazyConv1d(64, kernel_size=5, stride=2), activation(),
         )
         self.mlp = make_mlp([256, out_dim], activation=nn.LeakyReLU)
     
@@ -397,28 +397,7 @@ class PPORMAPolicy(TensorDictModuleBase):
         return tensordict
 
     def _train_policy(self, tensordict: TensorDict):
-
-        with torch.no_grad():
-            next_tensordict = tensordict["next"]
-            self._get_context(next_tensordict)
-            next_values = self.critic(next_tensordict)["state_value"]
-        
-        rewards = tensordict[REWARD_KEY]
-        dones = tensordict[DONE_KEY]
-        values = tensordict["state_value"]
-        values = self.value_norm.denormalize(values)
-        next_values = self.value_norm.denormalize(next_values)
-
-        adv, ret = self.gae(rewards, dones, values, next_values)
-        adv_mean = adv.mean()
-        adv_std = adv.std()
-        adv = (adv - adv_mean) / adv_std.clip(1e-7)
-        self.value_norm.update(ret)
-        ret = self.value_norm.normalize(ret)
-
-        tensordict.set("adv", adv)
-        tensordict.set("ret", ret)
-
+        tensordict = self._compute_advantage(tensordict)
         infos = []
         for epoch in range(self.cfg.ppo_epochs):
             batch = self.make_batch(tensordict, self.cfg.num_minibatches)
@@ -431,16 +410,12 @@ class PPORMAPolicy(TensorDictModuleBase):
 
     def _update(self, tensordict: TensorDict):
         self._get_context(tensordict)
-        dist = self.actor.get_dist(tensordict)
-        log_probs = dist.log_prob(tensordict[ACTION_KEY])
-        entropy = dist.entropy()
+        losses = TensorDict({}, [])
+        self._policy_loss(tensordict, losses)
 
-        adv = tensordict["adv"]
-        ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
-        surr1 = adv * ratio
-        surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
-        policy_loss = - torch.mean(torch.min(surr1, surr2)) * self.action_dim
-        entropy_loss = - self.entropy_coef * torch.mean(entropy)
+        policy_loss = losses["policy_loss"]
+        entropy_loss = losses["entropy_loss"]
+        entropy = losses["entropy"]
 
         b_values = tensordict["state_value"]
         b_returns = tensordict["ret"]
@@ -471,16 +446,59 @@ class PPORMAPolicy(TensorDictModuleBase):
     def _train_adaptation(self, tensordict: TensorDict):
         with torch.no_grad():
             tensordict = self.encoder(tensordict)
-        
-        info = []
+        self._compute_advantage(tensordict)
+        infos = []
         with hold_out_net(self.actor), hold_out_net(self.encoder):
             for epoch in range(4):
                 for batch in self.make_batch(tensordict, 8):
-                    loss = self.adaptation_loss(batch).mean()
+                    losses = TensorDict({}, [])
+                    self.adaptation_loss(batch, losses, mean=True)
+                    # self._policy_loss(batch, losses)
+                    loss = sum(losses.values())
                     self.adaptation_loss.opt.zero_grad()
                     loss.backward()
                     self.adaptation_loss.opt.step()
-                    info.append(loss)
+                    infos.append(losses)
+        infos: TensorDict = torch.stack(infos).to_tensordict()
+        infos = infos.apply(torch.mean, batch_size=[])
+        return {k: v.item() for k, v in infos.items()}
 
-        return {"adaptation_loss": torch.stack(info).mean().item()}
+    @torch.no_grad()
+    def _compute_advantage(self, tensordict: TensorDict):
+        next_tensordict = tensordict["next"]
+        self._get_context(next_tensordict)
+        next_values = self.critic(next_tensordict)["state_value"]
+        
+        rewards = tensordict[REWARD_KEY]
+        dones = tensordict[DONE_KEY]
+        values = tensordict["state_value"]
+        values = self.value_norm.denormalize(values)
+        next_values = self.value_norm.denormalize(next_values)
 
+        adv, ret = self.gae(rewards, dones, values, next_values)
+        adv_mean = adv.mean()
+        adv_std = adv.std()
+        adv = (adv - adv_mean) / adv_std.clip(1e-7)
+        self.value_norm.update(ret)
+        ret = self.value_norm.normalize(ret)
+
+        tensordict.set("adv", adv)
+        tensordict.set("ret", ret)
+        return tensordict
+
+    def _policy_loss(self, tensordict: TensorDictBase, out: TensorDictBase):
+        dist = self.actor.get_dist(tensordict)
+        log_probs = dist.log_prob(tensordict[ACTION_KEY])
+        entropy = dist.entropy()
+
+        adv = tensordict["adv"]
+        ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
+        surr1 = adv * ratio
+        surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
+        policy_loss = - torch.mean(torch.min(surr1, surr2)) * self.action_dim
+        entropy_loss = - self.entropy_coef * torch.mean(entropy)
+
+        out.set("policy_loss", policy_loss)
+        out.set("entropy_loss", entropy_loss)
+        out.set("entropy", entropy.mean())
+        return out
