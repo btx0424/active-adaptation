@@ -170,8 +170,9 @@ class PPODualPolicy(TensorDictModuleBase):
             "action_kl": self.action_kl
         }[cfg.adaptation_loss]
 
+        self.adaptation_start = 0.5
         self.train_adaptation = True
-        self.train_classifier = False
+        self.train_classifier = True
         self.adapt_ratio = 0.
         
         self.mode = "dual"
@@ -181,8 +182,8 @@ class PPODualPolicy(TensorDictModuleBase):
         )
     
     def step_schedule(self, progress: float):
-        self.adapt_ratio = 0.5 * max(0., min(2 * progress - 0.5, 1.0))
-        if self.adapt_ratio > 1e-3:
+        # self.adapt_ratio = 0.5 * max(0., min(2 * progress - 0.5, 1.0))
+        if progress > self.adaptation_start:
             self.train_adaptation = True
             self.train_classifier = True
 
@@ -209,7 +210,7 @@ class PPODualPolicy(TensorDictModuleBase):
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=actor_module,
             in_keys=["loc", "scale"],
-            out_keys=[("agents", "action")],
+            out_keys=[ACTION_KEY],
             distribution_class=IndependentNormal,
             return_log_prob=True
         ).to(self.device)
@@ -251,7 +252,7 @@ class PPODualPolicy(TensorDictModuleBase):
                 )
             ),
             in_keys=["loc", "scale"],
-            out_keys=[("agents", "action")],
+            out_keys=[ACTION_KEY],
             distribution_class=IndependentNormal,
             return_log_prob=True
         ).to(self.device)
@@ -296,19 +297,19 @@ class PPODualPolicy(TensorDictModuleBase):
         actor = nn.Sequential(make_mlp([256], nn.Mish), Actor(self.action_dim))
         self.actor = ProbabilisticActor(
             TensorDictSequential(
-                TensorDictModule(make_mlp([256, 256], nn.Mish), [self.OBS_KEY], ["_feature"]),
+                TensorDictModule(make_mlp([256, 256], nn.Mish), [OBS_KEY], ["_feature"]),
                 TensorDictModule(Condition(), ["_feature", "_context"], ["_feature"]),
                 TensorDictModule(actor, ["_feature"], ["loc", "scale"])
             ), 
             in_keys=["loc", "scale"],
-            out_keys=[("agents", "action")],
+            out_keys=[ACTION_KEY],
             distribution_class=IndependentNormal,
             return_log_prob=True
         ).to(self.device)
 
         critic = nn.Sequential(make_mlp([256], nn.Mish), nn.LazyLinear(1))
         self.critic = TensorDictSequential(
-            TensorDictModule(make_mlp([256, 256], nn.Mish), [self.OBS_KEY], ["_feature"]),
+            TensorDictModule(make_mlp([256, 256], nn.Mish), [OBS_KEY], ["_feature"]),
             TensorDictModule(Condition(), ["_feature", "_context"], ["_feature"]),
             TensorDictModule(critic, ["_feature"], ["state_value"])
         ).to(self.device)
@@ -348,7 +349,7 @@ class PPODualPolicy(TensorDictModuleBase):
                 )
             ),
             in_keys=["loc", "scale"],
-            out_keys=[("agents", "action")],
+            out_keys=[ACTION_KEY],
             distribution_class=IndependentNormal,
             return_log_prob=True
         ).to(self.device)
@@ -476,7 +477,7 @@ class PPODualPolicy(TensorDictModuleBase):
 
         tensordict = torch.where(is_adapt, tensordict_adapt.detach(), tensordict_priv)
         dist = self.actor.get_dist(tensordict)
-        log_probs = dist.log_prob(tensordict[("agents", "action")])
+        log_probs = dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy()
 
         adv = tensordict["adv"]
@@ -540,15 +541,16 @@ class PPODualPolicy(TensorDictModuleBase):
             self.classifier_opt.zero_grad()
             classifier_loss.backward()
             self.classifier_opt.step()
+            info["classifier_acc"] = 0.5 * ((pred_expert > 0).float().mean() + (pred_adapt < 0).float().mean())
             info["classifier_loss"] = classifier_loss
 
         return TensorDict(info, [])
 
-    def feature_mse(self, tensordict_priv: TensorDict, tensordict_adapt: TensorDict):
-        pred = tensordict_adapt[self.ADAPT_KEY]
-        target = tensordict_priv[self.ADAPT_KEY].detach()
-        loss = F.mse_loss(pred, target, reduction="none").mean(dim=-1, keepdim=True)
-        return loss
+    # def feature_mse(self, tensordict_priv: TensorDict, tensordict_adapt: TensorDict):
+    #     pred = tensordict_adapt[self.ADAPT_KEY]
+    #     target = tensordict_priv[self.ADAPT_KEY].detach()
+    #     loss = F.mse_loss(pred, target, reduction="none").mean(dim=-1, keepdim=True)
+    #     return loss
     
     # def action_kl(self, tensordict_priv: TensorDict, tensordict_adapt: TensorDict):
     #     dist_target = self.actor.get_dist(tensordict_priv.detach())
