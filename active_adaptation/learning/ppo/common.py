@@ -123,3 +123,9 @@ class GAE(nn.Module):
             advantages[:, step] = gae = delta + (self.gamma * self.lmbda * not_done[:, step] * gae)
         returns = advantages + value
         return advantages, returns
+
+
+def init_(module):
+    if isinstance(module, nn.Linear):
+        nn.init.orthogonal_(module.weight, 0.01)
+        nn.init.constant_(module.bias, 0.)

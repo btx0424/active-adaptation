@@ -42,7 +42,7 @@ from typing import Any, Mapping, Union, Sequence
 
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
-from .common import GAE, Duplicate, Actor, make_mlp, make_batch
+from .common import GAE, Duplicate, Actor, make_mlp, make_batch, init_
 from .adaptation import Action, Value, ActionValue, MSE
 from .ppo_rnn import GRU
 
@@ -65,12 +65,13 @@ class PPOConfig:
     ppo_epochs: int = 4
     num_minibatches: int = 16
     lr: float = 1e-3
+    predict_std: bool = True
 
     checkpoint_path: Union[str, None] = None
     phase: str = "train"
     condition_mode: str = "cat"
 
-    encoder_mode: str = "separate" # shared, separate, seperate_heads
+    encoder_mode: str = "shared" # shared, separate, seperate_heads
     adapt_arch: str = "tconv"
     # what the adaptation module learns to predict
     adaptation_key: Any = "context"
@@ -240,7 +241,10 @@ class PPORMAPolicy(TensorDictModuleBase):
         actor_module = TensorDictSequential(
             condition("actor", cfg.condition_mode),
             TensorDictModule(
-                nn.Sequential(make_mlp([256, 256]), Actor(self.action_dim)), 
+                nn.Sequential(
+                    make_mlp([256, 256]), 
+                    Actor(self.action_dim, predict_std=cfg.predict_std)
+                ), 
                 ["_feature"], ["loc", "scale"]
             )
         )
@@ -262,51 +266,47 @@ class PPORMAPolicy(TensorDictModuleBase):
         
         self.value_norm = ValueNorm1(1).to(self.device)
 
+        if self.adaptation_key == "context":
+            self.adaptation_module = make_adaptation_module(
+                self.cfg.encoder_mode, self.cfg.adapt_arch, 128
+            ).to(self.device)
+        elif self.adaptation_key == "raw":
+            self.adaptation_module = make_state_estimator(
+                self.cfg.adapt_arch, fake_input[OBS_PRIV_KEY].shape[-1]
+            ).to(self.device)
+        if self.cfg.adaptation_loss == "mse":
+            key = "context_actor" if self.adaptation_key == "context" else OBS_PRIV_KEY
+            self.adaptation_loss = MSE(
+                self.adaptation_module, 
+                [key], 
+            ).to(self.device)
+        elif self.cfg.adaptation_loss == "action_kl":
+            self.adaptation_loss = Action(
+                self.encoder,
+                self.adaptation_module,
+                self.actor,
+                # closed_kl=True
+            ).to(self.device)
+        else:
+            raise ValueError(self.cfg.adaptation_loss)
+        
         self.encoder(fake_input)
         self.actor(fake_input)
         self.critic(fake_input)
+        self.adaptation_module(fake_input)
 
         checkpoint_path = parse_path(self.cfg.checkpoint_path)
         if checkpoint_path is not None:
             state_dict = torch.load(checkpoint_path)
             self.load_state_dict(state_dict, strict=False)
         else:
-            def init_(module):
-                if isinstance(module, nn.Linear):
-                    nn.init.orthogonal_(module.weight, 0.01)
-                    nn.init.constant_(module.bias, 0.)
-            
             self.actor.apply(init_)
             self.critic.apply(init_)
             self.encoder.apply(init_)
-
-        if self.phase in ("adapt", "finetune"):
-            if self.adaptation_key == "context":
-                self.adaptation_module = make_adaptation_module(
-                    self.cfg.encoder_mode, self.cfg.adapt_arch, 128
-                ).to(self.device)
-            elif self.adaptation_key == "raw":
-                self.adaptation_module = make_state_estimator(
-                    self.cfg.adapt_arch, fake_input[OBS_PRIV_KEY].shape[-1]
-                ).to(self.device)
-            self.adaptation_module(fake_input)
-            if self.cfg.adaptation_loss == "mse":
-                key = "context_actor" if self.adaptation_key == "context" else OBS_PRIV_KEY
-                self.adaptation_loss = MSE(
-                    self.adaptation_module, 
-                    [key], 
-                ).to(self.device)
-            elif self.cfg.adaptation_loss == "action_kl":
-                self.adaptation_module(fake_input)
-                self.adaptation_loss = Action(
-                    self.encoder,
-                    self.adaptation_module,
-                    self.actor,
-                    # closed_kl=True
-                ).to(self.device)
-            else:
-                raise ValueError(self.cfg.adaptation_loss)
-
+        
+        if self.phase == "adapt":
+            self.adaptation_module.apply(init_)
+        
         self.opt = torch.optim.Adam(
             [
                 {"params": self.actor.parameters()},
@@ -349,7 +349,7 @@ class PPORMAPolicy(TensorDictModuleBase):
             self.train_adapt = True
         elif value == "finetune":
             self.train_policy = True
-            self.train_adapt = True
+            self.train_adapt = False
         else:
             raise ValueError(value)
         self._phase = value
@@ -364,15 +364,17 @@ class PPORMAPolicy(TensorDictModuleBase):
     def train_op(self, tensordict: TensorDict):
         info = {}
         if self.train_policy:
-            info.update(self._train_policy(tensordict))
+            with hold_out_net(self.adaptation_module):
+                info.update(self._train_policy(tensordict))
         if self.train_adapt:
-            info.update(self._train_adaptation(tensordict))
+            with hold_out_net(self.actor), hold_out_net(self.encoder):
+                info.update(self._train_adaptation(tensordict))
         return info
     
     def _get_context(self, tensordict: TensorDict):
         if self.phase == "train":
             self.encoder(tensordict)
-        elif self.phase == "adapt":
+        elif self.phase in ("adapt", "finetune"):
             if self.adaptation_key == "raw":
                 tensordict.rename_key_(OBS_PRIV_KEY, "tmp")
                 self.adaptation_module(tensordict)
@@ -433,19 +435,18 @@ class PPORMAPolicy(TensorDictModuleBase):
     def _train_adaptation(self, tensordict: TensorDict):
         with torch.no_grad():
             tensordict = self.encoder(tensordict)
-        self._compute_advantage(tensordict)
+        # self._compute_advantage(tensordict)
         infos = []
-        with hold_out_net(self.actor), hold_out_net(self.encoder):
-            for epoch in range(4):
-                for batch in self.make_batch(tensordict, 8):
-                    losses = TensorDict({}, [])
-                    self.adaptation_loss(batch, losses, mean=True)
-                    # self._policy_loss(batch, losses)
-                    loss = sum(losses.values())
-                    self.adaptation_loss.opt.zero_grad()
-                    loss.backward()
-                    self.adaptation_loss.opt.step()
-                    infos.append(losses)
+        for epoch in range(4):
+            for batch in self.make_batch(tensordict, 8):
+                losses = TensorDict({}, [])
+                self.adaptation_loss(batch, losses, mean=True)
+                # self._policy_loss(batch, losses)
+                loss = sum(losses.values())
+                self.adaptation_loss.opt.zero_grad()
+                loss.backward()
+                self.adaptation_loss.opt.step()
+                infos.append(losses)
         infos: TensorDict = torch.stack(infos).to_tensordict()
         infos = infos.apply(torch.mean, batch_size=[])
         return {k: v.item() for k, v in infos.items()}
