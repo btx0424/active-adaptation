@@ -128,8 +128,13 @@ class PPOPolicy(TensorDictModuleBase):
             self.actor.apply(init_)
             self.critic.apply(init_)
 
-        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=cfg.lr)
-        self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=cfg.lr)
+        self.opt = torch.optim.Adam(
+            [
+                {"params": self.actor.parameters()},
+                {"params": self.critic.parameters()}
+            ],
+            lr=cfg.lr
+        )
         self.value_norm = ValueNorm1(input_shape=1).to(self.device)
     
     # @torch.compile
@@ -193,13 +198,11 @@ class PPOPolicy(TensorDictModuleBase):
         value_loss = torch.max(value_loss_original, value_loss_clipped)
 
         loss = policy_loss + entropy_loss + value_loss
-        self.actor_opt.zero_grad()
-        self.critic_opt.zero_grad()
+        self.opt.zero_grad()
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.actor.parameters(), 10)
         critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 10)
-        self.actor_opt.step()
-        self.critic_opt.step()
+        self.opt.step()
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
         return TensorDict({
             "policy_loss": policy_loss,

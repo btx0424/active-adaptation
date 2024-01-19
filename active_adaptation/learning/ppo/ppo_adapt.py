@@ -320,9 +320,15 @@ class PPORMAPolicy(TensorDictModuleBase):
             else:
                 raise ValueError(self.cfg.adaptation_loss)
 
-        self.actor_opt = torch.optim.Adam(list(self.actor.parameters()) + list(self.encoder.parameters()), lr=cfg.lr)
-        self.critic_opt = torch.optim.Adam(list(self.critic.parameters()) + list(self.encoder.parameters()), lr=cfg.lr)
-        
+        self.opt = torch.optim.Adam(
+            [
+                {"params": self.actor.parameters()},
+                {"params": self.critic.parameters()},
+                {"params": self.encoder.parameters()},
+            ], 
+            lr=cfg.lr
+        )
+
         if cfg.adapt_arch == "rnn":
             from torchrl.envs.transforms.transforms import TensorDictPrimer
             from torchrl.data import UnboundedContinuousTensorSpec
@@ -447,15 +453,11 @@ class PPORMAPolicy(TensorDictModuleBase):
         value_loss = torch.max(value_loss_original, value_loss_clipped)
 
         loss = policy_loss + entropy_loss + value_loss
-        self.actor_opt.zero_grad()
-        self.critic_opt.zero_grad()
-        # self.encoder_opt.zero_grad()
+        self.opt.zero_grad()
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.actor.parameters(), 10)
         critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 10)
-        self.actor_opt.step()
-        self.critic_opt.step()
-        # self.encoder_opt.step()
+        self.opt.step()
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
         return TensorDict({
             "policy_loss": policy_loss,
@@ -481,10 +483,4 @@ class PPORMAPolicy(TensorDictModuleBase):
                     info.append(loss)
 
         return {"adaptation_loss": torch.stack(info).mean().item()}
-
-    def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
-        return super().load_state_dict(state_dict, strict)
-
-    def __str__(self) -> str:
-        return f"PPOAdapt-{self.cfg.phase}"
 
