@@ -148,7 +148,7 @@ def make_adaptation_module(encoder_mode: str, adapt_arch: str, dim: int):
         def make(output_key: str):
             in_keys = [f"_rnn_{output_key}", "is_init", f"{output_key}_hx"]
             out_keys = [output_key, ("next", f"{output_key}_hx")]
-            gru = GRU(dim, dim, skip_conn=None, layer_norm=False, allow_none=True)
+            gru = GRU(dim, dim, allow_none=True)
             return TensorDictSequential(
                 TensorDictModule(nn.LazyLinear(dim), [OBS_KEY], [f"_rnn_{output_key}"]),
                 TensorDictModule(gru, in_keys, out_keys),
@@ -178,7 +178,7 @@ def make_state_estimator(arch: str, dim: int):
     elif arch == "rnn":
         in_keys = ["_rnn_feature", "is_init", "_hx"]
         out_keys = [OBS_PRIV_KEY, ("next", f"_hx")]
-        gru = GRU(dim, dim, skip_conn=None, layer_norm=False, allow_none=True)
+        gru = GRU(dim, dim, allow_none=True)
         return TensorDictSequential(
             TensorDictModule(nn.LazyLinear(dim), [OBS_KEY], ["_rnn_feature"]),
             TensorDictModule(gru, in_keys, out_keys),
@@ -314,7 +314,8 @@ class PPORMAPolicy(TensorDictModuleBase):
                 self.adaptation_loss = Action(
                     self.encoder,
                     self.adaptation_module,
-                    self.actor
+                    self.actor,
+                    # closed_kl=True
                 ).to(self.device)
             else:
                 raise ValueError(self.cfg.adaptation_loss)

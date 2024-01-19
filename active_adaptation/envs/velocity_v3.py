@@ -286,6 +286,14 @@ class LocomotionV3(Env):
     def action_flip(self):
         return self._flip_lr.long() * 2 + self._flip_fb.long()
     
+    @observation_func
+    def flip_lr(self):
+        return self._flip_lr.float()
+    
+    @observation_func
+    def flip_fb(self):
+        return self._flip_fb.float()
+
     @reward_func
     def linvel_projection(self):
         linvel_w = self.robot.data.root_lin_vel_w

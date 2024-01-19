@@ -104,18 +104,14 @@ class GRU(nn.Module):
         self, 
         input_size, 
         hidden_size, 
-        skip_conn: str = None, 
-        bptt_len: int = 8,
-        layer_norm: bool = False,
-        allow_none: bool = False
+        allow_none: bool = False,
+        burn_in: bool = False
     ) -> None:
         super().__init__()
         self.gru = nn.GRUCell(input_size, hidden_size)
         self.out = nn.LazyLinear(hidden_size)
-        self.skip_conn = skip_conn
-        if layer_norm:
-            self.ln = nn.LayerNorm(hidden_size)
         self.allow_none = allow_none
+        self.burn_in = burn_in
 
     def forward(self, x: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor):
         if x.ndim == 2: # single step
@@ -123,11 +119,9 @@ class GRU(nn.Module):
             N = x.shape[0]
             if hx is None and self.allow_none:
                 hx = torch.zeros(N, self.gru.hidden_size, device=x.device)
-            reset = 1. - is_init.float().reshape(N, 1)
-            output = hx = self.gru(x, hx * reset)
+            assert (hx[is_init.squeeze()] == 0.).all()
+            output = hx = self.gru(x, hx)
             output = self.out(output)
-            if hasattr(self, "ln"):
-                output = self.ln(hx)
             return output, hx
 
         elif x.ndim == 3: # multi-step
@@ -139,13 +133,13 @@ class GRU(nn.Module):
                 hx = hx[:, 0]
             output = []
             reset = 1. - is_init.float().reshape(N, T, 1)
-            for x_t, reset_t in zip(x.unbind(1), reset.unbind(1)):
+            for i, x_t, reset_t in zip(range(T), x.unbind(1), reset.unbind(1)):
                 hx = self.gru(x_t, hx * reset_t)
+                if self.burn_in and i < T // 4:
+                    hx = hx.detach()
                 output.append(hx)
             output = torch.stack(output, dim=1)
             output = self.out(output)
-            if hasattr(self, "ln"):
-                output = self.ln(output)
             return output, einops.repeat(hx, "b h -> b t h", t=T)
 
 
@@ -206,7 +200,7 @@ class PPORNNPolicy(TensorDictModuleBase):
 
             def make_rnn(branch: str):
                 return TensorDictModule(
-                    GRU(256, self.cfg.hidden_size, self.cfg.skip_conn),
+                    GRU(256, self.cfg.hidden_size, allow_none=False),
                     ["feature", "is_init", f"{branch}_hx"],
                     ["feature", ("next", f"{branch}_hx")],
                 )
@@ -215,7 +209,7 @@ class PPORNNPolicy(TensorDictModuleBase):
 
             def make_rnn(branch: str):
                 return TensorDictModule(
-                    LSTM(256, self.cfg.hidden_size, self.cfg.skip_conn),
+                    LSTM(256, self.cfg.hidden_size, allow_none=False),
                     ["feature", "is_init", f"{branch}_hx", f"{branch}_cx"],
                     ["feature", ("next", f"{branch}_hx"), ("next", f"{branch}_cx")],
                 )

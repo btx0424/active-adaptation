@@ -141,8 +141,9 @@ class Action(AdaptationModule):
             loss = D.kl_divergence(pred_dist, target_dist)
         else:
             pred_dist = self.actor.get_dist(td)
-            pred_action = pred_dist.sample()
-            loss = pred_dist.log_prob(pred_action)-target_dist.log_prob(pred_action)
+            pred_action = pred_dist.rsample()
+            # loss = pred_dist.log_prob(pred_action)-target_dist.log_prob(pred_action)
+            loss = -target_dist.log_prob(pred_action)
         return loss
     
     def update(self, tensordict: TensorDictBase):
