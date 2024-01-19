@@ -46,6 +46,8 @@ from .common import GAE, Duplicate, Actor, make_mlp, make_batch
 from .adaptation import Action, Value, ActionValue, MSE
 from .ppo_rnn import GRU
 
+from active_adaptation.utils.wandb import parse_path
+
 make_mlp = functools.partial(make_mlp, activation=nn.Mish)
 
 OBS_KEY = "policy" # ("agents", "observation")
@@ -184,21 +186,6 @@ def make_state_estimator(arch: str, dim: int):
             TensorDictModule(gru, in_keys, out_keys),
         )
     return module
-
-
-def parse_path(path: Union[str, None]):
-    if path is None:
-        return None
-    elif isinstance(path, str):
-        if path.startswith("artifact:"):
-            import wandb
-            import os
-            api = wandb.Api()
-            artifact = api.artifact(path[9:])
-            dir_path = artifact.download()
-            checkpoint_path = os.path.join(dir_path, "checkpoint_final.pt")
-            return checkpoint_path
-        return path
 
 
 class PPORMAPolicy(TensorDictModuleBase):

@@ -27,6 +27,7 @@ import os
 
 import wandb
 from omegaconf import OmegaConf
+from typing import Union
 
 
 def dict_flatten(a: dict, delim="."):
@@ -84,3 +85,19 @@ def init_wandb(cfg):
     cfg_dict = dict_flatten(OmegaConf.to_container(cfg))
     run.config.update(cfg_dict)
     return run
+
+
+def parse_path(path: Union[str, None]):
+    if path is None:
+        return None
+    elif isinstance(path, str):
+        if path.startswith("artifact:"):
+            import wandb
+            import os
+            api = wandb.Api()
+            artifact = api.artifact(path[9:])
+            dir_path = artifact.download()
+            checkpoint_path = os.path.join(dir_path, "checkpoint_final.pt")
+            return checkpoint_path
+        return path
+

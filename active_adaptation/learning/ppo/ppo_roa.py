@@ -45,6 +45,8 @@ from ..modules.distributions import IndependentNormal
 from .common import GAE, Actor, make_mlp, make_batch
 from .ppo_rnn import GRU
 
+from active_adaptation.utils.wandb import parse_path
+
 OBS_KEY = "policy" # ("agents", "observation")
 OBS_PRIV_KEY = "priv"
 OBS_HIST_KEY = "policy_h"
@@ -123,10 +125,12 @@ class PPOROAPolicy(TensorDictModuleBase):
         self.encoder(fake_input)
         self.actor_critic(fake_input)
         self.adapt(fake_input)
+        self.value_norm = ValueNorm1(input_shape=1).to(self.device)
         
-        if self.cfg.checkpoint_path is not None:
-            state_dict = torch.load(self.cfg.checkpoint_path)
-            self.load_state_dict(state_dict, strict=False)
+        checkpoint_path = parse_path(self.cfg.checkpoint_path)
+        if checkpoint_path is not None:
+            state_dict = torch.load(checkpoint_path)
+            self.load_state_dict(state_dict, strict=True)
         else:
             def init_(module):
                 if isinstance(module, nn.Linear):
@@ -140,11 +144,12 @@ class PPOROAPolicy(TensorDictModuleBase):
             self.encoder.apply(init_)
             self.adapt.apply(init_)
 
-        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
-        self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=5e-4)
         self.adapt_opt = torch.optim.Adam(self.adapt.parameters())
-        self.encoder_opt = torch.optim.Adam(self.encoder.parameters(), lr=5e-4)
-        self.value_norm = ValueNorm1(input_shape=1).to(self.device)
+        self.opt = torch.optim.Adam([
+            {"params": self.actor.parameters()},
+            {"params": self.critic.parameters()},
+            {"params": self.encoder.parameters()},
+        ], lr=5e-4)
 
         self.mode = "expert"
         self.adaptation_loss = self.feature_mse
@@ -306,15 +311,11 @@ class PPOROAPolicy(TensorDictModuleBase):
             adapt_loss = torch.tensor(0., device=self.device)
             classifier_loss = torch.tensor(0., device=self.device)
             classifier_acc = torch.tensor(0., device=self.device)
-        self.actor_opt.zero_grad(set_to_none=True)
-        self.critic_opt.zero_grad(set_to_none=True)
-        self.encoder.zero_grad(set_to_none=True)
+        self.opt.zero_grad(set_to_none=True)
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.actor.parameters(), 10)
         critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 10)
-        self.actor_opt.step()
-        self.critic_opt.step()
-        self.encoder_opt.step()
+        self.opt.step()
         if self.train_adapt:
             self.adapt_opt.step()
             self.classifier_latent_opt.step()

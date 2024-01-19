@@ -96,6 +96,11 @@ def main(cfg):
     )
     
     pbar = tqdm(collector, total=total_frames//frames_per_batch)
+
+    env.eval()
+    if hasattr(collector.policy, "mode"):
+        collector.policy.mode = "adapt"
+    
     for i, data in enumerate(pbar):
         info = {}
         episode_stats.add(data)
