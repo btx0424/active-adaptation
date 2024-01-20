@@ -34,7 +34,7 @@ def main(cfg):
     
     app_launcher = AppLauncher(
         {"headless": cfg.headless, "offscreen_render": True},
-        experience=app_experience
+        # experience=app_experience
     )
     simulation_app = app_launcher.app
 

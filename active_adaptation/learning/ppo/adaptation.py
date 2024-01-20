@@ -95,7 +95,6 @@ class MSE(AdaptationModule):
         super().__init__()
         self.adaptation_module = adaptation_module
         self.keys = keys
-        self.opt = torch.optim.Adam(self.adaptation_module.parameters())
     
     def forward(self, tensordict: TensorDictBase, out: TensorDictBase, mean: bool=False):
         target = tensordict.select(*self.keys)
@@ -106,24 +105,21 @@ class MSE(AdaptationModule):
         ])
         if mean:
             loss = loss.mean()
-        out.set("adaptation_loss", loss)
+        out.set("adaptation_loss", loss.mean(-1))
         return out
 
 
 class Action(AdaptationModule):
     def __init__(
         self,
-        encoder: TensorDictModule,
         adaptation_module: TensorDictModule,
         actor: ProbabilisticActor,
         closed_kl: bool = False
     ) -> None:
         super().__init__()
-        self.encoder = encoder
         self.adaptation_module = adaptation_module
         self.actor = actor
         self.closed_kl = closed_kl
-        self.opt = torch.optim.Adam(self.adaptation_module.parameters())
     
     def forward(self, tensordict: TensorDictBase, out: TensorDictBase, mean: bool=False):
         target_dist = self.actor.get_dist(tensordict)
