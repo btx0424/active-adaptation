@@ -15,6 +15,7 @@ from torchrl.data import (
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
 
+from .mdp import BodyMasses, BodyMaterial, MotorParams, BodyInertias, MotorFailure
 
 class LocomotionV3(Env):
 
@@ -71,7 +72,6 @@ class LocomotionV3(Env):
                 self._flip_lr = torch.randn(self.num_envs, 1) > 0.
                 self._flip_fb = torch.randn(self.num_envs, 1) > 0.
 
-        from .mdp import BodyMasses, BodyMaterial, MotorParams, BodyInertias, MotorFailure
         self.randomizations = {
             "body_masses": BodyMasses(self, (0.7, 1.3), body_indices=torch.arange(19)),
             "payload_mass": BodyMasses(self, (0.01, 4.), body_indices=torch.tensor([19])),
@@ -294,6 +294,11 @@ class LocomotionV3(Env):
     def flip_fb(self):
         return self._flip_fb.float()
 
+    @observation_func
+    def motor_failure(self):
+        rand: MotorFailure = self.randomizations["motor_failure"]
+        return rand.motor_failure.reshape(self.num_envs, -1)
+    
     @reward_func
     def linvel_projection(self):
         linvel_w = self.robot.data.root_lin_vel_w

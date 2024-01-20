@@ -55,12 +55,15 @@ class MotorFailure(Randomization):
     
     def startup(self):
         self.motors: DCMotor = self.asset.actuators["base_legs"]
+        self.motor_failure = torch.zeros_like(self.motors.stiffness)
         
     def reset(self, env_ids: torch.Tensor):
+        self.motor_failure[env_ids] = 0.0
         with torch.device(self.env.device):
             env_ids = env_ids[torch.rand(len(env_ids)) < self.failure_prob]
             joint_id = self.joint_indices[torch.randint(0, len(self.joint_indices), env_ids.shape)]
         self.motors.stiffness[env_ids, joint_id] = 0.1
+        self.motor_failure[env_ids, joint_id] = 1.0
 
 
 class BodyMaterial(Randomization):

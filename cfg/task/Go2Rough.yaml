@@ -29,8 +29,13 @@ observation:
     # - "payload_inertia"
     - "flip_lr"
     - "flip_fb"
-  static_embed:
-    - "action_flip"
+    - "motor_failure"
+  # static_embed:
+  #   - "action_flip"
+  env:
+    - "motor_params"
+    - "payload_mass"
+    - "motor_failure"
 
 reward:
   linvel_exp: 1.0

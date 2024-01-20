@@ -173,3 +173,6 @@ artifacts/
 
 # local scripts
 *.sh
+scripts/*.png
+scripts/*.pt
+scripts/*.txt
