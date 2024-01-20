@@ -146,16 +146,16 @@ class PPODualPolicy(TensorDictModuleBase):
                 if isinstance(module, nn.Linear):
                     nn.init.orthogonal_(module.weight, 0.01)
                     nn.init.constant_(module.bias, 0.)
-                if isinstance(module, nn.Conv1d):
-                    nn.init.orthogonal_(module.weight, 0.01)
-                    nn.init.constant_(module.bias, 0.)
+                # if isinstance(module, nn.Conv1d):
+                #     nn.init.orthogonal_(module.weight, 0.01)
+                #     nn.init.constant_(module.bias, 0.)
             
             self.actor.apply(init_)
             self.critic.apply(init_)
             self.encoder.apply(init_)
             self.adapt.apply(init_)
 
-        self.adapt_opt = torch.optim.Adam(self.adapt.parameters())
+        self.adapt_opt = torch.optim.Adam(self.adapt.parameters(), lr=5e-4)
         self.classifier_opt = torch.optim.Adam(self.classifier.parameters(), lr=5e-4)
         self.opt = torch.optim.Adam([
             {"params": self.actor.parameters()},
@@ -171,8 +171,8 @@ class PPODualPolicy(TensorDictModuleBase):
         }[cfg.adaptation_loss]
 
         self.adaptation_start = 0.5
-        self.train_adaptation = True
-        self.train_classifier = True
+        self.train_adaptation = False
+        self.train_classifier = False
         self.adapt_ratio = 0.
         
         self.mode = "dual"
@@ -559,7 +559,7 @@ class PPODualPolicy(TensorDictModuleBase):
     #     return loss
     
     def feature_mse(self, tensordict: TensorDict):
-        pred = self.adapt(tensordict)[self.ADAPT_KEY]
+        pred = self.adapt(tensordict.to_tensordict())[self.ADAPT_KEY]
         target = tensordict[self.ADAPT_KEY].detach()
         loss = F.mse_loss(pred, target, reduction="none").mean(dim=-1, keepdim=True)
         return loss
