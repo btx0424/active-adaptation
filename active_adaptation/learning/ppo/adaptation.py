@@ -91,18 +91,15 @@ class AdaptationModule(Transform):
 
 
 class MSE(AdaptationModule):
-    def __init__(self, adaptation_module: TensorDictModule, keys: Sequence[str]):
+    def __init__(self, adaptation_module: TensorDictModule):
         super().__init__()
         self.adaptation_module = adaptation_module
-        self.keys = keys
     
     def forward(self, tensordict: TensorDictBase, out: TensorDictBase, mean: bool=False):
-        target = tensordict.select(*self.keys)
-        pred = self.adaptation_module(tensordict).select(*self.keys)
-        loss = sum([
-            F.mse_loss(pred[k], target[k], reduction="none") 
-            for k in self.keys
-        ])
+        loss = F.mse_loss(
+            self.adaptation_module(tensordict)["context_adapt"],
+            tensordict["context_expert"]
+        )
         if mean:
             loss = loss.mean()
         out.set("adaptation_loss", loss.mean(-1))
@@ -113,22 +110,25 @@ class Action(AdaptationModule):
     def __init__(
         self,
         adaptation_module: TensorDictModule,
-        actor: ProbabilisticActor,
+        actor_expert: ProbabilisticActor,
+        actor_adapt: ProbabilisticActor,
         closed_kl: bool = False
     ) -> None:
         super().__init__()
         self.adaptation_module = adaptation_module
-        self.actor = actor
+        self.actor_expert = actor_expert
+        self.actor_adapt = actor_adapt
         self.closed_kl = closed_kl
     
     def forward(self, tensordict: TensorDictBase, out: TensorDictBase, mean: bool=False):
-        target_dist = self.actor.get_dist(tensordict)
-        td = self.adaptation_module(tensordict)
+        target_dist = self.actor_expert.get_dist(tensordict)
+        self.adaptation_module(tensordict)
         if self.closed_kl:
-            pred_dist = self.actor.get_dist(td)
+            pred_dist = self.actor_adapt.get_dist(tensordict)
             loss = D.kl_divergence(pred_dist, target_dist)
+            # loss = D.kl_divergence(target_dist, pred_dist)
         else:
-            pred_dist = self.actor.get_dist(td)
+            pred_dist = self.actor_adapt.get_dist(tensordict)
             pred_action = pred_dist.rsample()
             # loss = pred_dist.log_prob(pred_action)-target_dist.log_prob(pred_action)
             loss = -target_dist.log_prob(pred_action)

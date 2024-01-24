@@ -23,15 +23,31 @@
 
 import torch
 import torch.nn as nn
-from tensordict import TensorDict
+import torch.nn.functional as F
+from tensordict import TensorDict, TensorDictBase
+from tensordict.nn import TensorDictModuleBase
+from torchrl.modules import ProbabilisticActor
 
 
-def make_mlp(num_units, activation=nn.Mish):
+OBS_KEY = "policy" # ("agents", "observation")
+OBS_PRIV_KEY = "priv"
+OBS_HIST_KEY = "policy_h"
+ACTION_KEY = "action" # ("agents", "action")
+REWARD_KEY = ("next", "reward") # ("agents", "reward")
+# DONE_KEY = ("next", "done")
+DONE_KEY = ("next", "terminated")
+
+
+def make_mlp(num_units, activation=nn.Mish, norm_first=False):
     layers = []
     for n in num_units:
         layers.append(nn.LazyLinear(n))
-        layers.append(activation())
-        layers.append(nn.LayerNorm(n))
+        if norm_first:
+            layers.append(nn.LayerNorm(n))
+            layers.append(activation())
+        else:
+            layers.append(activation())
+            layers.append(nn.LayerNorm(n))
     return nn.Sequential(*layers)
 
 
@@ -129,3 +145,45 @@ def init_(module):
     if isinstance(module, nn.Linear):
         nn.init.orthogonal_(module.weight, 0.01)
         nn.init.constant_(module.bias, 0.)
+
+
+def compute_policy_loss(
+    tensordict: TensorDictBase,
+    actor: ProbabilisticActor,
+    clip_param: float,
+    entropy_coef: float,
+):
+    dist = actor.get_dist(tensordict)
+    log_probs = dist.log_prob(tensordict[ACTION_KEY])
+    entropy = dist.entropy()
+
+    adv = tensordict["adv"]
+    ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
+    surr1 = adv * ratio
+    surr2 = adv * ratio.clamp(1. - clip_param, 1. + clip_param)
+    policy_loss = - torch.mean(torch.min(surr1, surr2)) * dist.event_shape[-1]
+    entropy_loss = - entropy_coef * torch.mean(entropy)
+    return policy_loss, entropy_loss, entropy.mean()
+
+
+def compute_value_loss(
+    tensordict: TensorDictBase, 
+    critic: TensorDictModuleBase,
+    clip_param: float,
+    critic_loss_fn: nn.Module,
+):
+    b_values = tensordict["state_value"]
+    b_returns = tensordict["ret"]
+    values = critic(tensordict)["state_value"]
+    values_clipped = b_values + (values - b_values).clamp(-clip_param, clip_param)
+    value_loss_clipped = critic_loss_fn(b_returns, values_clipped)
+    value_loss_original = critic_loss_fn(b_returns, values)
+    value_loss = torch.max(value_loss_original, value_loss_clipped)
+    explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
+
+    return value_loss, explained_var
+
+
+def hard_copy_(source_module: nn.Module, target_module: nn.Module):
+    for params_source, params_target in zip(source_module.parameters(), target_module.parameters()):
+        params_target.data.copy_(params_source.data)
