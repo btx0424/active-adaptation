@@ -100,6 +100,16 @@ class TConv(nn.Module):
         features = self.mlp(features)
         return features.reshape(*batch_shape, *features.shape[1:])
 
+class GRUModule(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+        self.mlp = make_mlp([128, 128])
+        self.gru = GRU(128, dim, allow_none=False)
+    
+    def forward(self, x, is_init, hx):
+        x = self.mlp(x)
+        x, hx = self.gru(x, is_init, hx)
+        return x, hx
 
 class FiLM(nn.Module):
     def __init__(self, feature_dim: int):
@@ -113,38 +123,47 @@ class FiLM(nn.Module):
         feature = self.act(w * feature + b) + feature
         return feature
 
+
 def make_adaptation_module(adapt_arch: str, dim: int):
     if adapt_arch == "tconv":
         def make(output_key: str):
             return TensorDictModule(TConv(dim), [OBS_HIST_KEY], [output_key])
     elif adapt_arch == "rnn":
         def make(output_key: str):
-            in_keys = [f"_rnn_{output_key}", "is_init", f"{output_key}_hx"]
+            in_keys = [OBS_KEY, "is_init", f"{output_key}_hx"]
             out_keys = [output_key, ("next", f"{output_key}_hx")]
-            gru = GRU(dim, dim, allow_none=True)
-            return TensorDictSequential(
-                TensorDictModule(nn.LazyLinear(dim), [OBS_KEY], [f"_rnn_{output_key}"]),
-                TensorDictModule(gru, in_keys, out_keys),
-            )
+            gru = GRUModule(dim)
+            return TensorDictModule(gru, in_keys, out_keys)
     else:
         raise NotImplementedError(adapt_arch)
-    module = TensorDictSequential(make("context_adapt"))
+    module = make("context_adapt")
     return module
 
 
 def make_state_estimator(arch: str, dim: int):
     if arch == "tconv":
-        module = nn.Sequential(TConv(dim), nn.LazyLinear(dim))
-        module = TensorDictModule(module, [OBS_HIST_KEY], [OBS_PRIV_KEY])
+        module = TensorDictModule(TConv(dim), [OBS_HIST_KEY], [OBS_PRIV_KEY])
     elif arch == "rnn":
-        in_keys = ["_rnn_feature", "is_init", "_hx"]
+        in_keys = [OBS_KEY, "is_init", "_hx"]
         out_keys = [OBS_PRIV_KEY, ("next", f"_hx")]
-        gru = GRU(dim, dim, allow_none=True)
-        return TensorDictSequential(
-            TensorDictModule(nn.LazyLinear(dim), [OBS_KEY], ["_rnn_feature"]),
-            TensorDictModule(gru, in_keys, out_keys),
-        )
+        gru = GRUModule(dim)
+        return TensorDictModule(gru, in_keys, out_keys)
     return module
+
+
+def condition(expert: bool, mode: str):
+    module = nn.Sequential(make_mlp([512]))
+    in_keys = ["_feature", "context_expert" if expert else "context_adapt"]
+    if mode == "cat":
+        return TensorDictSequential(
+            TensorDictModule(module, [OBS_KEY], ["_feature"]),
+            CatTensors(in_keys, "_feature", del_keys=False)
+        )
+    elif mode == "film":
+        return TensorDictSequential(
+            TensorDictModule(module, [OBS_KEY], ["_feature"]),
+            TensorDictModule(FiLM(256), in_keys, ["_feature"])
+        )
 
 
 class PPORMAPolicy(TensorDictModuleBase):
@@ -185,40 +204,9 @@ class PPORMAPolicy(TensorDictModuleBase):
             ["context_expert"]
         ).to(self.device)
 
-        def condition(expert: bool, mode: str):
-            module = nn.Sequential(make_mlp([512]))
-            in_keys = ["_feature", "context_expert" if expert else "context_adapt"]
-            if mode == "cat":
-                return TensorDictSequential(
-                    TensorDictModule(module, [OBS_KEY], ["_feature"]),
-                    CatTensors(in_keys, "_feature", del_keys=False)
-                )
-            elif mode == "film":
-                return TensorDictSequential(
-                    TensorDictModule(module, [OBS_KEY], ["_feature"]),
-                    TensorDictModule(FiLM(256), in_keys, ["_feature"])
-                )
-
         self.actor_expert: ProbabilisticActor = ProbabilisticActor(
             module=TensorDictSequential(
                 condition(expert=True, mode=cfg.condition_mode),
-                TensorDictModule(
-                    nn.Sequential(
-                        make_mlp([256, 256]), 
-                        Actor(self.action_dim, predict_std=cfg.predict_std)
-                    ), 
-                    ["_feature"], ["loc", "scale"]
-                )
-            ),
-            in_keys=["loc", "scale"],
-            out_keys=[ACTION_KEY],
-            distribution_class=IndependentNormal,
-            return_log_prob=True
-        ).to(self.device)
-
-        self.actor_adapt: ProbabilisticActor = ProbabilisticActor(
-            module=TensorDictSequential(
-                condition(expert=False, mode=cfg.condition_mode),
                 TensorDictModule(
                     nn.Sequential(
                         make_mlp([256, 256]), 
@@ -241,17 +229,9 @@ class PPORMAPolicy(TensorDictModuleBase):
                 ["_obs_critic"], ["state_value"]
             )
         ).to(self.device)
-        self.critic_adapt = TensorDictSequential(
-            CatTensors([OBS_KEY, OBS_PRIV_KEY], "_obs_critic", del_keys=False),
-            TensorDictModule(make_mlp([512, 256]), ["_obs_critic"], ["_feature_critic"]),
-            CatTensors(["context_adapt", "_feature_critic"], "_feature_critic", del_keys=False),
-            TensorDictModule(nn.Sequential(make_mlp([128]), nn.LazyLinear(1)), ["_feature_critic"], ["state_value"])
-        ).to(self.device)
         
         self.value_norm_expert = ValueNorm1(1).to(self.device)
-        self.value_norm_adapt = ValueNorm1(1).to(self.device)
 
-        self.adapt_module = make_adaptation_module(self.cfg.adapt_arch, 128).to(self.device)
         self.state_estimator = make_state_estimator(self.cfg.adapt_arch, observation_priv_dim).to(self.device)
         self.classifier = nn.Sequential(make_mlp([256, 128]), nn.LazyLinear(1)).to(self.device)
         # self.projection = nn.Sequential(make_mlp([256, 128]), nn.LazyLinear(64)).to(self.device)
@@ -259,12 +239,10 @@ class PPORMAPolicy(TensorDictModuleBase):
         self.encoder(fake_input)
         self.actor_expert(fake_input)
         self.critic_expert(fake_input)
+        self.classifier(torch.cat([fake_input[OBS_KEY], fake_input[ACTION_KEY]], dim=-1))
 
         if self.phase in ("adapt", "finetune"):
-
-            self.adapt_module(fake_input)
-            self.actor_adapt(fake_input)
-            self.critic_adapt(fake_input)
+            self.make_adapt_modules(fake_input)
 
         checkpoint_path = parse_path(self.cfg.checkpoint_path)
         if checkpoint_path is not None:
@@ -274,22 +252,9 @@ class PPORMAPolicy(TensorDictModuleBase):
             self.actor_expert.apply(init_)
             self.critic_expert.apply(init_)
             self.encoder.apply(init_)
-            self.critic_adapt.apply(init_)
         
         # initialize the adaptation actor
-        # hard_copy_(self.actor_expert, self.actor_adapt)
-
-        if self.cfg.adaptation_loss == "mse":
-            self.adaptation_loss = MSE(self.adapt_module).to(self.device)
-        elif self.cfg.adaptation_loss == "action_kl":
-            self.adaptation_loss = Action(
-                self.adapt_module,
-                self.actor_expert,
-                self.actor_adapt,
-                closed_kl=True
-            ).to(self.device)
-        else:
-            raise ValueError(self.cfg.adaptation_loss)
+        hard_copy_(self.actor_expert, self.actor_adapt)
         
         self.opt = torch.optim.Adam(
             [
@@ -299,16 +264,7 @@ class PPORMAPolicy(TensorDictModuleBase):
             ], 
             lr=cfg.lr
         )
-        self.adapt_opt = torch.optim.Adam(
-            [
-                {"params": self.adapt_module.parameters()},
-                {"params": self.actor_adapt.parameters()},
-                {"params": self.critic_adapt.parameters()},
-                {"params": self.classifier.parameters()},
-            ],
-            lr=cfg.lr,
-            fused=True
-        )
+        
         self.state_est_opt = torch.optim.Adam(self.state_estimator.parameters(), lr=cfg.lr)
 
         if cfg.adapt_arch == "rnn":
@@ -317,7 +273,7 @@ class PPORMAPolicy(TensorDictModuleBase):
             def make_tensordict_primer():
                 num_envs = observation_spec.shape[0]
                 return TensorDictPrimer({
-                    "context_hx": UnboundedContinuousTensorSpec((num_envs, 128))
+                    "context_adapt_hx": UnboundedContinuousTensorSpec((num_envs, 128))
                 })
             self.make_tensordict_primer = make_tensordict_primer
             self.make_batch = functools.partial(make_batch, seq_len=cfg.train_every)
@@ -326,6 +282,69 @@ class PPORMAPolicy(TensorDictModuleBase):
         
         self.train_contra = False
         self.exclude_keys = ["_obs_critic", "_feature", "_feature_critic"]
+
+    def make_adapt_modules(self, fake_input: TensorDictBase):
+        self.adapt_module = (
+            make_adaptation_module(self.cfg.adapt_arch, 128)
+            .to(self.device)
+        )
+
+        self.actor_adapt: ProbabilisticActor = ProbabilisticActor(
+            module=TensorDictSequential(
+                condition(expert=False, mode=self.cfg.condition_mode),
+                TensorDictModule(
+                    nn.Sequential(
+                        make_mlp([256, 256]), 
+                        Actor(self.action_dim, predict_std=self.cfg.predict_std)
+                    ), 
+                    ["_feature"], ["loc", "scale"]
+                )
+            ),
+            in_keys=["loc", "scale"],
+            out_keys=[ACTION_KEY],
+            distribution_class=IndependentNormal,
+            return_log_prob=True
+        ).to(self.device)
+
+        self.critic_adapt = TensorDictSequential(
+            CatTensors([OBS_KEY, OBS_PRIV_KEY], "_obs_critic", del_keys=False),
+            TensorDictModule(make_mlp([512, 256]), ["_obs_critic"], ["_feature_critic"]),
+            CatTensors(["context_adapt", "_feature_critic"], "_feature_critic", del_keys=False),
+            TensorDictModule(nn.Sequential(make_mlp([128]), nn.LazyLinear(1)), ["_feature_critic"], ["state_value"])
+        ).to(self.device)
+
+        self.value_norm_adapt = ValueNorm1(1).to(self.device)
+        
+        if self.cfg.adaptation_loss == "mse":
+            self.adaptation_loss = MSE(self.adapt_module).to(self.device)
+        elif self.cfg.adaptation_loss == "action_kl":
+            self.adaptation_loss = Action(
+                self.adapt_module,
+                self.actor_expert,
+                self.actor_adapt,
+                closed_kl=False
+            ).to(self.device)
+        else:
+            raise ValueError(self.cfg.adaptation_loss)
+        
+        if self.cfg.adapt_arch == "rnn":
+            fake_input["is_init"] = torch.ones(fake_input.shape[0], 1, dtype=torch.bool, device=self.device)
+            fake_input["context_adapt_hx"] = torch.zeros(fake_input.shape[0], 128, device=self.device)
+        self.adapt_module(fake_input)
+        self.actor_adapt(fake_input)
+        self.critic_adapt(fake_input)
+        self.critic_adapt.apply(init_)
+        
+        self.adapt_opt = torch.optim.Adam(
+            [
+                {"params": self.adapt_module.parameters()},
+                {"params": self.actor_adapt.parameters()},
+                {"params": self.critic_adapt.parameters()},
+                {"params": self.classifier.parameters()},
+            ],
+            lr=self.cfg.lr,
+            fused=True
+        )
 
     @property
     def phase(self):
@@ -347,10 +366,13 @@ class PPORMAPolicy(TensorDictModuleBase):
         self._phase = value
 
     def forward(self, tensordict: TensorDict):
+        self.encoder(tensordict)
         if self.phase == "train":
-            self.actor_expert(self.encoder(tensordict))
+            self.actor_expert(tensordict)
         else:
-            self.actor_adapt(self.adapt_module(tensordict))
+            self.adapt_module(tensordict)
+            self.actor_adapt(tensordict)
+            # self.adaptation_loss(tensordict, tensordict)
         tensordict.exclude(*self.exclude_keys, inplace=True)
         return tensordict
 
@@ -358,7 +380,10 @@ class PPORMAPolicy(TensorDictModuleBase):
         info = {}
         tensordict = tensordict.to_tensordict()
         if self.train_policy:
-            with hold_out_net(self.adapt_module):
+            if hasattr(self, "adapt_module"):
+                with hold_out_net(self.adapt_module):
+                    info.update(self._train_policy(tensordict))
+            else:
                 info.update(self._train_policy(tensordict))
         if self.train_adapt:
             with (
@@ -434,13 +459,11 @@ class PPORMAPolicy(TensorDictModuleBase):
         )
 
         loss = policy_loss + entropy_loss + value_loss
-        self.opt.zero_grad(set_to_none=True)
-        self.adapt_opt.zero_grad(set_to_none=True)
+        opt.zero_grad(set_to_none=True)
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad.clip_grad_norm_(actor.parameters(), 10)
         critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(critic.parameters(), 10)
-        self.opt.step()
-        self.adapt_opt.step()
+        opt.step()
 
         return TensorDict({
             "policy_loss": policy_loss,
@@ -459,21 +482,21 @@ class PPORMAPolicy(TensorDictModuleBase):
             self.adapt_module(tensordict["next"])
             tensordict.set("action_expert", tensordict[ACTION_KEY])
 
-        # assert "context_adapt" in tensordict.keys()
-        # assert "context_adapt" in tensordict["next"].keys()
-        # self._compute_advantage(tensordict, self.critic_adapt, self.value_norm_adapt)
+        assert "context_adapt" in tensordict.keys()
+        assert "context_adapt" in tensordict["next"].keys()
+        self._compute_advantage(tensordict, self.critic_adapt, self.value_norm_adapt)
 
         infos = []
         for epoch in range(4):
             for batch in self.make_batch(tensordict, 8):
                 losses = TensorDict({}, [])
                 self.adaptation_loss(batch, losses, mean=True)
-                # value_loss, explained_var = compute_value_loss(
-                #     batch, 
-                #     self.critic_adapt, 
-                #     self.clip_param, 
-                #     self.critic_loss_fn
-                # )
+                value_loss, explained_var = compute_value_loss(
+                    batch, 
+                    self.critic_adapt, 
+                    self.clip_param, 
+                    self.critic_loss_fn
+                )
                 
                 action_expert = batch["action_expert"]
                 with torch.no_grad():
@@ -485,13 +508,13 @@ class PPORMAPolicy(TensorDictModuleBase):
                 )
 
                 losses["classifier_loss"] = classifier_loss
-                # losses["value_loss"] = value_loss
+                losses["value_loss"] = value_loss
                 loss = sum(losses.values())
                 self.adapt_opt.zero_grad()
                 loss.backward()
                 self.adapt_opt.step()
 
-                # losses["explained_var"] = explained_var
+                losses["explained_var"] = explained_var
                 losses["classifier_acc"] = classifier_acc
                 losses["classifier_kl"] = kl
                 infos.append(losses)
@@ -538,7 +561,7 @@ def compute_classifier_loss(classifier, true_input, false_input):
         F.binary_cross_entropy_with_logits(true, torch.ones_like(true))
         + F.binary_cross_entropy_with_logits(false, torch.zeros_like(false))
     )
-    acc = ((true > 0.).sum() + (false < 0.).sum()) / (true.shape[0] + false.shape[0])
+    acc = ((true > 0.).sum() + (false < 0.).sum()) / (true.numel() + false.numel())
     kl = true.sigmoid().log() - (1.-true).sigmoid().log()
     return loss, acc, kl.mean()
 

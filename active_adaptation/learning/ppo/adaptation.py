@@ -96,10 +96,10 @@ class MSE(AdaptationModule):
         self.adaptation_module = adaptation_module
     
     def forward(self, tensordict: TensorDictBase, out: TensorDictBase, mean: bool=False):
-        loss = F.mse_loss(
-            self.adaptation_module(tensordict)["context_adapt"],
-            tensordict["context_expert"]
-        )
+        self.adaptation_module(tensordict)
+        pred = tensordict["context_adapt"]
+        target = tensordict["context_expert"]
+        loss = F.mse_loss(pred, target, reduction="none")
         if mean:
             loss = loss.mean()
         out.set("adaptation_loss", loss.mean(-1))
@@ -130,8 +130,8 @@ class Action(AdaptationModule):
         else:
             pred_dist = self.actor_adapt.get_dist(tensordict)
             pred_action = pred_dist.rsample()
-            # loss = pred_dist.log_prob(pred_action)-target_dist.log_prob(pred_action)
-            loss = -target_dist.log_prob(pred_action)
+            loss = pred_dist.log_prob(pred_action)-target_dist.log_prob(pred_action)
+            # loss = -target_dist.log_prob(pred_action)
         if mean:
             loss = loss.mean()
         out.set("adaptation_loss", loss)
