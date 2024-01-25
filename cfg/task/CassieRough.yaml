@@ -1,24 +1,26 @@
-name: Go2Rough
-task: Quadruped
+name: CassieRough
+task: Biped
 
 defaults:
   # see https://hydra.cc/docs/advanced/overriding_packages/
   - /task/Velocity@_here_
   - _self_
 
-robot: go2
+robot: cassie
 terrain: easy
-payload: true
+payload: false
 
 observation:
   policy:
     - "command"
+    - "root_linvel_b"
+    - "joint_vel"
     - "root_quat_w"
     - "root_angvel_b"
     - "projected_gravity_b"
     - "joint_pos"
     - "prev_actions"
-    # - "motor_params"
+    - "motor_params"
   priv:
     - "joint_vel"
     # - "joint_acc"
@@ -29,15 +31,12 @@ observation:
     # - "contact_forces"
     # - "payload_mass"
     # - "payload_inertia"
-    - "flip_lr"
-    - "flip_fb"
-    - "motor_failure"
   # static_embed:
   #   - "action_flip"
-  env:
-    - "motor_params"
-    - "payload_mass"
-    - "motor_failure"
+  # env:
+  #   - "motor_params"
+  #   - "payload_mass"
+  #   - "motor_failure"
 
 reward:
   linvel_exp: 1.0
@@ -46,7 +45,7 @@ reward:
   base_height: 0.5
   linvel_z_l2: 4.0
   energy_l1: 0.0001
-  joint_acc_l2: 2.5e-7
+  joint_acc_l2: 5e-7
   stand: 0.5
   orientation: 0.5
   survival: 0.5

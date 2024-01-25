@@ -8,11 +8,12 @@ from omni.isaac.orbit_assets import (
     UNITREE_GO1_CFG,
     UNITREE_GO2_CFG,
     ANYMAL_C_CFG,
+    cassie
 )
-from .cassie import CASSIE_CFG
 
 from omni.isaac.orbit.sim.utils import bind_physics_material, clone
 from omni.isaac.orbit.sim.spawners.from_files.from_files import _spawn_from_usd_file
+from omni.isaac.orbit.actuators import ImplicitActuatorCfg
 
 from omni.isaac.core.materials import PhysicsMaterial
 from pxr import PhysxSchema
@@ -47,3 +48,13 @@ def spawn_with_payload(
 UNITREE_A1_CFG = copy.deepcopy(UNITREE_A1_CFG)
 UNITREE_GO1_CFG = copy.deepcopy(UNITREE_GO1_CFG)
 UNITREE_GO2_CFG = copy.deepcopy(UNITREE_GO2_CFG)
+CASSIE_CFG = copy.deepcopy(cassie.CASSIE_CFG)
+
+UNITREE_GO1M_CFG = copy.deepcopy(UNITREE_A1_CFG)
+UNITREE_GO1M_CFG.spawn.usd_path = ""
+UNITREE_GO1M_CFG.actuators["arm"] = ImplicitActuatorCfg(
+    joint_names_expr=[],
+    stiffness=80.0,
+    velocity_limit=2.0,
+    damping=4.0
+)

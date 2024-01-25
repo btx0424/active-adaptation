@@ -15,9 +15,9 @@ from torchrl.data import (
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
 
-from .mdp import BodyMasses, BodyMaterial, MotorParams, BodyInertias, MotorFailure
+from .mdp import BodyMasses, BodyMaterial, MotorParams, BodyInertias, MotorFailure, CommandManager
 
-class LocomotionV3(Env):
+class Quadruped(Env):
 
     def __init__(self, cfg):
         super().__init__(cfg)
@@ -56,13 +56,9 @@ class LocomotionV3(Env):
         ).norm(dim=-1).argmin()
 
         self.target_base_height = self.cfg.target_base_height
+        self.command_manager = CommandManager(self)
 
         with torch.device(self.device):
-            self._command_stand = torch.zeros(self.num_envs, 1)
-            self._command_linvel = torch.zeros(self.num_envs, 3)
-            self._command_yaw = torch.zeros(self.num_envs)
-            self._command_heading = torch.zeros(self.num_envs, 3)
-            self._command_speed = torch.zeros(self.num_envs, 1)
             # self.action_scale = torch.ones(self.num_envs, 1)
             self.action_alpha = torch.ones(self.num_envs, 1)
             self._actions_t = torch.zeros(self.num_envs, 12)
@@ -77,7 +73,7 @@ class LocomotionV3(Env):
             "payload_mass": BodyMasses(self, (0.01, 4.), body_indices=torch.tensor([19])),
             "payload_inertia": BodyInertias(self, (0.01, 4.0), body_indices=torch.tensor([19])),
             "body_material": BodyMaterial(self, self.foot_indices, (0.6, 2.0), (0.6, 2.0)),
-            "motor_params": MotorParams(self, (0.7, 1.3), (0.6, 1.4)),
+            "motor_params": MotorParams(self, "base_legs", (0.7, 1.3), (0.6, 1.4)),
             "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.2),
         }
         for _, randomization in self.randomizations.items():
@@ -135,7 +131,7 @@ class LocomotionV3(Env):
         for _, randomization in self.randomizations.items():
             randomization.reset(env_ids)
         
-        self._sample_commands(env_ids=env_ids)
+        self.command_manager.reset(env_ids=env_ids)
     
     def _update(self):
         super()._update()
@@ -143,9 +139,8 @@ class LocomotionV3(Env):
             (self.episode_length_buf % self.resample_interval == 0)
             & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
         )
-        self._sample_commands(should_resample.nonzero().squeeze(-1))
-        self._update_commands()
-
+        self.command_manager.update(resample=should_resample.nonzero().squeeze(-1))
+        
         if self.sim.has_gui() and hasattr(self, "debug_draw"):
             self.debug_draw.clear()
             robot_pos = (
@@ -155,12 +150,12 @@ class LocomotionV3(Env):
             self.debug_draw.clear()
             self.debug_draw.vector(
                 robot_pos, 
-                self._command_linvel,                
+                self.command_manager._command_linvel,                
                 color=(1., 1., 1., 1.)
             )
             self.debug_draw.vector(
                 robot_pos,
-                self._command_heading,
+                self.command_manager._command_heading,
                 color=(.2, .2, 1., 1.)
             )
             self.debug_draw.vector(
@@ -190,8 +185,8 @@ class LocomotionV3(Env):
     @observation_func
     def command(self):
         quat_w = self.robot.data.root_quat_w
-        command_linvel = quat_rotate_inverse(quat_w, self._command_linvel)
-        command_heading = quat_rotate_inverse(quat_w, self._command_heading)
+        command_linvel = quat_rotate_inverse(quat_w, self.command_manager._command_linvel)
+        command_heading = quat_rotate_inverse(quat_w, self.command_manager._command_heading)
         return torch.cat([command_linvel, command_heading], dim=-1)
     
     @observation_func
@@ -235,7 +230,7 @@ class LocomotionV3(Env):
     @observation_func
     def contact_forces(self):
         forces = self.contact_sensor.data.net_forces_w_history[:, :, self.foot_indices].mean(dim=1)
-        return forces * self.step_dt
+        return (forces * self.step_dt).reshape(self.num_envs, -1)
         forces_norm = forces.norm(dim=-1, keepdim=True)
         return (forces / forces_norm.clamp_min(1e-6) * symlog(forces_norm)).reshape(self.num_envs, -1)
     
@@ -257,8 +252,8 @@ class LocomotionV3(Env):
     @observation_func
     def motor_params(self):
         motor: DCMotor = self.robot.actuators["base_legs"]
-        stiffness = motor.stiffness / 30.
-        damping = motor.damping / 0.5
+        stiffness = (motor.stiffness / 30.) * 2. - 1.
+        damping = (motor.damping / 0.5) * 2. - 1.
         return torch.cat([damping, stiffness], dim=-1).reshape(self.num_envs, -1)
 
     @observation_func
@@ -302,12 +297,16 @@ class LocomotionV3(Env):
     @reward_func
     def linvel_projection(self):
         linvel_w = self.robot.data.root_lin_vel_w
-        return (linvel_w * self._command_linvel).sum(dim=1, keepdim=True).clamp_max(self._command_speed)
+        return (
+            (linvel_w * self.command_manager._command_linvel)
+            .sum(dim=1, keepdim=True)
+            .clamp_max(self.command_manager._command_speed)
+        )
     
     @reward_func
     def linvel_exp(self):
         linvel_w = self.robot.data.root_lin_vel_w
-        linvel_error = square_norm(linvel_w - self._command_linvel)
+        linvel_error = square_norm(linvel_w - self.command_manager._command_linvel)
         return 1. / (1. + linvel_error / 0.25)
     
     @reward_func
@@ -317,7 +316,7 @@ class LocomotionV3(Env):
     @reward_func
     def heading(self):
         root_quat = self.robot.data.root_quat_w
-        heading_b_x = quat_rotate_inverse(root_quat, self._command_heading)[:, [0]]
+        heading_b_x = quat_rotate_inverse(root_quat, self.command_manager._command_heading)[:, [0]]
         return 0.5 * (heading_b_x + heading_b_x.sign() * heading_b_x.square())
     
     @reward_func
@@ -383,7 +382,7 @@ class LocomotionV3(Env):
         jpos_error = square_norm(self.robot.data.joint_pos - self.robot.data.default_joint_pos)
         front_symmetry = self._feet_pos_b[:, [0, 1], 1].sum(dim=1, keepdim=True).abs()
         back_symmetry = self._feet_pos_b[:, [2, 3], 1].sum(dim=1, keepdim=True).abs()
-        cost = - (jpos_error + front_symmetry + back_symmetry) * self._command_stand
+        cost = - (jpos_error + front_symmetry + back_symmetry) * self.command_manager._command_stand
         return cost
 
     @termination_func
@@ -393,25 +392,6 @@ class LocomotionV3(Env):
         undesired_contact = (contact_forces.norm(dim=-1) > 1.).any(dim=1)
         terminated = (fall_over | undesired_contact).unsqueeze(1)
         return terminated
-
-    def _update_commands(self):
-        self._command_heading[:, 0] = self._command_yaw.cos()
-        self._command_heading[:, 1] = self._command_yaw.sin()
-        self._command_heading[:, 2] = 0.
-
-    def _sample_commands(self, env_ids):
-        a = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
-        stand = torch.rand(len(env_ids), device=self.device) < 0.2
-        speed = torch.zeros(len(env_ids), device=self.device).uniform_(0.5, 2.0)
-        speed = speed * (~stand).float()
-        
-        self._command_stand[env_ids] = stand.float().unsqueeze(1)
-        self._command_speed[env_ids] = speed.unsqueeze(1)
-        self._command_linvel[env_ids, 0] = speed * a.cos()
-        self._command_linvel[env_ids, 1] = speed * a.sin()
-        
-        yaw = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
-        self._command_yaw[env_ids] = yaw
 
 
 def random_scale(x: torch.Tensor, low: float, high: float):

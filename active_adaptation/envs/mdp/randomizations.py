@@ -1,7 +1,7 @@
 import torch
 from omni.isaac.orbit.assets import Articulation
-from omni.isaac.orbit.actuators import DCMotor
-
+from omni.isaac.orbit.actuators import DCMotor, ImplicitActuator
+from typing import Union
 import logging
 
 class Randomization:
@@ -18,27 +18,30 @@ class Randomization:
 class MotorParams(Randomization):
     def __init__(
         self, 
-        env, 
+        env,
+        actuator_name,
         stiffness_range = (0.7, 1.3),
         damping_range = (0.7, 1.3)
     ):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
+        self.actuator_name = actuator_name
         self.stiffness_range = stiffness_range
         self.damping_range = damping_range
+        self.motors: Union[DCMotor, ImplicitActuator] = self.asset.actuators[self.actuator_name]
     
     def startup(self):
-        self.motors: DCMotor = self.asset.actuators["base_legs"]
         self.default_stiffness = self.motors.stiffness.clone()
         self.default_damping = self.motors.damping.clone()
         
     def reset(self, env_ids: torch.Tensor):
-        self.motors.stiffness[env_ids] = random_scale(
-            self.default_stiffness[env_ids], *self.stiffness_range
-        )
-        self.motors.damping[env_ids] = random_scale(
-            self.default_damping[env_ids], *self.damping_range
-        )
+        stiffness = random_scale(self.default_stiffness[env_ids], *self.stiffness_range)
+        damping = random_scale(self.default_damping[env_ids], *self.damping_range)
+        self.motors.stiffness[env_ids] = stiffness
+        self.motors.damping[env_ids] = damping
+        if isinstance(self.motors, ImplicitActuator):
+            self.asset.write_joint_stiffness_to_sim(self.motors.stiffness, self.motors.joint_indices)
+            self.asset.write_joint_damping_to_sim(self.motors.damping, self.motors.joint_indices)
 
 
 class MotorFailure(Randomization):
@@ -185,6 +188,43 @@ class JointFriction(Randomization):
             indices=self.asset._ALL_INDICES.cpu()
         )
         
+
+class CommandManager:
+    def __init__(self, env, speed_range=(0.5, 2.0)):
+        self.env = env
+        self.device = env.device
+        self.speed_range = speed_range
+
+        with torch.device(env.device):
+            self._command_stand = torch.zeros(env.num_envs, 1)
+            self._command_linvel = torch.zeros(env.num_envs, 3)
+            self._command_yaw = torch.zeros(env.num_envs)
+            self._command_heading = torch.zeros(env.num_envs, 3)
+            self._command_speed = torch.zeros(env.num_envs, 1)
+
+    def reset(self, env_ids: torch.Tensor):
+        self.sample_commands(env_ids)
+
+    def update(self, resample: torch.Tensor=None):
+        if resample is not None:
+            self.sample_commands(resample)
+        self._command_heading[:, 0] = self._command_yaw.cos()
+        self._command_heading[:, 1] = self._command_yaw.sin()
+        self._command_heading[:, 2] = 0.
+
+    def sample_commands(self, env_ids: torch.Tensor):
+        a = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
+        stand = torch.rand(len(env_ids), device=self.device) < 0.2
+        speed = torch.zeros(len(env_ids), device=self.device).uniform_(*self.speed_range)
+        speed = speed * (~stand).float()
+        
+        self._command_stand[env_ids] = stand.float().unsqueeze(1)
+        self._command_speed[env_ids] = speed.unsqueeze(1)
+        self._command_linvel[env_ids, 0] = speed * a.cos()
+        self._command_linvel[env_ids, 1] = speed * a.sin()
+        
+        yaw = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
+        self._command_yaw[env_ids] = yaw
 
 def random_scale(x: torch.Tensor, low: float, high: float):
     return x * (torch.rand_like(x) * (high - low) + low)

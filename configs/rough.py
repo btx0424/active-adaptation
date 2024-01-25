@@ -198,9 +198,11 @@ def LocomotionEnvCfg(task_cfg):
     robot_cfg = {
         "a1": UNITREE_A1_CFG,
         "go2": UNITREE_GO2_CFG,
+        "cassie": CASSIE_CFG,
     }[task_cfg.robot.lower()]
 
-    robot_cfg.actuators["base_legs"].friction = 0.02
+    for key, actuator in robot_cfg.actuators.items():
+        actuator.friction = 0.02
 
     if task_cfg.terrain == "plane":
         terrain_cfg = FLAT_TERRAIN_CFG
