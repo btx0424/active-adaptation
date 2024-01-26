@@ -70,7 +70,7 @@ class Biped(Env):
         self.randomizations = {
             "body_masses": BodyMasses(self, (0.7, 1.3), body_indices=torch.arange(13)),
             "body_material": BodyMaterial(self, self.foot_indices, (0.6, 2.0), (0.6, 2.0)),
-            "motor_params": MotorParams(self, "legs", (0.6, 1.4), (0.6, 1.4)),
+            "motor_params": MotorParams(self, "legs", (0.6, 1.4), (0.6, 1.4), homogeneous=True),
         }
         for _, randomization in self.randomizations.items():
             randomization.startup()
@@ -244,8 +244,8 @@ class Biped(Env):
     @observation_func
     def motor_params(self):
         rand: MotorParams = self.randomizations["motor_params"]
-        stiffness = (rand.motors.stiffness / rand.default_stiffness) - 1.
-        damping = (rand.motors.damping / rand.default_damping) - 1.
+        stiffness = rand.randomized_stiffness - 1.
+        damping = rand.randomized_damping - 1.
         return torch.cat([damping, stiffness], dim=-1).reshape(self.num_envs, -1)
 
     @observation_func
