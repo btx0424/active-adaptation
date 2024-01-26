@@ -38,16 +38,19 @@ REWARD_KEY = ("next", "reward") # ("agents", "reward")
 DONE_KEY = ("next", "terminated")
 
 
-def make_mlp(num_units, activation=nn.Mish, norm_first=False):
+def make_mlp(num_units, activation=nn.Mish, norm="before"):
+    assert norm in ("before", "after", None)
     layers = []
     for n in num_units:
         layers.append(nn.LazyLinear(n))
-        if norm_first:
+        if norm == "before":
             layers.append(nn.LayerNorm(n))
             layers.append(activation())
+        elif norm == "after":
+            layers.append(activation())
+            layers.append(nn.LayerNorm(n))
         else:
             layers.append(activation())
-            layers.append(nn.LayerNorm(n))
     return nn.Sequential(*layers)
 
 

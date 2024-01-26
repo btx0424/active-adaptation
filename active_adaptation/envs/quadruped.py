@@ -21,7 +21,7 @@ class Quadruped(Env):
 
     def __init__(self, cfg):
         super().__init__(cfg)
-        self.permute_actions = True
+        self.permute_actions = False
         self.action_scaling = 0.5
 
         self.robot = self.scene.articulations["robot"]
@@ -172,7 +172,7 @@ class Quadruped(Env):
 
             self._actions_tm2[:] = self._actions_tm1
             self._actions_tm1[:] = self._actions_t
-            self._actions_t.lerp_(actions, self.action_alpha)
+            # self._actions_t.lerp_(actions, self.action_alpha)
 
             if self.permute_actions:
                 actions = torch.where(self._flip_lr, flip_lr(actions), actions)
@@ -251,9 +251,9 @@ class Quadruped(Env):
     
     @observation_func
     def motor_params(self):
-        motor: DCMotor = self.robot.actuators["base_legs"]
-        stiffness = (motor.stiffness / 30.) * 2. - 1.
-        damping = (motor.damping / 0.5) * 2. - 1.
+        rand: MotorParams = self.randomizations["motor_params"]
+        stiffness = rand.randomized_stiffness - 1.
+        damping = rand.randomized_damping - 1.
         return torch.cat([damping, stiffness], dim=-1).reshape(self.num_envs, -1)
 
     @observation_func
@@ -384,6 +384,10 @@ class Quadruped(Env):
         back_symmetry = self._feet_pos_b[:, [2, 3], 1].sum(dim=1, keepdim=True).abs()
         cost = - (jpos_error + front_symmetry + back_symmetry) * self.command_manager._command_stand
         return cost
+
+    @reward_func
+    def feet_air_time(self):
+        return (self.contact_sensor.data.current_air_time[:, self.foot_indices] > 0.1).sum(-1, True)
 
     @termination_func
     def crash(self):

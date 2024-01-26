@@ -81,7 +81,7 @@ class PPOPolicy(TensorDictModuleBase):
 
         self.entropy_coef = 0.001
         self.clip_param = 0.1
-        self.critic_loss_fn = nn.HuberLoss(delta=10)
+        self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(0.99, 0.95)
 
@@ -195,7 +195,7 @@ class PPOPolicy(TensorDictModuleBase):
         )
         value_loss_clipped = self.critic_loss_fn(b_returns, values_clipped)
         value_loss_original = self.critic_loss_fn(b_returns, values)
-        value_loss = torch.max(value_loss_original, value_loss_clipped)
+        value_loss = torch.max(value_loss_original, value_loss_clipped).mean()
 
         loss = policy_loss + entropy_loss + value_loss
         self.opt.zero_grad()
