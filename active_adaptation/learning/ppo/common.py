@@ -179,10 +179,10 @@ def compute_value_loss(
     b_returns = tensordict["ret"]
     values = critic(tensordict)["state_value"]
     values_clipped = b_values + (values - b_values).clamp(-clip_param, clip_param)
-    value_loss_clipped = critic_loss_fn(b_returns, values_clipped)
-    value_loss_original = critic_loss_fn(b_returns, values)
-    value_loss = torch.max(value_loss_original, value_loss_clipped)
-    explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
+    value_loss_clipped = F.mse_loss(b_returns, values_clipped)
+    value_loss_original = F.mse_loss(b_returns, values)
+    value_loss = torch.max(value_loss_original, value_loss_clipped).mean()
+    explained_var = 1 - value_loss_original.detach() / b_returns.var()
 
     return value_loss, explained_var
 
@@ -190,3 +190,7 @@ def compute_value_loss(
 def hard_copy_(source_module: nn.Module, target_module: nn.Module):
     for params_source, params_target in zip(source_module.parameters(), target_module.parameters()):
         params_target.data.copy_(params_source.data)
+
+def soft_copy_(source_module: nn.Module, target_module: nn.Module, tau: float = 0.01):
+    for params_source, params_target in zip(source_module.parameters(), target_module.parameters()):
+        params_target.data.lerp_(params_source.data, tau)
