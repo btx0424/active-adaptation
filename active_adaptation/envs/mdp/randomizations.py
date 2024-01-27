@@ -80,6 +80,7 @@ class MotorFailure(Randomization):
             env_ids = env_ids[torch.rand(len(env_ids)) < self.failure_prob]
             joint_id = self.joint_indices[torch.randint(0, len(self.joint_indices), env_ids.shape)]
         self.motors.stiffness[env_ids, joint_id] = 0.1
+        self.motors.damping[env_ids, joint_id] = 0.1
         self.motor_failure[env_ids, joint_id] = 1.0
 
 

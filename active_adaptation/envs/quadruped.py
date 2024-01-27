@@ -16,6 +16,7 @@ quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
 
 from .mdp import BodyMasses, BodyMaterial, MotorParams, BodyInertias, MotorFailure, CommandManager
+from collections import OrderedDict
 
 class Quadruped(Env):
 
@@ -68,14 +69,14 @@ class Quadruped(Env):
                 self._flip_lr = torch.randn(self.num_envs, 1) > 0.
                 self._flip_fb = torch.randn(self.num_envs, 1) > 0.
 
-        self.randomizations = {
+        self.randomizations = OrderedDict({
             "body_masses": BodyMasses(self, (0.7, 1.3), body_indices=torch.arange(19)),
             "payload_mass": BodyMasses(self, (0.01, 4.), body_indices=torch.tensor([19])),
             "payload_inertia": BodyInertias(self, (0.01, 4.0), body_indices=torch.tensor([19])),
             "body_material": BodyMaterial(self, self.foot_indices, (0.6, 2.0), (0.6, 2.0)),
             "motor_params": MotorParams(self, "base_legs", (0.7, 1.3), (0.6, 1.4)),
             "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.2),
-        }
+        })
         for _, randomization in self.randomizations.items():
             randomization.startup()
         self.sim.physics_sim_view.flush()
