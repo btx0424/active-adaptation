@@ -22,7 +22,7 @@ from helpers import EpisodeStats, Every
 import os
 import time
 
-@hydra.main(config_path="../cfg", config_name="eval")
+@hydra.main(config_path="../cfg", config_name="eval", version_base=None)
 def main(cfg):
     OmegaConf.resolve(cfg)
 
@@ -130,7 +130,15 @@ def main(cfg):
             k: take_first_episode(v)
             for k, v in trajs[("next", "stats")].cpu().items()
         }
-
+        if "adaptation_loss" in trajs.keys():
+            adaptation_loss = einops.rearrange(trajs["adaptation_loss"], "n t 1-> n 1 t")
+            kernel = torch.linspace(0, 1, 15).reshape(1, 1, -1)
+            kernel = kernel / kernel.sum()
+            adaptation_loss = torch.conv1d(adaptation_loss, kernel, padding=kernel.shape[-1]//2)
+            adaptation_loss = take_first_episode(adaptation_loss.squeeze())
+        else:
+            adaptation_loss = torch.zeros_like(traj_stats["episode_len"])
+        
         info = {
             "eval/stats." + k: torch.mean(v.float()).item() 
             for k, v in traj_stats.items()
@@ -152,12 +160,26 @@ def main(cfg):
         axes[0].hist(traj_stats["return"])
         axes[1].hist(traj_stats["episode_len"])
         fig.tight_layout()
-        path = os.path.join(os.path.dirname(__file__), "plot.png")
+        path = os.path.join(os.path.dirname(__file__), "hist.png")
         fig.savefig(path)
 
+        fig, axes = plt.subplots(
+            2, 2, figsize=(8, 8), sharex=True,
+            gridspec_kw={"height_ratios": [1, 4], "width_ratios": [4, 1]}
+        )
+        axes[0, 0].hist(traj_stats["return"])
+        axes[1, 0].scatter(traj_stats["return"], adaptation_loss)
+        axes[1, 0].set_xlabel("return")
+        axes[1, 0].set_ylabel("adaptation_loss")
+        axes[1, 1].hist(adaptation_loss, orientation="horizontal")
+        fig.tight_layout()
+        path = os.path.join(os.path.dirname(__file__), "scatter.png")
+        fig.savefig(path)
+
+        info["eval/success"] = (traj_stats["episode_len"] > base_env.max_episode_length * 0.9).float().mean().item()
         return info
     
-    info = evaluate(render=False)
+    info = evaluate(render=False, seed=cfg.seed)
     print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, float)}))
     
     base_env.close()

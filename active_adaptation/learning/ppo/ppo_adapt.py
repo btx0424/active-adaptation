@@ -36,8 +36,13 @@ from torchrl.envs.transforms.transforms import TensorDictPrimer
 from torchrl.data import UnboundedContinuousTensorSpec
 
 from tensordict import TensorDict, TensorDictBase
-from tensordict.nn import TensorDictModule, TensorDictSequential, TensorDictModuleBase
-
+from tensordict.nn import (
+    TensorDictModule, 
+    TensorDictSequential, 
+    TensorDictModuleBase,
+    ProbabilisticTensorDictSequential,
+    ProbabilisticTensorDictModule
+)
 from hydra.core.config_store import ConfigStore
 from dataclasses import dataclass, MISSING
 from typing import Any, Mapping, Union, Sequence
@@ -66,6 +71,7 @@ class PPOConfig:
     checkpoint_path: Union[str, None] = None
     phase: str = "train"
     condition_mode: str = "cat"
+    expert_reg: float = 0.01
 
     adapt_arch: str = "tconv"
     # what the adaptation module learns to predict
@@ -116,6 +122,21 @@ class GRUModule(nn.Module):
         x, hx = self.gru(x, is_init, hx)
         return x, hx
 
+class GRUStochModule(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+        self.mlp = make_mlp([128, 128])
+        self.gru = GRU(128, dim, allow_none=False)
+        self.proj = nn.LazyLinear(dim * 2)
+        
+    def forward(self, x, is_init, hx):
+        x = self.mlp(x)
+        x, hx = self.gru(x, is_init, hx)
+        loc, scale = self.proj(x).chunk(2, dim=-1)
+        scale = torch.exp(scale)
+        return loc, scale, hx
+
+
 class FiLM(nn.Module):
     def __init__(self, feature_dim: int):
         super().__init__()
@@ -129,19 +150,26 @@ class FiLM(nn.Module):
         return feature
 
 
-def make_adaptation_module(adapt_arch: str, dim: int):
+def make_adaptation_module(adapt_arch: str, dim: int, output_key="context_adapt"):
     if adapt_arch == "tconv":
-        def make(output_key: str):
-            return TensorDictModule(TConv(dim), [OBS_HIST_KEY], [output_key])
+        module = TensorDictModule(TConv(dim), [OBS_HIST_KEY], [output_key])
     elif adapt_arch == "rnn":
-        def make(output_key: str):
-            in_keys = [OBS_KEY, "is_init", f"{output_key}_hx"]
-            out_keys = [output_key, ("next", f"{output_key}_hx")]
-            gru = GRUModule(dim)
-            return TensorDictModule(gru, in_keys, out_keys)
+        in_keys = [OBS_KEY, "is_init", f"{output_key}_hx"]
+        out_keys = [output_key, ("next", f"{output_key}_hx")]
+        gru = GRUModule(dim)
+        module = TensorDictModule(gru, in_keys, out_keys)
+    elif adapt_arch == "rnn_stoch":
+        in_keys = [OBS_KEY, "is_init", f"{output_key}_hx"]
+        module = ProbabilisticTensorDictSequential(
+            TensorDictModule(GRUStochModule(dim), in_keys, ["loc", "scale", ("next", f"{output_key}_hx")]),
+            ProbabilisticTensorDictModule(
+                ["loc", "scale"], 
+                ["context_adapt"], 
+                distribution_class=IndependentNormal
+            )
+        )
     else:
         raise NotImplementedError(adapt_arch)
-    module = make("context_adapt")
     return module
 
 
@@ -278,7 +306,7 @@ class PPORMAPolicy(TensorDictModuleBase):
             hard_copy_(self.actor_expert, self.actor_target)
             self.actor_target.requires_grad_(False)
         
-        if cfg.adapt_arch == "rnn":
+        if "rnn" in cfg.adapt_arch:
             def make_tensordict_primer():
                 num_envs = observation_spec.shape[0]
                 return TensorDictPrimer({
@@ -354,10 +382,12 @@ class PPORMAPolicy(TensorDictModuleBase):
                 self.actor_adapt,
                 closed_kl=False
             ).to(self.device)
+        elif self.cfg.adaptation_loss == "elbo":
+            self.adaptation_loss = ELBO(self.adapt_module).to(self.device)
         else:
             raise ValueError(self.cfg.adaptation_loss)
         
-        if self.cfg.adapt_arch == "rnn":
+        if "rnn" in self.cfg.adapt_arch:
             fake_input["is_init"] = torch.ones(fake_input.shape[0], 1, dtype=torch.bool, device=self.device)
             fake_input["context_adapt_hx"] = torch.zeros(fake_input.shape[0], 128, device=self.device)
         
@@ -398,7 +428,8 @@ class PPORMAPolicy(TensorDictModuleBase):
         else:
             self.adapt_module(tensordict)
             self.actor_adapt(tensordict)
-            # self.adaptation_loss(tensordict, tensordict)
+            if not self.training:
+                self.adaptation_loss(tensordict, tensordict, mean=False)
         tensordict.exclude(*self.exclude_keys, inplace=True)
         return tensordict
 
@@ -410,7 +441,8 @@ class PPORMAPolicy(TensorDictModuleBase):
         elif self.phase == "adapt":
             with (
                 hold_out_net(self.encoder),
-                hold_out_net(self.actor_expert), 
+                hold_out_net(self.actor_expert),
+                hold_out_net(self.actor_adapt)
             ):
                 info.update(self._train_adaptation(tensordict))
         elif self.phase == "finetune":
@@ -475,6 +507,10 @@ class PPORMAPolicy(TensorDictModuleBase):
             self.critic_loss_fn
         )
         losses["value_loss"] = value_loss
+
+        if self.phase == "train" and self.cfg.expert_reg > 0:
+            context_norm = tensordict["context_expert"].square().mean()
+            losses["regularize"] = context_norm * self.cfg.expert_reg
 
         loss = sum(losses.values())
         self.opt.zero_grad(set_to_none=True)
@@ -632,12 +668,31 @@ def action_kl(
     return D.kl_divergence(dist_a, dist_b).unsqueeze(-1)
 
 
-def elbo(tensordict: TensorDictBase):
-    loc = tensordict["context_adapt"]
-    scale = tensordict["context_adapt_std"]
-    dist = D.Normal(loc, scale)
-    x = tensordict["context_expret"]
-    return dist.log_prob(x) + dist.entropy()
+def elbo(
+    tensordict: TensorDictBase,
+    encoder: ProbabilisticTensorDictSequential,
+    beta: float=1.
+):
+    dist = encoder.get_dist(tensordict)
+    x = tensordict["context_expert"]
+    recon = F.mse_loss(dist.rsample(), x, reduction="none").mean(-1)
+    # target_dist = IndependentNormal(torch.zeros_like(x), torch.ones_like(x))
+    # kl = D.kl_divergence(dist, target_dist)
+    return recon # + beta * kl
+
+
+class ELBO(nn.Module):
+    def __init__(self, adaptation_module, beta: float=1.):
+        super().__init__()
+        self.adaptation_module = adaptation_module
+        self.beta = beta
+    
+    def forward(self, tensordict: TensorDictBase, out: TensorDictBase, mean=True):
+        loss = elbo(tensordict, self.adaptation_module, self.beta)
+        if mean:
+            loss = loss.mean()
+        out.set("adaptation_loss", loss)
+        return out
 
 
 def compute_classifier_loss(classifier, true_input, false_input):
