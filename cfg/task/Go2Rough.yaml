@@ -17,7 +17,7 @@ observation:
     - "root_angvel_b"
     - "projected_gravity_b"
     - "joint_pos"
-    - "joint_vel"
+    # - "joint_vel"
     - "prev_actions"
     # - "motor_params"
   priv:
@@ -33,6 +33,8 @@ observation:
     # - "payload_inertia"
     # - "flip_lr"
     # - "flip_fb"
+  height_scan:
+    - "height_scan"
   # static_embed:
   #   - "action_flip"
   env:

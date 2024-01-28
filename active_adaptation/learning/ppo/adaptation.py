@@ -134,7 +134,7 @@ class Action(AdaptationModule):
             # loss = -target_dist.log_prob(pred_action)
         if mean:
             loss = loss.mean()
-        out.set("adaptation_loss", loss)
+        out.set("adaptation_loss", loss.unsqueeze(-1))
         return out
 
 

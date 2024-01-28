@@ -179,8 +179,8 @@ def compute_value_loss(
     b_returns = tensordict["ret"]
     values = critic(tensordict)["state_value"]
     values_clipped = b_values + (values - b_values).clamp(-clip_param, clip_param)
-    value_loss_clipped = F.mse_loss(b_returns, values_clipped)
-    value_loss_original = F.mse_loss(b_returns, values)
+    value_loss_clipped = critic_loss_fn(b_returns, values_clipped)
+    value_loss_original = critic_loss_fn(b_returns, values)
     value_loss = torch.max(value_loss_original, value_loss_clipped).mean()
     explained_var = 1 - value_loss_original.detach() / b_returns.var()
 

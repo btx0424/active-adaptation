@@ -57,7 +57,6 @@ from active_adaptation.utils.wandb import parse_path
 import copy
 import logging
 
-make_mlp = functools.partial(make_mlp, activation=nn.Mish)
 
 @dataclass
 class PPOConfig:
@@ -71,7 +70,7 @@ class PPOConfig:
     checkpoint_path: Union[str, None] = None
     phase: str = "train"
     condition_mode: str = "cat"
-    expert_reg: float = 0.01
+    expert_reg: float = 0.0
 
     adapt_arch: str = "tconv"
     # what the adaptation module learns to predict
@@ -184,8 +183,8 @@ def make_state_estimator(arch: str, dim: int):
     return module
 
 
-def condition(expert: bool, mode: str):
-    module = nn.Sequential(make_mlp([512]))
+def condition(expert: bool, mode: str, dim: int=256):
+    module = nn.Sequential(make_mlp([dim]))
     in_keys = ["_feature", "context_expert" if expert else "context_adapt"]
     if mode == "cat":
         return TensorDictSequential(
@@ -231,11 +230,26 @@ class PPORMAPolicy(TensorDictModuleBase):
         fake_input = observation_spec.zero()
 
         # create and initialize the modules
-        self.encoder = TensorDictModule(
-            make_mlp([256, 128]), 
-            [OBS_PRIV_KEY], 
-            ["context_expert"]
-        ).to(self.device)
+        if "height_scan" in observation_spec.keys():
+            logging.info("Use height scan as terrain feature.")
+            conv = nn.Sequential(
+                nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1), nn.ELU(),
+                nn.LazyConv2d(16, kernel_size=3, stride=2, padding=1), nn.ELU(),
+                nn.Flatten(),
+                nn.LazyLinear(128), nn.ELU(),
+            )
+            self.encoder = TensorDictSequential(
+                TensorDictModule(make_mlp([256, 128]), [OBS_PRIV_KEY], ["context_state"]),
+                TensorDictModule(conv, ["height_scan"], ["context_terrain"]),
+                CatTensors(["context_state", "context_terrain"], "context_expert", del_keys=False)
+            ).to(self.device)
+        else:
+            logging.info("Use only state as terrain feature.")
+            self.encoder = TensorDictModule(
+                make_mlp([256, 128]), 
+                [OBS_PRIV_KEY], 
+                ["context_expert"]
+            ).to(self.device)
 
         self.actor_expert: ProbabilisticActor = ProbabilisticActor(
             module=TensorDictSequential(
@@ -256,10 +270,10 @@ class PPORMAPolicy(TensorDictModuleBase):
 
         # the critics always observe priviledged information
         self.critic_expert = TensorDictSequential(
-            CatTensors([OBS_KEY, OBS_PRIV_KEY], "_obs_critic", del_keys=False),
+            condition(expert=True, mode=cfg.condition_mode),
             TensorDictModule(
-                nn.Sequential(make_mlp([512, 256, 128]), nn.LazyLinear(1)), 
-                ["_obs_critic"], ["state_value"]
+                nn.Sequential(make_mlp([256, 128]), nn.LazyLinear(1)), 
+                ["_feature"], ["state_value"]
             )
         ).to(self.device)
         
@@ -365,13 +379,13 @@ class PPORMAPolicy(TensorDictModuleBase):
             TensorDictModule(make_mlp([512, 256]), ["_obs_critic"], ["_feature_critic"]),
             CatTensors(["context_adapt", "_feature_critic"], "_feature_critic", del_keys=False),
             TensorDictModule(
-                nn.Sequential(make_mlp([128]), nn.LazyLinear(2)), 
+                nn.Sequential(make_mlp([128]), nn.LazyLinear(3)), 
                 ["_feature_critic"], 
                 ["state_value"]
             )
         ).to(self.device)
 
-        self.value_norm_adapt = ValueNorm1(2).to(self.device)
+        self.value_norm_adapt = ValueNorm1(3).to(self.device)
         
         if self.cfg.adaptation_loss == "mse":
             self.adaptation_loss = MSE(self.adapt_module).to(self.device)
@@ -380,7 +394,7 @@ class PPORMAPolicy(TensorDictModuleBase):
                 self.adapt_module,
                 self.actor_expert,
                 self.actor_adapt,
-                closed_kl=False
+                closed_kl=True
             ).to(self.device)
         elif self.cfg.adaptation_loss == "elbo":
             self.adaptation_loss = ELBO(self.adapt_module).to(self.device)
@@ -464,6 +478,7 @@ class PPORMAPolicy(TensorDictModuleBase):
         return tensordict
 
     def _train_policy(self, tensordict: TensorDict):
+        self.encoder(tensordict["next"].view(-1))
         self._compute_advantage(tensordict, self.critic_expert, self.value_norm_expert)
         infos = []
         for epoch in range(self.cfg.ppo_epochs):
@@ -538,7 +553,7 @@ class PPORMAPolicy(TensorDictModuleBase):
     def _train_adaptation(self, tensordict: TensorDict):
         # compute values for the adaptation policy
         with torch.no_grad():
-            self.actor_expert(self.encoder(tensordict))
+            self.actor_expert(self.encoder(tensordict.view(-1)))
             self.adapt_module(tensordict["next"])
             tensordict.set("action_expert", tensordict[ACTION_KEY])
 
@@ -546,8 +561,9 @@ class PPORMAPolicy(TensorDictModuleBase):
         assert "context_adapt" in tensordict["next"].keys()
         
         with torch.no_grad():
-            kl = action_kl(tensordict.exclude(), self.actor_target, self.actor_expert)
-        tensordict.set(REWARD_KEY, torch.cat([tensordict[REWARD_KEY], kl], -1))
+            kl_target = action_kl(tensordict.exclude(), self.actor_target, self.actor_expert)
+            kl_adapt = action_kl(tensordict.exclude(), self.actor_adapt, self.actor_expert)
+        tensordict.set(REWARD_KEY, torch.cat([tensordict[REWARD_KEY], kl_target, kl_adapt], -1))
         self._compute_advantage(tensordict, self.critic_adapt, self.value_norm_adapt)
 
         infos = []
@@ -556,7 +572,7 @@ class PPORMAPolicy(TensorDictModuleBase):
                 losses = TensorDict({}, [])
                 self.adaptation_loss(batch, losses, mean=True)
                 value_loss, explained_var = compute_value_loss(
-                    batch, 
+                    batch.detach(), 
                     self.critic_adapt, 
                     self.clip_param, 
                     self.critic_loss_fn
@@ -587,6 +603,7 @@ class PPORMAPolicy(TensorDictModuleBase):
         infos = infos.apply(torch.mean, batch_size=[])
         infos["value_mean_0"] = tensordict["denormalized_state_value"][..., 0].mean()
         infos["value_mean_1"] = tensordict["denormalized_state_value"][..., 1].mean()
+        infos["value_mean_2"] = tensordict["denormalized_state_value"][..., 2].mean()
         return {k: v.item() for k, v in infos.items()}
 
     def _finetune(self, tensordict: TensorDict):
@@ -595,9 +612,10 @@ class PPORMAPolicy(TensorDictModuleBase):
         if self.cfg.use_separate_critics:
             with torch.no_grad():
                 self.adapt_module(tensordict["next"])
-                kl = action_kl(tensordict.exclude(), self.actor_target, self.actor_expert)
+                kl_target = action_kl(tensordict.exclude(), self.actor_target, self.actor_expert)
+                kl_adapt = action_kl(tensordict.exclude(), self.actor_adapt, self.actor_expert)
             critic = self.critic_adapt
-            tensordict.set(REWARD_KEY, torch.cat([tensordict[REWARD_KEY], kl], -1))
+            tensordict.set(REWARD_KEY, torch.cat([tensordict[REWARD_KEY], kl_target, kl_adapt], -1))
             self._compute_advantage(tensordict, critic, self.value_norm_adapt, (1., 0.))
         else:
             critic = self.critic_expert
@@ -622,6 +640,7 @@ class PPORMAPolicy(TensorDictModuleBase):
         if self.cfg.use_separate_critics:
             infos["value_mean_0"] = tensordict["denormalized_state_value"][..., 0].mean()
             infos["value_mean_1"] = tensordict["denormalized_state_value"][..., 1].mean()
+            infos["value_mean_2"] = tensordict["denormalized_state_value"][..., 2].mean()
         else:
             infos["value_mean_0"] = tensordict["denormalized_state_value"].mean()
         return {k: v.item() for k, v in infos.items()}

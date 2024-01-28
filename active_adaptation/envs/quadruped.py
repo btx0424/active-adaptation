@@ -192,6 +192,13 @@ class Quadruped(Env):
         self.robot.write_data_to_sim()
 
     @observation_func
+    def height_scan(self):
+        root_pos_w = self.robot.data.root_pos_w
+        ray_hits_w = self.height_scanner.data.ray_hits_w
+        height_scan = root_pos_w[:, [2]].unsqueeze(1) - ray_hits_w[:, :, [2]]
+        return height_scan.reshape(self.num_envs, 1, 11, 17).clamp(-2., 2.)
+
+    @observation_func
     def command(self):
         quat_w = self.robot.data.root_quat_w
         command_linvel = quat_rotate_inverse(quat_w, self.command_manager._command_linvel)
