@@ -78,7 +78,7 @@ class PPOStaticPolicy(TensorDictModuleBase):
         self.device = device
 
         self.entropy_coef = 0.001
-        self.clip_param = 0.1
+        self.clip_param = 0.2
         self.critic_loss_fn = nn.HuberLoss(delta=10)
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(0.99, 0.95)
@@ -86,15 +86,15 @@ class PPOStaticPolicy(TensorDictModuleBase):
         fake_input = observation_spec.zero()
         observation_dim = observation_spec[self.OBS_KEY].shape[-1]
         
-        self.embed = nn.Embedding(4, 16).to(self.device)
+        self.embed = nn.Embedding(4096, 8).to(self.device)
 
+        self.encoder = TensorDictModule(
+            make_mlp([512, 256, 256], nn.Mish),
+            ["full_obs"], ["_feature"]
+        ).to(self.device)
         actor_module=TensorDictModule(
-            nn.Sequential(
-                # nn.LayerNorm(observation_dim),
-                make_mlp([512, 256, 256], nn.Mish), 
-                Actor(self.action_dim)
-            ),
-            ["full_obs"], ["loc", "scale"]
+            Actor(self.action_dim),
+            ["_feature"], ["loc", "scale"]
         )
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=actor_module,
@@ -104,16 +104,13 @@ class PPOStaticPolicy(TensorDictModuleBase):
             return_log_prob=True
         ).to(self.device)
         
-        self.critic = TensorDictModule(
-            nn.Sequential(
-                # nn.LayerNorm(observation_dim),
-                make_mlp([512, 256, 256], nn.Mish), 
-                nn.LazyLinear(1)
-            ),
-            ["full_obs"], ["state_value"]
+        self.critic = TensorDictModule( 
+            nn.LazyLinear(1),
+            ["_feature"], ["state_value"]
         ).to(self.device)
 
         self._embed(fake_input)
+        self.encoder(fake_input)
         self.actor(fake_input)
         self.critic(fake_input)
         
@@ -125,20 +122,24 @@ class PPOStaticPolicy(TensorDictModuleBase):
                 if isinstance(module, nn.Linear):
                     nn.init.orthogonal_(module.weight, 0.01)
                     nn.init.constant_(module.bias, 0.)
-            
+        
+            self.encoder.apply(init_)
             self.actor.apply(init_)
             self.critic.apply(init_)
 
-        params = list(self.actor.parameters()) + list(self.critic.parameters())
-        self.opt = torch.optim.Adam(params, lr=cfg.lr)
+        self.opt = torch.optim.Adam([
+            {"params": self.encoder.parameters()},
+            {"params": self.actor.parameters()},
+            {"params": self.critic.parameters()},
+        ], lr=cfg.lr)
         self.embed_opt = torch.optim.Adam(self.embed.parameters(), lr=0.01)
         self.value_norm = ValueNorm1(input_shape=1).to(self.device)
     
     # @torch.compile
     def __call__(self, tensordict: TensorDict):
         self._embed(tensordict)
-        tensordict = self.actor(tensordict)
-        tensordict = self.critic(tensordict)
+        self.encoder(tensordict)
+        self.actor(tensordict)
         tensordict = tensordict.exclude("loc", "scale", "feature")
         return tensordict
 
@@ -149,8 +150,11 @@ class PPOStaticPolicy(TensorDictModuleBase):
     # @torch.compile
     def train_op(self, tensordict: TensorDict):
         with torch.no_grad():
+            self.encoder(tensordict)
+            self.critic(tensordict)
             next_tensordict = tensordict["next"]
             self._embed(next_tensordict)
+            self.encoder(next_tensordict)
             next_values = self.critic(next_tensordict)["state_value"]
         rewards = tensordict[self.REWARD_KEY]
         dones = tensordict[self.DONE_KEY]
@@ -180,6 +184,7 @@ class PPOStaticPolicy(TensorDictModuleBase):
 
     def _update(self, tensordict: TensorDict):
         self._embed(tensordict)
+        self.encoder(tensordict)
         dist = self.actor.get_dist(tensordict)
         log_probs = dist.log_prob(tensordict[self.ACTION_KEY])
         entropy = dist.entropy().mean()
@@ -217,6 +222,7 @@ class PPOStaticPolicy(TensorDictModuleBase):
             "entropy": entropy,
             "actor_grad_norm": actor_grad_norm,
             "critic_grad_norm": critic_grad_norm,
-            "explained_var": explained_var
+            "explained_var": explained_var,
+            "embed_reg_l1": embed_reg_l1,
         }, [])
 
