@@ -68,14 +68,15 @@ class Quadruped(Env):
             if self.permute_actions:
                 self._flip_lr = torch.randn(self.num_envs, 1) > 0.
                 self._flip_fb = torch.randn(self.num_envs, 1) > 0.
+            self._feet_pos_b = torch.zeros(self.num_envs, 4, 3)
 
         self.randomizations = OrderedDict({
             "body_masses": BodyMasses(self, (0.7, 1.3), body_indices=torch.arange(19)),
-            "payload_mass": BodyMasses(self, (0.01, 4.), body_indices=torch.tensor([19])),
-            "payload_inertia": BodyInertias(self, (0.01, 4.0), body_indices=torch.tensor([19])),
+            # "payload_mass": BodyMasses(self, (0.01, 4.), body_indices=torch.tensor([19])),
+            # "payload_inertia": BodyInertias(self, (0.01, 4.0), body_indices=torch.tensor([19])),
             "body_material": BodyMaterial(self, self.foot_indices, (0.6, 2.0), (0.6, 2.0)),
             "motor_params": MotorParams(self, "base_legs", (0.7, 1.3), (0.6, 1.4)),
-            "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.2),
+            # "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.2),
         })
         # self.randomizations = OrderedDict({
         #     "body_masses": BodyMasses(self, (0.7, 1.3), body_indices=torch.arange(19)),
@@ -150,6 +151,12 @@ class Quadruped(Env):
         )
         self.command_manager.update(resample=should_resample.nonzero().squeeze(-1))
         
+        feet_pos_w = self.robot.data.body_pos_w[:, self.foot_indices]
+        self._feet_pos_b[:] = quat_rotate_inverse(
+            self.robot.data.root_quat_w.unsqueeze(1),
+            feet_pos_w - self.robot.data.root_pos_w.unsqueeze(1)
+        )
+
         if self.sim.has_gui() and hasattr(self, "debug_draw"):
             self.debug_draw.clear()
             robot_pos = (
@@ -258,11 +265,6 @@ class Quadruped(Env):
 
     @observation_func
     def feet_pos_b(self):
-        feet_pos_w = self.robot.data.body_pos_w[:, self.foot_indices]
-        self._feet_pos_b = quat_rotate_inverse(
-            self.robot.data.root_quat_w.unsqueeze(1),
-            feet_pos_w - self.robot.data.root_pos_w.unsqueeze(1)
-        )
         return self._feet_pos_b.reshape(self.num_envs, -1)
     
     @observation_func

@@ -8,7 +8,7 @@ defaults:
 
 robot: go2
 terrain: medium
-payload: true
+payload: false
 
 observation:
   policy:
@@ -39,7 +39,7 @@ observation:
   #   - "action_flip"
   env:
     - "motor_params"
-    - "payload_mass"
+    # - "payload_mass"
     - "motor_failure"
 
 reward:

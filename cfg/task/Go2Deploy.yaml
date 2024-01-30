@@ -34,3 +34,4 @@ reward:
   orientation: 0.5
   survival: 0.5
   feet_slip: 0.2
+  action_rate_l2: 0.01

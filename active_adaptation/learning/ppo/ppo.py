@@ -47,6 +47,7 @@ class PPOConfig:
     ppo_epochs: int = 4
     num_minibatches: int = 16
     lr: float = 1e-3
+    clip_param: float = 0.2
 
     priv_actor: bool = False
     priv_critic: bool = False
@@ -80,7 +81,7 @@ class PPOPolicy(TensorDictModuleBase):
         self.device = device
 
         self.entropy_coef = 0.001
-        self.clip_param = 0.1
+        self.clip_param = self.cfg.clip_param
         self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(0.99, 0.95)

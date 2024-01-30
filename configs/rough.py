@@ -227,5 +227,7 @@ def LocomotionEnvCfg(task_cfg):
         reward = task_cfg.reward,
         observation = task_cfg.observation
     )
+    if "height_scan" not in task_cfg.observation.keys():
+        env_cfg.scene.height_scanner = None
     return env_cfg
 
