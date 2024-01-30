@@ -19,8 +19,8 @@ observation:
     - "joint_pos"
     - "joint_vel"
     - "prev_actions"
-    # - "motor_params"
-    # - "body_masses"
+    - "motor_params"
+    - "body_masses"
 
 reward:
   linvel_exp: 1.0
@@ -36,3 +36,4 @@ reward:
   # feet_slip: 0.2
   action_rate_l2: 0.01
   feet_air_time: 0.01
+  joint_torques_l2: 2e-4

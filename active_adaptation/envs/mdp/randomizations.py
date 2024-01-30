@@ -256,7 +256,8 @@ class CommandManager:
         self._command_linvel[env_ids, 0] = speed * a.cos()
         self._command_linvel[env_ids, 1] = speed * a.sin()
         
-        yaw = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
+        # yaw = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
+        yaw = a
         self._target_yaw[env_ids] = yaw
 
 def random_scale(x: torch.Tensor, low: float, high: float, homogeneous: bool=False):

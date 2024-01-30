@@ -222,8 +222,8 @@ class Quadruped(Env):
     
     @observation_func
     def joint_pos(self):
-        all_joint_pos = self.robot.data.joint_pos
-        return random_noise(all_joint_pos[:, self.motor_joint_indices], 0.05)
+        joint_pos = self.robot.data.joint_pos[:, self.motor_joint_indices]
+        return random_noise(joint_pos - self.default_joint_pos, 0.05)
     
     @observation_func
     def joint_vel(self):
@@ -277,7 +277,7 @@ class Quadruped(Env):
     @observation_func
     def body_masses(self):
         rand = self.randomizations["body_masses"]
-        return rand.randomized_masses.reshape(self.num_envs, -1)
+        return rand.randomized_masses.reshape(self.num_envs, -1)[:, [0]]
 
     @observation_func
     def payload_mass(self):

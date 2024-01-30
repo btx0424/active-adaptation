@@ -48,6 +48,7 @@ class PPOConfig:
     num_minibatches: int = 16
     lr: float = 1e-3
     clip_param: float = 0.2
+    recompute_adv: bool = True
 
     priv_actor: bool = False
     priv_critic: bool = False
@@ -147,12 +148,26 @@ class PPOPolicy(TensorDictModuleBase):
 
     # @torch.compile
     def train_op(self, tensordict: TensorDict):
-        next_tensordict = tensordict["next"]
-        with torch.no_grad():
-            next_values = self.critic(next_tensordict)["state_value"]
+        infos = []
+
+        for epoch in range(self.cfg.ppo_epochs):
+            if epoch == 0 or self.cfg.recompute_adv:
+                self._compute_advantage(tensordict)
+            batch = make_batch(tensordict, self.cfg.num_minibatches)
+            for minibatch in batch:
+                infos.append(self._update(minibatch))
+        
+        infos: TensorDict = torch.stack(infos).to_tensordict()
+        infos = infos.apply(torch.mean, batch_size=[])
+        return {k: v.item() for k, v in infos.items()}
+
+    @torch.no_grad()
+    def _compute_advantage(self, tensordict: TensorDict):
+        values = self.critic(tensordict)["state_value"]
+        next_values = self.critic(tensordict["next"])["state_value"]
+
         rewards = tensordict[self.REWARD_KEY]
         dones = tensordict[self.DONE_KEY]
-        values = tensordict["state_value"]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
 
@@ -165,16 +180,7 @@ class PPOPolicy(TensorDictModuleBase):
 
         tensordict.set("adv", adv)
         tensordict.set("ret", ret)
-
-        infos = []
-        for epoch in range(self.cfg.ppo_epochs):
-            batch = make_batch(tensordict, self.cfg.num_minibatches)
-            for minibatch in batch:
-                infos.append(self._update(minibatch))
-        
-        infos: TensorDict = torch.stack(infos).to_tensordict()
-        infos = infos.apply(torch.mean, batch_size=[])
-        return {k: v.item() for k, v in infos.items()}
+        return tensordict
 
     def _update(self, tensordict: TensorDict):
         dist = self.actor.get_dist(tensordict)

@@ -15,7 +15,8 @@ from torchrl.envs.transforms import (
     InitTracker,
     History,
     RewardSum,
-    CatFrames
+    CatFrames,
+    VecNorm
 )
 from active_adaptation.learning import ALGOS, PPODualPolicy
 from helpers import EpisodeStats, Every
@@ -65,8 +66,9 @@ def main(cfg):
     base_env = TASKS[cfg.task.task](env_cfg)
     transform = Compose(
         InitTracker(),
+        VecNorm(in_keys=["policy"], out_keys=["policy"]),
         # CatFrames(4, -1, ["policy"], ["priv"]),
-        History(["policy"], steps=16)
+        # History(["policy"], steps=16)
     )
     env = TransformedEnv(base_env, transform)
     env.set_seed(0)
@@ -226,11 +228,11 @@ def main(cfg):
         print()
         print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, float)}))
     
+    save(policy, "checkpoint_final")
+
     info = evaluate(render=cfg.eval_render, mode="expert")
     info["env_frames"] = collector._frames
     run.log(info)
-
-    save(policy, "checkpoint_final")
 
     wandb.finish()
     
