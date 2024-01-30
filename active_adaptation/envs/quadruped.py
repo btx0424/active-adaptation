@@ -32,7 +32,12 @@ class Quadruped(Env):
         self.foot_indices, _ = self.robot.find_bodies(".*_foot")
         self.calf_indices, _ = self.robot.find_bodies(".*_calf")
         self.thigh_indices, _ = self.robot.find_bodies(".*_thigh")
-        self.main_body_indices = list(set(range(self.robot.num_bodies)) - set(self.calf_indices) - set(self.foot_indices))
+        self.main_body_indices = list(
+            set(range(self.robot.num_bodies)) 
+            - set(self.calf_indices)
+            # - set(self.thigh_indices)
+            - set(self.foot_indices)
+        )
 
         self.contact_sensor: ContactSensor = self.scene.sensors.get("contact_forces", None)
         self.height_scanner: RayCaster = self.scene.sensors.get("height_scanner", None)
@@ -62,9 +67,7 @@ class Quadruped(Env):
         with torch.device(self.device):
             # self.action_scale = torch.ones(self.num_envs, 1)
             self.action_alpha = torch.ones(self.num_envs, 1)
-            self._actions_t = torch.zeros(self.num_envs, 12)
-            self._actions_tm1 = torch.zeros_like(self._actions_t)
-            self._actions_tm2 = torch.zeros_like(self._actions_t)
+            self._jpos_target = torch.zeros(self.num_envs, 12, 3)
             if self.permute_actions:
                 self._flip_lr = torch.randn(self.num_envs, 1) > 0.
                 self._flip_fb = torch.randn(self.num_envs, 1) > 0.
@@ -132,9 +135,8 @@ class Quadruped(Env):
             env_ids=env_ids
         )
         self.stats[env_ids] = 0.
-        self._actions_t[env_ids] = 0.
-        self._actions_tm1[env_ids] = 0.
-        self._actions_tm2[env_ids] = 0.
+        self._jpos_target[env_ids] = 0.
+        self._jpos_target[env_ids, :, -1] = self.init_joint_pos[env_ids]
 
         self.scene.reset(env_ids)
         self.scene.update(dt=self.physics_dt)
@@ -185,16 +187,14 @@ class Quadruped(Env):
         if substep == 0:
             # random packet loss: repeat previous actions
             actions = tensordict["action"]
-
-            self._actions_tm2[:] = self._actions_tm1
-            self._actions_tm1[:] = self._actions_t
-            # self._actions_t.lerp_(actions, self.action_alpha)
+            pos_target = actions * self.action_scaling + self.default_joint_pos
+            self._jpos_target[:, :, :-1] = self._jpos_target[:, :, 1:]
+            self._jpos_target[:, :, -1] = pos_target
 
             if self.permute_actions:
                 actions = torch.where(self._flip_lr, flip_lr(actions), actions)
                 actions = torch.where(self._flip_fb, flip_fb(actions), actions)
 
-            pos_target = actions * self.action_scaling + self.default_joint_pos
             self.robot.set_joint_position_target(pos_target, self.motor_joint_indices)
         self.robot.write_data_to_sim()
 
@@ -244,7 +244,7 @@ class Quadruped(Env):
     
     @observation_func
     def prev_actions(self):
-        return self._actions_t
+        return self._jpos_target[:, :, -1]
     
     @observation_func
     def applied_torques(self):
@@ -371,7 +371,8 @@ class Quadruped(Env):
 
     @reward_func
     def action_rate_l2(self):
-        return - (self._actions_t - self._actions_tm1).square().sum(dim=-1, keepdim=True)
+        action_diff = self._jpos_target[:, :, -1] - self._jpos_target[:, :, -2]
+        return - (action_diff / self.action_scaling).square().sum(dim=-1, keepdim=True)
 
     @reward_func
     def action_rate2_l2(self):
@@ -405,7 +406,11 @@ class Quadruped(Env):
 
     @reward_func
     def feet_air_time(self):
-        return (self.contact_sensor.data.current_air_time[:, self.foot_indices] > 0.1).sum(-1, True)
+        last_air_time = self.contact_sensor.data.last_air_time[:, self.foot_indices]
+        first_contact = last_air_time > 0.0
+        reward = torch.sum((last_air_time - 0.5) * first_contact, dim=1, keepdim=True)
+        reward *= 1. - self.command_manager._command_stand
+        return reward.reshape(self.num_envs, -1)
 
     @termination_func
     def crash(self):
