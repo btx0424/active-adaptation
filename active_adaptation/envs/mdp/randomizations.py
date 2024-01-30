@@ -151,10 +151,12 @@ class BodyMasses(Randomization):
         default_masses_all = self.asset.body_physx_view.get_masses().reshape(shape).clone()
         default_masses = default_masses_all[:, self.body_indices]
         randomized_masses, _ = random_scale(default_masses, *self.mass_range)
-        
-        indices = torch.arange(self.asset.body_physx_view.count).reshape(shape)[:, self.body_indices]
+
+        bodies_per_env = self.asset.body_physx_view.count // self.env.num_envs        
+        indices = self.body_indices.repeat(self.env.num_envs, 1)
+        indices += torch.arange(self.env.num_envs).unsqueeze(1) * bodies_per_env
         default_masses_all[:, self.body_indices] = randomized_masses
-        self.asset.root_physx_view.set_masses(default_masses_all.flatten(), indices.flatten())
+        self.asset.body_physx_view.set_masses(default_masses_all.flatten(), indices.flatten())
         
         self.default_masses = default_masses.to(self.env.device)
         self.randomized_masses = randomized_masses.to(self.env.device)
@@ -183,9 +185,11 @@ class BodyInertias(Randomization):
         default_inertias = default_inertias_all[:, self.body_indices]
         randomized_inertias, _ = random_scale(default_inertias, *self.inertia_range)
         
-        indices = torch.arange(self.asset.body_physx_view.count).reshape(shape)[:, self.body_indices]
+        bodies_per_env = self.asset.body_physx_view.count // self.env.num_envs        
+        indices = self.body_indices.repeat(self.env.num_envs, 1)
+        indices += torch.arange(self.env.num_envs).unsqueeze(1) * bodies_per_env
         default_inertias_all[:, self.body_indices] = randomized_inertias
-        self.asset.root_physx_view.set_inertias(default_inertias_all.flatten(), indices.flatten())
+        self.asset.body_physx_view.set_inertias(default_inertias_all.flatten(), indices.flatten())
         
         self.default_inertias = default_inertias.to(self.env.device)
         self.randomized_inertias = randomized_inertias.to(self.env.device)
