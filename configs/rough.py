@@ -89,7 +89,7 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
         # ),
         "pyramid_stairs": MeshPyramidStairsTerrainCfg(
             proportion=0.2,
-            step_height_range=(0.05, 0.23),
+            step_height_range=(0.05, 0.2),
             step_width=0.3,
             platform_width=3.0,
             border_width=1.0,
@@ -165,7 +165,6 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
 class EnvCfg:
 
     max_episode_length: int = 1000
-    decimation: int  = 2
     target_base_height: float = MISSING
     payload: bool = False
 
@@ -174,7 +173,11 @@ class EnvCfg:
     viewer: ViewerCfg = ViewerCfg()
     scene: LocomotionSceneCfg = MISSING
 
+    decimation: int  = 2
     sim = sim_utils.SimulationCfg(dt=0.01, disable_contact_processing=True)
+
+    # decimation: int  = 4
+    # sim = sim_utils.SimulationCfg(dt=0.005, disable_contact_processing=True)
     
     reward: Dict[str, float] = MISSING
     observation: Dict[str, List] = MISSING

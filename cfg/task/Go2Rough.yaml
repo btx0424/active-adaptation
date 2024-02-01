@@ -17,7 +17,7 @@ observation:
     - "root_angvel_b"
     - "projected_gravity_b"
     - "joint_pos"
-    # - "joint_vel"
+    - "joint_vel"
     - "prev_actions"
     # - "motor_params"
   priv:
@@ -28,15 +28,12 @@ observation:
     - "applied_torques"
     - "motor_failure"
     - "contact_indicator"
+    - "incoming_wrench"
     # - "contact_forces"
     # - "payload_mass"
     # - "payload_inertia"
-    # - "flip_lr"
-    # - "flip_fb"
-  height_scan:
-    - "height_scan"
-  # static_embed:
-  #   - "action_flip"
+  # height_scan:
+  #   - "height_scan"
   env:
     - "motor_params"
     # - "payload_mass"
@@ -53,3 +50,16 @@ reward:
   stand: 0.5
   orientation: 0.5
   survival: 0.5
+
+# reward: # orbit
+#   linvel_projection: 0.5
+#   linvel_xy_exp: 1.5
+#   angvel_z_exp: 0.75
+#   linvel_z_l2: 2.0
+#   angvel_xy_l2: 0.02
+#   joint_torques_l2: 1.0e-5
+#   joint_acc_l2: 2.5e-7
+#   stand: 0.5
+#   survival: 0.25
+#   action_rate_l2: 0.01
+#   feet_air_time: 0.1

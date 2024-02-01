@@ -16,6 +16,7 @@ quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
 
 from .mdp import BodyMasses, BodyMaterial, MotorParams, BodyInertias, MotorFailure, CommandManager
+from .mdp.command import COMMAND_CFG, UniformVelocityCommand
 from collections import OrderedDict
 
 class Quadruped(Env):
@@ -68,9 +69,6 @@ class Quadruped(Env):
             # self.action_scale = torch.ones(self.num_envs, 1)
             self.action_alpha = torch.ones(self.num_envs, 1)
             self._jpos_target = torch.zeros(self.num_envs, 12, 3)
-            if self.permute_actions:
-                self._flip_lr = torch.randn(self.num_envs, 1) > 0.
-                self._flip_fb = torch.randn(self.num_envs, 1) > 0.
             self._feet_pos_b = torch.zeros(self.num_envs, 4, 3)
 
         self.randomizations = OrderedDict({
@@ -79,7 +77,7 @@ class Quadruped(Env):
             # "payload_inertia": BodyInertias(self, (0.01, 4.0), body_indices=torch.tensor([19])),
             "body_material": BodyMaterial(self, self.foot_indices, (0.6, 2.0), (0.6, 2.0)),
             "motor_params": MotorParams(self, "base_legs", (0.7, 1.3), (0.6, 1.4)),
-            # "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.2),
+            "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.0),
         })
         # self.randomizations = OrderedDict({
         #     "body_masses": BodyMasses(self, (0.7, 1.3), body_indices=torch.arange(19)),
@@ -129,8 +127,7 @@ class Quadruped(Env):
             env_ids=env_ids
         )
         self.robot.write_joint_state_to_sim(
-            # random_scale(self.init_joint_pos[env_ids], 0.8, 1.2),
-            self.init_joint_pos[env_ids],
+            random_shift(self.init_joint_pos[env_ids], 0.8, 1.2),
             self.init_joint_vel[env_ids],
             env_ids=env_ids
         )
@@ -159,7 +156,8 @@ class Quadruped(Env):
             feet_pos_w - self.robot.data.root_pos_w.unsqueeze(1)
         )
 
-        if self.sim.has_gui() and hasattr(self, "debug_draw"):
+    def render(self, mode):
+        if hasattr(self, "debug_draw"):
             self.debug_draw.clear()
             robot_pos = (
                 self.robot.data.root_pos_w.cpu()
@@ -181,7 +179,7 @@ class Quadruped(Env):
                 self.robot.data.root_lin_vel_w,
                 color=(1., .5, .5, 1.)
             )
-
+        super().render(mode)
 
     def apply_action(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
@@ -190,10 +188,6 @@ class Quadruped(Env):
             pos_target = actions * self.action_scaling + self.default_joint_pos
             self._jpos_target[:, :, :-1] = self._jpos_target[:, :, 1:]
             self._jpos_target[:, :, -1] = pos_target
-
-            if self.permute_actions:
-                actions = torch.where(self._flip_lr, flip_lr(actions), actions)
-                actions = torch.where(self._flip_fb, flip_fb(actions), actions)
 
             self.robot.set_joint_position_target(pos_target, self.motor_joint_indices)
         self.robot.write_data_to_sim()
@@ -294,23 +288,21 @@ class Quadruped(Env):
     def body_materials(self):
         rand = self.randomizations["body_material"]
         return rand.material_properties.reshape(self.num_envs, -1)
-    
-    @observation_func
-    def action_flip(self):
-        return self._flip_lr.long() * 2 + self._flip_fb.long()
-    
-    @observation_func
-    def flip_lr(self):
-        return self._flip_lr.float()
-    
-    @observation_func
-    def flip_fb(self):
-        return self._flip_fb.float()
 
     @observation_func
     def motor_failure(self):
         rand: MotorFailure = self.randomizations["motor_failure"]
         return rand.motor_failure.reshape(self.num_envs, -1)
+    
+    @observation_func
+    def env_id(self):
+        return torch.arange(self.num_envs, device=self.device).reshape(self.num_envs, 1)
+    
+    @observation_func
+    def incoming_wrench(self):
+        link_incoming_forces = self.robot.root_physx_view.get_link_incoming_joint_force()
+        link_incoming_forces[:, :, :3] *= 0.01
+        return link_incoming_forces.reshape(self.num_envs, -1)
     
     @reward_func
     def linvel_projection(self):
@@ -321,15 +313,29 @@ class Quadruped(Env):
             .clamp_max(self.command_manager._command_speed)
         )
     
+    # @reward_func
+    # def linvel_xy_exp(self):
+    #     linvel_error = (self.command_manager.command[:, :2] - self.robot.data.root_lin_vel_b[:, :2]).square().sum(-1, True)
+    #     return torch.exp( - linvel_error / 0.25)
+
     @reward_func
     def linvel_exp(self):
         linvel_w = self.robot.data.root_lin_vel_w
-        linvel_error = square_norm(linvel_w - self.command_manager._command_linvel)
+        linvel_error = square_norm(linvel_w[:, :2] - self.command_manager._command_linvel[:, :2])
         return 1. / (1. + linvel_error / 0.25)
+
+    @reward_func
+    def angvel_z_exp(self):
+        angvel_error = (self.command_manager.command[:, [2]] - self.robot.data.root_ang_vel_b[:, [2]]).square()
+        return torch.exp( - angvel_error / 0.25)
     
     @reward_func
     def linvel_z_l2(self):
         return -self.robot.data.root_lin_vel_b[:, [2]].square()
+    
+    @reward_func
+    def angvel_xy_l2(self):
+        return - self.robot.data.root_ang_vel_b[:, :2].square().sum(-1, True)
     
     @reward_func
     def heading(self):
@@ -341,7 +347,7 @@ class Quadruped(Env):
     def base_height(self):
         height = self.robot.data.root_pos_w[:, [2]]
         height = height - self.robot.data.body_pos_w[:, self.foot_indices, 2].mean(1, keepdim=True)
-        return (height / self.target_base_height).square().clamp_max(1.)
+        return (height / self.target_base_height).square().clamp_max(0.8)
 
     @reward_func
     def energy_l2(self):
@@ -401,20 +407,20 @@ class Quadruped(Env):
         jpos_error = square_norm(self.robot.data.joint_pos - self.robot.data.default_joint_pos)
         front_symmetry = self._feet_pos_b[:, [0, 1], 1].sum(dim=1, keepdim=True).abs()
         back_symmetry = self._feet_pos_b[:, [2, 3], 1].sum(dim=1, keepdim=True).abs()
-        cost = - (jpos_error + front_symmetry + back_symmetry) * self.command_manager._command_stand
-        return cost
+        cost = - (jpos_error + front_symmetry + back_symmetry) 
+        return cost * self.command_manager.is_standing_env.reshape(self.num_envs, 1)
 
     @reward_func
     def feet_air_time(self):
         last_air_time = self.contact_sensor.data.last_air_time[:, self.foot_indices]
         first_contact = last_air_time > 0.0
-        reward = torch.sum((last_air_time - 0.5) * first_contact, dim=1, keepdim=True)
-        reward *= 1. - self.command_manager._command_stand
+        reward = torch.sum((last_air_time - 0.5) * first_contact, dim=1)
+        reward *= (self.command_manager.command[:, :2].norm(dim=-1)>0.1)
         return reward.reshape(self.num_envs, -1)
 
     @termination_func
     def crash(self):
-        fall_over = (self.robot.data.projected_gravity_b[:, 2] >= -0.3)
+        fall_over = (self.robot.data.projected_gravity_b[:, 2] >= -0.1)
         contact_forces = self.contact_sensor.data.net_forces_w[:, self.main_body_indices]
         undesired_contact = (contact_forces.norm(dim=-1) > 1.).any(dim=1)
         terminated = (fall_over | undesired_contact).unsqueeze(1)
