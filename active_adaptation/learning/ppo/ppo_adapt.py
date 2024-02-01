@@ -78,8 +78,6 @@ class PPOConfig:
     adaptation_loss: str = "mse" # mse, action_kl
     use_separate_critics: bool = True
 
-    encoder_dropout: float = 0.
-
     def __post_init__(self):
         assert self.condition_mode.lower() in ("cat", "film")
         assert self.adaptation_key in ("context", OBS_HIST_KEY, "_feature")
@@ -252,7 +250,7 @@ class PPORMAPolicy(TensorDictModuleBase):
             self.context_dim = 128
             logging.info("Use only state as terrain feature.")
             self.encoder = TensorDictModule(
-                make_mlp([256, self.context_dim], self.cfg.encoder_dropout),
+                make_mlp([256, self.context_dim]),
                 [OBS_PRIV_KEY], 
                 ["context_expert"]
             ).to(self.device)

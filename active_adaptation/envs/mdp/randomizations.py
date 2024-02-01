@@ -259,7 +259,7 @@ class CommandManager:
             torch.tensor([[1., 0., 0.]], device=self.device).expand(self.env.num_envs, 3)
         )
         yaw = torch.atan2(heading_w[:, 1], heading_w[:, 0])
-        self._command_yaw[:] = angle_mix(yaw, self._target_yaw, 0.2)
+        self._command_yaw[:] = self._target_yaw
         self._command_heading[:, 0] = self._command_yaw.cos()
         self._command_heading[:, 1] = self._command_yaw.sin()
         self._command_heading[:, 2] = 0.
