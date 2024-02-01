@@ -71,12 +71,14 @@ class PPOConfig:
     phase: str = "train"
     condition_mode: str = "cat"
     expert_reg: float = 0.0
+    norm_context: bool = False
 
     adapt_arch: str = "tconv"
     # what the adaptation module learns to predict
     adaptation_key: Any = "context"
     adaptation_loss: str = "mse" # mse, action_kl
     use_separate_critics: bool = True
+
 
     def __post_init__(self):
         assert self.condition_mode.lower() in ("cat", "film")
@@ -236,21 +238,28 @@ class PPORMAPolicy(TensorDictModuleBase):
             self.context_dim = 256
             logging.info("Use height scan as terrain feature.")
             conv = nn.Sequential(
-                nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1), nn.ELU(),
-                nn.LazyConv2d(16, kernel_size=3, stride=2, padding=1), nn.ELU(),
+                nn.LazyConv2d(8, kernel_size=5, stride=2, padding=1), nn.Mish(),
+                nn.LazyConv2d(16, kernel_size=5, stride=2, padding=1), nn.Mish(),
                 nn.Flatten(),
-                nn.LazyLinear(self.context_dim // 2), nn.ELU(),
+                nn.LazyLinear(self.context_dim // 2), nn.Mish(),
             )
-            self.encoder = TensorDictSequential(
+            encoder_layers = [
                 TensorDictModule(make_mlp([256, self.context_dim // 2]), [OBS_PRIV_KEY], ["context_state"]),
                 TensorDictModule(conv, ["height_scan"], ["context_terrain"]),
                 CatTensors(["context_state", "context_terrain"], "context_expert", del_keys=False)
-            ).to(self.device)
+            ]
+            if self.cfg.norm_context:
+                encoder_layers.append(TensorDictModule(L2Norm(), ["context_expert"], ["context_expert"]))
+            self.encoder = TensorDictSequential(*encoder_layers).to(self.device)
         else:
             self.context_dim = 128
             logging.info("Use only state as terrain feature.")
+            if self.cfg.norm_context:
+                encoder = nn.Sequential(make_mlp([256, self.context_dim]), L2Norm())
+            else:
+                encoder = make_mlp([256, self.context_dim])
             self.encoder = TensorDictModule(
-                make_mlp([256, self.context_dim]),
+                encoder,
                 [OBS_PRIV_KEY], 
                 ["context_expert"]
             ).to(self.device)

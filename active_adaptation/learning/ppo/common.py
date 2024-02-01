@@ -196,3 +196,9 @@ def hard_copy_(source_module: nn.Module, target_module: nn.Module):
 def soft_copy_(source_module: nn.Module, target_module: nn.Module, tau: float = 0.01):
     for params_source, params_target in zip(source_module.parameters(), target_module.parameters()):
         params_target.data.lerp_(params_source.data, tau)
+
+
+class L2Norm(nn.Module):
+    
+    def forward(self, x):
+        return x / torch.norm(x, dim=-1, keepdim=True).clamp(1e-7)

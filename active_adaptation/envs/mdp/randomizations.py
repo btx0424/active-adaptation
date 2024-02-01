@@ -229,7 +229,32 @@ class JointFriction(Randomization):
             frictions.expand(-1, self.asset.num_joints), 
             indices=self.asset._ALL_INDICES.cpu()
         )
-        
+
+
+class BodyComs(Randomization):
+    def __init__(self, env, com_range=(-0.1, 0.1), body_indices=None):
+        super().__init__(env)
+        self.com_range = com_range
+        self.asset: Articulation = self.env.scene["robot"]
+        if body_indices is None:
+            body_indices = slice(None)
+        self.body_indices = body_indices
+    
+    def startup(self):
+        logging.info(f"Randomize body coms {self.body_indices} upon starup.")
+        shape = (self.env.num_envs, self.asset.num_bodies)
+        coms: torch.Tensor = self.asset.body_physx_view.get_coms().clone().reshape(*shape, -1)
+        offset = torch.zeros_like(coms)
+        offset[:, :, :3].uniform_(*self.com_range)
+        coms = coms + offset
+
+        bodies_per_env = self.asset.body_physx_view.count // self.env.num_envs        
+        indices = self.body_indices.repeat(self.env.num_envs, 1)
+        indices += torch.arange(self.env.num_envs).unsqueeze(1) * bodies_per_env
+        self.asset.body_physx_view.set_coms(coms.flatten(), indices.flatten())
+
+        self.randomized_coms = coms[:, self.body_indices, :3].to(self.env.device)
+
 
 class CommandManager:
     def __init__(self, env, speed_range=(0.5, 2.0)):
