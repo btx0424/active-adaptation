@@ -179,7 +179,7 @@ class Quadruped(Env):
                 self.robot.data.root_lin_vel_w,
                 color=(1., .5, .5, 1.)
             )
-        super().render(mode)
+        return super().render(mode)
 
     def apply_action(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
