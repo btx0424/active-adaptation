@@ -156,7 +156,6 @@ class Quadruped(Env):
             feet_pos_w - self.robot.data.root_pos_w.unsqueeze(1)
         )
 
-    def render(self, mode):
         if hasattr(self, "debug_draw"):
             self.debug_draw.clear()
             robot_pos = (
@@ -179,7 +178,6 @@ class Quadruped(Env):
                 self.robot.data.root_lin_vel_w,
                 color=(1., .5, .5, 1.)
             )
-        return super().render(mode)
 
     def apply_action(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
