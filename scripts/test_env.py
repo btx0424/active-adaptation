@@ -66,7 +66,7 @@ def main(cfg):
     base_env = TASKS[cfg.task.task](env_cfg)
     transform = Compose(
         InitTracker(),
-        VecNorm(in_keys=["policy"], out_keys=["policy"]),
+        # VecNorm(in_keys=["policy"], out_keys=["policy"]),
         # CatFrames(4, -1, ["policy"], ["priv"]),
         # History(["policy"], steps=16)
     )
@@ -236,6 +236,7 @@ def main(cfg):
 
     wandb.finish()
     
+    exit(0)
     base_env.close()
     simulation_app.close()
 

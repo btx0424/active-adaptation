@@ -48,7 +48,7 @@ class PPOConfig:
     num_minibatches: int = 16
     lr: float = 1e-3
     clip_param: float = 0.2
-    recompute_adv: bool = True
+    recompute_adv: bool = False
 
     priv_actor: bool = False
     priv_critic: bool = False
