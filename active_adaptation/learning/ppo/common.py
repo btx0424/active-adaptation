@@ -38,7 +38,7 @@ REWARD_KEY = ("next", "reward") # ("agents", "reward")
 DONE_KEY = ("next", "terminated")
 
 
-def make_mlp(num_units, activation=nn.Mish, norm="before"):
+def make_mlp(num_units, activation=nn.Mish, norm="before", dropout=0.):
     assert norm in ("before", "after", None)
     layers = []
     for n in num_units:
@@ -51,6 +51,8 @@ def make_mlp(num_units, activation=nn.Mish, norm="before"):
             layers.append(nn.LayerNorm(n))
         else:
             layers.append(activation())
+        if dropout > 0. :
+            layers.append(nn.Dropout(dropout))
     return nn.Sequential(*layers)
 
 
