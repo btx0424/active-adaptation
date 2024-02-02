@@ -180,7 +180,14 @@ class Quadruped(Env):
                 self.robot.data.root_lin_vel_w,
                 color=(1., .5, .5, 1.)
             )
-
+    
+    def render(self, mode: str = "human"):
+        robot_pos = self.robot.data.root_pos_w[self.lookat_env_i].cpu()
+        eye = torch.tensor(self.cfg.viewer.eye) + robot_pos
+        lookat = torch.tensor(self.cfg.viewer.lookat) + robot_pos
+        self.sim.set_camera_view(eye, lookat)
+        return super().render(mode)
+    
     def apply_action(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
             # random packet loss: repeat previous actions
