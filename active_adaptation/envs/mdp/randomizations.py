@@ -255,6 +255,7 @@ class BodyComs(Randomization):
 
         self.randomized_coms = coms[:, self.body_indices, :3].to(self.env.device)
 
+import omni.isaac.orbit.utils.math as math_utils
 
 class CommandManager:
     def __init__(self, env, speed_range=(0.5, 2.0)):
@@ -302,6 +303,61 @@ class CommandManager:
         
         yaw = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
         self._target_yaw[env_ids] = yaw
+
+
+class CommandManager1:
+    def __init__(
+        self, 
+        env, 
+        speed_range=(0.5, 2.0),
+        angvel_range=(-1.0, 1.0),
+    ):
+        self.env = env
+        self.robot: Articulation = env.scene["robot"]
+        self.device = env.device
+        self.speed_range = speed_range
+        self.angvel_range = angvel_range
+
+        with torch.device(env.device):
+            # world frame
+            self._target_yaw = torch.zeros(env.num_envs)
+            self._command_stand = torch.zeros(env.num_envs, 1)
+            self._command_linvel = torch.zeros(env.num_envs, 3)
+            self._command_angvel_yaw = torch.zeros(env.num_envs)
+            self._command_heading = torch.zeros(env.num_envs, 3)
+            self._command_speed = torch.zeros(env.num_envs, 1)
+        self.is_standing_env = self._command_stand
+
+    @property
+    def command(self):
+        return torch.cat([self._command_linvel[:, :2], self._command_angvel_yaw.unsqueeze(1)], dim=1)
+
+    def reset(self, env_ids: torch.Tensor):
+        self.sample_commands(env_ids)
+
+    def update(self, resample: torch.Tensor=None):
+        if resample is not None:
+            self.sample_commands(resample)
+        
+        yaw_diff = self._target_yaw - self.robot.data.heading_w
+        self._command_angvel_yaw[:] = math_utils.wrap_to_pi(yaw_diff).clamp(*self.angvel_range)
+
+    def sample_commands(self, env_ids: torch.Tensor):
+        a = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
+        stand = torch.rand(len(env_ids), device=self.device) < 0.2
+        speed = torch.zeros(len(env_ids), device=self.device).uniform_(*self.speed_range)
+        speed = speed * (~stand).float()
+        
+        self._command_stand[env_ids] = stand.float().unsqueeze(1)
+        self._command_speed[env_ids] = speed.unsqueeze(1)
+        self._command_linvel[env_ids, 0] = speed * a.cos()
+        self._command_linvel[env_ids, 1] = speed * a.sin()
+        
+        yaw = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
+        self._target_yaw[env_ids] = yaw
+        self._command_heading[env_ids, 0] = yaw.cos()
+        self._command_heading[env_ids, 1] = yaw.sin()
+
 
 def random_scale(x: torch.Tensor, low: float, high: float, homogeneous: bool=False):
     if homogeneous:

@@ -15,7 +15,7 @@ from torchrl.data import (
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
 
-from .mdp import BodyMasses, BodyMaterial, MotorParams, BodyInertias, MotorFailure, CommandManager, BodyComs
+from .mdp import BodyMasses, BodyMaterial, MotorParams, BodyInertias, MotorFailure, CommandManager1, BodyComs
 from .mdp.command import COMMAND_CFG, UniformVelocityCommand
 from collections import OrderedDict
 
@@ -63,7 +63,7 @@ class Quadruped(Env):
         ).norm(dim=-1).argmin()
 
         self.target_base_height = self.cfg.target_base_height
-        self.command_manager = CommandManager(self, speed_range=(0.5, 2.4))
+        self.command_manager = CommandManager1(self, speed_range=(0.5, 2.4))
 
         with torch.device(self.device):
             # self.action_scale = torch.ones(self.num_envs, 1)
@@ -201,10 +201,7 @@ class Quadruped(Env):
 
     @observation_func
     def command(self):
-        quat_w = self.robot.data.root_quat_w
-        command_linvel = quat_rotate_inverse(quat_w, self.command_manager._command_linvel)
-        command_heading = quat_rotate_inverse(quat_w, self.command_manager._command_heading)
-        return torch.cat([command_linvel, command_heading], dim=-1)
+        return self.command_manager.command
     
     @observation_func
     def root_quat_w(self):
@@ -316,9 +313,9 @@ class Quadruped(Env):
     
     @reward_func
     def linvel_projection(self):
-        linvel_w = self.robot.data.root_lin_vel_w
+        linvel_w = self.robot.data.root_lin_vel_w[:, :2]
         return (
-            (linvel_w * self.command_manager._command_linvel)
+            (linvel_w * self.command_manager._command_linvel[:, :2])
             .sum(dim=1, keepdim=True)
             .clamp_max(self.command_manager._command_speed)
         )
@@ -330,9 +327,9 @@ class Quadruped(Env):
 
     @reward_func
     def linvel_exp(self):
-        linvel_w = self.robot.data.root_lin_vel_w
-        linvel_error = square_norm(linvel_w[:, :2] - self.command_manager._command_linvel[:, :2])
-        return 1. / (1. + linvel_error / 0.25)
+        linvel_w = self.robot.data.root_lin_vel_w[:, :2]
+        linvel_error = square_norm(linvel_w - self.command_manager._command_linvel[:, :2])
+        return torch.exp( - linvel_error / 0.25)
 
     @reward_func
     def angvel_z_exp(self):
