@@ -15,26 +15,18 @@ from torchrl.data import (
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
 
-from .mdp import BodyMasses, BodyMaterial, MotorParams, BodyInertias, MotorFailure, CommandManager
+from .mdp import BodyMasses, BodyMaterial, MotorParams, BodyInertias, MotorFailure, CommandManager1
+from .locomotion import LocomotionEnv
 
-class Biped(Env):
+class Biped(LocomotionEnv):
 
     def __init__(self, cfg):
         super().__init__(cfg)
         self.action_scaling = 0.5
-
-        self.robot = self.scene.articulations["robot"]
-        self.root_physx_view = self.robot.root_physx_view
-
-        body_masses = self.robot.body_physx_view.get_masses().reshape(self.num_envs, -1)[0]
-        for name, mass in zip(self.robot.body_names, body_masses):
-            print(name, mass)
+        self.target_base_height = self.cfg.target_base_height
         
         self.foot_indices, _ = self.robot.find_bodies(".*_toe")
         self.main_body_indices = list(set(range(self.robot.num_bodies)) - set(self.foot_indices))
-
-        self.contact_sensor: ContactSensor = self.scene.sensors.get("contact_forces", None)
-        self.height_scanner: RayCaster = self.scene.sensors.get("height_scanner", None)
 
         self.init_root_state = self.robot.data.default_root_state.clone()
         self.init_joint_pos = self.robot.data.default_joint_pos.clone()
@@ -44,28 +36,15 @@ class Biped(Env):
         self.toe_joint_indices = self.robot.actuators["toes"].joint_indices
         self.motor_joint_indices = self.leg_joint_indices + self.toe_joint_indices
         self.default_joint_pos = self.robot.data.default_joint_pos[:, self.motor_joint_indices]
-        
-        try:
-            from omni_drones.envs.isaac_env import DebugDraw
-            self.debug_draw = DebugDraw()
-            print("[INFO] Debug Draw API enabled.")
-        except ModuleNotFoundError:
-            pass
-        
-        self.lookat_env_i = (
-            self.scene._default_env_origins.cpu() 
-            - torch.tensor(self.cfg.viewer.lookat)
-        ).norm(dim=-1).argmin()
 
-        self.target_base_height = 0.5
-        self.command_manager = CommandManager(self)
+        self.command_manager = CommandManager1(self)
 
         with torch.device(self.device):
             # self.action_scale = torch.ones(self.num_envs, 1)
             self.action_alpha = torch.ones(self.num_envs, 1)
-            self._actions_t = torch.zeros(self.num_envs, 12)
-            self._actions_tm1 = torch.zeros_like(self._actions_t)
-            self._actions_tm2 = torch.zeros_like(self._actions_t)
+            self.action_buf = torch.zeros(self.num_envs, 12, 4)
+            self.last_action = torch.zeros(self.num_envs, 12)
+            self.delay = torch.zeros(self.num_envs, 1, dtype=int)
 
         self.randomizations = {
             "body_masses": BodyMasses(self, (0.7, 1.3), body_indices=torch.arange(13)),
@@ -102,92 +81,6 @@ class Biped(Env):
 
         self.resample_interval = 300
         self.resample_prob = 0.6
-
-    def _reset_idx(self, env_ids: torch.Tensor):
-        init_root_state = self.init_root_state[env_ids]
-        init_root_state[:, :3] += self.scene.env_origins[env_ids]
-        
-        self.robot.write_root_state_to_sim(
-            init_root_state, 
-            env_ids=env_ids
-        )
-        self.robot.write_joint_state_to_sim(
-            # random_scale(self.init_joint_pos[env_ids], 0.8, 1.2),
-            self.init_joint_pos[env_ids],
-            self.init_joint_vel[env_ids],
-            env_ids=env_ids
-        )
-        self.stats[env_ids] = 0.
-        self._actions_t[env_ids] = 0.
-        self._actions_tm1[env_ids] = 0.
-        self._actions_tm2[env_ids] = 0.
-
-        self.scene.reset(env_ids)
-        self.scene.update(dt=self.physics_dt)
-        for _, randomization in self.randomizations.items():
-            randomization.reset(env_ids)
-        
-        self.command_manager.reset(env_ids=env_ids)
-    
-    def _update(self):
-        super()._update()
-        should_resample = (
-            (self.episode_length_buf % self.resample_interval == 0)
-            & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
-        )
-        self.command_manager.update(resample=should_resample.nonzero().squeeze(-1))
-
-        if self.sim.has_gui() and hasattr(self, "debug_draw"):
-            self.debug_draw.clear()
-            robot_pos = (
-                self.robot.data.root_pos_w.cpu()
-                + torch.tensor([0., 0., 0.2])
-            )
-            self.debug_draw.clear()
-            self.debug_draw.vector(
-                robot_pos, 
-                self.command_manager._command_linvel,                
-                color=(1., 1., 1., 1.)
-            )
-            self.debug_draw.vector(
-                robot_pos,
-                self.command_manager._command_heading,
-                color=(.2, .2, 1., 1.)
-            )
-            self.debug_draw.vector(
-                robot_pos, 
-                self.robot.data.root_lin_vel_w,
-                color=(1., .5, .5, 1.)
-            )
-
-
-    def apply_action(self, tensordict: TensorDictBase, substep: int):
-        if substep == 0:
-            # random packet loss: repeat previous actions
-            actions = tensordict["action"]
-
-            self._actions_tm2[:] = self._actions_tm1
-            self._actions_tm1[:] = self._actions_t
-            self._actions_t.lerp_(actions, self.action_alpha)
-
-            pos_target = actions * self.action_scaling + self.default_joint_pos
-            self.robot.set_joint_position_target(pos_target, self.motor_joint_indices)
-        self.robot.write_data_to_sim()
-
-    @observation_func
-    def command(self):
-        quat_w = self.robot.data.root_quat_w
-        command_linvel = quat_rotate_inverse(quat_w, self.command_manager._command_linvel)
-        command_heading = quat_rotate_inverse(quat_w, self.command_manager._command_heading)
-        return torch.cat([command_linvel, command_heading], dim=-1)
-    
-    @observation_func
-    def root_quat_w(self):
-        return self.robot.data.root_quat_w
-    
-    @observation_func
-    def root_angvel_b(self):
-        return self.robot.data.root_ang_vel_b
     
     @observation_func
     def joint_pos(self):
@@ -200,20 +93,8 @@ class Biped(Env):
         return random_noise(all_joint_vel[:, self.motor_joint_indices], 0.2)
     
     @observation_func
-    def joint_acc(self):
-        return self.robot.data.joint_acc * self.step_dt
-
-    @observation_func
-    def projected_gravity_b(self):
-        return self.robot.data.projected_gravity_b
-    
-    @observation_func
-    def root_linvel_b(self):
-        return self.robot.data.root_lin_vel_b
-    
-    @observation_func
     def prev_actions(self):
-        return self._actions_t
+        return self.action_buf.reshape(self.num_envs, -1)
     
     @observation_func
     def applied_torques(self):
@@ -262,79 +143,6 @@ class Biped(Env):
     def motor_failure(self):
         rand: MotorFailure = self.randomizations["motor_failure"]
         return rand.motor_failure.reshape(self.num_envs, -1)
-    
-    @reward_func
-    def linvel_projection(self):
-        linvel_w = self.robot.data.root_lin_vel_w
-        return (
-            (linvel_w * self.command_manager._command_linvel)
-            .sum(dim=1, keepdim=True)
-            .clamp_max(self.command_manager._command_speed)
-        )
-    
-    @reward_func
-    def linvel_exp(self):
-        linvel_w = self.robot.data.root_lin_vel_w
-        linvel_error = square_norm(linvel_w - self.command_manager._command_linvel)
-        return 1. / (1. + linvel_error / 0.25)
-    
-    @reward_func
-    def linvel_z_l2(self):
-        return -self.robot.data.root_lin_vel_b[:, [2]].square()
-    
-    @reward_func
-    def heading(self):
-        root_quat = self.robot.data.root_quat_w
-        heading_b_x = quat_rotate_inverse(root_quat, self.command_manager._command_heading)[:, [0]]
-        return 0.5 * (heading_b_x + heading_b_x.sign() * heading_b_x.square())
-    
-    @reward_func
-    def base_height(self):
-        height = self.robot.data.root_pos_w[:, [2]]
-        height = height - self.robot.data.body_pos_w[:, self.foot_indices, 2].mean(1, keepdim=True)
-        return (height / self.target_base_height).square().clamp_max(1.)
-
-    @reward_func
-    def energy_l2(self):
-        energy = (
-            (self.robot.data.joint_vel * self.robot.data.applied_torque)
-            .square()
-            .sum(dim=-1, keepdim=True)
-        )
-        return - energy
-    
-    @reward_func
-    def energy_l1(self):
-        energy = (
-            (self.robot.data.joint_vel * self.robot.data.applied_torque)
-            .abs()
-            .sum(dim=-1, keepdim=True)
-        )
-        return - energy
-    
-    @reward_func
-    def joint_acc_l2(self):
-        return - self.robot.data.joint_acc.square().sum(dim=-1, keepdim=True)
-    
-    @reward_func
-    def joint_torques_l2(self):
-        return - self.robot.data.applied_torque.square().sum(dim=-1, keepdim=True)
-
-    @reward_func
-    def action_rate_l2(self):
-        return - (self._actions_t - self._actions_tm1).square().sum(dim=-1, keepdim=True)
-
-    @reward_func
-    def action_rate2_l2(self):
-        return - (
-            (self._actions_t - self._actions_tm1 - self._actions_tm1 + self._actions_tm2)
-            .square()
-            .sum(dim=-1, keepdim=True)
-        )
-
-    @reward_func
-    def survival(self):
-        return torch.ones(self.num_envs, 1, device=self.device)
     
     @reward_func
     def orientation(self):

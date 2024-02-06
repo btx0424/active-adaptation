@@ -73,13 +73,17 @@ class Env(EnvBase):
         observation_funcs = {}
         reward_funcs = {}
         termination_funcs = {}
-        for name, func in self.__class__.__dict__.items():
-            if hasattr(func, "_is_obs"):
-                observation_funcs[name] = func
-            if hasattr(func, "_is_reward"):
-                reward_funcs[name] = func
-            if hasattr(func, "_is_termination"):
-                termination_funcs[name] = func
+        for name in dir(self):
+            try:
+                item = getattr(self, name)
+                if hasattr(item, "_is_obs"):
+                    observation_funcs[name] = item
+                if hasattr(item, "_is_reward"):
+                    reward_funcs[name] = item
+                if hasattr(item, "_is_termination"):
+                    termination_funcs[name] = item
+            except:
+                pass
         
         self.observation_funcs = {}
         self.reward_funcs = {}
@@ -126,7 +130,7 @@ class Env(EnvBase):
             .to(self.device)
         )
         self.stats = self.observation_spec["stats"].zero()
-
+    
     @property
     def num_envs(self) -> int:
         """The number of instances of the environment that are running."""
@@ -163,7 +167,7 @@ class Env(EnvBase):
 
     def _compute_observation(self) -> TensorDictBase:
         observation = TensorDict({
-            group: torch.cat([func(self) for func in funcs.values()], dim=-1)
+            group: torch.cat([func() for func in funcs.values()], dim=-1)
             for group, funcs in self.observation_funcs.items()
         }, [self.num_envs])
         observation["stats"] = self.stats.clone()
@@ -172,7 +176,7 @@ class Env(EnvBase):
     def _compute_reward(self) -> TensorDictBase:
         rewards = []
         for key, (func, weight) in self.reward_funcs.items():
-            reward = weight * func(self)
+            reward = weight * func()
             self.stats[key].add_(reward)
             rewards.append(reward)
         reward = sum(rewards).clip(0.)
@@ -181,7 +185,7 @@ class Env(EnvBase):
         return {"reward": reward}
     
     def _compute_termination(self) -> TensorDictBase:
-        flags = torch.cat([func(self) for func in self.termination_funcs.values()], dim=-1)
+        flags = torch.cat([func() for func in self.termination_funcs.values()], dim=-1)
         return flags.any(dim=-1, keepdim=True)
 
     def _update(self):

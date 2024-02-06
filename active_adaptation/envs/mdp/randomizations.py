@@ -319,7 +319,6 @@ class CommandManager1:
         self.angvel_range = angvel_range
 
         with torch.device(env.device):
-            # world frame
             self._target_yaw = torch.zeros(env.num_envs)
             self._command_stand = torch.zeros(env.num_envs, 1)
             self._command_linvel = torch.zeros(env.num_envs, 3)

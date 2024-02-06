@@ -16,20 +16,16 @@ quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
 
 from .mdp import BodyMasses, BodyMaterial, MotorParams, BodyInertias, MotorFailure, CommandManager1, BodyComs
-from .mdp.command import COMMAND_CFG, UniformVelocityCommand
 from collections import OrderedDict
+from .locomotion import LocomotionEnv
 
-class Quadruped(Env):
+class Quadruped(LocomotionEnv):
 
     def __init__(self, cfg):
         super().__init__(cfg)
-        self.permute_actions = False
         self.action_scaling = 0.5
-
-        self.robot = self.scene.articulations["robot"]
-        body_masses = self.robot.body_physx_view.get_masses().reshape(self.num_envs, -1)[0]
-        for name, mass in zip(self.robot.body_names, body_masses):
-            print(name, mass)
+        self.target_base_height = self.cfg.target_base_height
+        
         self.foot_indices, _ = self.robot.find_bodies(".*_foot")
         self.calf_indices, _ = self.robot.find_bodies(".*_calf")
         self.thigh_indices, _ = self.robot.find_bodies(".*_thigh")
@@ -40,36 +36,16 @@ class Quadruped(Env):
             - set(self.foot_indices)
         )
 
-        self.contact_sensor: ContactSensor = self.scene.sensors.get("contact_forces", None)
-        self.height_scanner: RayCaster = self.scene.sensors.get("height_scanner", None)
-
         self.init_root_state = self.robot.data.default_root_state.clone()
         self.init_joint_pos = self.robot.data.default_joint_pos.clone()
         self.init_joint_vel = self.robot.data.default_joint_vel.clone()
         
         self.motor_joint_indices = self.robot.actuators["base_legs"].joint_indices
         self.default_joint_pos = self.robot.data.default_joint_pos[:, self.motor_joint_indices]
-        
-        try:
-            from omni_drones.envs.isaac_env import DebugDraw
-            self.debug_draw = DebugDraw()
-            print("[INFO] Debug Draw API enabled.")
-        except ModuleNotFoundError:
-            pass
-        
-        self.lookat_env_i = (
-            self.scene._default_env_origins.cpu() 
-            - torch.tensor(self.cfg.viewer.lookat)
-        ).norm(dim=-1).argmin()
 
-        self.target_base_height = self.cfg.target_base_height
-        self.command_manager = CommandManager1(self, speed_range=(0.5, 2.4))
+        self._feet_pos_b = self.robot.data.body_pos_w[:, self.foot_indices].clone()
 
-        with torch.device(self.device):
-            # self.action_scale = torch.ones(self.num_envs, 1)
-            self.action_alpha = torch.ones(self.num_envs, 1)
-            self._jpos_target = torch.zeros(self.num_envs, 12, 3)
-            self._feet_pos_b = torch.zeros(self.num_envs, 4, 3)
+        self.command_manager = CommandManager1(self, speed_range=(0.5, 2.0))
 
         self.randomizations = OrderedDict({
             "body_masses": BodyMasses(self, (0.7, 1.3), body_indices=torch.arange(19)),
@@ -119,104 +95,6 @@ class Quadruped(Env):
 
         self.resample_interval = 300
         self.resample_prob = 0.6
-
-    def _reset_idx(self, env_ids: torch.Tensor):
-        init_root_state = self.init_root_state[env_ids]
-        init_root_state[:, :3] += self.scene.env_origins[env_ids]
-        
-        self.robot.write_root_state_to_sim(
-            init_root_state, 
-            env_ids=env_ids
-        )
-        self.robot.write_joint_state_to_sim(
-            random_shift(self.init_joint_pos[env_ids], 0.8, 1.2),
-            self.init_joint_vel[env_ids],
-            env_ids=env_ids
-        )
-        self.stats[env_ids] = 0.
-        self._jpos_target[env_ids] = 0.
-        self._jpos_target[env_ids, :, -1] = self.init_joint_pos[env_ids]
-
-        self.scene.reset(env_ids)
-        self.scene.update(dt=self.physics_dt)
-        for _, randomization in self.randomizations.items():
-            randomization.reset(env_ids)
-        
-        self.command_manager.reset(env_ids=env_ids)
-    
-    def _update(self):
-        super()._update()
-        should_resample = (
-            (self.episode_length_buf % self.resample_interval == 0)
-            & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
-        )
-        self.command_manager.update(resample=should_resample.nonzero().squeeze(-1))
-        
-        feet_pos_w = self.robot.data.body_pos_w[:, self.foot_indices]
-        self._feet_pos_b[:] = quat_rotate_inverse(
-            self.robot.data.root_quat_w.unsqueeze(1),
-            feet_pos_w - self.robot.data.root_pos_w.unsqueeze(1)
-        )
-
-        if hasattr(self, "debug_draw"):
-            self.debug_draw.clear()
-            robot_pos = (
-                self.robot.data.root_pos_w.cpu()
-                + torch.tensor([0., 0., 0.2])
-            )
-            self.debug_draw.clear()
-            self.debug_draw.vector(
-                robot_pos, 
-                self.command_manager._command_linvel,                
-                color=(1., 1., 1., 1.)
-            )
-            self.debug_draw.vector(
-                robot_pos,
-                self.command_manager._command_heading,
-                color=(.2, .2, 1., 1.)
-            )
-            self.debug_draw.vector(
-                robot_pos, 
-                self.robot.data.root_lin_vel_w,
-                color=(1., .5, .5, 1.)
-            )
-    
-    def render(self, mode: str = "human"):
-        robot_pos = self.robot.data.root_pos_w[self.lookat_env_i].cpu()
-        eye = torch.tensor(self.cfg.viewer.eye) + robot_pos
-        lookat = torch.tensor(self.cfg.viewer.lookat) + robot_pos
-        self.sim.set_camera_view(eye, lookat)
-        return super().render(mode)
-    
-    def apply_action(self, tensordict: TensorDictBase, substep: int):
-        if substep == 0:
-            # random packet loss: repeat previous actions
-            actions = tensordict["action"]
-            pos_target = actions * self.action_scaling + self.default_joint_pos
-            self._jpos_target[:, :, :-1] = self._jpos_target[:, :, 1:]
-            self._jpos_target[:, :, -1] = pos_target
-
-            self.robot.set_joint_position_target(pos_target, self.motor_joint_indices)
-        self.robot.write_data_to_sim()
-
-    @observation_func
-    def height_scan(self):
-        root_pos_w = self.robot.data.root_pos_w
-        ray_hits_w = self.height_scanner.data.ray_hits_w
-        height_scan = root_pos_w[:, [2]].unsqueeze(1) - ray_hits_w[:, :, [2]]
-        return height_scan.reshape(self.num_envs, 1, 11, 17).clamp(-2., 2.)
-
-    @observation_func
-    def command(self):
-        return self.command_manager.command
-    
-    @observation_func
-    def root_quat_w(self):
-        return self.robot.data.root_quat_w
-    
-    @observation_func
-    def root_angvel_b(self):
-        return self.robot.data.root_ang_vel_b
     
     @observation_func
     def joint_pos(self):
@@ -229,41 +107,8 @@ class Quadruped(Env):
         return all_joint_vel[:, self.motor_joint_indices]
     
     @observation_func
-    def joint_acc(self):
-        return self.robot.data.joint_acc * self.step_dt
-
-    @observation_func
-    def projected_gravity_b(self):
-        return self.robot.data.projected_gravity_b
-    
-    @observation_func
-    def root_linvel_b(self):
-        return self.robot.data.root_lin_vel_b
-    
-    @observation_func
-    def prev_actions(self):
-        return self._jpos_target[:, :, -1]
-    
-    @observation_func
     def applied_torques(self):
         return self.robot.data.applied_torque / 30.
-    
-    @observation_func
-    def contact_forces(self):
-        forces = self.contact_sensor.data.net_forces_w_history[:, :, self.foot_indices].mean(dim=1)
-        return (forces * self.step_dt).reshape(self.num_envs, -1)
-        forces_norm = forces.norm(dim=-1, keepdim=True)
-        return (forces / forces_norm.clamp_min(1e-6) * symlog(forces_norm)).reshape(self.num_envs, -1)
-    
-    @observation_func
-    def contact_indicator(self):
-        force_history = self.contact_sensor.data.net_forces_w_history[:, :, self.foot_indices]
-        force_norm = force_history.norm(dim=-1)
-        return (force_norm.mean(dim=1) > 1.).float()
-
-    @observation_func
-    def feet_pos_b(self):
-        return self._feet_pos_b.reshape(self.num_envs, -1)
     
     @observation_func
     def motor_params(self):
@@ -320,36 +165,13 @@ class Quadruped(Env):
     
     @reward_func
     def linvel_projection(self):
-        linvel_w = self.robot.data.root_lin_vel_w[:, :2]
-        return (
-            (linvel_w * self.command_manager._command_linvel[:, :2])
-            .sum(dim=1, keepdim=True)
-            .clamp_max(self.command_manager._command_speed)
+        linvel_b = self.robot.data.root_lin_vel_b[:, :2]
+        command_linvel_b = self.command_manager._command_linvel[:, :2]
+        projection = (
+            (linvel_b * command_linvel_b).sum(dim=-1, keepdim=True) 
+            / (linvel_b .norm(dim=-1, keepdim=True) + command_linvel_b.norm(dim=-1, keepdim=True))
         )
-    
-    # @reward_func
-    # def linvel_xy_exp(self):
-    #     linvel_error = (self.command_manager.command[:, :2] - self.robot.data.root_lin_vel_b[:, :2]).square().sum(-1, True)
-    #     return torch.exp( - linvel_error / 0.25)
-
-    @reward_func
-    def linvel_exp(self):
-        linvel_w = self.robot.data.root_lin_vel_w[:, :2]
-        linvel_error = square_norm(linvel_w - self.command_manager._command_linvel[:, :2])
-        return torch.exp( - linvel_error / 0.25)
-
-    @reward_func
-    def angvel_z_exp(self):
-        angvel_error = (self.command_manager.command[:, [2]] - self.robot.data.root_ang_vel_b[:, [2]]).square()
-        return torch.exp( - angvel_error / 0.25)
-    
-    @reward_func
-    def linvel_z_l2(self):
-        return -self.robot.data.root_lin_vel_b[:, [2]].square()
-    
-    @reward_func
-    def angvel_xy_l2(self):
-        return - self.robot.data.root_ang_vel_b[:, :2].square().sum(-1, True)
+        return projection.clamp_max(1.)
     
     @reward_func
     def heading(self):
@@ -362,59 +184,6 @@ class Quadruped(Env):
         height = self.robot.data.root_pos_w[:, [2]]
         height = height - self.robot.data.body_pos_w[:, self.foot_indices, 2].mean(1, keepdim=True)
         return (height / self.target_base_height).square().clamp_max(0.8)
-
-    @reward_func
-    def energy_l2(self):
-        energy = (
-            (self.robot.data.joint_vel * self.robot.data.applied_torque)
-            .square()
-            .sum(dim=-1, keepdim=True)
-        )
-        return - energy
-    
-    @reward_func
-    def energy_l1(self):
-        energy = (
-            (self.robot.data.joint_vel * self.robot.data.applied_torque)
-            .abs()
-            .sum(dim=-1, keepdim=True)
-        )
-        return - energy
-    
-    @reward_func
-    def joint_acc_l2(self):
-        return - self.robot.data.joint_acc.square().sum(dim=-1, keepdim=True)
-    
-    @reward_func
-    def joint_torques_l2(self):
-        return - self.robot.data.applied_torque.square().sum(dim=-1, keepdim=True)
-
-    @reward_func
-    def action_rate_l2(self):
-        action_diff = self._jpos_target[:, :, -1] - self._jpos_target[:, :, -2]
-        return - (action_diff / self.action_scaling).square().sum(dim=-1, keepdim=True)
-
-    @reward_func
-    def action_rate2_l2(self):
-        return - (
-            (self._actions_t - self._actions_tm1 - self._actions_tm1 + self._actions_tm2)
-            .square()
-            .sum(dim=-1, keepdim=True)
-        )
-
-    @reward_func
-    def survival(self):
-        return torch.ones(self.num_envs, 1, device=self.device)
-    
-    @reward_func
-    def orientation(self):
-        return self.robot.data.projected_gravity_b[:, [2]].square()
-    
-    @reward_func
-    def feet_slip(self):
-        i = self.contact_indicator()
-        feet_vel = self.robot.data.body_lin_vel_w[:, self.foot_indices]
-        return - (i * feet_vel.norm(dim=-1)).sum(dim=1, keepdim=True)
     
     @reward_func
     def stand(self):
