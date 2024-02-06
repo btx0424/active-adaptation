@@ -54,6 +54,7 @@ class PPOConfig:
     priv_critic: bool = False
 
     checkpoint_path: Union[str, None] = None
+    train_model: bool = False
 
 cs = ConfigStore.instance()
 cs.store("ppo", node=PPOConfig, group="algo")
@@ -130,6 +131,9 @@ class PPOPolicy(TensorDictModuleBase):
             self.actor.apply(init_)
             self.critic.apply(init_)
 
+        if self.cfg.train_model:
+            self.aux_model = AuxModel(observation_spec).to(self.device)
+
         self.opt = torch.optim.Adam(
             [
                 {"params": self.actor.parameters()},
@@ -157,9 +161,10 @@ class PPOPolicy(TensorDictModuleBase):
             for minibatch in batch:
                 infos.append(self._update(minibatch))
         
-        infos: TensorDict = torch.stack(infos).to_tensordict()
-        infos = infos.apply(torch.mean, batch_size=[])
-        return {k: v.item() for k, v in infos.items()}
+        infos = {k: v.mean().item() for k, v in torch.stack(infos).items()}
+        if self.cfg.train_model:
+            infos.update(self.aux_model.train_op(tensordict))
+        return infos
 
     @torch.no_grad()
     def _compute_advantage(self, tensordict: TensorDict):
@@ -220,3 +225,62 @@ class PPOPolicy(TensorDictModuleBase):
             "explained_var": explained_var
         }, [])
 
+
+class AuxModel(nn.Module):
+    def __init__(self, observation_spec: CompositeSpec):
+        super().__init__()
+        observation_dim = observation_spec["policy"].shape[-1]
+
+        self.beta = 0.
+        self.model_state = LatentModel(observation_dim)
+        self.model_obs = LatentModel(observation_dim)
+        self.opt = torch.optim.Adam(self.parameters(), lr=1e-3)
+
+    def train_op(self, tensordict: TensorDict):
+        infos = []
+        for minibatch in make_batch(tensordict, 16):
+            infos.append(self._update(minibatch))
+            
+        infos: TensorDict = torch.stack(infos).to_tensordict()
+        infos = infos.apply(torch.mean, batch_size=[])
+        return {k: v.item() for k, v in infos.items()}
+    
+    def _update(self, tensordict: TensorDict):
+        obs_policy = tensordict["policy"]
+        obs_priv = tensordict["priv"]
+        obs_next = tensordict["next", "policy"]
+        action = tensordict["action"]
+
+        loss_obs = self._elbo(
+            torch.cat([obs_policy, action], dim=-1), obs_next, self.model_obs
+        )
+
+        loss_state = self._elbo(
+            torch.cat([obs_policy, obs_priv, action], dim=-1), obs_next, self.model_state
+        )
+        self.opt.zero_grad()
+        (loss_obs + loss_state).backward()
+        self.opt.step()
+
+        return TensorDict({"loss_obs": loss_obs, "loss_state": loss_state}, [])
+    
+    def _elbo(self, x, x_target, model):
+        x_hat, mu, logvar = model(x)
+        recon = F.mse_loss(x_hat, x_target, reduction="mean").sum(-1)
+        kl = -0.5 * (1 + logvar - mu.square() - logvar.exp()).sum(-1)
+        return (recon + kl * self.beta).mean()
+
+
+class LatentModel(nn.Module):
+    def __init__(self, output_dim: int, latent_dim: int = 64):
+        super().__init__()
+        self.encoder = nn.Sequential(make_mlp([512, 256, 128]), nn.LazyLinear(latent_dim * 2))
+        self.decoder = nn.Sequential(make_mlp([128, 256, 256]), nn.LazyLinear(output_dim))
+    
+    def forward(self, x: torch.Tensor):
+        latent = self.encoder(x)
+        mu, logvar = torch.chunk(latent, 2, dim=-1)
+        std = torch.exp(0.5 * logvar)
+        z = mu + std * torch.randn_like(std)
+        x_hat = self.decoder(z)
+        return x_hat, mu, logvar
