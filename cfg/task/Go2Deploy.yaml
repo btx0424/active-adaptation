@@ -33,11 +33,12 @@ reward:
   # base_height: 0.5
   linvel_z_l2: 1.0
   # energy_l1: 0.0001
-  joint_acc_l2: 5e-7
+  joint_acc_l2: 2.5e-7
   joint_torques_l2: 2e-4
   stand: 0.5
   orientation: 0.25
-  survival: 0.5
+  survival: 0.25
   # feet_slip: 0.2
   action_rate_l2: 0.01
   # feet_air_time: 0.01
+  undesired_contact: 1.0

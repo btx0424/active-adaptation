@@ -254,11 +254,8 @@ class LocomotionEnv(Env):
     def linvel_projection(self):
         linvel_b = self.robot.data.root_lin_vel_b[:, :2]
         command_linvel_b = self.command_manager._command_linvel[:, :2]
-        projection = (
-            (linvel_b * command_linvel_b).sum(dim=-1, keepdim=True) 
-            / (linvel_b .norm(dim=-1, keepdim=True) + command_linvel_b.norm(dim=-1, keepdim=True))
-        )
-        return projection.clamp_max(1.)
+        projection = (linvel_b * command_linvel_b).sum(dim=-1, keepdim=True) 
+        return projection.clamp_max(self.command_manager._command_speed)
     
     @reward_func
     def linvel_exp(self):

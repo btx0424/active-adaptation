@@ -144,10 +144,6 @@ class Quadruped(LocomotionEnv):
         return rand.motor_failure.reshape(self.num_envs, -1)
     
     @observation_func
-    def env_id(self):
-        return torch.arange(self.num_envs, device=self.device).reshape(self.num_envs, 1)
-    
-    @observation_func
     def incoming_wrench(self):
         link_incoming_forces = self.robot.root_physx_view.get_link_incoming_joint_force()
         link_incoming_forces[:, :, :3] *= 0.01
@@ -163,21 +159,6 @@ class Quadruped(LocomotionEnv):
         rand: BodyComs = self.randomizations["body_coms"]
         return rand.randomized_coms.reshape(self.num_envs, -1)
     
-    @reward_func
-    def linvel_projection(self):
-        linvel_b = self.robot.data.root_lin_vel_b[:, :2]
-        command_linvel_b = self.command_manager._command_linvel[:, :2]
-        projection = (
-            (linvel_b * command_linvel_b).sum(dim=-1, keepdim=True) 
-            / (linvel_b .norm(dim=-1, keepdim=True) + command_linvel_b.norm(dim=-1, keepdim=True))
-        )
-        return projection.clamp_max(1.)
-    
-    @reward_func
-    def heading(self):
-        root_quat = self.robot.data.root_quat_w
-        heading_b_x = quat_rotate_inverse(root_quat, self.command_manager._command_heading)[:, [0]]
-        return 0.5 * (heading_b_x + heading_b_x.sign() * heading_b_x.square())
     
     @reward_func
     def base_height(self):
@@ -201,6 +182,11 @@ class Quadruped(LocomotionEnv):
         reward *= (self.command_manager.command[:, :2].norm(dim=-1)>0.1)
         return reward.reshape(self.num_envs, -1)
 
+    @reward_func
+    def undesired_contact(self):
+        contact_forces = self.contact_sensor.data.net_forces_w[:, self.calf_indices]
+        return - (contact_forces.norm(dim=-1) > 1.).sum(dim=1, keepdim=True).float()
+    
     @termination_func
     def crash(self):
         fall_over = (self.robot.data.projected_gravity_b[:, 2] >= -0.1)
