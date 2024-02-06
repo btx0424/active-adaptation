@@ -189,7 +189,7 @@ class Env(EnvBase):
         return flags.any(dim=-1, keepdim=True)
 
     def _update(self):
-        self.scene.update(self.step_dt)
+        # self.scene.update(self.step_dt)
         if self.sim.has_gui():
             self.sim.render()
         self.episode_length_buf.add_(1)
@@ -200,6 +200,7 @@ class Env(EnvBase):
             self.apply_action(tensordict, substep)
             self.scene.write_data_to_sim()
             self.sim.step(render=False)
+            self.scene.update(self.physics_dt)
         # end = time.perf_counter()
         # print(end - start, self.cfg.decimation)
         self._update()
