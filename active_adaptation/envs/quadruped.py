@@ -29,6 +29,7 @@ class Quadruped(LocomotionEnv):
         self.foot_indices, _ = self.robot.find_bodies(".*_foot")
         self.calf_indices, _ = self.robot.find_bodies(".*_calf")
         self.thigh_indices, _ = self.robot.find_bodies(".*_thigh")
+        self.hip_indices, _ = self.robot.find_bodies(".*_hip")
         self.main_body_indices = list(
             set(range(self.robot.num_bodies)) 
             - set(self.calf_indices)
@@ -118,9 +119,20 @@ class Quadruped(LocomotionEnv):
         return torch.cat([damping, stiffness], dim=-1).reshape(self.num_envs, -1)
 
     @observation_func
-    def body_masses(self):
+    def base_mass(self):
         rand = self.randomizations["body_masses"]
         return rand.randomized_masses.reshape(self.num_envs, -1)[:, [0]]
+
+    @observation_func
+    def base_inertia(self):
+        rand = self.randomizations["body_inertias"]
+        inertia = rand.randomized_inertias.reshape(self.num_envs, -1)[:, [0, 4, 8]]
+        return inertia
+    
+    @observation_func
+    def base_com(self):
+        rand: BodyComs = self.randomizations["body_coms"]
+        return rand.randomized_coms.reshape(self.num_envs, -1)
 
     @observation_func
     def payload_mass(self):
@@ -153,12 +165,6 @@ class Quadruped(LocomotionEnv):
     def body_inertias(self):
         rand: BodyInertias = self.randomizations["body_inertias"]
         return rand.randomized_inertias.reshape(self.num_envs, -1)
-    
-    @observation_func
-    def body_coms(self):
-        rand: BodyComs = self.randomizations["body_coms"]
-        return rand.randomized_coms.reshape(self.num_envs, -1)
-    
     
     @reward_func
     def base_height(self):

@@ -13,7 +13,6 @@ from torchrl.envs.transforms import (
     TransformedEnv, 
     Compose, 
     InitTracker,
-    History,
     RewardSum,
     CatFrames,
     VecNorm

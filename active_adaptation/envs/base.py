@@ -103,6 +103,7 @@ class Env(EnvBase):
             {
                 "return": UnboundedContinuousTensorSpec(1),
                 "episode_len": UnboundedContinuousTensorSpec(1),
+                "success": UnboundedContinuousTensorSpec(1),
             }
         )
         for key, weight in self.cfg.reward.items():
@@ -182,6 +183,7 @@ class Env(EnvBase):
         reward = sum(rewards).clip(0.)
         self.stats["return"].add_(reward)
         self.stats["episode_len"][:] = self.episode_length_buf.unsqueeze(1)
+        self.stats["success"][:] = (self.episode_length_buf >= self.max_episode_length * 0.9).unsqueeze(1).float()
         return {"reward": reward}
     
     def _compute_termination(self) -> TensorDictBase:
