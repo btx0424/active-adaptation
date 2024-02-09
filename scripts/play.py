@@ -10,7 +10,7 @@ from omni_drones.utils.torchrl import SyncDataCollector
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from torchrl.envs.transforms import (
-    TransformedEnv, Compose, InitTracker, History
+    TransformedEnv, Compose, InitTracker
 )
 from active_adaptation.learning import ALGOS
 
@@ -56,7 +56,6 @@ def main(cfg):
     base_env = TASKS[cfg.task.task](env_cfg)
     transform = Compose(
         InitTracker(),
-        History(["policy"], steps=16)
     )
     env = TransformedEnv(base_env, transform)
     env.set_seed(0)

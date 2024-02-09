@@ -10,7 +10,7 @@ from omni_drones.utils.torchrl import SyncDataCollector
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from torchrl.envs.transforms import (
-    TransformedEnv, Compose, InitTracker, History
+    TransformedEnv, Compose, InitTracker
 )
 from active_adaptation.learning import ALGOS
 
@@ -21,6 +21,7 @@ from helpers import EpisodeStats, Every
 
 import os
 import time
+import datetime
 
 @hydra.main(config_path="../cfg", config_name="eval", version_base=None)
 def main(cfg):
@@ -56,7 +57,6 @@ def main(cfg):
     base_env = TASKS[cfg.task.task](env_cfg)
     transform = Compose(
         InitTracker(),
-        History(["policy"], steps=16)
     )
     env = TransformedEnv(base_env, transform)
     env.set_seed(0)
@@ -176,11 +176,23 @@ def main(cfg):
         path = os.path.join(os.path.dirname(__file__), "scatter.png")
         fig.savefig(path)
 
+        time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
+        torch.save(
+            trajs.exclude("context_expert", "context_adapt", "context_adapt_hx", "height_scan"),
+            os.path.join(os.path.dirname(__file__), f"trajs-{time_str}.pt")
+        )
+
         info["eval/success"] = (traj_stats["episode_len"] > base_env.max_episode_length * 0.9).float().mean().item()
         return info
     
     info = evaluate(render=False, seed=cfg.seed)
-    print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, float)}))
+    info = {k: v for k, v in info.items() if isinstance(v, float)}
+    print(OmegaConf.to_yaml(info))
+    
+    time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
+    path = os.path.join(os.path.dirname(__file__), f"eval/{time_str}.yaml")
+    with open(path, "w") as f:
+        OmegaConf.save(info, f)
     
     base_env.close()
     simulation_app.close()

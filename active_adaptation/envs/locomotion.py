@@ -169,6 +169,10 @@ class LocomotionEnv(Env):
         return self.command_manager.command
     
     @observation_func
+    def prev_command(self):
+        return self.command_manager.command_prev
+    
+    @observation_func
     def root_quat_w(self):
         return self.robot.data.root_quat_w
     

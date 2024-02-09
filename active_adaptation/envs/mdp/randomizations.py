@@ -311,12 +311,14 @@ class CommandManager1:
         env, 
         speed_range=(0.5, 2.0),
         angvel_range=(-1.0, 1.0),
+        stand_prob=0.1
     ):
         self.env = env
         self.robot: Articulation = env.scene["robot"]
         self.device = env.device
         self.speed_range = speed_range
         self.angvel_range = angvel_range
+        self.sand_prob = stand_prob
 
         with torch.device(env.device):
             self._target_yaw = torch.zeros(env.num_envs)
@@ -325,14 +327,13 @@ class CommandManager1:
             self._command_angvel_yaw = torch.zeros(env.num_envs)
             self._command_heading = torch.zeros(env.num_envs, 3)
             self._command_speed = torch.zeros(env.num_envs, 1)
+            self.command = torch.zeros(env.num_envs, 3)
+            self.command_prev = torch.zeros(env.num_envs, 3)
         self.is_standing_env = self._command_stand
-
-    @property
-    def command(self):
-        return torch.cat([self._command_linvel[:, :2], self._command_angvel_yaw.unsqueeze(1)], dim=1)
 
     def reset(self, env_ids: torch.Tensor):
         self.sample_commands(env_ids)
+        self.command_prev[env_ids] = self.command[env_ids]
 
     def update(self, resample: torch.Tensor=None):
         if resample is not None:
@@ -341,9 +342,13 @@ class CommandManager1:
         yaw_diff = self._target_yaw - self.robot.data.heading_w
         self._command_angvel_yaw[:] = math_utils.wrap_to_pi(yaw_diff).clamp(*self.angvel_range)
 
+        self.command_prev[:] = self.command
+        self.command[:, :2] = self._command_linvel[:, :2]
+        self.command[:, 2] = self._command_angvel_yaw
+
     def sample_commands(self, env_ids: torch.Tensor):
         a = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
-        stand = torch.rand(len(env_ids), device=self.device) < 0.2
+        stand = torch.rand(len(env_ids), device=self.device) < self.sand_prob
         speed = torch.zeros(len(env_ids), device=self.device).uniform_(*self.speed_range)
         speed = speed * (~stand).float()
         

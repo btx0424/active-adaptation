@@ -33,7 +33,7 @@ class Quadruped(LocomotionEnv):
         self.main_body_indices = list(
             set(range(self.robot.num_bodies)) 
             - set(self.calf_indices)
-            # - set(self.thigh_indices)
+            - set(self.thigh_indices)
             - set(self.foot_indices)
         )
 
@@ -55,16 +55,18 @@ class Quadruped(LocomotionEnv):
             # "payload_mass": BodyMasses(self, (0.01, 4.), body_indices=torch.tensor([19])),
             # "payload_inertia": BodyInertias(self, (0.01, 4.0), body_indices=torch.tensor([19])),
             "body_material": BodyMaterial(self, self.foot_indices, (0.6, 1.0), (0.6, 1.0)),
-            "motor_params": MotorParams(self, "base_legs", (0.7, 1.3), (0.6, 1.4)),
-            "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.0),
+            "motor_params": MotorParams(self, "base_legs", (0.7, 1.3), (0.6, 1.4), (0.7, 1.3)),
+            "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.2),
         })
         # self.randomizations = OrderedDict({
         #     "body_masses": BodyMasses(self, (0.7, 1.3), body_indices=torch.arange(19)),
-        #     "payload_mass": BodyMasses(self, (0.01, 4.), body_indices=torch.tensor([19])),
-        #     "payload_inertia": BodyInertias(self, (0.01, 4.0), body_indices=torch.tensor([19])),
+        #     "body_coms": BodyComs(self, (-0.1, 0.1), body_indices=torch.tensor([0])),
+        #     "body_inertias": BodyInertias(self, (0.7, 1.3), body_indices=torch.tensor([0])),
+        #     # "payload_mass": BodyMasses(self, (0.01, 4.), body_indices=torch.tensor([19])),
+        #     # "payload_inertia": BodyInertias(self, (0.01, 4.0), body_indices=torch.tensor([19])),
         #     "body_material": BodyMaterial(self, self.foot_indices, (0.6, 2.0), (0.6, 2.0)),
         #     "motor_params": MotorParams(self, "base_legs", (0.7, 1.3), (0.6, 1.4)),
-        #     "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=1.0),
+        #     "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.2),
         # })
         for _, randomization in self.randomizations.items():
             randomization.startup()
@@ -97,6 +99,30 @@ class Quadruped(LocomotionEnv):
         self.resample_interval = 300
         self.resample_prob = 0.6
     
+    @observation_func
+    def linvel_error(self):
+        return self.command_manager._command_linvel[:, :2] - self.robot.data.root_lin_vel_b[:, :2]
+    
+    @observation_func
+    def feet_pos_b(self):
+        feet_pos_w = self.robot.data.body_pos_w[:, self.foot_indices]
+        feet_pos = feet_pos_w - self.robot.data.root_pos_w.unsqueeze(1)
+        self._feet_pos_b = quat_rotate_inverse(
+            self.robot.data.root_quat_w.unsqueeze(1),
+            feet_pos
+        )
+        feet_pos = torch.cat([self._feet_pos_b, feet_pos[:, :, [2]]], dim=-1)
+        return feet_pos.reshape(self.num_envs, -1)
+
+    @observation_func
+    def feet_vel_b(self):
+        feet_vel_w = self.robot.data.body_lin_vel_w[:, self.foot_indices]
+        feet_vel = quat_rotate_inverse(
+            self.robot.data.root_quat_w.unsqueeze(1),
+            feet_vel_w
+        )
+        return feet_vel.reshape(self.num_envs, -1)
+
     @observation_func
     def joint_pos(self):
         joint_pos = self.robot.data.joint_pos[:, self.motor_joint_indices]
@@ -197,7 +223,7 @@ class Quadruped(LocomotionEnv):
     def crash(self):
         fall_over = (self.robot.data.projected_gravity_b[:, 2] >= -0.1)
         contact_forces = self.contact_sensor.data.net_forces_w[:, self.main_body_indices]
-        undesired_contact = (contact_forces.norm(dim=-1) > 1.).any(dim=1)
+        undesired_contact = (contact_forces.norm(dim=-1) > 5.).any(dim=1)
         terminated = (fall_over | undesired_contact).unsqueeze(1)
         return terminated
 

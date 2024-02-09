@@ -176,3 +176,4 @@ artifacts/
 scripts/*.png
 scripts/*.pt
 scripts/*.txt
+scripts/eval
