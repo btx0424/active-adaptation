@@ -244,7 +244,7 @@ class PPORMAPolicy(TensorDictModuleBase):
                 nn.LazyConv2d(8, kernel_size=5, stride=2, padding=1), nn.Mish(),
                 nn.LazyConv2d(16, kernel_size=5, stride=2, padding=1), nn.Mish(),
                 nn.Flatten(),
-                nn.LazyLinear(self.context_dim // 2), nn.Mish(), # nn.LayerNorm(self.context_dim // 2)
+                nn.LazyLinear(self.context_dim // 2), nn.Mish(), nn.LayerNorm(self.context_dim // 2)
             )
             encoder_layers = [
                 TensorDictModule(make_mlp([256, self.context_dim // 2]), [OBS_PRIV_KEY], ["context_state"]),
@@ -297,6 +297,19 @@ class PPORMAPolicy(TensorDictModuleBase):
             make_adaptation_module(self.cfg.adapt_arch, self.context_dim)
             .to(self.device)
         )
+        if self.cfg.adaptation_loss == "mse":
+            self.adaptation_loss = MSE(self.adapt_module).to(self.device)
+        elif self.cfg.adaptation_loss == "action_kl":
+            self.adaptation_loss = Action(
+                self.adapt_module,
+                self.actor_expert,
+                self.actor_adapt,
+                closed_kl=True
+            ).to(self.device)
+        elif self.cfg.adaptation_loss == "elbo":
+            self.adaptation_loss = ELBO(self.adapt_module).to(self.device)
+        else:
+            raise ValueError(self.cfg.adaptation_loss)
 
         self.value_norm_expert = ValueNorm1(2).to(self.device)
 
@@ -425,20 +438,6 @@ class PPORMAPolicy(TensorDictModuleBase):
         # ).to(self.device)
 
         self.value_norm_adapt = ValueNorm1(5).to(self.device)
-        
-        if self.cfg.adaptation_loss == "mse":
-            self.adaptation_loss = MSE(self.adapt_module).to(self.device)
-        elif self.cfg.adaptation_loss == "action_kl":
-            self.adaptation_loss = Action(
-                self.adapt_module,
-                self.actor_expert,
-                self.actor_adapt,
-                closed_kl=True
-            ).to(self.device)
-        elif self.cfg.adaptation_loss == "elbo":
-            self.adaptation_loss = ELBO(self.adapt_module).to(self.device)
-        else:
-            raise ValueError(self.cfg.adaptation_loss)
         
         self.actor_adapt(fake_input)
         self.actor_target(fake_input)
@@ -610,9 +609,9 @@ class PPORMAPolicy(TensorDictModuleBase):
         losses = TensorDict({}, [])
         self.adaptation_loss(tensordict, losses, mean=True)
         loss = sum(losses.values())
-        self.adapt_opt.zero_grad()
+        self.opt.zero_grad()
         loss.backward()
-        self.adapt_opt.step()
+        self.opt.step()
         return losses
     
     def _train_adaptation(self, tensordict: TensorDict):
