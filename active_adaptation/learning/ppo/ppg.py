@@ -5,6 +5,7 @@ import torch.distributions as D
 
 from torchrl.data import CompositeSpec, TensorSpec
 from torchrl.modules import ProbabilisticActor
+from torchrl.envs.transforms import CatTensors
 from tensordict.nn import TensorDictModule, TensorDictSequential
 
 from hydra.core.config_store import ConfigStore
@@ -66,9 +67,12 @@ class PPGPolicy:
             return_log_prob=True
         ).to(self.device)
 
-        self.critic = TensorDictModule(
-            nn.Sequential(make_mlp([256, 256, 128]), nn.LazyLinear(1),),
-            [OBS_KEY], ["state_value"]
+        self.critic = TensorDictSequential(
+            CatTensors([OBS_KEY, OBS_PRIV_KEY], "full_obs", del_keys=False),
+            TensorDictModule(
+                nn.Sequential(make_mlp([256, 256, 128]), nn.LazyLinear(1),),
+                ["full_obs"], ["state_value"]
+            ),
         ).to(self.device)
 
         self.actor(fake_input)
