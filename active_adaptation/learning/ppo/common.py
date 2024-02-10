@@ -203,3 +203,8 @@ class L2Norm(nn.Module):
     
     def forward(self, x):
         return x / torch.norm(x, dim=-1, keepdim=True).clamp(1e-7)
+
+
+def collect_info(infos):
+    return {k: v.mean().item() for k, v in torch.stack(infos).items()}
+

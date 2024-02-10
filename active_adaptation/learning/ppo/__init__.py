@@ -32,6 +32,7 @@ from .ppo_model import PPOModelPolicy
 from .ppo_guided import PPOGuidedPolicy
 from .ppo_static import PPOStaticPolicy
 from .final import Policy as PPOFinalPolicy
+from .ppg import PPGPolicy
 
 ALGOS = {
     "ppo": PPOPolicy,
@@ -45,4 +46,5 @@ ALGOS = {
     "ppo_guided": PPOGuidedPolicy,
     "ppo_static": PPOStaticPolicy,
     "final": PPOFinalPolicy,
+    "ppg": PPGPolicy
 }
