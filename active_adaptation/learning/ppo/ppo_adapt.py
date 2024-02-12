@@ -33,7 +33,7 @@ from torchrl.envs.transforms import CatTensors
 from torchrl.modules import ProbabilisticActor
 from torchrl.objectives.utils import hold_out_net
 from torchrl.envs.transforms.transforms import TensorDictPrimer
-from torchrl.data import UnboundedContinuousTensorSpec
+from torchrl.data import UnboundedContinuousTensorSpec, replay_buffers as rb
 
 from tensordict import TensorDict, TensorDictBase
 from tensordict.nn import (
@@ -332,6 +332,11 @@ class PPORMAPolicy(TensorDictModuleBase):
         else:
             raise ValueError(self.cfg.adaptation_loss)
 
+        self.rb = rb.TensorDictPrioritizedReplayBuffer(
+            alpha=0.7, beta=0.9,
+            priority_key="error", reduction="mean",
+            storage=rb.ListStorage(max_size=observation_spec.shape[0] * 4)
+        )
 
         # self.state_estimator = make_state_estimator(self.cfg.adapt_arch, observation_priv_dim).to(self.device)
         self.classifier = nn.Sequential(make_mlp([256, 128]), nn.LazyLinear(1)).to(self.device)
@@ -570,10 +575,22 @@ class PPORMAPolicy(TensorDictModuleBase):
         infos.update(collect_info(infos_policy))
         
         infos_adapt = []
-        for epoch in range(1):
-            for minibatch in make_batch(tensordict, 8, self.cfg.train_every):
-                infos_adapt.append(self._update_adaptation(minibatch))
+        keys = ["policy", "priv", "height_scan", "is_init", "context_adapt_hx"]
+        samples = tensordict.select(keys, strict=False).cpu()
+        samples["error"] = mse
+        self.rb.extend(samples)
+
+        for i in range(8):
+            minibatch = self.rb.sample(tensordict.shape[0]//self.cfg.num_minibatches).to(self.device)
+            with torch.no_grad(), minibatch.view(-1) as _minibatch:
+                self.encoder(_minibatch)
+            infos_adapt.append(self._update_adaptation(minibatch))
         infos.update(collect_info(infos_adapt))
+
+        # for epoch in range(1):
+        #     for minibatch in make_batch(tensordict, 8, self.cfg.train_every):
+        #         infos_adapt.append(self._update_adaptation(minibatch))
+        # infos.update(collect_info(infos_adapt))
 
         mean, var = self.value_norm_expert.running_mean_var()
         for name, value_mean in zip(
@@ -634,7 +651,7 @@ class PPORMAPolicy(TensorDictModuleBase):
         infos["entropy"] = entropy
         return TensorDict(infos, []).detach()
     
-    @functools.partial(torch.compile, mode="reduce-overhead")
+    # @functools.partial(torch.compile, mode="reduce-overhead")
     def _update_adaptation(self, tensordict: TensorDict):
         losses = {}
         self.adaptation_loss(tensordict, losses, mean=True)
