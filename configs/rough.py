@@ -68,12 +68,9 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
     use_cache=False,
     sub_terrains={
         "random_rough_hard": HfRandomUniformTerrainCfg(
-            proportion=0.35, noise_range=(0.02, 0.05), noise_step=0.01, border_width=0.4
+            proportion=0.6, noise_range=(0.02, 0.05), noise_step=0.01, border_width=0.4
         ),
-        "random_rough_easy": HfRandomUniformTerrainCfg(
-            proportion=0.35, noise_range=(0.01, 0.02), noise_step=0.01, border_width=0.4
-        ),
-         "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
+        "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
             proportion=0.15, slope_range=(0.0, 0.3), platform_width=1.0, border_width=0.25
         ),
         "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(

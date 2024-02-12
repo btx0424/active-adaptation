@@ -336,7 +336,7 @@ class CommandManager1:
         self.command_prev[env_ids] = self.command[env_ids]
 
     def update(self, resample: torch.Tensor=None):
-        if resample is not None:
+        if resample is not None and len(resample) > 0:
             self.sample_commands(resample)
         
         yaw_diff = self._target_yaw - self.robot.data.heading_w

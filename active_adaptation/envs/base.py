@@ -200,7 +200,7 @@ class Env(EnvBase):
         # start = time.perf_counter()
         for substep in range(self.cfg.decimation):
             self.apply_action(tensordict, substep)
-            self.scene.write_data_to_sim()
+            # self.scene.write_data_to_sim()
             self.sim.step(render=False)
             self.scene.update(self.physics_dt)
         # end = time.perf_counter()

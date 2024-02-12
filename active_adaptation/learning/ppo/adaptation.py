@@ -102,7 +102,7 @@ class MSE(AdaptationModule):
         loss = F.mse_loss(pred, target, reduction="none")
         if mean:
             loss = loss.mean()
-        out.set("adaptation_loss", loss.mean(-1, keepdim=True))
+        out["adaptation_loss"] = loss.mean(-1, keepdim=True)
         return out
 
 
