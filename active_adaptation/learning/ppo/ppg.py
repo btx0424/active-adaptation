@@ -36,7 +36,7 @@ class PPGConfig:
     num_minibatches: int = 16
     lr: float = 5e-4
     clip_param: float = 0.2
-    recompute_adv: bool = False
+    recompute_adv: bool = True
 
 cs = ConfigStore.instance()
 cs.store(name="ppg", node=PPGConfig, group="algo")
@@ -111,6 +111,7 @@ class PPGPolicy(TensorDictModuleBase):
         reward_spec: TensorSpec,
         device
     ):
+        super().__init__()
         self.cfg = cfg
         self.device = device
         self.action_dim = action_spec.shape[-1]
@@ -131,6 +132,7 @@ class PPGPolicy(TensorDictModuleBase):
                     TensorDictSequential(
                         TensorDictModule(GRUModule(128), [OBS_KEY, "is_init", "hx"], ["_feature_actor", ("next", "hx")]),
                         TensorDictModule(nn.LazyLinear(1), ["_feature_actor"], ["value_actor"]),
+                        TensorDictModule(nn.LazyLinear(5), ["_feature_actor"], ["linvel_pred"]),
                         TensorDictModule(Actor(self.action_dim), ["_feature_actor"], ["loc", "scale"]),
                     ),
                     in_keys=["loc", "scale"],
@@ -294,18 +296,20 @@ class PPGPolicy(TensorDictModuleBase):
         
         b_returns = tensordict["ret"]
         values_actor = tensordict["value_actor"]
-        values_critic = self.critic(tensordict)["state_value"]
+        # values_critic = self.critic(tensordict)["state_value"]
 
         aux_value_loss_actor = F.mse_loss(values_actor, b_returns)
-        aux_value_loss = F.mse_loss(values_critic, b_returns)
+        # aux_value_loss = F.mse_loss(values_critic, b_returns)
+        state_target = tensordict[OBS_PRIV_KEY][..., :5]
+        state_est_loss = F.mse_loss(tensordict["linvel_pred"], state_target)
 
-        feature_pred = self.dynamics(
-            torch.cat([tensordict["_feature_actor"], self.action_enc(tensordict[ACTION_KEY])], -1)
-        )
-        feature_next = tensordict["next", "_feature_actor"]
-        aux_model_loss = F.mse_loss(feature_pred, feature_next)
+        # feature_pred = self.dynamics(
+        #     torch.cat([tensordict["_feature_actor"], self.action_enc(tensordict[ACTION_KEY])], -1)
+        # )
+        # feature_next = tensordict["next", "_feature_actor"]
+        # aux_model_loss = F.mse_loss(feature_pred, feature_next)
 
-        loss = aux_model_loss + aux_value_loss_actor + aux_value_loss + self.cfg.beta_clone * kl
+        loss = state_est_loss + aux_value_loss_actor + self.cfg.beta_clone * kl
         self.opt.zero_grad()
         loss.backward()
         grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.actor.parameters(), 10)
@@ -313,8 +317,9 @@ class PPGPolicy(TensorDictModuleBase):
 
         return TensorDict({
             "aux_kl": kl,
-            "aux_value_loss": aux_value_loss,
+            "state_est_loss": state_est_loss,
+            # "aux_value_loss": aux_value_loss,
             "aux_value_loss_actor": aux_value_loss_actor,
-            "aux_model_loss": aux_model_loss,
+            # "aux_model_loss": aux_model_loss,
             "grad_norm": grad_norm
         }, [])
