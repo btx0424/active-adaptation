@@ -95,9 +95,9 @@ class GRUModule(nn.Module):
         self.out = make_mlp([dim])
     
     def forward(self, x, is_init, hx):
-        x = self.mlp(x)
-        x, hx = self.gru(x, is_init, hx)
-        x = self.out(x)
+        obs_feature = self.mlp(x)
+        rnn_feature, hx = self.gru(obs_feature.detach(), is_init, hx)
+        x = self.out(torch.cat([obs_feature, rnn_feature], -1))
         return x, hx.contiguous()
 
 
@@ -121,7 +121,7 @@ class PPGPolicy(TensorDictModuleBase):
         self.critic_loss_fn = nn.HuberLoss(delta=10)
         self.action_dim = action_spec.shape[-1]
 
-        self.gae = GAE(0.99, 0.95).to(self.device)
+        self.gae = GAE(0.995, 0.95).to(self.device)
         self.value_norm = ValueNorm1(1).to(self.device)
 
         fake_input = observation_spec.zero()
@@ -164,11 +164,21 @@ class PPGPolicy(TensorDictModuleBase):
                     return_log_prob=True
                 ).to(self.device)
 
+            conv = nn.Sequential(
+                nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1), nn.Mish(),
+                nn.LazyConv2d(16, kernel_size=3, stride=2, padding=1), nn.Mish(),
+                nn.Flatten(),
+                nn.LazyLinear(128), nn.Mish(), nn.LayerNorm(128)
+            )
+            
             self.critic = TensorDictSequential(
                 CatTensors([OBS_KEY, OBS_PRIV_KEY], "full_obs", del_keys=False),
+                TensorDictModule(make_mlp([256, 128]), ["full_obs"], ["context_expert"]),
+                TensorDictModule(conv, ["height_scan"], ["context_terrain"]),
+                CatTensors(["context_expert", "context_terrain"], "_feature", del_keys=False),
                 TensorDictModule(
-                    nn.Sequential(make_mlp([256, 256, 128]), nn.LazyLinear(1),),
-                    ["full_obs"], ["state_value"]
+                    nn.Sequential(make_mlp([256, 128]), nn.LazyLinear(1),),
+                    ["_feature"], ["state_value"]
                 ),
             ).to(self.device)
 
@@ -270,7 +280,7 @@ class PPGPolicy(TensorDictModuleBase):
         entropy_loss = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
-        values = self.critic(tensordict)["state_value"]
+        values = self.critic(tensordict.view(-1))["state_value"].reshape(*tensordict.shape, -1)
         value_loss = self.critic_loss_fn(b_returns, values)
 
         loss = policy_loss + entropy_loss + value_loss
