@@ -22,9 +22,9 @@ class MotorParams(Randomization):
         self, 
         env,
         actuator_name,
-        stiffness_range = (0.7, 1.3),
-        damping_range = (0.7, 1.3),
-        strength_range = (0.7, 1.3),
+        stiffness_range = (1.0, 1.0),
+        damping_range = (1.0, 1.0),
+        strength_range = (1.0, 1.0),
         homogeneous: bool = False,
     ):
         super().__init__(env)
@@ -54,7 +54,7 @@ class MotorParams(Randomization):
             self.randomized_damping = torch.ones_like(self.default_damping)
             self.randomized_strength = torch.ones_like(self.default_strength)
         
-    def reset(self, env_ids: torch.Tensor):
+    def reset(self, env_ids: torch.Tensor=slice(None)):
         stiffness, self.randomized_stiffness[env_ids] = random_scale(
             self.default_stiffness[env_ids], *self.stiffness_range, self.homogeneous
         )

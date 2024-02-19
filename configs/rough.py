@@ -1,10 +1,6 @@
 from active_adaptation.assets import (
     ArticulationCfg,
-    UNITREE_A1_CFG,
-    UNITREE_GO1_CFG,
-    UNITREE_GO2_CFG,
-    CASSIE_CFG, 
-    ANYMAL_C_CFG,
+    ROBOTS,
     spawn_with_payload
 )
 from omni.isaac.orbit.scene import InteractiveSceneCfg
@@ -13,120 +9,12 @@ from omni.isaac.orbit.terrains import TerrainImporterCfg
 from omni.isaac.orbit.envs import ViewerCfg
 from omni.isaac.orbit.assets import AssetBaseCfg
 from omni.isaac.orbit.sensors import ContactSensorCfg, RayCasterCfg, patterns
-from omni.isaac.orbit.terrains import (
-    HfRandomUniformTerrainCfg,
-    HfPyramidSlopedTerrainCfg,
-    HfInvertedPyramidSlopedTerrainCfg,
-    TerrainGeneratorCfg,
-    MeshInvertedPyramidStairsTerrainCfg,
-    MeshPyramidStairsTerrainCfg
-)
 import omni.isaac.orbit.sim as sim_utils
 
 from dataclasses import MISSING
 from typing import Dict, List
 
-from omni.isaac.orbit.terrains.config.rough import ROUGH_TERRAINS_CFG as ROUGH_HARD
-
-ROUGH_EASY = TerrainGeneratorCfg(
-    seed=0,
-    size=(8.0, 8.0),
-    border_width=20.0,
-    num_rows=20,
-    num_cols=20,
-    horizontal_scale=0.1,
-    vertical_scale=0.005,
-    slope_threshold=0.75,
-    difficulty_choices=(0.5, 0.75, 0.9),
-    use_cache=False,
-    sub_terrains={
-        "random_rough_hard": HfRandomUniformTerrainCfg(
-            proportion=0.35, noise_range=(0.02, 0.05), noise_step=0.01, border_width=0.4
-        ),
-        "random_rough_easy": HfRandomUniformTerrainCfg(
-            proportion=0.35, noise_range=(0.01, 0.05), noise_step=0.01, border_width=0.4
-        ),
-         "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
-            proportion=0.15, slope_range=(0.0, 0.3), platform_width=1.0, border_width=0.25
-        ),
-        "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
-            proportion=0.15, slope_range=(0.0, 0.3), platform_width=1.0, border_width=0.25
-        ),
-    },
-)
-
-ROUGH_MEDIUM = TerrainGeneratorCfg(
-    seed=0,
-    size=(8.0, 8.0),
-    border_width=20.0,
-    num_rows=10,
-    num_cols=20,
-    horizontal_scale=0.1,
-    vertical_scale=0.005,
-    slope_threshold=0.75,
-    difficulty_choices=(0.5, 0.75, 0.9),
-    use_cache=False,
-    sub_terrains={
-        "random_rough_hard": HfRandomUniformTerrainCfg(
-            proportion=0.6, noise_range=(0.02, 0.05), noise_step=0.01, border_width=0.4
-        ),
-        "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
-            proportion=0.15, slope_range=(0.0, 0.3), platform_width=1.0, border_width=0.25
-        ),
-        "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
-            proportion=0.15, slope_range=(0.0, 0.3), platform_width=1.0, border_width=0.25
-        ),
-        # "pyramid_stairs_inv": MeshInvertedPyramidStairsTerrainCfg(
-        #     proportion=0.15,
-        #     step_height_range=(0.05, 0.23),
-        #     step_width=0.3,
-        #     platform_width=3.0,
-        #     border_width=1.0,
-        #     holes=False,
-        # ),
-        "pyramid_stairs": MeshPyramidStairsTerrainCfg(
-            proportion=0.2,
-            step_height_range=(0.05, 0.2),
-            step_width=0.3,
-            platform_width=3.0,
-            border_width=1.0,
-            holes=False,
-        ),
-    },
-)
-
-
-ROUGH_TERRAIN_CFG = TerrainImporterCfg(
-    prim_path="/World/ground",
-    terrain_type="generator",
-    terrain_generator=MISSING,
-    max_init_terrain_level=None,
-    collision_group=-1,
-    physics_material=sim_utils.RigidBodyMaterialCfg(
-        friction_combine_mode="multiply",
-        restitution_combine_mode="multiply",
-        static_friction=1.0,
-        dynamic_friction=1.0,
-    ),
-    visual_material=sim_utils.MdlFileCfg(
-        mdl_path="{NVIDIA_NUCLEUS_DIR}/Materials/Base/Architecture/Shingles_01.mdl",
-        project_uvw=True,
-    ),
-    debug_vis=True,
-)
-
-FLAT_TERRAIN_CFG = TerrainImporterCfg(
-    prim_path="/World/ground",
-    terrain_type="plane",
-    physics_material = sim_utils.RigidBodyMaterialCfg(
-        friction_combine_mode="multiply",
-        restitution_combine_mode="multiply",
-        static_friction=1.0,
-        dynamic_friction=1.0,
-        improve_patch_friction=True
-    ),
-)
-
+from .terrain import *
 
 @configclass
 class LocomotionSceneCfg(InteractiveSceneCfg):
@@ -186,20 +74,10 @@ class EnvCfg:
         if self.payload:
             self.scene.robot.spawn.func = spawn_with_payload
 
-REWARD_RECOVER = {
-    "orientation": 1.0,
-    "base_height": 0.2,
-    "stand_on_feet": 0.2,
-    "action_rate_l2": 0.01,
-}
 
 def LocomotionEnvCfg(task_cfg):
 
-    robot_cfg = {
-        "a1": UNITREE_A1_CFG,
-        "go2": UNITREE_GO2_CFG,
-        "cassie": CASSIE_CFG,
-    }[task_cfg.robot.lower()]
+    robot_cfg = ROBOTS[task_cfg.robot.lower()]
 
     for key, actuator in robot_cfg.actuators.items():
         actuator.friction = 0.02
@@ -229,5 +107,15 @@ def LocomotionEnvCfg(task_cfg):
     )
     if "height_scan" not in task_cfg.observation.keys():
         env_cfg.scene.height_scanner = None
+    
+    # slightly reduces GPU memory usage
+    env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21
+    env_cfg.sim.physx.gpu_max_rigid_patch_count = 2**21
+    env_cfg.sim.physx.gpu_found_lost_pairs_capacity = 2**20
+    env_cfg.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**22
+    env_cfg.sim.physx.gpu_total_aggregate_pairs_capacity = 2**19
+    env_cfg.sim.physx.gpu_collision_stack_size = 2**25
+    env_cfg.sim.physx.gpu_heap_capacity = 2**24
+    
     return env_cfg
 

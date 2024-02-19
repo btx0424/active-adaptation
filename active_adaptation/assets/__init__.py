@@ -50,15 +50,17 @@ def spawn_with_payload(
 UNITREE_A1_CFG = copy.deepcopy(UNITREE_A1_CFG)
 UNITREE_GO1_CFG = copy.deepcopy(UNITREE_GO1_CFG)
 UNITREE_GO2_CFG = copy.deepcopy(UNITREE_GO2_CFG)
+UNITREE_GO2_CFG.init_state.pos = (0., 0., 0.35)
 CASSIE_CFG = copy.deepcopy(cassie.CASSIE_CFG)
 
 UNITREE_GO1M_CFG = copy.deepcopy(UNITREE_A1_CFG)
-UNITREE_GO1M_CFG.spawn.usd_path = ""
-UNITREE_GO1M_CFG.actuators["arm"] = ImplicitActuatorCfg(
-    joint_names_expr=[],
+UNITREE_GO1M_CFG.spawn.usd_path = f"{ASSET_PATH}/widowGo1.usd"
+UNITREE_GO1M_CFG.actuators["arm"] = DCMotorCfg(
+    joint_names_expr=[".*widow_(waist|shoulder|elbow)"],
     stiffness=80.0,
     velocity_limit=2.0,
-    damping=4.0
+    damping=4.0,
+    saturation_effort=200
 )
 
 H1_CFG = ArticulationCfg(
@@ -98,3 +100,12 @@ H1_CFG = ArticulationCfg(
         ),
     },
 )
+
+ROBOTS = {
+    "a1": UNITREE_A1_CFG,
+    "go1": UNITREE_GO1_CFG,
+    "go1m": UNITREE_GO1M_CFG,
+    "go2": UNITREE_GO2_CFG,
+    "cassie": CASSIE_CFG,
+    "h1": H1_CFG
+}

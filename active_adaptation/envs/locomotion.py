@@ -18,6 +18,32 @@ quat_rotate_inverse = batchify(quat_rotate_inverse)
 from .mdp import BodyMasses, BodyMaterial, MotorParams, BodyInertias, MotorFailure, CommandManager1
 from collections import OrderedDict
 
+class Filter:
+    def __init__(self, shape, device):
+        self.data_history = torch.zeros(shape, 4, device=device)
+        self.data = torch.zeros(shape, device=device)
+
+    def reset(self, env_ids: torch.Tensor, value=0.):
+        self.data[env_ids] = value
+    
+    def update(self, value: torch.Tensor):
+        self.data_history[..., :-1] = self.data_history[..., 1:]
+        self.data_history[..., -1] = value
+        self.data[:] = self.data_history.mean(dim=-1)
+
+
+class Buffer:
+    def __init__(self, shape, size, device):
+        self.data = torch.zeros(*shape, size, device=device)
+
+    def reset(self, env_ids: torch.Tensor, value=0.):
+        self.data[env_ids] = value
+    
+    def update(self, value: torch.Tensor):
+        self.data[..., :-1] = self.data[..., 1:]
+        self.data[..., -1] = value
+
+
 class LocomotionEnv(Env):
 
     def __init__(self, cfg):
@@ -37,8 +63,6 @@ class LocomotionEnv(Env):
         self.init_joint_vel = self.robot.data.default_joint_vel.clone()
         
         self.default_joint_pos = self.init_joint_pos.clone()
-        # assume all joints are actuated for now
-        self.action_dim = self.default_joint_pos.shape[-1]
         
         try:
             from omni_drones.envs.isaac_env import DebugDraw
@@ -61,7 +85,7 @@ class LocomotionEnv(Env):
             self.action_buf = torch.zeros(self.num_envs, self.action_dim, 4)
             self.last_action = torch.zeros(self.num_envs, self.action_dim)
             self.delay = torch.zeros(self.num_envs, 1, dtype=int)
-
+            self.root_pos_history = torch.zeros(self.num_envs, 5, 3)
         self.randomizations = OrderedDict()
 
         # set by subclass
@@ -87,6 +111,7 @@ class LocomotionEnv(Env):
         )
         self.stats[env_ids] = 0.
         self.action_buf[env_ids] = 0.
+        self.last_action[env_ids] = 0.
         self.delay[env_ids] = torch.randint(0, 4, (len(env_ids), 1), device=self.device)
 
         self.scene.reset(env_ids)
@@ -151,7 +176,7 @@ class LocomotionEnv(Env):
             self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
             self.action_buf[:, :, 0] = tensordict["action"]
             action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
-            self.last_action[:] = action.squeeze(-1)
+            self.last_action.lerp_(action.squeeze(-1), self.action_alpha)
 
             pos_target = self.last_action * self.action_scaling + self.default_joint_pos
             self.robot.set_joint_position_target(pos_target, self.motor_joint_indices)
@@ -164,6 +189,14 @@ class LocomotionEnv(Env):
         height_scan = root_pos_w[:, [2]].unsqueeze(1) - ray_hits_w[:, :, [2]]
         return height_scan.reshape(self.num_envs, 1, 11, 17).clamp(-2., 2.)
     
+    @observation_func
+    def root_pos_traj(self):
+        pos = quat_rotate_inverse(
+            self.robot.data.root_quat_w.unsqueeze(1),
+            self.root_pos_history[:, [-1]] - self.root_pos_history[:, :-1]
+        )
+        return pos.reshape(self.num_envs, -1)
+
     @observation_func
     def command(self):
         return self.command_manager.command
@@ -204,7 +237,8 @@ class LocomotionEnv(Env):
     
     @observation_func
     def prev_actions(self):
-        return self.last_action.reshape(self.num_envs, -1)
+        # return self.last_action.reshape(self.num_envs, -1)
+        return self.action_buf.reshape(self.num_envs, -1)
     
     @observation_func
     def applied_torques(self):
@@ -212,10 +246,11 @@ class LocomotionEnv(Env):
     
     @observation_func
     def contact_forces(self):
-        forces = self.contact_sensor.data.net_forces_w_history[:, :, self.foot_indices].mean(dim=1)
+        forces = quat_rotate_inverse(
+            self.robot.data.root_quat_w.unsqueeze(1),
+            self.contact_sensor.data.net_forces_w_history[:, :, self.foot_indices].mean(dim=1)
+        )
         return (forces * self.step_dt).reshape(self.num_envs, -1)
-        forces_norm = forces.norm(dim=-1, keepdim=True)
-        return (forces / forces_norm.clamp_min(1e-6) * symlog(forces_norm)).reshape(self.num_envs, -1)
     
     @observation_func
     def contact_indicator(self):

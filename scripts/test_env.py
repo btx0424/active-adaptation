@@ -52,16 +52,7 @@ def main(cfg):
 
     # setup environment
     env_cfg = LocomotionEnvCfg(cfg.task)
-    env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**22
-    env_cfg.sim.physx.gpu_max_rigid_patch_count = 2**22
-    env_cfg.sim.physx.gpu_found_lost_pairs_capacity = 2**20
-    env_cfg.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**22
-    env_cfg.sim.physx.gpu_total_aggregate_pairs_capacity = 2**19
-    env_cfg.sim.physx.gpu_collision_stack_size = 2**25
-    env_cfg.sim.physx.gpu_heap_capacity = 2**24
     
-    env_cfg.history_length = cfg.task.history_length
-
     base_env = TASKS[cfg.task.task](env_cfg)
     transform = Compose(
         InitTracker(),
@@ -235,9 +226,9 @@ def main(cfg):
 
     wandb.finish()
     
-    exit(0)
     base_env.close()
     simulation_app.close()
+    exit(0)
 
 
 if __name__ == "__main__":

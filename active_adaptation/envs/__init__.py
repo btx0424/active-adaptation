@@ -1,9 +1,9 @@
 from .quadruped import Quadruped
 from .biped import Biped
-from .recover import Recover
+from .manipulation import QuadrupedManip
 
 TASKS = {
     "Quadruped": Quadruped,
     "Biped": Biped,
-    "Recover": Recover,
+    "QuadrupedManip": QuadrupedManip,
 }
