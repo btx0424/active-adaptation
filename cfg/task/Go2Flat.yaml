@@ -1,0 +1,55 @@
+name: Go2Flat
+task: Quadruped
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/Velocity@_here_
+  - _self_
+
+robot: go2
+terrain: plane
+payload: false
+
+observation:
+  policy:
+    - "command"
+    - "root_quat_w"
+    - "root_angvel_b"
+    - "projected_gravity_b"
+    - "joint_pos"
+    - "joint_vel"
+    - "prev_actions"
+    # - "motor_params"
+  priv:
+    - "joint_vel"
+    # - "joint_acc"
+    - "root_linvel_b"
+    - "feet_pos_b"
+    - "applied_torques"
+    # - "payload_mass"
+    # - "payload_inertia"
+
+reward:
+  linvel_exp: 1.0
+  linvel_projection: 1.0
+  heading: 0.5
+  base_height: 0.5
+  linvel_z_l2: 4.0
+  energy_l1: 0.0001
+  joint_acc_l2: 2.5e-7
+  stand: 0.5
+  orientation: 0.5
+  survival: 0.5
+
+# reward: # orbit
+#   linvel_projection: 0.5
+#   linvel_xy_exp: 1.5
+#   angvel_z_exp: 0.75
+#   linvel_z_l2: 2.0
+#   angvel_xy_l2: 0.02
+#   joint_torques_l2: 1.0e-5
+#   joint_acc_l2: 2.5e-7
+#   stand: 0.5
+#   # survival: 0.25
+#   action_rate_l2: 0.01
+#   feet_air_time: 1.0

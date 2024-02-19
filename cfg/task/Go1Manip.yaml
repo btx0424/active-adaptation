@@ -1,0 +1,27 @@
+name: Go2Rough
+task: QuadrupedManip
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/Velocity@_here_
+  - _self_
+
+robot: go1m
+terrain: medium
+payload: false
+
+observation:
+  policy:
+    - "root_quat_w"
+    - "root_angvel_b"
+    - "projected_gravity_b"
+    - "joint_pos"
+    - "joint_vel"
+    - "prev_actions"
+
+reward:
+  base_height: 0.5
+  joint_acc_l2: 2.5e-7
+  joint_torques_l2: 2e-4
+  orientation: 0.25
+  survival: 0.25

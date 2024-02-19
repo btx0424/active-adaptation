@@ -167,4 +167,13 @@ artifacts/
 # nohup
 *.out
 
+# assets
 *.ipynb
+*.mp4
+
+# local scripts
+*.sh
+scripts/*.png
+scripts/*.pt
+scripts/*.txt
+scripts/eval
