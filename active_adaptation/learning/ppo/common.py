@@ -204,7 +204,29 @@ class L2Norm(nn.Module):
     def forward(self, x):
         return x / torch.norm(x, dim=-1, keepdim=True).clamp(1e-7)
 
+class SimNorm(nn.Module):
+    """
+    Simplicial normalization.
+    Adapted from https://arxiv.org/abs/2204.00616.
+    """
 
-def collect_info(infos):
-    return {k: v.mean().item() for k, v in torch.stack(infos).items()}
+    def __init__(self, dim: int, method="l2"):
+        super().__init__()
+        self.dim = dim
+        if method == "softmax":
+            self.f = F.softmax
+        elif method == "l2":
+            self.f = lambda x: x / x.norm(dim=-1, keepdim=True).clamp(1e-6)
+        else:
+            raise NotImplementedError
+
+    def forward(self, x: torch.Tensor):
+        shp = x.shape
+        x = x.view(*shp[:-1], -1, self.dim)
+        x = self.f(x)
+        return x.view(*shp)
+
+
+def collect_info(infos, prefix=""):
+    return {prefix+k: v.mean().item() for k, v in torch.stack(infos).items()}
 

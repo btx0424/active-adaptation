@@ -17,9 +17,11 @@ quat_rotate_inverse = batchify(quat_rotate_inverse)
 
 from .mdp import BodyMasses, BodyMaterial, MotorParams, BodyInertias, MotorFailure, CommandManager1, BodyComs
 from collections import OrderedDict
-from .locomotion import LocomotionEnv
+from .locomotion import LocomotionEnv, Filter, Buffer
 
 class Quadruped(LocomotionEnv):
+
+    num_feet: int = 4
 
     def __init__(self, cfg):
         super().__init__(cfg)
@@ -45,29 +47,29 @@ class Quadruped(LocomotionEnv):
         self.default_joint_pos = self.robot.data.default_joint_pos[:, self.motor_joint_indices]
 
         self._feet_pos_b = self.robot.data.body_pos_w[:, self.foot_indices].clone()
-
+        
         self.command_manager = CommandManager1(self, speed_range=(0.5, 2.0))
 
-        self.randomizations = OrderedDict({
-            "body_masses": BodyMasses(self, (0.7, 1.3), body_indices=torch.arange(19)),
-            "body_coms": BodyComs(self, (-0.1, 0.1), body_indices=torch.tensor([0])),
-            "body_inertias": BodyInertias(self, (0.7, 1.3), body_indices=torch.tensor([0])),
-            # "payload_mass": BodyMasses(self, (0.01, 4.), body_indices=torch.tensor([19])),
-            # "payload_inertia": BodyInertias(self, (0.01, 4.0), body_indices=torch.tensor([19])),
-            "body_material": BodyMaterial(self, self.foot_indices, (0.6, 1.0), (0.6, 1.0)),
-            "motor_params": MotorParams(self, "base_legs", (0.7, 1.3), (0.6, 1.4), (0.7, 1.3)),
-            "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.2),
-        })
         # self.randomizations = OrderedDict({
-        #     "body_masses": BodyMasses(self, (1.2, 1.3), body_indices=torch.arange(19)),
+        #     "body_masses": BodyMasses(self, (0.7, 1.3), body_indices=torch.arange(19)),
         #     "body_coms": BodyComs(self, (-0.1, 0.1), body_indices=torch.tensor([0])),
         #     "body_inertias": BodyInertias(self, (0.7, 1.3), body_indices=torch.tensor([0])),
         #     # "payload_mass": BodyMasses(self, (0.01, 4.), body_indices=torch.tensor([19])),
         #     # "payload_inertia": BodyInertias(self, (0.01, 4.0), body_indices=torch.tensor([19])),
-        #     "body_material": BodyMaterial(self, self.foot_indices, (0.2, 1.0), (0.2, 1.0)),
+        #     "body_material": BodyMaterial(self, self.foot_indices, (0.6, 1.0), (0.6, 1.0)),
         #     "motor_params": MotorParams(self, "base_legs", (0.7, 1.3), (0.6, 1.4), (0.7, 1.3)),
-        #     "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.6),
+        #     "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.2),
         # })
+        self.randomizations = OrderedDict({
+            "body_masses": BodyMasses(self, (1.2, 1.3), body_indices=torch.arange(19)),
+            "body_coms": BodyComs(self, (-0.1, 0.1), body_indices=torch.tensor([0])),
+            "body_inertias": BodyInertias(self, (0.7, 1.3), body_indices=torch.tensor([0])),
+            # "payload_mass": BodyMasses(self, (0.01, 4.), body_indices=torch.tensor([19])),
+            # "payload_inertia": BodyInertias(self, (0.01, 4.0), body_indices=torch.tensor([19])),
+            "body_material": BodyMaterial(self, self.foot_indices, (0.2, 1.0), (0.2, 1.0)),
+            "motor_params": MotorParams(self, "base_legs", (0.7, 1.3), (0.6, 1.4), (0.7, 1.3)),
+            "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.6),
+        })
         for _, randomization in self.randomizations.items():
             randomization.startup()
         self.sim.physics_sim_view.flush()
@@ -107,19 +109,14 @@ class Quadruped(LocomotionEnv):
     def feet_pos_b(self):
         feet_pos_w = self.robot.data.body_pos_w[:, self.foot_indices]
         feet_pos = feet_pos_w - self.robot.data.root_pos_w.unsqueeze(1)
-        self._feet_pos_b[:] = quat_rotate_inverse(
-            self.robot.data.root_quat_w.unsqueeze(1),
-            feet_pos
-        )
         feet_pos = torch.cat([self._feet_pos_b, feet_pos[:, :, [2]]], dim=-1)
         return feet_pos.reshape(self.num_envs, -1)
 
     @observation_func
     def feet_vel_b(self):
-        feet_vel_w = self.robot.data.body_lin_vel_w[:, self.foot_indices]
         feet_vel = quat_rotate_inverse(
             self.robot.data.root_quat_w.unsqueeze(1),
-            feet_vel_w
+            self.robot.data.body_lin_vel_w[:, self.foot_indices]
         )
         return feet_vel.reshape(self.num_envs, -1)
 
@@ -136,6 +133,7 @@ class Quadruped(LocomotionEnv):
     @observation_func
     def applied_torques(self):
         return self.robot.data.applied_torque / 30.
+        # return self.applied_torques_buffer.data.reshape(self.num_envs, -1) / 30.
     
     @observation_func
     def motor_params(self):
@@ -174,7 +172,7 @@ class Quadruped(LocomotionEnv):
     @observation_func
     def body_materials(self):
         rand = self.randomizations["body_material"]
-        return rand.material_properties.reshape(self.num_envs, -1)
+        return rand.material_properties.reshape(self.num_envs, -1) * 2.0 - 1.0
 
     @observation_func
     def motor_failure(self):
@@ -184,7 +182,7 @@ class Quadruped(LocomotionEnv):
     @observation_func
     def incoming_wrench(self):
         link_incoming_forces = self.robot.root_physx_view.get_link_incoming_joint_force()
-        link_incoming_forces[:, :, :3] *= 0.01
+        link_incoming_forces[:, :, :3] /= self.default_mass_total
         return link_incoming_forces.reshape(self.num_envs, -1)
     
     @observation_func

@@ -46,6 +46,8 @@ class Buffer:
 
 class LocomotionEnv(Env):
 
+    num_feet: int
+
     def __init__(self, cfg):
         super().__init__(cfg)
         self.action_scaling = 0.5
@@ -54,6 +56,7 @@ class LocomotionEnv(Env):
         body_masses = self.robot.body_physx_view.get_masses().reshape(self.num_envs, -1)[0]
         for name, mass in zip(self.robot.body_names, body_masses):
             print(name, mass)
+        self.default_mass_total = body_masses.sum() * 9.81 # in Newton
 
         self.contact_sensor: ContactSensor = self.scene.sensors.get("contact_forces", None)
         self.height_scanner: RayCaster = self.scene.sensors.get("height_scanner", None)
@@ -86,6 +89,9 @@ class LocomotionEnv(Env):
             self.last_action = torch.zeros(self.num_envs, self.action_dim)
             self.delay = torch.zeros(self.num_envs, 1, dtype=int)
             self.root_pos_history = torch.zeros(self.num_envs, 5, 3)
+            self.last_contact = torch.zeros(self.num_envs, self.num_feet)
+            self.joint_vel_buf = torch.zeros(self.num_envs, self.robot.num_joints, 4)
+        
         self.randomizations = OrderedDict()
 
         # set by subclass
@@ -95,6 +101,10 @@ class LocomotionEnv(Env):
         self._feet_pos_b: torch.Tensor
         self.main_body_indices: torch.Tensor
         self.motor_joint_indices: torch.Tensor
+
+    @property
+    def action_dim(self):
+        return sum(actuator.num_joints for actuator in self.robot.actuators.values())
 
     def _reset_idx(self, env_ids: torch.Tensor):
         init_root_state = self.init_root_state[env_ids]
@@ -113,6 +123,8 @@ class LocomotionEnv(Env):
         self.action_buf[env_ids] = 0.
         self.last_action[env_ids] = 0.
         self.delay[env_ids] = torch.randint(0, 4, (len(env_ids), 1), device=self.device)
+        self.last_contact[env_ids] = 0.
+        self.joint_vel_buf[env_ids] = 0.
 
         self.scene.reset(env_ids)
         self.scene.update(dt=self.physics_dt)
@@ -128,6 +140,13 @@ class LocomotionEnv(Env):
             & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
         )
         self.command_manager.update(resample=should_resample.nonzero().squeeze(-1))
+        self.joint_vel_buf[:, :, :-1] = self.joint_vel_buf[:, :, 1:]
+        self.joint_vel_buf[:, :, -1] = self.robot.data.joint_vel
+
+        force_history = self.contact_sensor.data.net_forces_w_history[:, :, self.foot_indices]
+        force_norm = force_history.norm(dim=-1).mean(1)
+        contact_i = force_norm > 1.
+        self.last_contact = torch.where(contact_i, self.last_contact, self.episode_length_buf.unsqueeze(1))
 
         feet_pos_w = self.robot.data.body_pos_w[:, self.foot_indices]
         self._feet_pos_b[:] = quat_rotate_inverse(
@@ -225,7 +244,9 @@ class LocomotionEnv(Env):
     
     @observation_func
     def joint_acc(self):
-        return self.robot.data.joint_acc * self.step_dt
+        vel_diff = self.joint_vel_buf[:, :, 1:] - self.joint_vel_buf[:, :, :-1]
+        joint_acc = (vel_diff / self.step_dt).mean(dim=-1)
+        return symlog(joint_acc * self.step_dt)
 
     @observation_func
     def projected_gravity_b(self):
@@ -255,8 +276,13 @@ class LocomotionEnv(Env):
     @observation_func
     def contact_indicator(self):
         force_history = self.contact_sensor.data.net_forces_w_history[:, :, self.foot_indices]
-        force_norm = force_history.norm(dim=-1)
-        return (force_norm.mean(dim=1) > 1.).float()
+        force_norm = force_history.norm(dim=-1).mean(dim=1)
+        return (force_norm / self.default_mass_total).clamp_max(1.)
+
+    @observation_func
+    def contact_interval(self):
+        interval = (self.episode_length_buf.unsqueeze(1) - self.last_contact)
+        return (self.step_dt * interval).clamp_max(1.)
 
     @observation_func
     def feet_pos_b(self):

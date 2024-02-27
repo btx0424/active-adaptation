@@ -13,7 +13,6 @@ from torchrl.envs.transforms import (
     TransformedEnv, 
     Compose, 
     InitTracker,
-    History,
     RewardSum,
     CatFrames
 )
@@ -66,7 +65,7 @@ def main(cfg):
     transform = Compose(
         InitTracker(),
         # CatFrames(4, -1, ["policy"], ["priv"]),
-        History(["policy"], steps=16)
+        # History(["policy"], steps=16)
     )
     env = TransformedEnv(base_env, transform)
     env.set_seed(0)

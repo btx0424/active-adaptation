@@ -12,7 +12,7 @@ from .ppo.common import make_batch, make_mlp
 from .ppo.ppo_adapt import GRUModule
 
 
-class BCPolicy(nn.Module):
+class BCPolicy(TensorDictModuleBase):
     def __init__(
         self, 
         observation_spec,
@@ -27,9 +27,16 @@ class BCPolicy(nn.Module):
         self.teacher = teacher
 
         fake_input = observation_spec.zero()
+        fake_input["hx"] = torch.zeros((fake_input.shape[0], 128), device=self.device)
         self.actor = TensorDictSequential(
-            TensorDictModule(GRUModule(256), ["policy"], ["_feature", ("next", "hx")]),
-            TensorDictModule(nn.LazyLinear(self.action_dim), ["_feature"], ["action"])
+            TensorDictModule(GRUModule(256), ["policy", "is_init", "hx"], ["_feature", ("next", "hx")]),
+            TensorDictModule(
+                nn.Sequential(
+                    nn.LayerNorm(),
+                    nn.Mish(),
+                    nn.LazyLinear(self.action_dim)
+                ) 
+                ["_feature"], ["action"])
         ).to(self.device)
 
         self.teacher(fake_input)
@@ -47,8 +54,9 @@ class BCPolicy(nn.Module):
         return self.actor(tensordict)
     
     def train_op(self, tensordict: TensorDictBase):
-        action_expert = self.teacher(tensordict.exclude("action"))["action"]
-        tensordict.set("action_expert", action_expert)
+        with torch.no_grad():
+            action_expert = self.teacher(tensordict.reshape(-1).to_tensordict())["action"]
+        tensordict.set("action_expert", action_expert.reshape_as(tensordict["action"]))
         
         losses = []
         for epoch in range(4):
@@ -62,6 +70,6 @@ class BCPolicy(nn.Module):
     
     def loss(self, tensordict: TensorDictBase):
         action = self(tensordict)["action"]
-        action_expert = self.teacher(tensordict)["action_expert"]
+        action_expert = tensordict["action_expert"]
         return F.mse_loss(action, action_expert)
 
