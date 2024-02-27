@@ -827,8 +827,13 @@ class PPORMAPolicy(TensorDictModuleBase):
         reward_weights=1.,
         subtract_mean=False
     ):
-        values = critic(tensordict.view(-1))["state_value"].reshape(*tensordict.shape, -1)
-        next_values = critic(tensordict["next"].view(-1))["state_value"].reshape(*tensordict.shape, -1)
+        with tensordict.view(-1) as td:
+            # self.encoder(td)
+            # self.encoder(td["next"])
+            critic(td)
+            critic(td["next"])
+        values = tensordict["state_value"]
+        next_values = tensordict["next", "state_value"]
         
         rewards = tensordict[REWARD_KEY]
         dones = tensordict[DONE_KEY]

@@ -50,26 +50,26 @@ class Quadruped(LocomotionEnv):
         
         self.command_manager = CommandManager1(self, speed_range=(0.5, 2.0))
 
-        # self.randomizations = OrderedDict({
-        #     "body_masses": BodyMasses(self, (0.7, 1.3), body_indices=torch.arange(19)),
-        #     "body_coms": BodyComs(self, (-0.1, 0.1), body_indices=torch.tensor([0])),
-        #     "body_inertias": BodyInertias(self, (0.7, 1.3), body_indices=torch.tensor([0])),
-        #     # "payload_mass": BodyMasses(self, (0.01, 4.), body_indices=torch.tensor([19])),
-        #     # "payload_inertia": BodyInertias(self, (0.01, 4.0), body_indices=torch.tensor([19])),
-        #     "body_material": BodyMaterial(self, self.foot_indices, (0.6, 1.0), (0.6, 1.0)),
-        #     "motor_params": MotorParams(self, "base_legs", (0.7, 1.3), (0.6, 1.4), (0.7, 1.3)),
-        #     "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.2),
-        # })
         self.randomizations = OrderedDict({
-            "body_masses": BodyMasses(self, (1.2, 1.3), body_indices=torch.arange(19)),
+            "body_masses": BodyMasses(self, (0.7, 1.3), body_indices=torch.arange(19)),
             "body_coms": BodyComs(self, (-0.1, 0.1), body_indices=torch.tensor([0])),
             "body_inertias": BodyInertias(self, (0.7, 1.3), body_indices=torch.tensor([0])),
             # "payload_mass": BodyMasses(self, (0.01, 4.), body_indices=torch.tensor([19])),
             # "payload_inertia": BodyInertias(self, (0.01, 4.0), body_indices=torch.tensor([19])),
-            "body_material": BodyMaterial(self, self.foot_indices, (0.2, 1.0), (0.2, 1.0)),
+            "body_material": BodyMaterial(self, self.foot_indices, (0.6, 1.0), (0.6, 1.0)),
             "motor_params": MotorParams(self, "base_legs", (0.7, 1.3), (0.6, 1.4), (0.7, 1.3)),
-            "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.6),
+            "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.2),
         })
+        # self.randomizations = OrderedDict({
+        #     "body_masses": BodyMasses(self, (1.2, 1.3), body_indices=torch.arange(19)),
+        #     "body_coms": BodyComs(self, (-0.1, 0.1), body_indices=torch.tensor([0])),
+        #     "body_inertias": BodyInertias(self, (0.7, 1.3), body_indices=torch.tensor([0])),
+        #     # "payload_mass": BodyMasses(self, (0.01, 4.), body_indices=torch.tensor([19])),
+        #     # "payload_inertia": BodyInertias(self, (0.01, 4.0), body_indices=torch.tensor([19])),
+        #     "body_material": BodyMaterial(self, self.foot_indices, (0.2, 1.0), (0.2, 1.0)),
+        #     "motor_params": MotorParams(self, "base_legs", (0.7, 1.3), (0.6, 1.4), (0.7, 1.3)),
+        #     "motor_failure": MotorFailure(self, [8, 9, 10, 11], failure_prob=0.6),
+        # })
         for _, randomization in self.randomizations.items():
             randomization.startup()
         self.sim.physics_sim_view.flush()

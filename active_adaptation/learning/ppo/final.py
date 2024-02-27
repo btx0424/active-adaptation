@@ -58,8 +58,6 @@ from active_adaptation.utils.wandb import parse_path
 import copy
 import logging
 
-torch.set_float32_matmul_precision('high')
-
 @dataclass
 class PPOConfig:
     name: str = "final"
@@ -143,35 +141,34 @@ class GRUModule(nn.Module):
     def __init__(self, feature_dim: int, context_dim: int):
         super().__init__()
         self.obs_enc = make_mlp([128])
-        self.actor_enc = make_mlp([256])
-        self.critic_enc = make_mlp([256])
         self.gru = GRU(128, hidden_size=128, allow_none=False)
-        # self.out_feature = nn.LazyLinear(feature_dim)
         self.out_context = nn.LazyLinear(context_dim)
+        self.out_feature = nn.LazyLinear(feature_dim)
     
     def forward(self, x, is_init, hx):
         obs_enc = self.obs_enc(x)
-        actor_enc = self.actor_enc(x)
-        critic_enc = self.critic_enc(x)
         x, hx = self.gru(obs_enc, is_init, hx)
-        # feature = self.out_feature(obs_enc)
+        feature = self.out_feature(x.detach())
         context = self.out_context(x)
-        return actor_enc, critic_enc, context.detach(), hx
+        return context, feature, hx.contiguous()
 
 
 class Encoder(nn.Module):
-    def __init__(self):
+    def __init__(self, terrain_dim: int, propri_dim: int):
         super().__init__()
         self.conv = nn.Sequential(
             nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1), nn.Mish(),
             nn.LazyConv2d(16, kernel_size=3, stride=2, padding=1), nn.Mish(),
             nn.Flatten(),
-            make_mlp([32])
+            make_mlp([terrain_dim])
         )
-        self.mlp = make_mlp([256, 96])
+        self.mlp = make_mlp([256, propri_dim])
 
-    def forward(self, propri, height_scan):
-        enc = torch.cat([self.mlp(propri), self.conv(height_scan)], -1)
+    def forward(self, propri, height_scan: torch.Tensor):
+        batch_shapes = height_scan.shape[:-3]
+        terrain = self.conv(height_scan.flatten(0, -4)).unflatten(0, batch_shapes)
+        propri = self.mlp(propri)
+        enc = torch.cat([propri, terrain], -1)
         return enc
 
 
@@ -213,18 +210,22 @@ class Policy(TensorDictModuleBase):
 
         # create and initialize the modules
         if "height_scan" in observation_spec.keys():
-            self.context_dim = 128
-            self.encoder = TensorDictModule(
-                Encoder(), [OBS_PRIV_KEY, "height_scan"], ["context_expert"]
+            self.context_dim = 256
+            self.encoder_priv = TensorDictModule(
+                Encoder(128, 128), [OBS_PRIV_KEY, "height_scan"], ["context_expert"]
             ).to(self.device)
         else:
             self.context_dim = 128
             encoder = make_mlp([256, self.context_dim])
-            self.encoder = TensorDictModule(
+            self.encoder_priv = TensorDictModule(
                 encoder,
                 [OBS_PRIV_KEY], 
                 ["context_expert"]
             ).to(self.device)
+        self.encoder_obs = TensorDictSequential(
+            TensorDictModule(make_mlp([256]), [OBS_KEY], ["obs_feature_actor"]),
+            TensorDictModule(make_mlp([256]), [OBS_KEY], ["obs_feature_critic"]),
+        ).to(self.device)
 
         def make_actor(feature_key: str) -> ProbabilisticActor:
             actor = nn.Sequential(make_mlp([256, 128]), Actor(self.action_dim, cfg.predict_std))
@@ -242,8 +243,6 @@ class Policy(TensorDictModuleBase):
 
         self.actor_expert = make_actor("feature_expert_actor").to(self.device)
         self.actor_target = make_actor("feature_adapt_actor").to(self.device)
-        # self.actor_expert = make_actor("feature_expert").to(self.device)
-        # self.actor_target = make_actor("feature_adapt").to(self.device)
 
         # the critics always observe priviledged information
         self.critic_expert = make_critic("feature_expert_critic").to(self.device)
@@ -253,9 +252,9 @@ class Policy(TensorDictModuleBase):
         self.value_norm_adapt = ValueNorm1(3).to(self.device)
         
         self.adapt_module = TensorDictModule(
-            GRUModule(128, self.context_dim),
+            GRUModule(64, self.context_dim),
             [OBS_KEY, "is_init", "hx"],
-            ["feature_actor", "feature_critic", "context_adapt", ("next", "hx")]
+            ["context_adapt", "rnn_feature", ("next", "hx")]
         ).to(self.device)
 
         if self.cfg.adaptation_loss == "mse":
@@ -275,8 +274,6 @@ class Policy(TensorDictModuleBase):
         fake_input["is_init"] = torch.ones(fake_input.shape[0], 1, dtype=torch.bool, device=self.device)
         fake_input["hx"] = torch.zeros(fake_input.shape[0], 128, device=self.device)
         
-        self.encoder(fake_input)
-        self.adapt_module(fake_input)
         self._get_features(fake_input)
         self.actor_expert(fake_input)
         self.actor_target(fake_input)
@@ -288,10 +285,18 @@ class Policy(TensorDictModuleBase):
             [
                 {"params": self.actor_expert.parameters()},
                 {"params": self.critic_expert.parameters()},
-                {"params": self.encoder.parameters()},
-                {"params": self.adapt_module.parameters()}
+                {"params": self.encoder_priv.parameters()},
+                {"params": self.encoder_obs.parameters()},
             ], 
             lr=self.cfg.lr
+        )
+
+        self.adapt_opt = torch.optim.Adam(
+            [
+                {"params": self.adapt_module.parameters()},
+                # {"params": self.actor_adapt.parameters()},
+            ],
+            lr=self.cfg.lr,
         )
 
         if self.phase in ("adapt", "finetune"):
@@ -304,7 +309,8 @@ class Policy(TensorDictModuleBase):
         else:
             self.actor_expert.apply(init_)
             self.critic_expert.apply(init_)
-            self.encoder.apply(init_)
+            self.encoder_obs.apply(init_)
+            self.encoder_priv.apply(init_)
         
         # initialize the adaptation actor
         if (
@@ -325,7 +331,7 @@ class Policy(TensorDictModuleBase):
         self.make_tensordict_primer = make_tensordict_primer
         self.make_batch = functools.partial(make_batch, seq_len=cfg.train_every)
         
-        self.exclude_keys = ["context_terrain", "context_state", "feature"]
+        self.exclude_keys = ["obs_feature", "feature_expert_actor", "feature_expert_critic", "feature_adapt_actor", "feature_adapt_critic"]
         self.train_iter = 0
 
     def make_adapt_policy(self, fake_input: TensorDictBase):
@@ -379,14 +385,13 @@ class Policy(TensorDictModuleBase):
         self._phase = value
 
     def forward(self, tensordict: TensorDict):
-        self.encoder(tensordict)
-        self.adapt_module(tensordict)
-        self._get_features(tensordict)
         if self.phase == "train":
+            self._get_features(tensordict, adapt=False)
             self.actor_expert(tensordict)
             if not self.training:
                 self.critic_expert(tensordict)
         else:
+            self.adapt_module(tensordict)
             self.actor_adapt(tensordict)
             if not self.training:
                 self.adaptation_loss(tensordict, tensordict, mean=False)
@@ -405,27 +410,26 @@ class Policy(TensorDictModuleBase):
         tensordict = tensordict.to_tensordict()
         if self.phase == "train":
             info.update(self._train_expert(tensordict))
-        elif self.phase == "adapt":
-            with (
-                hold_out_net(self.encoder),
-                hold_out_net(self.actor_expert),
-                hold_out_net(self.actor_adapt)
-            ):
-                info.update(self._train_adaptation(tensordict))
-        elif self.phase == "finetune":
-            with hold_out_net(self.encoder):
-                info.update(self._finetune(tensordict))
         self.train_iter += 1
         return info
     
-    def _get_features(self, tensordict: TensorDict):
-        # tensordict["feature_expert"] = torch.cat([tensordict["feature"], tensordict["context_expert"]], -1)
-        # tensordict["feature_adapt"] = torch.cat([tensordict["feature"], tensordict["context_adapt"]], -1)
-        feature_actor = tensordict.pop("feature_actor")
-        feature_critic = tensordict.pop("feature_critic")
-        tensordict["feature_expert_actor"] = torch.cat([feature_actor, tensordict["context_expert"]], -1)
+    def _get_features(self, tensordict: TensorDict, adapt=True):
+        self.encoder_obs(tensordict)
+        self.encoder_priv(tensordict)
+        self.adapt_module(tensordict)
+        # obs_feature = tensordict.pop("obs_feature")
+        # tensordict["feature_expert"] = torch.cat([obs_feature, tensordict["context_expert"]], -1)
+        # if adapt:
+        #     tensordict["feature_adapt"] = torch.cat([obs_feature, tensordict["context_adapt"]], -1)
+        
+        feature_actor = tensordict.pop("obs_feature_actor")
+        feature_critic = tensordict.pop("obs_feature_critic")
+        rnn_feature = tensordict.pop("rnn_feature")
+        tensordict["feature_expert_actor"] = torch.cat([feature_actor, rnn_feature, tensordict["context_expert"]], -1)
         tensordict["feature_expert_critic"] = torch.cat([feature_critic, tensordict["context_expert"]], -1)
-        tensordict["feature_adapt_actor"] = torch.cat([feature_actor, tensordict["context_adapt"]], -1)
+        if adapt:
+            tensordict["feature_adapt_actor"] = torch.cat([feature_actor, rnn_feature, tensordict["context_adapt"]], -1)
+            tensordict["feature_adapt_critic"] = torch.cat([feature_critic, tensordict["context_adapt"]], -1)
         return tensordict
 
     def _train_expert(self, tensordict: TensorDict):
@@ -433,27 +437,35 @@ class Policy(TensorDictModuleBase):
 
         self._compute_rewards(tensordict)
         weights = (1., self.exp_reward, self.reg_reward)
+        self._compute_advantage(
+            tensordict, 
+            self.critic_expert, 
+            self.gae_expert, 
+            self.value_norm_expert, 
+            weights
+        )
 
         infos = {}
         infos_policy = []
         for epoch in range(self.cfg.ppo_epochs):
-            if epoch == 0 or self.cfg.recompute_adv:
-                self._compute_advantage(
-                    tensordict, 
-                    self.critic_expert, 
-                    self.gae_expert, 
-                    self.value_norm_expert, 
-                    weights
-                )
-            for minibatch in self.make_batch(tensordict, self.cfg.num_minibatches):
+            # if epoch == 0 or self.cfg.recompute_adv:
+            #     self._compute_advantage(
+            #         tensordict, 
+            #         self.critic_expert, 
+            #         self.gae_expert, 
+            #         self.value_norm_expert, 
+            #         weights
+            #     )
+            # for minibatch in self.make_batch(tensordict, self.cfg.num_minibatches):
+            for minibatch in make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every):
                 infos_policy.append(self._update(minibatch, self.critic_expert))
         infos.update(collect_info(infos_policy))
 
-        # infos_adapt = []
-        # for epoch in range(1):
-        #     for minibatch in make_batch(tensordict, 8, self.cfg.train_every):
-        #         infos_adapt.append(self._update_adaptation(minibatch))
-        # infos.update(collect_info(infos_adapt, "adapt/"))
+        infos_adapt = []
+        for epoch in range(1):
+            for minibatch in make_batch(tensordict, 8, self.cfg.train_every):
+                infos_adapt.append(self._update_adaptation(minibatch))
+        infos.update(collect_info(infos_adapt, "adapt/"))
 
         mean, var = self.value_norm_expert.running_mean_var()
         for name, value_mean in zip(
@@ -472,10 +484,8 @@ class Policy(TensorDictModuleBase):
         tensordict: TensorDict, 
         critic: TensorDictModule,
     ):
-        with tensordict.view(-1) as flattened_tensordict:
-            self.encoder(flattened_tensordict)
-        self.adapt_module(tensordict)
-        self._get_features(tensordict)
+        # self.adapt_module(tensordict)
+        self._get_features(tensordict, adapt=False)
         actor = self.actor_expert
         
         losses = {}
@@ -523,9 +533,9 @@ class Policy(TensorDictModuleBase):
         # )
         # losses["value_loss"] = value_loss_adapt
         loss = sum(losses.values())
-        self.opt.zero_grad()
+        self.adapt_opt.zero_grad()
         loss.backward()
-        self.opt.step()
+        self.adapt_opt.step()
         return TensorDict(losses, []).detach()
     
     def _train_adaptation(self, tensordict: TensorDict):
@@ -610,20 +620,20 @@ class Policy(TensorDictModuleBase):
         """
         Compute auxiliary rewards.
         """
+        self.adapt_module(tensordict)
+        self._get_features(tensordict)
 
-        with tensordict["next"].view(-1) as next_tensordict:
-            self.encoder(next_tensordict)
-            self.adapt_module(next_tensordict)
-            self._get_features(next_tensordict)
-
-            kl_target = action_kl(tensordict.exclude(), self.actor_target, self.actor_expert)
-            self.adaptation_loss(tensordict, tensordict, mean=False)
-            adapt_error = tensordict["adaptation_loss"]
+        rewards = [tensordict[REWARD_KEY]]
+        mse = F.mse_loss(tensordict["context_adapt"], tensordict["context_expert"], reduction="none").mean(-1, True)
+        kl_target = action_kl(tensordict.exclude(), self.actor_target, self.actor_expert)
+        rewards.append(mse)
+        rewards.append(kl_target)
         
-        reward_aug = torch.cat([tensordict[REWARD_KEY], kl_target, adapt_error], -1)
+        rewards = torch.cat(rewards, -1)
         # non-episodic aux rewards
-        done = torch.cat([tensordict[DONE_KEY]]+ [torch.zeros_like(tensordict[DONE_KEY])] * 2, -1)
-        tensordict.set(REWARD_KEY, reward_aug)
+        done = tensordict[DONE_KEY]
+        done = torch.cat([done]+ [torch.zeros_like(done)] * (rewards.shape[-1]-1), -1)
+        tensordict.set(REWARD_KEY, rewards)
         tensordict.set(DONE_KEY, done)
         return tensordict
 
@@ -637,9 +647,16 @@ class Policy(TensorDictModuleBase):
         reward_weights=1.,
         subtract_mean=False
     ):
-        values = critic(tensordict.view(-1))["state_value"].reshape(*tensordict.shape, -1)
-        next_values = critic(tensordict["next"].view(-1))["state_value"].reshape(*tensordict.shape, -1)
-        
+        with tensordict.view(-1) as td:
+            critic(td)
+            self._get_features(td["next"], adapt=False)
+            critic(td["next"])
+        values = tensordict["state_value"]
+        next_values = tensordict["next", "state_value"]
+
+        tensordict.exclude(*self.exclude_keys, inplace=True)
+        tensordict["next"].exclude(*self.exclude_keys, inplace=True)
+
         rewards = tensordict[REWARD_KEY]
         dones = tensordict[DONE_KEY]
         values = value_norm.denormalize(values)
