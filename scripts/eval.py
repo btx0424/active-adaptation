@@ -177,10 +177,10 @@ def main(cfg):
         fig.savefig(path)
 
         time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
-        torch.save(
-            trajs.exclude("context_expert", "context_adapt", "context_adapt_hx", "height_scan"),
-            os.path.join(os.path.dirname(__file__), f"trajs-{time_str}.pt")
-        )
+        # torch.save(
+        #     trajs.exclude("context_expert", "context_adapt", "context_adapt_hx", "height_scan"),
+        #     os.path.join(os.path.dirname(__file__), f"trajs-{time_str}.pt")
+        # )
 
         info["eval/success"] = (traj_stats["episode_len"] > base_env.max_episode_length * 0.9).float().mean().item()
         return info

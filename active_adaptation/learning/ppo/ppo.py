@@ -167,7 +167,7 @@ class PPOPolicy(TensorDictModuleBase):
         return infos
 
     @torch.no_grad()
-    def _compute_advantage(self, tensordict: TensorDict):
+    def _compute_advantage(self, tensordict: TensorDict, subtract_mean: bool=False):
         values = self.critic(tensordict)["state_value"]
         next_values = self.critic(tensordict["next"])["state_value"]
 
@@ -179,9 +179,13 @@ class PPOPolicy(TensorDictModuleBase):
         adv, ret = self.gae(rewards, dones, values, next_values)
         adv_mean = adv.mean()
         adv_std = adv.std()
-        adv = (adv - adv_mean) / adv_std.clip(1e-7)
         self.value_norm.update(ret)
         ret = self.value_norm.normalize(ret)
+        
+        if subtract_mean:
+            adv = (adv - adv_mean) / adv_std.clip(1e-7)
+        else:
+            adv = adv / adv_std.clip(1e-7)
 
         tensordict.set("adv", adv)
         tensordict.set("ret", ret)

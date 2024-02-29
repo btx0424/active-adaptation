@@ -17,6 +17,8 @@ from collections import OrderedDict
 from abc import abstractmethod
 import time
 
+import active_adaptation.envs.mdp as mdp
+
 class Env(EnvBase):
 
     def __init__(self, cfg):
@@ -70,55 +72,7 @@ class Env(EnvBase):
         self.episode_length_buf = torch.zeros(self.num_envs, dtype=int, device=self.device)
         self.step_dt = self.physics_dt * self.cfg.decimation
 
-        observation_funcs = {}
-        reward_funcs = {}
-        termination_funcs = {}
-        for name in dir(self):
-            try:
-                item = getattr(self, name)
-                if hasattr(item, "_is_obs"):
-                    observation_funcs[name] = item
-                if hasattr(item, "_is_reward"):
-                    reward_funcs[name] = item
-                if hasattr(item, "_is_termination"):
-                    termination_funcs[name] = item
-            except:
-                pass
-        
-        self.observation_funcs = {}
-        self.reward_funcs = {}
-        for group, funcs in self.cfg.observation.items():
-            self.observation_funcs[group] = OrderedDict(
-                {
-                    key: observation_funcs[key] 
-                    for key in funcs
-                }
-            )
-        self.observation_spec = CompositeSpec(
-            {}, 
-            shape=[self.num_envs],
-            device=self.device
-        )
-        stats_spec = CompositeSpec(
-            {
-                "return": UnboundedContinuousTensorSpec(1),
-                "episode_len": UnboundedContinuousTensorSpec(1),
-                "success": UnboundedContinuousTensorSpec(1),
-            }
-        )
-        for key, weight in self.cfg.reward.items():
-            self.reward_funcs[key] = (reward_funcs[key], weight)
-            stats_spec[key] = UnboundedContinuousTensorSpec(1)
-
-        self.observation_spec["stats"] = stats_spec.expand(self.num_envs).to(self.device)
-
-        self.termination_funcs = OrderedDict(
-            {
-                key: termination_funcs[key] 
-                for key in self.cfg.termination
-            }
-        )
-
+        # parse obs and reward functions
         self.done_spec = (
             CompositeSpec(
                 {
@@ -130,7 +84,72 @@ class Env(EnvBase):
             .expand(self.num_envs)
             .to(self.device)
         )
-        self.stats = self.observation_spec["stats"].zero()
+        self.action_spec = CompositeSpec(
+            {
+                "action": UnboundedContinuousTensorSpec((self.num_envs, self.action_dim))
+            },
+            shape=[self.num_envs]
+        ).to(self.device)
+
+        import inspect
+        members = dict(inspect.getmembers(self.__class__, inspect.isclass))
+
+        RAND_FUNCS = mdp.RAND_FUNCS
+        OBS_FUNCS = mdp.OBS_FUNCS
+        OBS_FUNCS.update(mdp.get_obj_by_class(members, mdp.Observation))
+        REW_FUNCS = mdp.REW_FUNCS
+        REW_FUNCS.update(mdp.get_obj_by_class(members, mdp.Reward))
+        TERM_FUNCS = mdp.TERM_FUNCS
+        TERM_FUNCS.update(mdp.get_obj_by_class(members, mdp.Termination))
+
+        self.randomization = OrderedDict()
+        self.observation_funcs = OrderedDict()
+        self.reward_funcs = OrderedDict()
+
+        for key, params in self.cfg.randomization.items():
+            self.randomization[key] = RAND_FUNCS[key](self, **params if params is not None else {})
+            self.randomization[key].startup()
+        
+        for group, funcs in self.cfg.observation.items():
+            self.observation_funcs[group] = OrderedDict(
+                {
+                    key: OBS_FUNCS[key](self, **(params if params is not None else {}))
+                    for key, params in funcs.items()
+                }
+            )
+        
+        obs = self._compute_observation()
+
+        observation_spec = {}
+        for group, value in obs.items(True, True):
+            observation_spec[group] = UnboundedContinuousTensorSpec(value.shape, device=self.device)
+        self.observation_spec = CompositeSpec(
+            observation_spec, 
+            shape=[self.num_envs],
+            device=self.device
+        )
+
+        reward_spec = CompositeSpec({
+            "reward": UnboundedContinuousTensorSpec(1),
+            "stats": {
+                "return": UnboundedContinuousTensorSpec(1),
+                "episode_len": UnboundedContinuousTensorSpec(1),
+                "success": UnboundedContinuousTensorSpec(1),
+            }
+        })
+        for key, weight in self.cfg.reward.items():
+            self.reward_funcs[key] = (REW_FUNCS[key](self), weight)
+            reward_spec["stats", key] = UnboundedContinuousTensorSpec(1, device=self.device)
+        self.reward_spec = reward_spec.expand(self.num_envs).to(self.device)
+        self.stats = self.reward_spec["stats"].zero()
+
+        self.termination_funcs = OrderedDict(
+            {
+                key: TERM_FUNCS[key](self, **params) 
+                for key, params in self.cfg.termination.items()
+            }
+        )
+        self.time_stamp = 0
     
     @property
     def num_envs(self) -> int:
@@ -148,6 +167,13 @@ class Env(EnvBase):
             env_mask = torch.ones(self.num_envs, dtype=bool, device=self.device)
         env_ids = env_mask.nonzero().squeeze(-1)
         self._reset_idx(env_ids)
+        for group, funcs in self.observation_funcs.items():
+            for name, func in funcs.items():
+                func.reset(env_ids)
+        for name, (func, weight) in self.reward_funcs.items():
+            func.reset(env_ids)
+        for name, func in self.randomization.items():
+            func.reset(env_ids)
         self.sim._physics_sim_view.flush()
         self.episode_length_buf[env_ids] = 0
         self.scene.update(self.step_dt)
@@ -166,12 +192,14 @@ class Env(EnvBase):
     def apply_action(self, tensordict: TensorDictBase, substep: int):
         raise NotImplementedError
 
-    def _compute_observation(self) -> TensorDictBase:
-        observation = TensorDict({
-            group: torch.cat([func() for func in funcs.values()], dim=-1)
-            for group, funcs in self.observation_funcs.items()
-        }, [self.num_envs])
-        observation["stats"] = self.stats.clone()
+    def _compute_observation(self, concat: bool=True) -> TensorDictBase:
+        observation = TensorDict({}, [self.num_envs])
+        if concat:
+            for group, funcs in self.observation_funcs.items():
+                observation[group] = torch.cat([func() for func in funcs.values()], dim=-1)
+        else:
+            for group, funcs in self.observation_funcs.items():
+                observation[group] = {name: func() for name, func in funcs.items()}
         return observation
     
     def _compute_reward(self) -> TensorDictBase:
@@ -184,17 +212,20 @@ class Env(EnvBase):
         self.stats["return"].add_(reward)
         self.stats["episode_len"][:] = self.episode_length_buf.unsqueeze(1)
         self.stats["success"][:] = (self.episode_length_buf >= self.max_episode_length * 0.9).unsqueeze(1).float()
-        return {"reward": reward}
+        return {"reward": reward, "stats": self.stats.clone()}
     
     def _compute_termination(self) -> TensorDictBase:
         flags = torch.cat([func() for func in self.termination_funcs.values()], dim=-1)
         return flags.any(dim=-1, keepdim=True)
 
     def _update(self):
-        # self.scene.update(self.step_dt)
+        for group, funcs in self.observation_funcs.items():
+            for name, func in funcs.items():
+                func.update()
         if self.sim.has_gui():
             self.sim.render()
         self.episode_length_buf.add_(1)
+        self.time_stamp += 1
 
     def _step(self, tensordict: TensorDictBase) -> TensorDictBase:
         # start = time.perf_counter()
@@ -247,16 +278,4 @@ class Env(EnvBase):
             # update closing status
             self._is_closed = True
 
-
-def observation_func(func):
-    func._is_obs = True
-    return func
-
-def reward_func(func):
-    func._is_reward = True
-    return func
-
-def termination_func(func):
-    func._is_termination = True
-    return func
 

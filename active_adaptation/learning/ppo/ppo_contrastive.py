@@ -40,7 +40,7 @@ from typing import Union
 
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
-from .common import GAE, Actor, make_mlp, Chunk, make_batch
+from .common import *
 
 
 class Detach(Transform):
@@ -52,12 +52,13 @@ class Detach(Transform):
 @dataclass
 class PPOConfig:
     name: str = "ppo_contra"
-    lr: float = 1e-3
     train_every: int = 32
     ppo_epochs: int = 4
-    num_minibatches: int = 32
+    num_minibatches: int = 16
+    lr: float = 5e-4
 
     checkpoint_path: Union[str, None] = None
+    train_contra: bool = False
 
 
 cs = ConfigStore.instance()
@@ -73,22 +74,16 @@ class TConv(nn.Module):
             nn.LazyConv1d(64, kernel_size=7, stride=2), activation(),
             nn.LazyConv1d(64, kernel_size=5, stride=2), activation(),
         )
-        self.mlp = make_mlp([out_dim], activation=nn.Mish)
+        self.mlp = make_mlp([256, out_dim], activation=nn.Mish)
     
     def forward(self, features: torch.Tensor):
         batch_shape = features.shape[:-2]
         features = features.reshape(-1, *features.shape[-2:])
-        features = einops.rearrange(self.tconv(features), "b d t -> b (t d)")
+        features_tconv = einops.rearrange(self.tconv(features), "b d t -> b (t d)")
+        features = torch.cat([features_tconv, features[:, :, -1]], dim=1)
         features = self.mlp(features)
         return features.reshape(*batch_shape, *features.shape[1:])
 
-
-OBS_KEY = "policy"
-OBS_HIST_KEY = "policy_h"
-ACTION_KEY = "action"
-REWARD_KEY = ("next", "reward")
-# DONE_KEY = ("next", "done")
-DONE_KEY = ("next", "terminated")
 
 class PPOTConvPolicy(TensorDictModuleBase):
 
@@ -112,54 +107,57 @@ class PPOTConvPolicy(TensorDictModuleBase):
 
         fake_input = observation_spec.zero()
 
-        self.encoder = TensorDictSequential(
-            TensorDictModule(
-                nn.Sequential(TConv(256), nn.LazyLinear(256), Chunk(2)),
-                [OBS_HIST_KEY], 
-                ["_feature_hist", "_context"]
-            ),
-            Detach(["_context"], ["_context_detached"])
+        self.adapt_module = TensorDictModule(
+            TConv(128), [OBS_HIST_KEY], ["_feature_hist"],
         ).to(self.device)
-        # self.encoder = TensorDictSequential(
-        #     TensorDictModule(
-        #         nn.Sequential(TConv(128), nn.LazyLinear(128)),
-        #         [OBS_HIST_KEY], ["_feature_hist"]
-        #     ),
-        #     TensorDictModule(
-        #         nn.Sequential(TConv(128), nn.LazyLinear(128)),
-        #         [OBS_HIST_KEY], ["_context"]
-        #     ),
-        #     Detach(["_context"], ["_context_detached"])
-        # ).to(self.device)
-        
-        actor = TensorDictSequential(
-            TensorDictModule(make_mlp([256, 256]), [OBS_KEY], ["_feature"]),
-            CatTensors(["_feature_hist", "_feature", "_context_detached"], "_feature", del_keys=False),
-            TensorDictModule(
-                nn.Sequential(make_mlp([256]), Actor(self.action_dim)), 
-                ["_feature"], ["loc", "scale"]
-            )
-        )
+
+        self.encoder = TensorDictModule(
+            make_mlp([256, 128]), [OBS_PRIV_KEY], ["_feature_expert"]
+        ).to(self.device)
         
         self.actor: ProbabilisticActor = ProbabilisticActor(
-            module=actor,
+            module=TensorDictSequential(
+                TensorDictModule(make_mlp([512]), [OBS_KEY], ["_feature_actor"]),
+                CatTensors(["_feature_expert", "_feature_actor",], "_feature_actor", del_keys=False),
+                TensorDictModule(
+                    nn.Sequential(make_mlp([256, 256]), Actor(self.action_dim)), 
+                    ["_feature_actor"], ["loc", "scale"]
+                )
+            ),
             in_keys=["loc", "scale"],
             out_keys=[ACTION_KEY],
             distribution_class=IndependentNormal,
             return_log_prob=True
         ).to(self.device)
 
+        self.actor_adapt: ProbabilisticActor = ProbabilisticActor(
+            module=TensorDictSequential(
+                TensorDictModule(make_mlp([512]), [OBS_KEY], ["_feature_actor"]),
+                CatTensors(["_feature_hist", "_feature_actor",], "_feature_actor", del_keys=False),
+                TensorDictModule(
+                    nn.Sequential(make_mlp([256, 256]), Actor(self.action_dim)), 
+                    ["_feature_actor"], ["loc", "scale"]
+                )
+            ),
+            in_keys=["loc", "scale"],
+            out_keys=[ACTION_KEY],
+            distribution_class=IndependentNormal,
+            return_log_prob=True
+        ).to(self.device)
+
+        # the critics always observe priviledged information
         self.critic = TensorDictSequential(
-            TensorDictModule(make_mlp([256, 256]), [OBS_KEY], ["_feature"]),
-            CatTensors(["_feature_hist", "_feature", "_context_detached"], "_feature", del_keys=False),
+            CatTensors([OBS_KEY, OBS_PRIV_KEY], "_obs_critic", del_keys=False),
             TensorDictModule(
-                nn.Sequential(make_mlp([256]), nn.LazyLinear(1)), 
-                ["_feature"], ["state_value"]
+                nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1)), 
+                ["_obs_critic"], ["state_value"]
             )
         ).to(self.device)
 
         self.encoder(fake_input)
         self.actor(fake_input)
+        self.adapt_module(fake_input)
+        self.actor_adapt(fake_input)
         self.critic(fake_input)
         
         if self.cfg.checkpoint_path is not None:
@@ -173,26 +171,42 @@ class PPOTConvPolicy(TensorDictModuleBase):
             
             self.actor.apply(init_)
             self.critic.apply(init_)
+            self.encoder.apply(init_)
+
+        hard_copy_(self.actor, self.actor_adapt)
 
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=cfg.lr)
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=cfg.lr)
         self.encoder_opt = torch.optim.Adam(self.encoder.parameters(), lr=5e-4)
+        self.adapt_opt = torch.optim.Adam(self.adapt_module.parameters())
         self.value_norm = ValueNorm1(1).to(self.device)
 
         self.exclude_keys = ["_feature_hist", "_feature", "_context", "_context_detached"]
+        self.train_contra = self.cfg.train_contra
+        self.mode = "adapt"
     
-    @torch.autocast(device_type="cuda", dtype=torch.float16)
+    # @torch.autocast(device_type="cuda", dtype=torch.float16)
     def __call__(self, tensordict: TensorDict):
-        self.encoder(tensordict)
-        self.actor(tensordict)
+        if self.mode == "expert":
+            self.encoder(tensordict)
+            self.actor(tensordict)
+        else:
+            self.adapt_module(tensordict)
+            self.actor_adapt(tensordict)
         self.critic(tensordict)
         tensordict.exclude(*self.exclude_keys, inplace=True)
         return tensordict
 
     def train_op(self, tensordict: TensorDict):
-        next_tensordict = tensordict["next"]
+        infos = {}
+        
+        # infos.update(self._train_policy(tensordict))
+        infos.update(self._train_adapt(tensordict))
+        return infos
+
+    def _train_policy(self, tensordict: TensorDictBase):
         with torch.no_grad():
-            self.encoder(next_tensordict)
+            next_tensordict = tensordict["next"]
             next_values = self.critic(next_tensordict)["state_value"]
         rewards = tensordict[REWARD_KEY]
         dones = tensordict[DONE_KEY]
@@ -220,6 +234,29 @@ class PPOTConvPolicy(TensorDictModuleBase):
         infos = infos.apply(torch.mean, batch_size=[])
         return {k: v.item() for k, v in infos.items()}
 
+    def _train_adapt(self, tensordict: TensorDictBase):
+        infos = []
+        for epoch in range(4):
+            for batch in make_batch(tensordict, 32):
+                with torch.no_grad():
+                    self.encoder(batch)
+                self.adapt_module(batch)
+                contra_loss, contra_acc = compute_contra_loss(
+                    batch["_feature_hist"],
+                    batch["_feature_expert"].detach()
+                )
+                self.adapt_opt.zero_grad()
+                contra_loss.backward()
+                self.adapt_opt.step()
+                infos.append(TensorDict({
+                    "contra_loss": contra_loss,
+                    "contra_acc": contra_acc
+                }, []))
+        infos: TensorDict = torch.stack(infos).to_tensordict()
+        infos = infos.apply(torch.mean, batch_size=[])
+        return {k: v.item() for k, v in infos.items()}
+
+
     def _update(self, tensordict: TensorDict):
         self.encoder(tensordict)
         dist = self.actor.get_dist(tensordict)
@@ -243,15 +280,7 @@ class PPOTConvPolicy(TensorDictModuleBase):
         value_loss_original = self.critic_loss_fn(b_returns, values)
         value_loss = torch.max(value_loss_original, value_loss_clipped)
 
-        # contrastive learning
-        context = tensordict["_context"]
-        next_context = tensordict["next", "_context"].detach()
-        logits = torch.einsum("ik, jk -> ij", context, next_context)
-        I = torch.eye(logits.shape[0], device=logits.device)
-        contra_loss = F.binary_cross_entropy_with_logits(logits, I)
-        contra_acc = ((logits.detach() > 0).float() == I).float().mean()
-        
-        loss = policy_loss + entropy_loss + value_loss + contra_loss
+        loss = policy_loss + entropy_loss + value_loss
         self.actor_opt.zero_grad(set_to_none=True)
         self.critic_opt.zero_grad(set_to_none=True)
         self.encoder_opt.zero_grad(set_to_none=True)
@@ -262,15 +291,28 @@ class PPOTConvPolicy(TensorDictModuleBase):
         self.critic_opt.step()
         self.encoder_opt.step()
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-
-        return TensorDict({
+        
+        infos = {
             "policy_loss": policy_loss,
             "value_loss": value_loss,
             "entropy": entropy,
             "actor_grad_norm": actor_grad_norm,
             "critic_grad_norm": critic_grad_norm,
             "explained_var": explained_var,
-            "contra_loss": contra_loss,
-            "contra_acc": contra_acc,
-        }, [])
+        }
+        return TensorDict(infos, [])
 
+
+def compute_contra_loss(
+    source: torch.Tensor,
+    target: torch.Tensor,
+):
+    logits = torch.einsum("ik, jk -> ij", source, target)
+    I = torch.eye(logits.shape[0], device=logits.device)
+    contra_loss = F.binary_cross_entropy_with_logits(logits, I)
+    contra_acc = ((logits.detach() > 0).float() == I).float().mean()
+    return contra_loss, contra_acc
+
+def hard_copy_(source_module: nn.Module, target_module: nn.Module):
+    for params_source, params_target in zip(source_module.parameters(), target_module.parameters()):
+        params_target.data.copy_(params_source.data)

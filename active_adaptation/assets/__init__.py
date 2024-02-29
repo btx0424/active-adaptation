@@ -65,7 +65,7 @@ UNITREE_GO1M_CFG.actuators["arm"] = DCMotorCfg(
 
 H1_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAAC_ORBIT_NUCLEUS_DIR}/Robots/Unitree/Go2/go2.usd",
+        usd_path=f"{ASSET_PATH}/h1_isaacgym.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -81,21 +81,50 @@ H1_CFG = ArticulationCfg(
         ),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.4),
+        pos=(0.0, 0.0, 1.0),
         joint_pos={
-
+            '.*knee_joint': 0.8,
+            '.*ankle_joint': -0.4,
+            '.*hip_pitch_joint': -0.4,
+            'left_hip_yaw_joint' : 0. ,   
+            'left_hip_roll_joint' : 0,               
+            'right_hip_yaw_joint' : 0., 
+            'right_hip_roll_joint' : 0, 
+            'torso_joint' : 0., 
+            'left_shoulder_pitch_joint' : 0., 
+            'left_shoulder_roll_joint' : 0, 
+            'left_shoulder_yaw_joint' : 0.,
+            'left_elbow_joint'  : 0.,
+            'right_shoulder_pitch_joint' : 0.,
+            'right_shoulder_roll_joint' : 0.0,
+            'right_shoulder_yaw_joint' : 0.,
+            'right_elbow_joint' : 0.,
         },
         joint_vel={".*": 0.0},
     ),
     soft_joint_pos_limit_factor=0.9,
     actuators={
         "base_legs": DCMotorCfg(
-            joint_names_expr=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
-            effort_limit=200.0,
-            saturation_effort=200.0,
+            joint_names_expr=[".*"],
+            effort_limit=400.0,
+            saturation_effort=400.0,
             velocity_limit=30.0,
-            stiffness=100.0,
-            damping=3.0,
+            stiffness={
+                ".*hip.*": 200,
+                ".*knee.*": 300,
+                ".*ankle.*": 40,
+                "torso_joint": 300,
+                ".*shoulder.*": 100,
+                ".*elbow.*": 100
+            },
+            damping={
+                ".*hip.*": 5,
+                ".*knee.*": 6,
+                ".*ankle.*": 2,
+                "torso_joint": 6,
+                ".*shoulder.*": 2,
+                ".*elbow.*": 2
+            },
             friction=0.0,
         ),
     },

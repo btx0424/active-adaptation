@@ -3,7 +3,6 @@ import logging
 
 from omni.isaac.orbit.sensors import ContactSensor, RayCaster
 from omni.isaac.orbit.actuators import DCMotor
-from active_adaptation.envs.base import Env, observation_func, reward_func, termination_func
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 
@@ -113,193 +112,193 @@ class QuadrupedManip(LocomotionEnv):
             self.robot.set_joint_position_target(pos_target, self.actuated_joint_indices)
         self.robot.write_data_to_sim()
 
-    @observation_func
-    def height_scan(self):
-        root_pos_w = self.robot.data.root_pos_w
-        ray_hits_w = self.height_scanner.data.ray_hits_w
-        height_scan = root_pos_w[:, [2]].unsqueeze(1) - ray_hits_w[:, :, [2]]
-        return height_scan.reshape(self.num_envs, 1, 11, 17).clamp(-2., 2.)
+    # @observation_func
+    # def height_scan(self):
+    #     root_pos_w = self.robot.data.root_pos_w
+    #     ray_hits_w = self.height_scanner.data.ray_hits_w
+    #     height_scan = root_pos_w[:, [2]].unsqueeze(1) - ray_hits_w[:, :, [2]]
+    #     return height_scan.reshape(self.num_envs, 1, 11, 17).clamp(-2., 2.)
     
-    @observation_func
-    def root_quat_w(self):
-        return self.robot.data.root_quat_w
+    # @observation_func
+    # def root_quat_w(self):
+    #     return self.robot.data.root_quat_w
     
-    @observation_func
-    def root_angvel_b(self):
-        return self.robot.data.root_ang_vel_b
+    # @observation_func
+    # def root_angvel_b(self):
+    #     return self.robot.data.root_ang_vel_b
     
-    @observation_func
-    def joint_pos(self):
-        all_joint_pos = self.robot.data.joint_pos
-        return random_noise(all_joint_pos, 0.05)
+    # @observation_func
+    # def joint_pos(self):
+    #     all_joint_pos = self.robot.data.joint_pos
+    #     return random_noise(all_joint_pos, 0.05)
     
-    @observation_func
-    def joint_vel(self):
-        all_joint_vel = self.robot.data.joint_vel
-        return random_noise(all_joint_vel, 0.2)
+    # @observation_func
+    # def joint_vel(self):
+    #     all_joint_vel = self.robot.data.joint_vel
+    #     return random_noise(all_joint_vel, 0.2)
     
-    @observation_func
-    def joint_acc(self):
-        return self.robot.data.joint_acc * self.step_dt
+    # @observation_func
+    # def joint_acc(self):
+    #     return self.robot.data.joint_acc * self.step_dt
 
-    @observation_func
-    def projected_gravity_b(self):
-        return self.robot.data.projected_gravity_b
+    # @observation_func
+    # def projected_gravity_b(self):
+    #     return self.robot.data.projected_gravity_b
     
-    @observation_func
-    def root_linvel_b(self):
-        return self.robot.data.root_lin_vel_b
+    # @observation_func
+    # def root_linvel_b(self):
+    #     return self.robot.data.root_lin_vel_b
     
-    @observation_func
-    def prev_actions(self):
-        # return self.last_action.reshape(self.num_envs, -1)
-        return self.action_buf.reshape(self.num_envs, -1)
+    # @observation_func
+    # def prev_actions(self):
+    #     # return self.last_action.reshape(self.num_envs, -1)
+    #     return self.action_buf.reshape(self.num_envs, -1)
     
-    @observation_func
-    def applied_torques(self):
-        return self.robot.data.applied_torque / 30.
+    # @observation_func
+    # def applied_torques(self):
+    #     return self.robot.data.applied_torque / 30.
     
-    @observation_func
-    def contact_forces(self):
-        forces = quat_rotate_inverse(
-            self.robot.data.root_quat_w.unsqueeze(1),
-            self.contact_sensor.data.net_forces_w_history[:, :, self.foot_indices].mean(dim=1)
-        )
-        return (forces * self.step_dt).reshape(self.num_envs, -1)
+    # @observation_func
+    # def contact_forces(self):
+    #     forces = quat_rotate_inverse(
+    #         self.robot.data.root_quat_w.unsqueeze(1),
+    #         self.contact_sensor.data.net_forces_w_history[:, :, self.foot_indices].mean(dim=1)
+    #     )
+    #     return (forces * self.step_dt).reshape(self.num_envs, -1)
     
-    @observation_func
-    def contact_indicator(self):
-        force_history = self.contact_sensor.data.net_forces_w_history[:, :, self.foot_indices]
-        force_norm = force_history.norm(dim=-1)
-        return (force_norm.mean(dim=1) > 1.).float()
+    # @observation_func
+    # def contact_indicator(self):
+    #     force_history = self.contact_sensor.data.net_forces_w_history[:, :, self.foot_indices]
+    #     force_norm = force_history.norm(dim=-1)
+    #     return (force_norm.mean(dim=1) > 1.).float()
 
-    @observation_func
-    def feet_pos_b(self):
-        feet_pos_w = self.robot.data.body_pos_w[:, self.foot_indices]
-        self._feet_pos_b = quat_rotate_inverse(
-            self.robot.data.root_quat_w.unsqueeze(1),
-            feet_pos_w - self.robot.data.root_pos_w.unsqueeze(1)
-        )
-        return self._feet_pos_b.reshape(self.num_envs, -1)
+    # @observation_func
+    # def feet_pos_b(self):
+    #     feet_pos_w = self.robot.data.body_pos_w[:, self.foot_indices]
+    #     self._feet_pos_b = quat_rotate_inverse(
+    #         self.robot.data.root_quat_w.unsqueeze(1),
+    #         feet_pos_w - self.robot.data.root_pos_w.unsqueeze(1)
+    #     )
+    #     return self._feet_pos_b.reshape(self.num_envs, -1)
     
-    @observation_func
-    def motor_params(self):
-        rand: MotorParams = self.randomizations["motor_params"]
-        stiffness = rand.randomized_stiffness - 1.
-        damping = rand.randomized_damping - 1.
-        return torch.cat([damping, stiffness], dim=-1).reshape(self.num_envs, -1)
+    # @observation_func
+    # def motor_params(self):
+    #     rand: MotorParams = self.randomizations["motor_params"]
+    #     stiffness = rand.randomized_stiffness - 1.
+    #     damping = rand.randomized_damping - 1.
+    #     return torch.cat([damping, stiffness], dim=-1).reshape(self.num_envs, -1)
 
-    @observation_func
-    def body_masses(self):
-        rand = self.randomizations["body_masses"]
-        return rand.randomized_masses.reshape(self.num_envs, -1)
+    # @observation_func
+    # def body_masses(self):
+    #     rand = self.randomizations["body_masses"]
+    #     return rand.randomized_masses.reshape(self.num_envs, -1)
     
-    @observation_func
-    def body_materials(self):
-        rand = self.randomizations["body_material"]
-        return rand.material_properties.reshape(self.num_envs, -1)
+    # @observation_func
+    # def body_materials(self):
+    #     rand = self.randomizations["body_material"]
+    #     return rand.material_properties.reshape(self.num_envs, -1)
 
-    @observation_func
-    def motor_failure(self):
-        rand: MotorFailure = self.randomizations["motor_failure"]
-        return rand.motor_failure.reshape(self.num_envs, -1)
+    # @observation_func
+    # def motor_failure(self):
+    #     rand: MotorFailure = self.randomizations["motor_failure"]
+    #     return rand.motor_failure.reshape(self.num_envs, -1)
     
-    @reward_func
-    def linvel_projection(self):
-        linvel_b = self.robot.data.root_lin_vel_b[:, :2]
-        command_linvel_b = self.command_manager._command_linvel[:, :2]
-        projection = (linvel_b * command_linvel_b).sum(dim=-1, keepdim=True) 
-        return projection.clamp_max(self.command_manager._command_speed)
+    # @reward_func
+    # def linvel_projection(self):
+    #     linvel_b = self.robot.data.root_lin_vel_b[:, :2]
+    #     command_linvel_b = self.command_manager._command_linvel[:, :2]
+    #     projection = (linvel_b * command_linvel_b).sum(dim=-1, keepdim=True) 
+    #     return projection.clamp_max(self.command_manager._command_speed)
     
-    @reward_func
-    def linvel_exp(self):
-        linvel_b = self.robot.data.root_lin_vel_b[:, :2]
-        linvel_error = square_norm(linvel_b - self.command_manager._command_linvel[:, :2])
-        return torch.exp( - linvel_error / 0.25)
+    # @reward_func
+    # def linvel_exp(self):
+    #     linvel_b = self.robot.data.root_lin_vel_b[:, :2]
+    #     linvel_error = square_norm(linvel_b - self.command_manager._command_linvel[:, :2])
+    #     return torch.exp( - linvel_error / 0.25)
     
-    @reward_func
-    def angvel_z_exp(self):
-        angvel_error = (self.command_manager.command[:, [2]] - self.robot.data.root_ang_vel_b[:, [2]]).square()
-        return torch.exp( - angvel_error / 0.25)
+    # @reward_func
+    # def angvel_z_exp(self):
+    #     angvel_error = (self.command_manager.command[:, [2]] - self.robot.data.root_ang_vel_b[:, [2]]).square()
+    #     return torch.exp( - angvel_error / 0.25)
 
-    @reward_func
-    def linvel_z_l2(self):
-        return -self.robot.data.root_lin_vel_b[:, [2]].square()
+    # @reward_func
+    # def linvel_z_l2(self):
+    #     return -self.robot.data.root_lin_vel_b[:, [2]].square()
     
-    @reward_func
-    def angvel_xy_l2(self):
-        return - self.robot.data.root_ang_vel_b[:, :2].square().sum(-1, True)
+    # @reward_func
+    # def angvel_xy_l2(self):
+    #     return - self.robot.data.root_ang_vel_b[:, :2].square().sum(-1, True)
     
-    @reward_func
-    def heading(self):
-        root_quat = self.robot.data.root_quat_w
-        heading_b_x = quat_rotate_inverse(root_quat, self.command_manager._command_heading)[:, [0]]
-        return 0.5 * (heading_b_x + heading_b_x.sign() * heading_b_x.square())
+    # @reward_func
+    # def heading(self):
+    #     root_quat = self.robot.data.root_quat_w
+    #     heading_b_x = quat_rotate_inverse(root_quat, self.command_manager._command_heading)[:, [0]]
+    #     return 0.5 * (heading_b_x + heading_b_x.sign() * heading_b_x.square())
     
-    @reward_func
-    def base_height(self):
-        height = self.robot.data.root_pos_w[:, [2]]
-        height = height - self.robot.data.body_pos_w[:, self.foot_indices, 2].mean(1, keepdim=True)
-        return (height / self.target_base_height).square().clamp_max(1.)
+    # @reward_func
+    # def base_height(self):
+    #     height = self.robot.data.root_pos_w[:, [2]]
+    #     height = height - self.robot.data.body_pos_w[:, self.foot_indices, 2].mean(1, keepdim=True)
+    #     return (height / self.target_base_height).square().clamp_max(1.)
 
-    @reward_func
-    def energy_l2(self):
-        energy = (
-            (self.robot.data.joint_vel * self.robot.data.applied_torque)
-            .square()
-            .sum(dim=-1, keepdim=True)
-        )
-        return - energy
+    # @reward_func
+    # def energy_l2(self):
+    #     energy = (
+    #         (self.robot.data.joint_vel * self.robot.data.applied_torque)
+    #         .square()
+    #         .sum(dim=-1, keepdim=True)
+    #     )
+    #     return - energy
     
-    @reward_func
-    def energy_l1(self):
-        energy = (
-            (self.robot.data.joint_vel * self.robot.data.applied_torque)
-            .abs()
-            .sum(dim=-1, keepdim=True)
-        )
-        return - energy
+    # @reward_func
+    # def energy_l1(self):
+    #     energy = (
+    #         (self.robot.data.joint_vel * self.robot.data.applied_torque)
+    #         .abs()
+    #         .sum(dim=-1, keepdim=True)
+    #     )
+    #     return - energy
     
-    @reward_func
-    def joint_acc_l2(self):
-        return - self.robot.data.joint_acc.square().sum(dim=-1, keepdim=True)
+    # @reward_func
+    # def joint_acc_l2(self):
+    #     return - self.robot.data.joint_acc.square().sum(dim=-1, keepdim=True)
     
-    @reward_func
-    def joint_torques_l2(self):
-        return - self.robot.data.applied_torque.square().sum(dim=-1, keepdim=True)
+    # @reward_func
+    # def joint_torques_l2(self):
+    #     return - self.robot.data.applied_torque.square().sum(dim=-1, keepdim=True)
 
-    @reward_func
-    def action_rate_l2(self):
-        action_diff = self.action_buf[:, :, 0] - self.action_buf[:, :, 1]
-        return - action_diff.square().sum(dim=-1, keepdim=True)
+    # @reward_func
+    # def action_rate_l2(self):
+    #     action_diff = self.action_buf[:, :, 0] - self.action_buf[:, :, 1]
+    #     return - action_diff.square().sum(dim=-1, keepdim=True)
 
-    @reward_func
-    def survival(self):
-        return torch.ones(self.num_envs, 1, device=self.device)
+    # @reward_func
+    # def survival(self):
+    #     return torch.ones(self.num_envs, 1, device=self.device)
     
-    @reward_func
-    def orientation(self):
-        return self.robot.data.projected_gravity_b[:, [2]].square()
+    # @reward_func
+    # def orientation(self):
+    #     return self.robot.data.projected_gravity_b[:, [2]].square()
     
-    @reward_func
-    def feet_slip(self):
-        i = self.contact_indicator()
-        feet_vel = self.robot.data.body_lin_vel_w[:, self.foot_indices]
-        return - (i * feet_vel.norm(dim=-1)).sum(dim=1, keepdim=True)
+    # @reward_func
+    # def feet_slip(self):
+    #     i = self.contact_indicator()
+    #     feet_vel = self.robot.data.body_lin_vel_w[:, self.foot_indices]
+    #     return - (i * feet_vel.norm(dim=-1)).sum(dim=1, keepdim=True)
     
-    @reward_func
-    def stand(self):
-        jpos_error = square_norm(self.robot.data.joint_pos - self.robot.data.default_joint_pos)
-        cost = - (jpos_error) * self.command_manager._command_stand
-        return cost
+    # @reward_func
+    # def stand(self):
+    #     jpos_error = square_norm(self.robot.data.joint_pos - self.robot.data.default_joint_pos)
+    #     cost = - (jpos_error) * self.command_manager._command_stand
+    #     return cost
 
-    @termination_func
-    def crash(self):
-        fall_over = (self.robot.data.projected_gravity_b[:, 2] >= -0.3)
-        contact_forces = self.contact_sensor.data.net_forces_w[:, self.main_body_indices]
-        undesired_contact = (contact_forces.norm(dim=-1) > 1.).any(dim=1)
-        terminated = (fall_over | undesired_contact).unsqueeze(1)
-        return terminated
+    # @termination_func
+    # def crash(self):
+    #     fall_over = (self.robot.data.projected_gravity_b[:, 2] >= -0.3)
+    #     contact_forces = self.contact_sensor.data.net_forces_w[:, self.main_body_indices]
+    #     undesired_contact = (contact_forces.norm(dim=-1) > 1.).any(dim=1)
+    #     terminated = (fall_over | undesired_contact).unsqueeze(1)
+    #     return terminated
 
 
 def random_scale(x: torch.Tensor, low: float, high: float):

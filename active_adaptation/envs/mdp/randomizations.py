@@ -15,9 +15,12 @@ class Randomization:
     
     def reset(self, env_ids: torch.Tensor):
         pass
+    
+    def step(self):
+        pass
 
 
-class MotorParams(Randomization):
+class motor_params(Randomization):
     def __init__(
         self, 
         env,
@@ -303,6 +306,26 @@ class CommandManager:
         
         yaw = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
         self._target_yaw[env_ids] = yaw
+
+
+class push(Randomization):
+    def __init__(self, env, body_names):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_indices, self.body_names = self.asset.find_bodies(body_names)
+        
+        with torch.device(self.env.device):
+            self.forces = torch.zeros(self.env.num_envs, len(self.body_indices), 3)
+
+    def reset(self, env_ids: torch.Tensor):
+        self.forces[env_ids] = 0.
+
+    def step(self):
+        i = torch.rand(self.num_envs, len(self.body_indices), 3, device=self.device) > 0.02
+        push_forces = torch.rand_like(self.forces)
+        push_forces[:, :, 2] = 0.
+        self.forces = torch.where(i, push_forces, self.forces * 0.6)
+        self.asset.set_external_force_and_torque(forces=self.forces, body_ids=self.body_indices)
 
 
 class CommandManager1:

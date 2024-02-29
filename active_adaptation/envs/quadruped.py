@@ -2,26 +2,19 @@ import torch
 
 from omni.isaac.orbit.sensors import ContactSensor, RayCaster
 from omni.isaac.orbit.actuators import DCMotor
-from active_adaptation.envs.base import Env, observation_func, reward_func, termination_func
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
-
-from tensordict.tensordict import TensorDictBase
-from torchrl.data import (
-    CompositeSpec, 
-    UnboundedContinuousTensorSpec
-)
 
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
 
-from .mdp import BodyMasses, BodyMaterial, MotorParams, BodyInertias, MotorFailure, CommandManager1, BodyComs
 from collections import OrderedDict
-from .locomotion import LocomotionEnv, Filter, Buffer
+from .locomotion import LocomotionEnv
+from . import mdp
 
 class Quadruped(LocomotionEnv):
 
-    num_feet: int = 4
+    feet_name_expr = ".*_foot"
 
     def __init__(self, cfg):
         super().__init__(cfg)
@@ -38,15 +31,9 @@ class Quadruped(LocomotionEnv):
             - set(self.thigh_indices)
             - set(self.foot_indices)
         )
-
-        self.init_root_state = self.robot.data.default_root_state.clone()
-        self.init_joint_pos = self.robot.data.default_joint_pos.clone()
-        self.init_joint_vel = self.robot.data.default_joint_vel.clone()
         
         self.motor_joint_indices = self.robot.actuators["base_legs"].joint_indices
         self.default_joint_pos = self.robot.data.default_joint_pos[:, self.motor_joint_indices]
-
-        self._feet_pos_b = self.robot.data.body_pos_w[:, self.foot_indices].clone()
         
         self.command_manager = CommandManager1(self, speed_range=(0.5, 2.0))
 
@@ -74,156 +61,121 @@ class Quadruped(LocomotionEnv):
             randomization.startup()
         self.sim.physics_sim_view.flush()
 
-        obs = super()._compute_observation()
-        reward = self._compute_reward()
-
-        self.action_spec = CompositeSpec(
-            {
-                "action": UnboundedContinuousTensorSpec((self.num_envs, 12))
-            }, 
-            shape=[self.num_envs]
-        ).to(self.device)
-
-        for key, value in obs.items(True, True):
-            if key not in self.observation_spec.keys(True, True):
-                self.observation_spec[key] = UnboundedContinuousTensorSpec(value.shape, device=self.device)
-        
-        self.reward_spec = CompositeSpec(
-            {
-                key: UnboundedContinuousTensorSpec(value.shape)
-                for key, value in reward.items()
-            },
-            shape=[self.num_envs]
-        ).to(self.device)
-
         self.packet_loss = 0.0
 
         self.resample_interval = 300
         self.resample_prob = 0.6
     
-    @observation_func
-    def linvel_error(self):
-        return self.command_manager._command_linvel[:, :2] - self.robot.data.root_lin_vel_b[:, :2]
+    @property
+    def action_dim(self):
+        return 12
     
-    @observation_func
-    def feet_pos_b(self):
-        feet_pos_w = self.robot.data.body_pos_w[:, self.foot_indices]
-        feet_pos = feet_pos_w - self.robot.data.root_pos_w.unsqueeze(1)
-        feet_pos = torch.cat([self._feet_pos_b, feet_pos[:, :, [2]]], dim=-1)
-        return feet_pos.reshape(self.num_envs, -1)
+    # @observation_func
+    # def linvel_error(self):
+    #     return self.command_manager._command_linvel[:, :2] - self.robot.data.root_lin_vel_b[:, :2]
 
-    @observation_func
-    def feet_vel_b(self):
-        feet_vel = quat_rotate_inverse(
-            self.robot.data.root_quat_w.unsqueeze(1),
-            self.robot.data.body_lin_vel_w[:, self.foot_indices]
-        )
-        return feet_vel.reshape(self.num_envs, -1)
+    # @observation_func
+    # def feet_vel_b(self):
+    #     feet_vel = quat_rotate_inverse(
+    #         self.robot.data.root_quat_w.unsqueeze(1),
+    #         self.robot.data.body_lin_vel_w[:, self.foot_indices]
+    #     )
+    #     return feet_vel.reshape(self.num_envs, -1)
+    
+    # @observation_func
+    # def applied_torques(self):
+    #     return self.robot.data.applied_torque / 30.
+    #     # return self.applied_torques_buffer.data.reshape(self.num_envs, -1) / 30.
+    
+    # @observation_func
+    # def motor_params(self):
+    #     rand: MotorParams = self.randomizations["motor_params"]
+    #     stiffness = rand.randomized_stiffness - 1.
+    #     damping = rand.randomized_damping - 1.
+    #     return torch.cat([damping, stiffness], dim=-1).reshape(self.num_envs, -1)
 
-    @observation_func
-    def joint_pos(self):
-        joint_pos = self.robot.data.joint_pos[:, self.motor_joint_indices]
-        return random_noise(joint_pos - self.default_joint_pos, 0.05)
-    
-    @observation_func
-    def joint_vel(self):
-        all_joint_vel = self.robot.data.joint_vel
-        return all_joint_vel[:, self.motor_joint_indices]
-    
-    @observation_func
-    def applied_torques(self):
-        return self.robot.data.applied_torque / 30.
-        # return self.applied_torques_buffer.data.reshape(self.num_envs, -1) / 30.
-    
-    @observation_func
-    def motor_params(self):
-        rand: MotorParams = self.randomizations["motor_params"]
-        stiffness = rand.randomized_stiffness - 1.
-        damping = rand.randomized_damping - 1.
-        return torch.cat([damping, stiffness], dim=-1).reshape(self.num_envs, -1)
+    # @observation_func
+    # def base_mass(self):
+    #     rand = self.randomizations["body_masses"]
+    #     return rand.randomized_masses.reshape(self.num_envs, -1)[:, [0]]
 
-    @observation_func
-    def base_mass(self):
-        rand = self.randomizations["body_masses"]
-        return rand.randomized_masses.reshape(self.num_envs, -1)[:, [0]]
+    # @observation_func
+    # def base_inertia(self):
+    #     rand = self.randomizations["body_inertias"]
+    #     inertia = rand.randomized_inertias.reshape(self.num_envs, -1)[:, [0, 4, 8]]
+    #     return inertia
+    
+    # @observation_func
+    # def base_com(self):
+    #     rand: BodyComs = self.randomizations["body_coms"]
+    #     return rand.randomized_coms.reshape(self.num_envs, -1)
 
-    @observation_func
-    def base_inertia(self):
-        rand = self.randomizations["body_inertias"]
-        inertia = rand.randomized_inertias.reshape(self.num_envs, -1)[:, [0, 4, 8]]
-        return inertia
+    # @observation_func
+    # def payload_mass(self):
+    #     rand = self.randomizations["payload_mass"]
+    #     return rand.randomized_masses.reshape(self.num_envs, -1)
     
-    @observation_func
-    def base_com(self):
-        rand: BodyComs = self.randomizations["body_coms"]
-        return rand.randomized_coms.reshape(self.num_envs, -1)
+    # @observation_func
+    # def payload_inertia(self):
+    #     rand = self.randomizations["payload_inertia"]
+    #     inertia = rand.randomized_inertias.reshape(self.num_envs, -1)[:, [0, 4, 8]]
+    #     return inertia
+    
+    # @observation_func
+    # def body_materials(self):
+    #     rand = self.randomizations["body_material"]
+    #     return rand.material_properties.reshape(self.num_envs, -1) * 2.0 - 1.0
 
-    @observation_func
-    def payload_mass(self):
-        rand = self.randomizations["payload_mass"]
-        return rand.randomized_masses.reshape(self.num_envs, -1)
+    # @observation_func
+    # def motor_failure(self):
+    #     rand: MotorFailure = self.randomizations["motor_failure"]
+    #     return rand.motor_failure.reshape(self.num_envs, -1)
     
-    @observation_func
-    def payload_inertia(self):
-        rand = self.randomizations["payload_inertia"]
-        inertia = rand.randomized_inertias.reshape(self.num_envs, -1)[:, [0, 4, 8]]
-        return inertia
+    # @observation_func
+    # def incoming_wrench(self):
+    #     link_incoming_forces = self.robot.root_physx_view.get_link_incoming_joint_force()
+    #     link_incoming_forces[:, :, :3] /= self.default_mass_total
+    #     return link_incoming_forces.reshape(self.num_envs, -1)
     
-    @observation_func
-    def body_materials(self):
-        rand = self.randomizations["body_material"]
-        return rand.material_properties.reshape(self.num_envs, -1) * 2.0 - 1.0
+    # @observation_func
+    # def body_inertias(self):
+    #     rand: BodyInertias = self.randomizations["body_inertias"]
+    #     return rand.randomized_inertias.reshape(self.num_envs, -1)
+    
+    # @reward_func
+    # def base_height(self):
+    #     height = self.robot.data.root_pos_w[:, [2]]
+    #     height = height - self.robot.data.body_pos_w[:, self.foot_indices, 2].mean(1, keepdim=True)
+    #     return (height / self.target_base_height).square().clamp_max(0.8)
+    
+    # @reward_func
+    # def stand(self):
+    #     jpos_error = square_norm(self.robot.data.joint_pos - self.robot.data.default_joint_pos)
+    #     front_symmetry = self._feet_pos_b[:, [0, 1], 1].sum(dim=1, keepdim=True).abs()
+    #     back_symmetry = self._feet_pos_b[:, [2, 3], 1].sum(dim=1, keepdim=True).abs()
+    #     cost = - (jpos_error + front_symmetry + back_symmetry) 
+    #     return cost * self.command_manager.is_standing_env.reshape(self.num_envs, 1)
 
-    @observation_func
-    def motor_failure(self):
-        rand: MotorFailure = self.randomizations["motor_failure"]
-        return rand.motor_failure.reshape(self.num_envs, -1)
-    
-    @observation_func
-    def incoming_wrench(self):
-        link_incoming_forces = self.robot.root_physx_view.get_link_incoming_joint_force()
-        link_incoming_forces[:, :, :3] /= self.default_mass_total
-        return link_incoming_forces.reshape(self.num_envs, -1)
-    
-    @observation_func
-    def body_inertias(self):
-        rand: BodyInertias = self.randomizations["body_inertias"]
-        return rand.randomized_inertias.reshape(self.num_envs, -1)
-    
-    @reward_func
-    def base_height(self):
-        height = self.robot.data.root_pos_w[:, [2]]
-        height = height - self.robot.data.body_pos_w[:, self.foot_indices, 2].mean(1, keepdim=True)
-        return (height / self.target_base_height).square().clamp_max(0.8)
-    
-    @reward_func
-    def stand(self):
-        jpos_error = square_norm(self.robot.data.joint_pos - self.robot.data.default_joint_pos)
-        front_symmetry = self._feet_pos_b[:, [0, 1], 1].sum(dim=1, keepdim=True).abs()
-        back_symmetry = self._feet_pos_b[:, [2, 3], 1].sum(dim=1, keepdim=True).abs()
-        cost = - (jpos_error + front_symmetry + back_symmetry) 
-        return cost * self.command_manager.is_standing_env.reshape(self.num_envs, 1)
+    # @reward_func
+    # def feet_air_time(self):
+    #     last_air_time = self.contact_sensor.data.last_air_time[:, self.foot_indices]
+    #     first_contact = last_air_time > 0.0
+    #     reward = torch.sum((last_air_time - 0.5) * first_contact, dim=1)
+    #     reward *= (self.command_manager.command[:, :2].norm(dim=-1)>0.1)
+    #     return reward.reshape(self.num_envs, -1)
 
-    @reward_func
-    def feet_air_time(self):
-        last_air_time = self.contact_sensor.data.last_air_time[:, self.foot_indices]
-        first_contact = last_air_time > 0.0
-        reward = torch.sum((last_air_time - 0.5) * first_contact, dim=1)
-        reward *= (self.command_manager.command[:, :2].norm(dim=-1)>0.1)
-        return reward.reshape(self.num_envs, -1)
-
-    @reward_func
-    def undesired_contact(self):
-        contact_forces = self.contact_sensor.data.net_forces_w[:, self.calf_indices]
-        return - (contact_forces.norm(dim=-1) > 1.).sum(dim=1, keepdim=True).float()
+    # @reward_func
+    # def undesired_contact(self):
+    #     contact_forces = self.contact_sensor.data.net_forces_w[:, self.calf_indices]
+    #     return - (contact_forces.norm(dim=-1) > 1.).sum(dim=1, keepdim=True).float()
     
-    @termination_func
-    def crash(self):
-        fall_over = (self.robot.data.projected_gravity_b[:, 2] >= -0.1)
-        contact_forces = self.contact_sensor.data.net_forces_w[:, self.main_body_indices]
-        undesired_contact = (contact_forces.norm(dim=-1) > 5.).any(dim=1)
-        terminated = (fall_over | undesired_contact).unsqueeze(1)
-        return terminated
+    # @termination_func
+    # def crash(self):
+    #     fall_over = (self.robot.data.projected_gravity_b[:, 2] >= -0.1)
+    #     contact_forces = self.contact_sensor.data.net_forces_w[:, self.main_body_indices]
+    #     undesired_contact = (contact_forces.norm(dim=-1) > 5.).any(dim=1)
+    #     terminated = (fall_over | undesired_contact).unsqueeze(1)
+    #     return terminated
 
 
 def random_scale(x: torch.Tensor, low: float, high: float):

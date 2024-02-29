@@ -66,9 +66,8 @@ class EnvCfg:
     
     reward: Dict[str, float] = MISSING
     observation: Dict[str, List] = MISSING
-    termination: List = [
-        "crash"
-    ]
+    termination: List = MISSING
+    randomization: List = MISSING
 
     def __post_init__(self):
         if self.payload:
@@ -103,7 +102,9 @@ def LocomotionEnvCfg(task_cfg):
             terrain=terrain_cfg,
         ),
         reward = task_cfg.reward,
-        observation = task_cfg.observation
+        observation = task_cfg.observation,
+        termination = task_cfg.termination,
+        randomization = task_cfg.get("randomization", {})
     )
     if "height_scan" not in task_cfg.observation.keys():
         env_cfg.scene.height_scanner = None
