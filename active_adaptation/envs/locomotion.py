@@ -85,7 +85,6 @@ class LocomotionEnv(Env):
             self.root_pos_history = torch.zeros(self.num_envs, 5, 3)
             self.last_contact = torch.zeros(self.num_envs, self.num_feet)
             
-        self.randomizations = OrderedDict()
         # set by subclass
         self.resample_interval = 300
         self.resample_prob = 0.6
@@ -102,11 +101,11 @@ class LocomotionEnv(Env):
             init_root_state, 
             env_ids=env_ids
         )
-        self.robot.write_joint_state_to_sim(
-            random_scale(self.init_joint_pos[env_ids], 0.8, 1.2),
-            self.init_joint_vel[env_ids],
-            env_ids=env_ids
-        )
+        # self.robot.write_joint_state_to_sim(
+        #     random_scale(self.init_joint_pos[env_ids], 0.8, 1.2),
+        #     self.init_joint_vel[env_ids],
+        #     env_ids=env_ids
+        # )
         self.stats[env_ids] = 0.
         self.action_buf[env_ids] = 0.
         self.last_action[env_ids] = 0.
@@ -152,6 +151,8 @@ class LocomotionEnv(Env):
                 self.robot.data.root_lin_vel_w,
                 color=(1., .5, .5, 1.)
             )
+            for rand in self.randomizations.values():
+                rand.debug_draw()
 
     def render(self, mode: str = "human"):
         robot_pos = self.robot.data.root_pos_w[self.lookat_env_i].cpu()
@@ -177,10 +178,13 @@ class LocomotionEnv(Env):
     def height_scan(self):
         asset = self.scene["robot"]
         height_scanner = self.scene.sensors["height_scanner"]
-        root_pos_w = asset.data.root_pos_w
-        ray_hits_w = height_scanner.data.ray_hits_w
-        height_scan = root_pos_w[:, [2]].unsqueeze(1) - ray_hits_w[:, :, [2]]
-        return height_scan.reshape(self.num_envs, 1, 11, 17).clamp(-2., 2.)
+        if not hasattr(height_scanner, "_view"):
+            return torch.zeros(self.num_envs, 1, 11, 17, deivce=self.device)
+        else:
+            root_pos_w = asset.data.root_pos_w
+            ray_hits_w = height_scanner.data.ray_hits_w
+            height_scan = root_pos_w[:, [2]].unsqueeze(1) - ray_hits_w[:, :, [2]]
+            return height_scan.reshape(self.num_envs, 1, 11, 17).clamp(-2., 2.)
     
     @mdp.observation_func
     def command(self):

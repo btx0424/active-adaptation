@@ -27,7 +27,9 @@ observation:
     body_pos: {body_names: ".*elbow_link"} 
     applied_torques: {actuator_name: base_legs}
     contact_indicator: {body_names: ".*ankle_link"}
-
+  height_scan:
+    height_scan: 
+  
 reward:
   linvel_exp: 1.0
   linvel_projection: 1.0
@@ -40,11 +42,16 @@ reward:
   survival: 1.0
 
 randomization:
-  # push: {body_names: ["pelvis", "torso_link"]}
+  push: {body_names: ["pelvis", ".*shoulder_pitch_link"]}
   motor_params:
     actuator_name: base_legs
     stiffness_range: [0.8, 1.2]
     damping_range: [0.8, 1.2]
+  reset_joint_states_uniform:
+    pos_ranges:
+      torso_joint: [-1., 1.]
+      .*elbow.*: [-0.8, 0.8]
+      .*shoulder.*: [-0.8, 0.8]
 
 termination:
   crash: 

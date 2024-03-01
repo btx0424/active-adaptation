@@ -102,13 +102,13 @@ class Env(EnvBase):
         TERM_FUNCS = mdp.TERM_FUNCS
         TERM_FUNCS.update(mdp.get_obj_by_class(members, mdp.Termination))
 
-        self.randomization = OrderedDict()
+        self.randomizations = OrderedDict()
         self.observation_funcs = OrderedDict()
         self.reward_funcs = OrderedDict()
 
         for key, params in self.cfg.randomization.items():
-            self.randomization[key] = RAND_FUNCS[key](self, **params if params is not None else {})
-            self.randomization[key].startup()
+            self.randomizations[key] = RAND_FUNCS[key](self, **params if params is not None else {})
+            self.randomizations[key].startup()
         
         for group, funcs in self.cfg.observation.items():
             self.observation_funcs[group] = OrderedDict(
@@ -172,7 +172,7 @@ class Env(EnvBase):
                 func.reset(env_ids)
         for name, (func, weight) in self.reward_funcs.items():
             func.reset(env_ids)
-        for name, func in self.randomization.items():
+        for name, func in self.randomizations.items():
             func.reset(env_ids)
         self.sim._physics_sim_view.flush()
         self.episode_length_buf[env_ids] = 0
@@ -234,6 +234,8 @@ class Env(EnvBase):
             # self.scene.write_data_to_sim()
             self.sim.step(render=False)
             self.scene.update(self.physics_dt)
+            for rand in self.randomizations.values():
+                rand.step(substep)
         # end = time.perf_counter()
         # print(end - start, self.cfg.decimation)
         self._update()

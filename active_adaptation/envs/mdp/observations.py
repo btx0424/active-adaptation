@@ -195,6 +195,19 @@ class contact_indicator(Observation):
         return (force_norm / self.default_mass_total).clamp_max(1.)
 
 
+class motor_params(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.randomized_stiffness = self.env._randomized_stiffness
+        self.randomized_damping = self.env._randomized_damping
+        self.randomized_strength = self.env._randomized_strength
+    
+    def __call__(self) -> torch.Tensor:
+        stiffness = self.randomized_stiffness
+        damping = self.randomized_damping
+        return torch.cat([stiffness, damping], dim=-1)
+
+
 def symlog(x: torch.Tensor, a: float=1.):
     return x.sign() * torch.log(x.abs() * a + 1.) / a
 
