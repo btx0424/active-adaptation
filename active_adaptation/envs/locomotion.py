@@ -151,6 +151,9 @@ class LocomotionEnv(Env):
                 self.robot.data.root_lin_vel_w,
                 color=(1., .5, .5, 1.)
             )
+            for group in self.observation_funcs.values():
+                for obs in group.values():
+                    obs.debug_draw()
             for rand in self.randomizations.values():
                 rand.debug_draw()
 

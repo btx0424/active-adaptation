@@ -355,6 +355,7 @@ class push(Randomization):
 
     def reset(self, env_ids: torch.Tensor):
         self.forces[env_ids] = 0.
+        self.last_push[env_ids] = - self.min_interval
 
     def step(self, substep):
         if substep == 0:

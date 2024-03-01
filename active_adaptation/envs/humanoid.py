@@ -18,22 +18,11 @@ class Humanoid(LocomotionEnv):
 
     def __init__(self, cfg):
         super().__init__(cfg)
-        self.action_scaling = 0.25
+        self.action_scaling = 0.5
         self.robot = self.scene.articulations["robot"]
         self.mass_distibution: torch.Tensor = self.default_masses / self.default_mass_total
         
         self.motor_joint_indices = slice(None)
-
-    def _update(self):
-        super()._update()
-        self.com = (self.robot.data.body_pos_w.cpu() * self.mass_distibution.unsqueeze(-1)).sum(1)
-        self.com_vel = (self.robot.data.body_lin_vel_w.cpu() * self.mass_distibution.unsqueeze(-1)).sum(1)
-        if self.sim.has_gui() and hasattr(self, "debug_draw"):
-            self.debug_draw.vector(
-                self.com,
-                self.com_vel,
-                color=(0., 1., 0., 1.)
-            )
 
     @property
     def action_dim(self):

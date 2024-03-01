@@ -41,6 +41,8 @@ class Observation:
     def reset(self, env_ids: torch.Tensor):
         pass
 
+    def debug_draw(self):
+        pass
 
 class BufferedObs(Observation):
     def __init__(self, env, shape, size):
@@ -206,6 +208,65 @@ class motor_params(Observation):
         stiffness = self.randomized_stiffness
         damping = self.randomized_damping
         return torch.cat([stiffness, damping], dim=-1)
+
+
+class com(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        default_masses = self.asset.root_physx_view.get_masses()[0].to(self.env.device)
+        self.default_mass_distribution = (default_masses / default_masses.sum()).unsqueeze(-1)
+        self.default_coms = self.asset.root_physx_view.get_coms()[0, :, :3].to(self.env.device)
+
+        self.com_b = torch.zeros(self.env.num_envs, 3, device=self.env.device)
+        self.com_w_buffer = Buffer((self.env.num_envs, 3), 4, self.env.device)
+
+    def update(self):
+        body_com_pos_w = self.asset.data.body_pos_w + quat_rotate(self.asset.data.body_quat_w, self.default_coms.unsqueeze(0))
+        self.com_w = (body_com_pos_w * self.default_mass_distribution).sum(1)
+        self.com_w_buffer.update(self.com_w, self.env.time_stamp)
+        com_diff = self.com_w_buffer.data[:, :, 1:] - self.com_w_buffer.data[:, :, :-1]
+        self.com_vel_w = (com_diff / self.env.step_dt).mean(dim=-1)
+
+    def __call__(self) -> torch.Tensor:
+        return self.com_b
+
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.com_w,
+            self.com_vel_w,
+            color=(0., 1., 1., 1.)
+        )
+
+
+class external_forces(Observation):
+    def __init__(self, env, body_names):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_indices, self.body_names = self.asset.find_bodies(body_names)
+        self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum() * 9.81
+
+    def __call__(self) -> torch.Tensor:
+        forces_b = self.asset._external_force_b[:, self.body_indices]
+        return (forces_b / self.default_mass_total).reshape(self.env.num_envs, -1)
+
+
+# class incoming_wrench(Observation):
+#     def __init__(self, env):
+#         super().__init__(env)
+#         self.asset: Articulation = self.env.scene["robot"]
+#         self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum().to(self.env.device) * 9.81
+
+#     def __call__(self) -> torch.Tensor:
+#         self.forces = self.asset.root_physx_view.get_link_incoming_joint_force()[:, :, :3]
+#         return self.forces / self.default_mass_total
+
+#     def debug_draw(self):
+#         self.env.debug_draw.vector(
+#             self.asset.data.body_pos_w[:, [1, 2]],
+#             self.forces[:, [1, 2]],
+#             color=(1., 1., 0., 1.)
+#         )
 
 
 def symlog(x: torch.Tensor, a: float=1.):
