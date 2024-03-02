@@ -16,29 +16,34 @@ observation:
     root_quat_w:
     root_angvel_b:
     projected_gravity_b:
-    joint_pos: {noise_std: 0.0}
-    joint_vel: {noise_std: 0.0}
+    joint_pos: {noise_std: 0.05}
+    joint_vel: {noise_std: 0.2}
     prev_actions: 
     # - "motor_params"
   priv:
     root_linvel_b:
     feet_pos_b:
-    applied_torques:
+    applied_torques: {actuator_name: base_legs}
+    contact_indicator: {body_names: ".*_foot"}
 
 reward:
-  linvel_exp: 1.0
-  linvel_projection: 1.0
+  linvel_exp: 1.5
+  linvel_projection: 1.2
+  angvel_z_exp: 0.75
+  angvel_xy_l2: 0.02
   base_height: 0.5
-  linvel_z_l2: 4.0
-  energy_l1: 0.0001
+  linvel_z_l2: 1.0
+  # energy_l1: 0.0001
   joint_acc_l2: 2.5e-7
+  joint_torques_l2: 2e-4
   stand: 0.5
-  orientation: 0.5
-  survival: 0.5
+  orientation: 0.25
+  survival: 0.25
+  action_rate_l2: 0.01
+  undesired_contact: 1.0
 
 termination:
-  crash:
-    body_names_expr: ["base", ".*thigh"]
+  crash: {body_names_expr: ["base", ".*_hip", ".*_thigh"]}
 
 # reward: # orbit
 #   linvel_projection: 0.5

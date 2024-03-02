@@ -108,6 +108,9 @@ def LocomotionEnvCfg(task_cfg):
     )
     if "height_scan" not in task_cfg.observation.keys():
         env_cfg.scene.height_scanner = None
+    else:
+        prim_path = "{ENV_REGEX_NS}/Robot/" + task_cfg.observation["height_scan"]["height_scan"]["prim_path"]
+        env_cfg.scene.height_scanner.prim_path = prim_path
     
     # slightly reduces GPU memory usage
     env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21

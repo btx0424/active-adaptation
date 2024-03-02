@@ -170,7 +170,7 @@ class LocomotionEnv(Env):
         self.robot.write_data_to_sim()
 
     @mdp.observation_func
-    def height_scan(self):
+    def height_scan(self, prim_path):
         asset = self.scene["robot"]
         height_scanner = self.scene.sensors["height_scanner"]
         if not hasattr(height_scanner, "_view"):
@@ -272,8 +272,7 @@ class LocomotionEnv(Env):
     
     @mdp.reward_func
     def base_height(self):
-        height = self.scene["robot"].data.root_pos_w[:, [2]]
-        height = height - self.scene["robot"].data.body_pos_w[:, self.foot_indices, 2].mean(1, keepdim=True)
+        height = self.scene["robot"].data.feet_pos_b[:, :, 2].mean(1, keepdim=True).abs()
         return (height / self.target_base_height).square().clamp_max(1.)
     
     @mdp.reward_func
@@ -308,6 +307,7 @@ class LocomotionEnv(Env):
     class feet_pos_b(mdp.body_pos):
         def __init__(self, env: "LocomotionEnv"):
             super().__init__(env, env.feet_name_expr)
+            self.asset.data.feet_pos_b = self.body_pos_b
     
 
 def random_scale(x: torch.Tensor, low: float, high: float):

@@ -151,6 +151,8 @@ class Env(EnvBase):
 
         for rand in self.randomizations.values():
             rand.startup()
+        self.sim.physics_sim_view.flush()
+        
         self.time_stamp = 0
     
     @property
