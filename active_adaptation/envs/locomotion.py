@@ -45,14 +45,6 @@ class LocomotionEnv(Env):
         self.feet_indices, self.feet_names = self.robot.find_bodies(self.feet_name_expr)
         self.num_feet = len(self.feet_indices)
 
-        body_masses = self.robot.body_physx_view.get_masses().reshape(self.num_envs, -1)[0]
-        for name, mass in zip(self.robot.body_names, body_masses):
-            print(name, mass)
-        
-        # masses in Newton
-        self.default_masses = body_masses * 9.81
-        self.default_mass_total = body_masses.sum() * 9.81
-
         self.contact_sensor: ContactSensor = self.scene.sensors.get("contact_forces", None)
         self.height_scanner: RayCaster = self.scene.sensors.get("height_scanner", None)
 

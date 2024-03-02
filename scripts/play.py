@@ -81,7 +81,7 @@ def main(cfg):
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
 
     stats_keys = [
-        k for k in env.observation_spec.keys(True, True) 
+        k for k in env.reward_spec.keys(True, True) 
         if isinstance(k, tuple) and k[0]=="stats"
     ]
     episode_stats = EpisodeStats(stats_keys)

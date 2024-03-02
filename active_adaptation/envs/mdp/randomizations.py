@@ -4,12 +4,20 @@ from omni.isaac.orbit.actuators import DCMotor, ImplicitActuator
 from typing import Union
 import logging
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
-from typing import Dict
+from typing import Dict, Tuple
 
 class Randomization:
     def __init__(self, env):
         self.env = env
 
+    @property
+    def num_envs(self):
+        return self.env.num_envs
+    
+    @property
+    def device(self):
+        return self.env.device
+    
     def startup(self):
         pass
     
@@ -154,38 +162,37 @@ class BodyMaterial(Randomization):
         )
 
 
-class BodyMasses(Randomization):
+class perturb_body_mass(Randomization):
     def __init__(
-        self,
-        env,
-        mass_range=(0.7, 1.3),
-        body_indices=None
+        self, env, **perturb_ranges: Tuple[float, float]
     ):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
-        self.mass_range = mass_range
+        self.default_masses = (
+            self.asset.body_physx_view
+            .get_masses()
+            .reshape(self.num_envs, self.asset.num_bodies)[0]
+        )
+        self.mass_ranges = torch.ones(self.asset.num_bodies, 2)
 
-        self.default_masses: torch.Tensor = None
-        self.body_masses: torch.Tensor = None
-        if body_indices is None:
-            body_indices = slice(None)
-        self.body_indices = body_indices
+        for body_name_expr, (low, high) in perturb_ranges.items():
+            body_ids, body_names = self.asset.find_bodies(body_name_expr)
+            print(f"Default mass of {body_names}: \n"
+                  f"{[round(i, 2) for i in self.default_masses[body_ids].tolist()]}")
+            self.mass_ranges[body_ids, 0] = low
+            self.mass_ranges[body_ids, 1] = high
 
     def startup(self):
         logging.info("Randomize body masses upon starup.")
         shape = (self.env.num_envs, self.asset.num_bodies)
-        default_masses_all = self.asset.body_physx_view.get_masses().reshape(shape).clone()
-        default_masses = default_masses_all[:, self.body_indices]
-        randomized_masses, _ = random_scale(default_masses, *self.mass_range)
+        masses, _ = random_scale(
+            self.default_masses.expand(self.env.num_envs, self.asset.num_bodies), 
+            self.mass_ranges[:, 0], 
+            self.mass_ranges[:, 1], 
+        )
+        indices = torch.arange(self.asset.body_physx_view.count)
+        self.asset.body_physx_view.set_masses(masses, indices)
 
-        bodies_per_env = self.asset.body_physx_view.count // self.env.num_envs        
-        indices = self.body_indices.repeat(self.env.num_envs, 1)
-        indices += torch.arange(self.env.num_envs).unsqueeze(1) * bodies_per_env
-        default_masses_all[:, self.body_indices] = randomized_masses
-        self.asset.body_physx_view.set_masses(default_masses_all.flatten(), indices.flatten())
-        
-        self.default_masses = default_masses.to(self.env.device)
-        self.randomized_masses = randomized_masses.to(self.env.device)
 
 class BodyInertias(Randomization):
     def __init__(
@@ -355,7 +362,7 @@ class push(Randomization):
 
     def reset(self, env_ids: torch.Tensor):
         self.forces[env_ids] = 0.
-        self.last_push[env_ids] = - self.min_interval
+        self.last_push[env_ids] = 0.
 
     def step(self, substep):
         if substep == 0:

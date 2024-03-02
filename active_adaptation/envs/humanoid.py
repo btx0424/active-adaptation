@@ -19,9 +19,7 @@ class Humanoid(LocomotionEnv):
     def __init__(self, cfg):
         super().__init__(cfg)
         self.action_scaling = 0.5
-        self.robot = self.scene.articulations["robot"]
-        self.mass_distibution: torch.Tensor = self.default_masses / self.default_mass_total
-        
+        self.robot = self.scene.articulations["robot"]        
         self.motor_joint_indices = slice(None)
 
     @property

@@ -78,7 +78,7 @@ def main(cfg):
         transform.append(policy.make_tensordict_primer())
 
     stats_keys = [
-        k for k in env.observation_spec.keys(True, True) 
+        k for k in env.reward_spec.keys(True, True) 
         if isinstance(k, tuple) and k[0]=="stats"
     ]
     episode_stats = EpisodeStats(stats_keys)

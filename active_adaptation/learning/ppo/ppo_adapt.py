@@ -74,7 +74,7 @@ class PPOConfig:
     phase: str = "train"
     condition_mode: str = "cat"
     expert_reg: float = 0.0
-    norm_context: bool = True
+    norm_context: bool = False
 
     adapt_arch: str = "rnn"
     # what the adaptation module learns to predict
@@ -517,8 +517,8 @@ class PPORMAPolicy(TensorDictModuleBase):
         
         self.adapt_opt.add_param_group({"params": self.actor_adapt.parameters()})
         self.adapt_opt.add_param_group({"params": self.critic_adapt.parameters()})
-        self.opt.add_param_group({"params": self.actor_adapt.parameters()})
-        self.opt.add_param_group({"params": self.critic_adapt.parameters()})
+        # self.opt.add_param_group({"params": self.actor_adapt.parameters()})
+        # self.opt.add_param_group({"params": self.critic_adapt.parameters()})
 
     @property
     def phase(self):
@@ -563,21 +563,6 @@ class PPORMAPolicy(TensorDictModuleBase):
         return info
     
     
-    def _get_context(self, tensordict: TensorDict):
-        if self.phase == "train":
-            self.encoder(tensordict)
-        elif self.phase in ("adapt", "finetune"):
-            if self.adaptation_key == "raw":
-                tensordict.rename_key_(OBS_PRIV_KEY, "tmp")
-                self.adapt_module(tensordict)
-                self.encoder(tensordict)
-                tensordict.exclude(OBS_PRIV_KEY, inplace=True)
-                tensordict.rename_key_("tmp", OBS_PRIV_KEY)
-            else:
-                self.adapt_module(tensordict)
-        return tensordict
-
-
     def _get_context(self, tensordict: TensorDict):
         if self.phase == "train":
             self.encoder(tensordict)
@@ -665,11 +650,11 @@ class PPORMAPolicy(TensorDictModuleBase):
         losses["value_loss"] = value_loss
 
         loss = sum(losses.values())
-        self.opt.zero_grad(set_to_none=True)
+        opt.zero_grad(set_to_none=True)
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad.clip_grad_norm_(actor.parameters(), 10)
         critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(critic.parameters(), 10)
-        self.opt.step()
+        opt.step()
 
         infos = losses
         infos["actor_grad_norm"] = actor_grad_norm
@@ -736,11 +721,13 @@ class PPORMAPolicy(TensorDictModuleBase):
         denormed_values = tensordict["denormed_values"]
         for name, value in zip(self.value_names, denormed_values.unbind(-1), strict=True):
             infos[name] = value.mean().item()
+        infos["adapt/acc_adapt"] = tensordict["acc_adapt"].mean().item()
+        infos["adapt/acc_target"] = tensordict["acc_target"].mean().item()
         return infos
 
     def _finetune(self, tensordict: TensorDict):
         self._compute_rewards(tensordict)
-        weights = (1., 0., 0., 4., 0.)
+        weights = (1., 0., 0., 0., 0.)
         self._compute_advantage(
             tensordict, 
             self.critic_adapt,
@@ -767,11 +754,11 @@ class PPORMAPolicy(TensorDictModuleBase):
             infos.update(collect_info(infos_policy))
 
         # update adaptation module
-        infos_adapt = []
-        for epoch in range(2):
-            for minibatch in self.make_batch(tensordict, 8):
-                infos_adapt.append(self._update_adaptation(minibatch))
-        infos.update(collect_info(infos_adapt, "adapt/"))
+        # infos_adapt = []
+        # for epoch in range(2):
+        #     for minibatch in self.make_batch(tensordict, 8):
+        #         infos_adapt.append(self._update_adaptation(minibatch))
+        # infos.update(collect_info(infos_adapt, "adapt/"))
 
         denormed_values = tensordict["denormed_values"]
         for name, value in zip(self.value_names, denormed_values.unbind(-1), strict=True):
@@ -830,10 +817,8 @@ class PPORMAPolicy(TensorDictModuleBase):
         with tensordict.view(-1) as td:
             # self.encoder(td)
             # self.encoder(td["next"])
-            critic(td)
-            critic(td["next"])
-        values = tensordict["state_value"]
-        next_values = tensordict["next", "state_value"]
+            values = critic(td)["state_value"].reshape(*tensordict.shape, -1)
+            next_values = critic(td["next"])["state_value"].reshape(*tensordict.shape, -1)
         
         rewards = tensordict[REWARD_KEY]
         dones = tensordict[DONE_KEY]

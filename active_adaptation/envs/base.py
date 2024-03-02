@@ -108,7 +108,6 @@ class Env(EnvBase):
 
         for key, params in self.cfg.randomization.items():
             self.randomizations[key] = RAND_FUNCS[key](self, **params if params is not None else {})
-            self.randomizations[key].startup()
         
         for group, funcs in self.cfg.observation.items():
             self.observation_funcs[group] = OrderedDict(
@@ -149,6 +148,9 @@ class Env(EnvBase):
                 for key, params in self.cfg.termination.items()
             }
         )
+
+        for rand in self.randomizations.values():
+            rand.startup()
         self.time_stamp = 0
     
     @property
