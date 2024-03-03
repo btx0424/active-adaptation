@@ -22,6 +22,7 @@ observation:
     # - "motor_params"
   
   priv:
+    applied_action:
     linvel_error:
     joint_acc:
     root_linvel_b:

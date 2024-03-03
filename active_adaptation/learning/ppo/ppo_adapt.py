@@ -397,11 +397,11 @@ class PPORMAPolicy(TensorDictModuleBase):
         else:
             raise ValueError(self.cfg.adaptation_loss)
 
-        self.rb = rb.TensorDictPrioritizedReplayBuffer(
-            alpha=0.7, beta=0.9,
-            priority_key="error", reduction="mean",
-            storage=rb.ListStorage(max_size=observation_spec.shape[0] * 4)
-        )
+        # self.rb = rb.TensorDictPrioritizedReplayBuffer(
+        #     alpha=0.7, beta=0.9,
+        #     priority_key="error", reduction="mean",
+        #     storage=rb.ListStorage(max_size=observation_spec.shape[0] * 4)
+        # )
 
         if "rnn" in self.cfg.adapt_arch:
             fake_input["is_init"] = torch.ones(fake_input.shape[0], 1, dtype=torch.bool, device=self.device)
