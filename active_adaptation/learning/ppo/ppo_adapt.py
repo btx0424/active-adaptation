@@ -591,6 +591,7 @@ class PPORMAPolicy(TensorDictModuleBase):
             for minibatch in make_batch(tensordict, 8, self.cfg.train_every):
                 infos_adapt.append(self._update_adaptation(minibatch, classifier=False))
         infos.update(collect_info(infos_adapt, "adapt/"))
+        soft_copy_(self.adapt_module, self.adapt_module_ema)
 
         mean, var = self.value_norm_expert.running_mean_var()
         for name, value_mean in zip(
