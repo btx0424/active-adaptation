@@ -69,6 +69,7 @@ class PPOConfig:
     lr: float = 5e-4
     recompute_adv: bool = True
     predict_std: bool = True
+    discard_init: bool = True
 
     checkpoint_path: Union[str, None] = None
     phase: str = "train"
@@ -449,6 +450,9 @@ class PPORMAPolicy(TensorDictModuleBase):
             self.critic_expert.apply(init_)
             self.encoder.apply(init_)
         
+        self.adapt_module_ema = copy.deepcopy(self.adapt_module)
+        self.adapt_module_ema.requires_grad_(False)
+
         # initialize the adaptation actor
         if (
             self.phase in ("adapt", "finetune") 
@@ -515,10 +519,10 @@ class PPORMAPolicy(TensorDictModuleBase):
         self.critic_adapt(fake_input)
         self.critic_adapt.apply(init_)
         
-        self.adapt_opt.add_param_group({"params": self.actor_adapt.parameters()})
-        self.adapt_opt.add_param_group({"params": self.critic_adapt.parameters()})
-        # self.opt.add_param_group({"params": self.actor_adapt.parameters()})
-        # self.opt.add_param_group({"params": self.critic_adapt.parameters()})
+        # self.adapt_opt.add_param_group({"params": self.actor_adapt.parameters()})
+        # self.adapt_opt.add_param_group({"params": self.critic_adapt.parameters()})
+        self.opt.add_param_group({"params": self.actor_adapt.parameters()})
+        self.opt.add_param_group({"params": self.critic_adapt.parameters()})
 
     @property
     def phase(self):
@@ -536,7 +540,7 @@ class PPORMAPolicy(TensorDictModuleBase):
             if not self.training:
                 self.critic_expert(tensordict)
         else:
-            self.adapt_module(tensordict)
+            self.adapt_module_ema(tensordict)
             self.actor_adapt(tensordict)
             if not self.training:
                 self.adaptation_loss(tensordict, tensordict, mean=False)
@@ -561,21 +565,6 @@ class PPORMAPolicy(TensorDictModuleBase):
             info.update(self._finetune(tensordict))
         self.train_iter += 1
         return info
-    
-    
-    def _get_context(self, tensordict: TensorDict):
-        if self.phase == "train":
-            self.encoder(tensordict)
-        elif self.phase in ("adapt", "finetune"):
-            if self.adaptation_key == "raw":
-                tensordict.rename_key_(OBS_PRIV_KEY, "tmp")
-                self.adapt_module(tensordict)
-                self.encoder(tensordict)
-                tensordict.exclude(OBS_PRIV_KEY, inplace=True)
-                tensordict.rename_key_("tmp", OBS_PRIV_KEY)
-            else:
-                self.adapt_module(tensordict)
-        return tensordict
 
     def _train_expert(self, tensordict: TensorDict):
         hard_copy_(self.actor_expert, self.actor_target)
@@ -623,12 +612,10 @@ class PPORMAPolicy(TensorDictModuleBase):
         if self.phase == "train":
             tensordict = self.encoder(tensordict)
             actor = self.actor_expert
-            opt = self.opt
         elif self.phase == "finetune":
             # TODO: detach or not?
-            tensordict = self.adapt_module(tensordict).detach()
+            tensordict = self.adapt_module_ema(tensordict).detach()
             actor = self.actor_adapt
-            opt = self.adapt_opt
         
         losses = {}
 
@@ -636,7 +623,8 @@ class PPORMAPolicy(TensorDictModuleBase):
             tensordict,
             actor, 
             self.clip_param, 
-            self.entropy_coef
+            self.entropy_coef,
+            self.cfg.discard_init
         )
         losses["policy_loss"] = policy_loss
         losses["entropy_loss"] = entropy_loss
@@ -645,16 +633,17 @@ class PPORMAPolicy(TensorDictModuleBase):
             tensordict, 
             critic, 
             self.clip_param, 
-            self.critic_loss_fn
+            self.critic_loss_fn,
+            self.cfg.discard_init
         )
         losses["value_loss"] = value_loss
 
         loss = sum(losses.values())
-        opt.zero_grad(set_to_none=True)
+        self.opt.zero_grad(set_to_none=True)
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad.clip_grad_norm_(actor.parameters(), 10)
         critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(critic.parameters(), 10)
-        opt.step()
+        self.opt.step()
 
         infos = losses
         infos["actor_grad_norm"] = actor_grad_norm
@@ -726,13 +715,22 @@ class PPORMAPolicy(TensorDictModuleBase):
         return infos
 
     def _finetune(self, tensordict: TensorDict):
-        self._compute_rewards(tensordict)
-        weights = (1., 0., 0., 0., 0.)
+        # self._compute_rewards(tensordict, adapt_rewards=True)
+        # weights = (1., 0., 0., 0., 0.)
+        # self._compute_advantage(
+        #     tensordict, 
+        #     self.critic_adapt,
+        #     self.gae_adapt,
+        #     self.value_norm_adapt,
+        #     weights
+        # )
+        self._compute_rewards(tensordict, adapt_rewards=False)
+        weights = (1., 0., 0.)
         self._compute_advantage(
             tensordict, 
-            self.critic_adapt,
-            self.gae_adapt,
-            self.value_norm_adapt, 
+            self.critic_expert,
+            self.gae_expert,
+            self.value_norm_expert,
             weights
         )
         
@@ -741,33 +739,29 @@ class PPORMAPolicy(TensorDictModuleBase):
         if self.train_iter > 0:
             infos_policy = []
             for epoch in range(self.cfg.ppo_epochs):
-                # if epoch > 0 and self.cfg.recompute_adv:
-                #     self._compute_advantage(
-                #         tensordict, 
-                #         self.critic_adapt,
-                #         self.gae_adapt,
-                #         self.value_norm_adapt, 
-                #         weights
-                #     )
                 for minibatch in self.make_batch(tensordict, self.cfg.num_minibatches):
-                    infos_policy.append(self._update(minibatch, self.critic_adapt))
+                    # infos_policy.append(self._update(minibatch, self.critic_adapt))
+                    infos_policy.append(self._update(minibatch, self.critic_expert))
             infos.update(collect_info(infos_policy))
 
         # update adaptation module
-        # infos_adapt = []
-        # for epoch in range(2):
-        #     for minibatch in self.make_batch(tensordict, 8):
-        #         infos_adapt.append(self._update_adaptation(minibatch))
-        # infos.update(collect_info(infos_adapt, "adapt/"))
+        infos_adapt = []
+        for epoch in range(2):
+            for minibatch in self.make_batch(tensordict, 8):
+                infos_adapt.append(self._update_adaptation(minibatch))
+        
+        # update adaptation module ema
+        infos.update(collect_info(infos_adapt, "adapt/"))
+        soft_copy_(self.adapt_module, self.adapt_module_ema)
 
         denormed_values = tensordict["denormed_values"]
-        for name, value in zip(self.value_names, denormed_values.unbind(-1), strict=True):
+        for name, value in zip(self.value_names, denormed_values.unbind(-1)):
             infos[name] = value.mean().item()
-        infos["adapt/acc_adapt"] = tensordict["acc_adapt"].mean().item()
-        infos["adapt/acc_target"] = tensordict["acc_target"].mean().item()
+        # infos["adapt/acc_adapt"] = tensordict["acc_adapt"].mean().item()
+        # infos["adapt/acc_target"] = tensordict["acc_target"].mean().item()
         return infos
     
-    def _compute_rewards(self, tensordict: TensorDict):
+    def _compute_rewards(self, tensordict: TensorDict, adapt_rewards: bool=False):
         """
         Compute auxiliary rewards.
         """
@@ -775,15 +769,15 @@ class PPORMAPolicy(TensorDictModuleBase):
         rewards = [tensordict[REWARD_KEY]]
         with torch.no_grad(), tensordict["next"].view(-1) as next_tensordict:
             self.encoder(next_tensordict)
-            self.adapt_module(tensordict)
-            self.adapt_module(next_tensordict)
+            self.adapt_module_ema(tensordict)
+            self.adapt_module_ema(next_tensordict)
 
             mse = F.mse_loss(tensordict["context_adapt"], tensordict["context_expert"], reduction="none").mean(-1, True)
             kl_target = action_kl(tensordict.exclude(), self.actor_target, self.actor_expert)
             rewards.append(mse)
             rewards.append(kl_target)
 
-            if self.phase in ("adapt", "finetune"):
+            if adapt_rewards:
                 action_adapt = self.actor_adapt(tensordict)[ACTION_KEY]
                 action_target = self.actor_target(tensordict)[ACTION_KEY]
                 sa_adapt = torch.cat([tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_adapt], -1)

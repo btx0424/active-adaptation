@@ -2,6 +2,7 @@ import torch
 import abc
 
 from omni.isaac.orbit.assets import Articulation
+from omni.isaac.orbit.sensors import ContactSensor
 
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
@@ -27,6 +28,14 @@ class Buffer:
 class Observation:
     def __init__(self, env):
         self.env = env
+
+    @property
+    def num_envs(self):
+        return self.env.num_envs
+    
+    @property
+    def device(self):
+        return self.env.device
 
     @abc.abstractmethod
     def __call__(self) ->  torch.Tensor:
@@ -187,18 +196,37 @@ class applied_torques(Observation):
 
 
 class contact_indicator(Observation):
-    def __init__(self, env, body_names: str):
+    def __init__(self, env, body_names: str, timing: bool=True):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
-        self.contact_sensor = self.env.scene["contact_forces"]
-        self.body_indices, self.body_names = self.asset.find_bodies(body_names)
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+        self.body_ids, self.body_names = self.asset.find_bodies(body_names)
+        self.timing = timing
+        
         self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum().to(self.env.device) * 9.81
-    
-    def __call__(self):
-        force_history = self.contact_sensor.data.net_forces_w_history[:, :, self.body_indices]
-        force_norm = force_history.norm(dim=-1).mean(dim=1)
-        return (force_norm / self.default_mass_total).clamp_max(1.)
+        self.forces = torch.zeros(self.num_envs, len(self.body_ids), 3, device=self.device)
 
+    def update(self):
+        self.forces[:] = self.contact_sensor.data.net_forces_w_history[:, :, self.body_ids].mean(1)
+
+    def __call__(self):
+        if self.timing:
+            current_air_time = self.contact_sensor.data.current_air_time[:, self.body_ids].clamp_max(1.)
+            current_contact_time = self.contact_sensor.data.current_contact_time[:, self.body_ids].clamp_max(1.)
+            return torch.cat([
+                current_air_time,
+                current_contact_time,
+                (self.forces / self.default_mass_total).reshape(self.num_envs, -1)
+            ], dim=-1)
+        else:
+            return (self.forces / self.default_mass_total).reshape(self.num_envs, -1)
+
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.asset.data.body_pos_w[:, self.body_ids],
+            self.forces / self.default_mass_total,
+            color=(1., 1., 1., 1.)
+        )
 
 class motor_params(Observation):
     def __init__(self, env):
@@ -252,6 +280,16 @@ class external_forces(Observation):
     def __call__(self) -> torch.Tensor:
         forces_b = self.asset._external_force_b[:, self.body_indices]
         return (forces_b / self.default_mass_total).reshape(self.env.num_envs, -1)
+
+
+class body_materials(Observation):
+    def __init__(self, env, body_names):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_ids, self.body_names = self.asset.find_bodies(body_names)
+
+    def __call__(self):
+        return self.asset.data.body_materials[:, self.body_ids, :2].reshape(self.num_envs, -1)
 
 
 # class incoming_wrench(Observation):

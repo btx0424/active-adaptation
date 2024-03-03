@@ -118,48 +118,45 @@ class MotorFailure(Randomization):
         self.motor_failure[env_ids, joint_id] = 1.0
 
 
-class BodyMaterial(Randomization):
+class perturb_body_materials(Randomization):
     def __init__(
         self,
         env,
-        body_indices,
+        body_names,
         static_friction_range = (0.6, 1.0),
         dynamic_friction_range = (0.6, 1.0),
-        restitution_range=(0.0, 0.0)
+        restitution_range=(0.0, 0.0),
+        homogeneous: bool=True
     ):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
-        self.body_indices = body_indices
+        self.body_ids, self.body_names = self.asset.find_bodies(body_names)
+
         self.static_friction_range = static_friction_range
         self.dynamic_friction_range = dynamic_friction_range
         self.restitution_range = restitution_range
+        self.homogeneous = homogeneous
 
-        self.default_material_properties: torch.Tensor = None
-        self.material_properties: torch.Tensor = None
+        self.default_materials = (
+            self.asset.body_physx_view.get_material_properties()
+            .reshape(self.num_envs, self.asset.num_bodies, -1, 3)
+        )
 
     def startup(self):
-        logging.info("Randomize body materials upon starup.")
-        default_material_properties = self.asset.body_physx_view.get_material_properties()
-        shape = (self.asset.body_physx_view.count, self.asset.body_physx_view.max_shapes, 3)
-        materials = torch.zeros(shape)
-        materials[:, :, 0].uniform_(*self.static_friction_range)
-        materials[:, :, 1].uniform_(*self.dynamic_friction_range)
-        materials[:, :, 2].uniform_(*self.restitution_range)
+        logging.info(f"Randomize body materials of {self.body_names} upon startup.")
+        
+        materials = self.default_materials.clone()
+        if self.homogeneous:
+            shape = (self.num_envs, 1, 1)
+        else:
+            shape = (self.num_envs, len(self.body_ids), 1)
+        materials[:, self.body_ids, :, 0] = sample_uniform(shape, *self.static_friction_range)
+        materials[:, self.body_ids, :, 1] = sample_uniform(shape, *self.dynamic_friction_range)
+        materials[:, self.body_ids, :, 2] = sample_uniform(shape, *self.restitution_range)
 
-        bodies_per_env = self.asset.body_physx_view.count // self.env.num_envs  # - number of bodies per spawned asset
-        indices = torch.tensor(self.body_indices, dtype=torch.int).repeat(self.env.num_envs, 1)
-        indices += torch.arange(self.env.num_envs).unsqueeze(1) * bodies_per_env
-        # indices = torch.arange(self.asset.body_physx_view.count)
-        self.asset.body_physx_view.set_material_properties(materials, indices)
-
-        self.default_material_properties = (
-            default_material_properties.reshape(self.env.num_envs, self.asset.num_bodies, -1)[:, self.body_indices]
-            .to(self.env.device)
-        )
-        self.material_properties = (
-            materials.reshape(self.env.num_envs, self.asset.num_bodies, -1)[:, self.body_indices]
-            .to(self.env.device)
-        )
+        indices = torch.arange(self.asset.body_physx_view.count)
+        self.asset.body_physx_view.set_material_properties(materials.flatten(), indices)
+        self.asset.data.body_materials = materials.mean(2).to(self.device)
 
 
 class perturb_body_mass(Randomization):
@@ -183,7 +180,7 @@ class perturb_body_mass(Randomization):
             self.mass_ranges[body_ids, 1] = high
 
     def startup(self):
-        logging.info("Randomize body masses upon starup.")
+        logging.info("Randomize body masses upon startup.")
         shape = (self.env.num_envs, self.asset.num_bodies)
         masses, _ = random_scale(
             self.default_masses.expand(self.env.num_envs, self.asset.num_bodies), 
@@ -296,6 +293,34 @@ class reset_joint_states_uniform(Randomization):
             init_pos, init_vel, self.joint_ids, env_ids.unsqueeze(1)
         )
 
+
+class reset_joint_states_scale(Randomization):
+    def __init__(self, env, pos_scales: Dict[str, tuple]):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        
+        self.joint_ids = []
+        self.pos_scales = []
+        for joint_name, (low, high) in pos_scales.items():
+            joint_ids, joint_names = self.asset.find_joints(joint_name)
+            self.joint_ids.extend(joint_ids)
+            self.pos_scales.append(torch.tensor([low, high], device=self.env.device).expand(len(joint_ids), 2))
+            print(f"Reset {joint_names} to scales of U({low}, {high})")
+        self.pos_scales = torch.cat(self.pos_scales, 0).unbind(1)
+        self.default_joint_pos = self.asset.data.default_joint_pos[:, self.joint_ids]
+        self.default_joint_vel = self.asset.data.default_joint_vel[:, self.joint_ids]
+    
+    def reset(self, env_ids: torch.Tensor):
+        init_pos = random_scale(
+            self.default_joint_pos[env_ids], 
+            *self.pos_scales, 
+            self.env.device
+        )[0]
+        init_vel = self.default_joint_vel[env_ids]
+        self.asset.write_joint_state_to_sim(
+            init_pos, init_vel, self.joint_ids, env_ids.unsqueeze(1)
+        )
+        
 
 import omni.isaac.orbit.utils.math as math_utils
 

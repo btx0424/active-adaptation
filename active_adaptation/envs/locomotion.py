@@ -212,39 +212,11 @@ class LocomotionEnv(Env):
         return self.last_action
     
     @mdp.observation_func
-    def contact_forces(self):
-        forces = quat_rotate_inverse(
-            self.scene["robot"].data.root_quat_w.unsqueeze(1),
-            self.contact_sensor.data.net_forces_w_history[:, :, self.foot_indices].mean(dim=1)
-        )
-        return (forces * self.step_dt).reshape(self.num_envs, -1)
-
-    @mdp.observation_func
-    def contact_interval(self):
-        interval = (self.episode_length_buf.unsqueeze(1) - self.last_contact)
-        return (self.step_dt * interval).clamp_max(1.)
-    
-    @mdp.observation_func
     def motor_params(self):
         rand: MotorParams = self.randomizations["motor_params"]
         stiffness = rand.randomized_stiffness - 1.
         damping = rand.randomized_damping - 1.
         return torch.cat([damping, stiffness], dim=-1).reshape(self.num_envs, -1)
-
-    @mdp.observation_func
-    def body_masses(self):
-        rand = self.randomizations["body_masses"]
-        return rand.randomized_masses.reshape(self.num_envs, -1)
-    
-    @mdp.observation_func
-    def body_materials(self):
-        rand = self.randomizations["body_material"]
-        return rand.material_properties.reshape(self.num_envs, -1)
-
-    @mdp.observation_func
-    def motor_failure(self):
-        rand: MotorFailure = self.randomizations["motor_failure"]
-        return rand.motor_failure.reshape(self.num_envs, -1)
     
     @mdp.reward_func
     def linvel_projection(self):

@@ -157,6 +157,7 @@ def compute_policy_loss(
     actor: ProbabilisticActor,
     clip_param: float,
     entropy_coef: float,
+    discard_init: bool=True,
 ):
     dist = actor.get_dist(tensordict)
     log_probs = dist.log_prob(tensordict[ACTION_KEY])
@@ -166,7 +167,10 @@ def compute_policy_loss(
     ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
     surr1 = adv * ratio
     surr2 = adv * ratio.clamp(1. - clip_param, 1. + clip_param)
-    policy_loss = - torch.mean(torch.min(surr1, surr2)) * dist.event_shape[-1]
+    policy_loss = torch.min(surr1, surr2)
+    if discard_init:
+        policy_loss = policy_loss * (~tensordict["is_init"])
+    policy_loss = - torch.mean(policy_loss) * dist.event_shape[-1]
     entropy_loss = - entropy_coef * torch.mean(entropy)
     return policy_loss, entropy_loss, entropy.mean()
 
@@ -176,6 +180,7 @@ def compute_value_loss(
     critic: TensorDictModuleBase,
     clip_param: float,
     critic_loss_fn: nn.Module,
+    discard_init: bool=True,
 ):
     # b_values = tensordict["state_value"]
     b_returns = tensordict["ret"]
@@ -184,6 +189,11 @@ def compute_value_loss(
     # value_loss_clipped = critic_loss_fn(b_returns, values_clipped)
     value_loss_original = critic_loss_fn(b_returns, values)
     # value_loss = torch.max(value_loss_original, value_loss_clipped).mean()
+
+    # mask out first transitions which are generally invalid
+    # due to the limiatations of Isaac Sim
+    if discard_init:
+        value_loss_original = value_loss_original * (~tensordict["is_init"])
     value_loss = value_loss_original.mean()
     explained_var = 1 - value_loss_original.detach() / b_returns.var()
 

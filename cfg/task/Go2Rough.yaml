@@ -29,6 +29,7 @@ observation:
     applied_torques: {actuator_name: base_legs}
     # motor_failure:
     contact_indicator: {body_names: ".*_foot"}
+    body_materials: {body_names: ".*_foot"}
   
   height_scan:
     height_scan: {prim_path: base}
@@ -52,15 +53,32 @@ reward:
 termination:
   crash: {body_names_expr: ["base", ".*_hip", ".*_thigh"]}
 
-# reward: # orbit
-#   linvel_projection: 0.5
-#   linvel_xy_exp: 1.5
-#   angvel_z_exp: 0.75
-#   linvel_z_l2: 2.0
-#   angvel_xy_l2: 0.02
-#   joint_torques_l2: 1.0e-5
-#   joint_acc_l2: 2.5e-7
-#   stand: 0.5
-#   survival: 0.25
-#   action_rate_l2: 0.01
-#   feet_air_time: 0.1
+randomization:
+  perturb_body_mass:
+    .*: [0.7, 1.3]
+  perturb_body_materials:
+    body_names: ".*_foot"
+    static_friction_range: [0.6, 2.0]
+    dynamic_friction_range: [0.6, 2.0]
+  motor_params:
+    actuator_name: base_legs
+    stiffness_range: [0.7, 1.3]
+    damping_range: [0.7, 1.3]
+  reset_joint_states_scale:
+    pos_scales:
+      .*: [0.8, 1.2]
+
+# randomization:
+#   perturb_body_mass:
+#     .*: [0.7, 1.3]
+#   perturb_body_materials:
+#     body_names: ".*_foot"
+#     static_friction_range: [0.6, 2.0]
+#     dynamic_friction_range: [0.6, 2.0]
+#   motor_params:
+#     actuator_name: base_legs
+#     stiffness_range: [0.7, 1.3]
+#     damping_range: [0.7, 1.3]
+#   reset_joint_states_scale:
+#     pos_scales:
+#       .*: [0.8, 1.2]

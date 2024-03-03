@@ -115,15 +115,16 @@ def main(cfg):
         from tqdm import tqdm
         t = tqdm(total=base_env.max_episode_length)
         def record_frame(*args, **kwargs):
-            frame = base_env.render(mode="rgb_array")
-            frames.append(frame)
+            if render:
+                frame = base_env.render(mode="rgb_array")
+                frames.append(frame)
             t.update(2)
         
         with set_exploration_type(exploration_type):
             trajs = env.rollout(
                 max_steps=base_env.max_episode_length,
                 policy=policy,
-                callback=Every(record_frame, 2) if render else None,
+                callback=Every(record_frame, 2),
                 auto_reset=True,
                 break_when_any_done=False,
                 return_contiguous=False,

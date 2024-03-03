@@ -105,17 +105,28 @@ class Env(EnvBase):
         self.randomizations = OrderedDict()
         self.observation_funcs = OrderedDict()
         self.reward_funcs = OrderedDict()
+        self._update_callbacks = []
+        self._reset_callbacks = []
+        self._debug_draw_callbacks = []
 
         for key, params in self.cfg.randomization.items():
-            self.randomizations[key] = RAND_FUNCS[key](self, **params if params is not None else {})
-        
+            rand = RAND_FUNCS[key](self, **params if params is not None else {})
+            self.randomizations[key] = rand
+            self._reset_callbacks.append(rand.reset)
+            self._debug_draw_callbacks.append(rand.debug_draw)
+
         for group, funcs in self.cfg.observation.items():
-            self.observation_funcs[group] = OrderedDict(
-                {
-                    key: OBS_FUNCS[key](self, **(params if params is not None else {}))
-                    for key, params in funcs.items()
-                }
-            )
+            self.observation_funcs[group] = OrderedDict()
+            for key, params in funcs.items():
+                obs = OBS_FUNCS[key](self, **(params if params is not None else {}))
+                self.observation_funcs[group][key] = obs
+                self._update_callbacks.append(obs.update)
+                self._reset_callbacks.append(obs.reset)
+                self._debug_draw_callbacks.append(obs.debug_draw)
+        
+        for rand in self.randomizations.values():
+            rand.startup()
+        self.sim.physics_sim_view.flush()
         
         obs = self._compute_observation()
 
@@ -137,7 +148,10 @@ class Env(EnvBase):
             }
         })
         for key, weight in self.cfg.reward.items():
-            self.reward_funcs[key] = (REW_FUNCS[key](self), weight)
+            reward = REW_FUNCS[key](self)
+            self.reward_funcs[key] = (reward, weight)
+            self._update_callbacks.append(reward.update)
+            self._reset_callbacks.append(reward.reset)
             reward_spec["stats", key] = UnboundedContinuousTensorSpec(1, device=self.device)
         self.reward_spec = reward_spec.expand(self.num_envs).to(self.device)
         self.stats = self.reward_spec["stats"].zero()
@@ -149,9 +163,6 @@ class Env(EnvBase):
             }
         )
 
-        for rand in self.randomizations.values():
-            rand.startup()
-        self.sim.physics_sim_view.flush()
         
         self.time_stamp = 0
     
