@@ -211,13 +211,6 @@ class LocomotionEnv(Env):
             return torch.zeros(self.num_envs, self.action_dim, device=self.device)
         return self.last_action
     
-    @mdp.observation_func
-    def motor_params(self):
-        rand: MotorParams = self.randomizations["motor_params"]
-        stiffness = rand.randomized_stiffness - 1.
-        damping = rand.randomized_damping - 1.
-        return torch.cat([damping, stiffness], dim=-1).reshape(self.num_envs, -1)
-    
     @mdp.reward_func
     def linvel_projection(self):
         linvel_b = self.scene["robot"].data.root_lin_vel_b[:, :2]

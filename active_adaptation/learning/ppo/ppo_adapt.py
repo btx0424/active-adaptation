@@ -675,12 +675,12 @@ class PPORMAPolicy(TensorDictModuleBase):
         return TensorDict(losses, []).detach()
     
     def _train_adaptation(self, tensordict: TensorDict):
-        self._compute_rewards(tensordict)
+        self._compute_rewards(tensordict, adapt_rewards=True)
         self._compute_advantage(
             tensordict,
             self.critic_adapt,
             self.gae_adapt,
-            self.value_norm_adapt
+            self.value_norm_adapt,
         )
 
         infos = []
@@ -699,14 +699,17 @@ class PPORMAPolicy(TensorDictModuleBase):
                 losses["value_loss"] = value_loss_adapt
                 loss = sum(losses.values())
                 self.adapt_opt.zero_grad()
+                self.opt.zero_grad()
                 loss.backward()
                 self.adapt_opt.step()
+                self.opt.step()
 
                 losses["explained_var"] = explained_var_adapt
                 losses["classifier_acc"] = classifier_acc
                 infos.append(losses)
         
         infos = collect_info(infos, "adapt/")
+        soft_copy_(self.adapt_module, self.adapt_module_ema)
 
         denormed_values = tensordict["denormed_values"]
         for name, value in zip(self.value_names, denormed_values.unbind(-1), strict=True):

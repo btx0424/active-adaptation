@@ -228,16 +228,16 @@ class contact_indicator(Observation):
             color=(1., 1., 1., 1.)
         )
 
+
 class motor_params(Observation):
-    def __init__(self, env):
+    def __init__(self, env, actuator_name: str):
         super().__init__(env)
-        self.randomized_stiffness = self.env._randomized_stiffness
-        self.randomized_damping = self.env._randomized_damping
-        self.randomized_strength = self.env._randomized_strength
+        self.asset: Articulation = self.env.scene["robot"]
+        self.motors = self.asset.actuators[actuator_name]
     
     def __call__(self) -> torch.Tensor:
-        stiffness = self.randomized_stiffness
-        damping = self.randomized_damping
+        stiffness = self.motors.stiffness
+        damping  = self.motors.damping
         return torch.cat([stiffness, damping], dim=-1)
 
 

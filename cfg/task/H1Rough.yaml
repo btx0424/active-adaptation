@@ -30,6 +30,9 @@ observation:
     # external_forces: {body_names: ["pelvis", ".*shoulder_pitch_link"]}
   height_scan:
     height_scan: {prim_path: pelvis}
+  param:
+    motor_params: {actuator_name: "base_legs"}
+    body_materials: {body_names: ".*ankle_link"}
   
 reward:
   linvel_exp: 1.25
@@ -46,6 +49,10 @@ randomization:
   push: {body_names: ["pelvis", ".*shoulder_pitch_link"]}
   perturb_body_mass:
     .*: [0.7, 1.3]
+  perturb_body_materials:
+    body_names: ".*ankle_link"
+    static_friction_range: [0.6, 1.2]
+    dynamic_friction_range: [0.6, 1.2]
   motor_params:
     actuator_name: base_legs
     stiffness_range: [0.8, 1.2]

@@ -50,8 +50,8 @@ class motor_params(Randomization):
         self.homogeneous = homogeneous
         self.motors: Union[DCMotor, ImplicitActuator] = self.asset.actuators[self.actuator_name]
         
-        self.default_stiffness = self.motors.stiffness.clone()
-        self.default_damping = self.motors.damping.clone()
+        self.default_stiffness = self.motors.default_stiffness = self.motors.stiffness.clone()
+        self.default_damping = self.motors.default_damping = self.motors.damping.clone()
         if isinstance(self.motors, DCMotor):
             self.default_strength = torch.full_like(self.default_stiffness, self.motors._saturation_effort)
             self.motors._saturation_effort = self.default_strength.clone()
@@ -66,10 +66,6 @@ class motor_params(Randomization):
             self.randomized_stiffness = torch.ones_like(self.default_stiffness)
             self.randomized_damping = torch.ones_like(self.default_damping)
             self.randomized_strength = torch.ones_like(self.default_strength)
-        
-        setattr(self.motors, "_randomized_stiffness", self.randomized_stiffness)
-        setattr(self.motors, "_randomized_damping", self.randomized_damping)
-        setattr(self.motors, "_randomized_strength", self.randomized_strength)
         
     def reset(self, env_ids: torch.Tensor=slice(None)):
         stiffness, self.randomized_stiffness[env_ids] = random_scale(
