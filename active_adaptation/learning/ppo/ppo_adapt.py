@@ -730,8 +730,8 @@ class PPORMAPolicy(TensorDictModuleBase):
         denormed_values = tensordict["denormed_values"]
         for name, value in zip(self.value_names, denormed_values.unbind(-1), strict=True):
             infos[name] = value.mean().item()
-        infos["adapt/acc_adapt"] = tensordict["acc_adapt"].mean().item()
-        infos["adapt/acc_target"] = tensordict["acc_target"].mean().item()
+        infos["adapt/score_adapt"] = tensordict["score_adapt"].mean().item()
+        infos["adapt/score_target"] = tensordict["score_target"].mean().item()
         return infos
 
     def _finetune(self, tensordict: TensorDict):
