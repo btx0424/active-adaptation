@@ -8,6 +8,7 @@ sim: ${task.sim}
 total_frames: -1
 max_iters: -1
 eval_interval: -1
+eval_render: false
 save_interval: -1
 seed: 0
 

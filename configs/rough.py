@@ -25,12 +25,39 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
     robot: ArticulationCfg = MISSING
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=2, track_air_time=True)
     
-    light: AssetBaseCfg = AssetBaseCfg(
-        prim_path="/World/light",
+    light_0: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/light_0",
         spawn=sim_utils.DistantLightCfg(
-            color=(1.0, 1.0, 1.0),
+            color=(0.4, 0.7, 0.9),
             intensity=3000.0,
+            angle=10,
+            exposure=0.2,
         ),
+        init_state=ArticulationCfg.InitialStateCfg(
+            rot=(0.9330127,  0.25     ,  0.25     , -0.0669873)
+        )
+    )
+    light_1: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/light_1",
+        spawn=sim_utils.DistantLightCfg(
+            color=(0.8, 0.5, 0.5),
+            intensity=3000.0,
+            angle=20,
+        ),
+        init_state=ArticulationCfg.InitialStateCfg(
+            rot=(0.78201786,  0.3512424 ,  0.50162613, -0.11596581)
+        )
+    )
+    light_2: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/light_2",
+        spawn=sim_utils.DistantLightCfg(
+            color=(0.8, 0.5, 0.4),
+            intensity=3000.0,
+            angle=20,
+        ),
+        init_state=ArticulationCfg.InitialStateCfg(
+            rot=(7.07106781e-01, 5.55111512e-17, 6.12372436e-01, 3.53553391e-01)
+        )
     )
 
     terrain: TerrainImporterCfg = MISSING
@@ -55,7 +82,9 @@ class EnvCfg:
 
     history_length: int = 32
 
-    viewer: ViewerCfg = ViewerCfg()
+    viewer: ViewerCfg = ViewerCfg(
+        eye=(4., 4., 4.)
+    )
     scene: LocomotionSceneCfg = MISSING
 
     decimation: int  = 2

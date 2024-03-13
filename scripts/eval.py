@@ -106,13 +106,13 @@ def main(cfg):
             if render:
                 frame = base_env.render(mode="rgb_array")
                 frames.append(frame)
-            t.update(2)
+            t.update(1)
         
         with set_exploration_type(exploration_type):
             trajs = env.rollout(
                 max_steps=base_env.max_episode_length,
                 policy=policy,
-                callback=Every(record_frame, 2),
+                callback=record_frame,
                 auto_reset=True,
                 break_when_any_done=False,
                 return_contiguous=False,
@@ -146,12 +146,14 @@ def main(cfg):
 
         # log video
         if len(frames):
-            video_array = einops.rearrange(np.stack(frames), "t h w c -> t c h w")
+            from torchvision.io import write_video
+            time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
+            video_array = np.stack(frames)
             frames.clear()
-            info["recording"] = wandb.Video(
-                video_array, 
-                fps=0.5 / (cfg.sim.dt * cfg.sim.substeps), 
-                format="mp4"
+            write_video(
+                os.path.join(os.path.dirname(__file__), f"recording-{time_str}.mp4"),
+                video_array,
+                fps=0.6 / 0.02
             )
         
         import matplotlib.pyplot as plt
@@ -185,7 +187,7 @@ def main(cfg):
         info["eval/success"] = (traj_stats["episode_len"] > base_env.max_episode_length * 0.9).float().mean().item()
         return info
     
-    info = evaluate(render=False, seed=cfg.seed)
+    info = evaluate(render=cfg.eval_render, seed=cfg.seed)
     info = {k: v for k, v in info.items() if isinstance(v, float)}
     print(OmegaConf.to_yaml(info))
     
