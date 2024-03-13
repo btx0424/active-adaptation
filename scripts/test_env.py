@@ -27,6 +27,10 @@ from tqdm import tqdm
 import os
 import time
 
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+torch.backends.cudnn.deterministic = False
+torch.backends.cudnn.benchmark = False
 
 @hydra.main(config_path="../cfg", config_name="train")
 def main(cfg):

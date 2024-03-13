@@ -55,7 +55,7 @@ class LocomotionEnv(Env):
         self.default_joint_pos = self.init_joint_pos.clone()
         
         try:
-            from omni_drones.envs.isaac_env import DebugDraw
+            from active_adaptation.utils.debug import DebugDraw
             self.debug_draw = DebugDraw()
             print("[INFO] Debug Draw API enabled.")
         except ModuleNotFoundError:

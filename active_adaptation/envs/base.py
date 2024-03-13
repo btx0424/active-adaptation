@@ -182,12 +182,12 @@ class Env(EnvBase):
             env_mask = torch.ones(self.num_envs, dtype=bool, device=self.device)
         env_ids = env_mask.nonzero().squeeze(-1)
         self._reset_idx(env_ids)
+        for name, func in self.randomizations.items():
+            func.reset(env_ids)
         for group, funcs in self.observation_funcs.items():
             for name, func in funcs.items():
                 func.reset(env_ids)
         for name, (func, weight) in self.reward_funcs.items():
-            func.reset(env_ids)
-        for name, func in self.randomizations.items():
             func.reset(env_ids)
         self.sim._physics_sim_view.flush()
         self.episode_length_buf[env_ids] = 0

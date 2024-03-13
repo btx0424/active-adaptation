@@ -23,7 +23,6 @@ ROUGH_EASY = TerrainGeneratorCfg(
     horizontal_scale=0.1,
     vertical_scale=0.005,
     slope_threshold=0.75,
-    difficulty_choices=(0.5, 0.75, 0.9),
     use_cache=False,
     sub_terrains={
         "random_rough_hard": HfRandomUniformTerrainCfg(
@@ -50,7 +49,6 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
     horizontal_scale=0.1,
     vertical_scale=0.005,
     slope_threshold=0.75,
-    difficulty_choices=(0.5, 0.75, 0.9),
     use_cache=False,
     sub_terrains={
         "random_rough_hard": HfRandomUniformTerrainCfg(
@@ -98,7 +96,7 @@ ROUGH_TERRAIN_CFG = TerrainImporterCfg(
         mdl_path="{NVIDIA_NUCLEUS_DIR}/Materials/Base/Architecture/Shingles_01.mdl",
         project_uvw=True,
     ),
-    debug_vis=True,
+    debug_vis=False,
 )
 
 FLAT_TERRAIN_CFG = TerrainImporterCfg(

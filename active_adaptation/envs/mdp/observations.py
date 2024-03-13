@@ -241,6 +241,17 @@ class motor_params(Observation):
         return torch.cat([stiffness, damping], dim=-1)
 
 
+class motor_failure(Observation):
+    def __init__(self, env, actuator_name: str):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.motors = self.asset.actuators[actuator_name]
+        self.motor_failure = self.motors.motor_failure
+    
+    def __call__(self) -> torch.Tensor:
+        return self.motor_failure
+
+
 class com(Observation):
     def __init__(self, env):
         super().__init__(env)

@@ -81,7 +81,7 @@ class PPOConfig:
     # what the adaptation module learns to predict
     adaptation_key: Any = "context"
     adaptation_loss: str = "mse" # mse, action_kl
-    use_separate_critics: bool = True
+    use_separate_critics: bool = False
 
     # coefficients for using adaptation error as exploration bonus or penalty
     exp_reward: float = 0.0
@@ -513,6 +513,13 @@ class PPORMAPolicy(TensorDictModuleBase):
                 ["state_value"]
             )
         ).to(self.device)
+        # self.critic_expert = TensorDictSequential(
+        #     condition(expert=True, mode=self.cfg.condition_mode),
+        #     TensorDictModule(
+        #         nn.Sequential(make_mlp([256, 128]), nn.LazyLinear(self.num_rewards)), 
+        #         ["_feature"], ["state_value"]
+        #     )
+        # ).to(self.device)
         
         self.actor_adapt(fake_input)
         # self.critic_target(fake_input)
@@ -545,6 +552,15 @@ class PPORMAPolicy(TensorDictModuleBase):
             if not self.training:
                 self.adaptation_loss(tensordict, tensordict, mean=False)
                 self.critic_adapt(tensordict)
+                # action_adapt = self.actor_adapt(tensordict.exclude(ACTION_KEY))[ACTION_KEY]
+                # action_target = self.actor_target(tensordict.exclude(ACTION_KEY))[ACTION_KEY]
+                # sa_adapt = torch.cat([tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_adapt], -1)
+                # sa_target = torch.cat([tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_target], -1)
+                # # score = (1. - 0.25 * (self.classifier(sa) - 1.).square()).clamp(0.)
+                # score_adapt = self.classifier(sa_adapt)
+                # score_target = self.classifier(sa_target)
+                # tensordict.set("score_adapt", score_adapt)
+                # tensordict.set("score_target", score_target)
         tensordict.exclude(*self.exclude_keys, inplace=True)
         if not self.training:
             tensordict.exclude("context_expert", "context_adapt", inplace=True)
@@ -719,24 +735,28 @@ class PPORMAPolicy(TensorDictModuleBase):
         return infos
 
     def _finetune(self, tensordict: TensorDict):
-        # self._compute_rewards(tensordict, adapt_rewards=True)
-        # weights = (1., 0., 0., 0., 0.)
-        # self._compute_advantage(
-        #     tensordict, 
-        #     self.critic_adapt,
-        #     self.gae_adapt,
-        #     self.value_norm_adapt,
-        #     weights
-        # )
-        self._compute_rewards(tensordict, adapt_rewards=False)
-        weights = (1., 0., 0.)
-        self._compute_advantage(
-            tensordict, 
-            self.critic_expert,
-            self.gae_expert,
-            self.value_norm_expert,
-            weights
-        )
+        if self.cfg.use_separate_critics:
+            self._compute_rewards(tensordict, adapt_rewards=True)
+            weights = (1., 0., 0., 0., 0.)
+            self._compute_advantage(
+                tensordict, 
+                self.critic_adapt,
+                self.gae_adapt,
+                self.value_norm_adapt,
+                weights
+            )
+            critic = self.critic_adapt
+        else:
+            self._compute_rewards(tensordict, adapt_rewards=False)
+            weights = (1., 0., 0.)
+            self._compute_advantage(
+                tensordict, 
+                self.critic_expert,
+                self.gae_expert,
+                self.value_norm_expert,
+                weights
+            )
+            critic = self.critic_expert
         
         infos = {}
         # update policy (actor and critic)
@@ -744,8 +764,7 @@ class PPORMAPolicy(TensorDictModuleBase):
             infos_policy = []
             for epoch in range(self.cfg.ppo_epochs):
                 for minibatch in self.make_batch(tensordict, self.cfg.num_minibatches):
-                    # infos_policy.append(self._update(minibatch, self.critic_adapt))
-                    infos_policy.append(self._update(minibatch, self.critic_expert))
+                    infos_policy.append(self._update(minibatch, critic))
             infos.update(collect_info(infos_policy))
 
         # update adaptation module
@@ -761,8 +780,8 @@ class PPORMAPolicy(TensorDictModuleBase):
         denormed_values = tensordict["denormed_values"]
         for name, value in zip(self.value_names, denormed_values.unbind(-1)):
             infos[name] = value.mean().item()
-        # infos["adapt/acc_adapt"] = tensordict["acc_adapt"].mean().item()
-        # infos["adapt/acc_target"] = tensordict["acc_target"].mean().item()
+        infos["adapt/score_adapt"] = tensordict["score_adapt"].mean().item()
+        infos["adapt/score_target"] = tensordict["score_target"].mean().item()
         return infos
     
     def _compute_rewards(self, tensordict: TensorDict, adapt_rewards: bool=False):
@@ -781,18 +800,19 @@ class PPORMAPolicy(TensorDictModuleBase):
             rewards.append(mse)
             rewards.append(kl_target)
 
-            if adapt_rewards:
-                action_adapt = self.actor_adapt(tensordict)[ACTION_KEY]
-                action_target = self.actor_target(tensordict)[ACTION_KEY]
+            if self.phase in ("adapt", "finetune"):
+                action_adapt = self.actor_adapt(tensordict.exclude(ACTION_KEY))[ACTION_KEY]
+                action_target = self.actor_target(tensordict.exclude(ACTION_KEY))[ACTION_KEY]
                 sa_adapt = torch.cat([tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_adapt], -1)
                 sa_target = torch.cat([tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_target], -1)
                 # score = (1. - 0.25 * (self.classifier(sa) - 1.).square()).clamp(0.)
                 score_adapt = self.classifier(sa_adapt)
                 score_target = self.classifier(sa_target)
-                rewards.append(score_adapt)
-                rewards.append(score_target)
-                tensordict.set("acc_adapt", (score_adapt < 0.).float())
-                tensordict.set("acc_target", (score_target < 0.).float())
+                tensordict.set("score_adapt", score_adapt)
+                tensordict.set("score_target", score_target)
+                if adapt_rewards:
+                    rewards.append(score_adapt)
+                    rewards.append(score_target)
 
         rewards = torch.cat(rewards, -1)
         # non-episodic aux rewards

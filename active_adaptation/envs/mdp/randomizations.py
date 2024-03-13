@@ -88,30 +88,42 @@ class motor_params(Randomization):
             self.motors.effort_limit[env_ids] = strength
 
 
-class MotorFailure(Randomization):
+class random_motor_failure(Randomization):
     def __init__(
-        self, 
+        self,
         env,
-        joint_indices,
+        actuator_name: str,
+        joint_names: str,
         failure_prob: float = 0.2,
     ):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
-        self.joint_indices = torch.as_tensor(joint_indices, device=self.env.device)
+        self.motors: DCMotor = self.asset.actuators[actuator_name]
+        self.joint_ids, self.joint_names = self.asset.find_joints(joint_names, self.motors.joint_names)
+        self.joint_ids = torch.as_tensor(self.joint_ids, device=self.device)
         self.failure_prob = failure_prob
-    
-    def startup(self):
-        self.motors: DCMotor = self.asset.actuators["base_legs"]
-        self.motor_failure = torch.zeros_like(self.motors.stiffness)
+        assert not hasattr(self.motors, "motor_failure")
+        self.motor_failure = self.motors.motor_failure = torch.zeros(self.num_envs, len(self.joint_ids), device=self.device)
+        logging.info(f"Randomly disable one joint from {self.joint_names} with prob. {self.failure_prob}.")
+        self.failure_prob = failure_prob
+
+        # hard-coded
+        self._body_ids = self.asset.find_bodies(".*calf.*")[0]
         
     def reset(self, env_ids: torch.Tensor):
         self.motor_failure[env_ids] = 0.0
-        with torch.device(self.env.device):
+        with torch.device(self.device):
             env_ids = env_ids[torch.rand(len(env_ids)) < self.failure_prob]
-            joint_id = self.joint_indices[torch.randint(0, len(self.joint_indices), env_ids.shape)]
-        self.motors.stiffness[env_ids, joint_id] = 0.1
-        self.motors.damping[env_ids, joint_id] = 0.1
-        self.motor_failure[env_ids, joint_id] = 1.0
+            i = torch.randint(0, len(self.joint_ids), env_ids.shape)
+            joint_id = self.joint_ids[i]
+        self.motors.stiffness[env_ids, joint_id] = 0.02
+        self.motors.damping[env_ids, joint_id] = 0.02
+        self.motor_failure[env_ids, i] = 1.0
+
+    def debug_draw(self):
+        x = self.asset.data.body_pos_w[:, self._body_ids]
+        x = x[self.motor_failure.bool()]
+        self.env.debug_draw.point(x, color=(0.1, 1.0, 0.1, 0.8), size=20)
 
 
 class perturb_body_materials(Randomization):
