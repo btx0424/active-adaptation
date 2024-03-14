@@ -241,10 +241,6 @@ class LocomotionEnv(Env):
         return (height / self.target_base_height).square().clamp_max(1.)
     
     @mdp.reward_func
-    def joint_acc_l2(self):
-        return - self.scene["robot"].data.joint_acc.square().sum(dim=-1, keepdim=True)
-    
-    @mdp.reward_func
     def joint_torques_l2(self):
         return - self.scene["robot"].data.applied_torque.square().sum(dim=-1, keepdim=True)
 
@@ -254,7 +250,15 @@ class LocomotionEnv(Env):
         return - action_diff.square().sum(dim=-1, keepdim=True)
     
     @mdp.reward_func
+    def action_rate2_l2(self):
+        action_diff = (
+            self.action_buf[:, :, 0] - 2 * self.action_buf[:, :, 1] + self.action_buf[:, :, 2]
+        )
+        return - action_diff.square().sum(dim=-1, keepdim=True)
+
+    @mdp.reward_func
     def orientation(self):
+        return -self.scene["robot"].data.projected_gravity_b[:, :2].square().sum(-1, True)
         return self.scene["robot"].data.projected_gravity_b[:, [2]].square()
     
     @mdp.reward_func
@@ -273,6 +277,19 @@ class LocomotionEnv(Env):
         def __init__(self, env: "LocomotionEnv"):
             super().__init__(env, env.feet_name_expr)
             self.asset.data.feet_pos_b = self.body_pos_b
+    
+    class feet_air_time(mdp.Reward):
+        def __init__(self, env: "LocomotionEnv"):
+            super().__init__(env)
+            self.asset = self.env.scene["robot"]
+            self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+            self.feet_ids, _ = self.asset.find_bodies(self.env.feet_name_expr)
+
+        def __call__(self):
+            first_contact = self.contact_sensor.compute_first_contact(self.env.step_dt)[:, self.feet_ids]
+            last_air_time = self.contact_sensor.data.last_air_time[:, self.feet_ids]
+            reward = torch.sum(last_air_time.clamp(max=0.2) * first_contact, dim=1, keepdim=True)
+            return reward
     
 
 def random_scale(x: torch.Tensor, low: float, high: float):

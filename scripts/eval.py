@@ -153,10 +153,11 @@ def main(cfg):
             write_video(
                 os.path.join(os.path.dirname(__file__), f"recording-{time_str}.mp4"),
                 video_array,
-                fps=0.6 / 0.02
+                fps=1 / base_env.step_dt
             )
         
         import matplotlib.pyplot as plt
+        plt.style.use('ggplot')
 
         fig, axes = plt.subplots(1, 2, figsize=(8, 8))
         axes[0].hist(traj_stats["return"])
@@ -171,8 +172,8 @@ def main(cfg):
         )
         axes[0, 0].hist(traj_stats["return"])
         axes[1, 0].scatter(traj_stats["return"], adaptation_loss)
-        axes[1, 0].set_xlabel("return")
-        axes[1, 0].set_ylabel("adaptation_loss")
+        axes[1, 0].set_xlabel("Episode Reward")
+        axes[1, 0].set_ylabel("Ada./Est. Error")
         axes[1, 1].hist(adaptation_loss, orientation="horizontal")
         fig.tight_layout()
         path = os.path.join(os.path.dirname(__file__), "scatter.png")
