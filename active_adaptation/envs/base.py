@@ -147,9 +147,9 @@ class Env(EnvBase):
                 "success": UnboundedContinuousTensorSpec(1),
             }
         })
-        for key, weight in self.cfg.reward.items():
-            reward = REW_FUNCS[key](self)
-            self.reward_funcs[key] = (reward, weight)
+        for key, params in self.cfg.reward.items():
+            reward = REW_FUNCS[key](self, **params)
+            self.reward_funcs[key] = reward
             self._update_callbacks.append(reward.update)
             self._reset_callbacks.append(reward.reset)
             reward_spec["stats", key] = UnboundedContinuousTensorSpec(1, device=self.device)
@@ -187,7 +187,7 @@ class Env(EnvBase):
         for group, funcs in self.observation_funcs.items():
             for name, func in funcs.items():
                 func.reset(env_ids)
-        for name, (func, weight) in self.reward_funcs.items():
+        for name, func in self.reward_funcs.items():
             func.reset(env_ids)
         self.sim._physics_sim_view.flush()
         self.episode_length_buf[env_ids] = 0
@@ -219,10 +219,11 @@ class Env(EnvBase):
     
     def _compute_reward(self) -> TensorDictBase:
         rewards = []
-        for key, (func, weight) in self.reward_funcs.items():
-            reward = weight * func()
+        for key, reward_func in self.reward_funcs.items():
+            reward = reward_func()
             self.stats[key].add_(reward)
-            rewards.append(reward)
+            if reward_func.enabled:
+                rewards.append(reward)
         reward = sum(rewards).clip(0.)
         self.stats["return"].add_(reward)
         self.stats["episode_len"][:] = self.episode_length_buf.unsqueeze(1)

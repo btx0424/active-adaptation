@@ -4,8 +4,10 @@ import abc
 from omni.isaac.orbit.assets import Articulation
 
 class Reward:
-    def __init__(self, env):
+    def __init__(self, env, weight: float, enabled: bool=True):
         self.env = env
+        self.weight = weight
+        self.enabled = enabled
     
     def update(self):
         pass
@@ -13,14 +15,17 @@ class Reward:
     def reset(self, env_ids):
         pass
     
+    def __call__(self, *args: torch.Any, **kwds: torch.Any) -> torch.Any:
+        return self.weight * self.compute()
+    
     @abc.abstractmethod
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         raise NotImplementedError
 
 
 def reward_func(func):
     class RewFunc(Reward):
-        def __call__(self):
+        def compute(self):
             return func(self.env)
     return RewFunc
 

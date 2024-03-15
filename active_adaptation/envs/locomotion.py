@@ -225,6 +225,12 @@ class LocomotionEnv(Env):
         return torch.exp( - linvel_error / 0.25)
     
     @mdp.reward_func
+    def linvel_rational(self):
+        linvel_b = self.scene["robot"].data.root_lin_vel_b[:, :2]
+        linvel_error = square_norm(linvel_b - self.command_manager._command_linvel[:, :2])
+        return 1 / (1 + linvel_error / 0.25)
+
+    @mdp.reward_func
     def angvel_z_exp(self):
         angvel_error = (self.command_manager.command[:, [2]] - self.scene["robot"].data.root_ang_vel_b[:, [2]]).square()
         return torch.exp( - angvel_error / 0.25)
@@ -279,8 +285,8 @@ class LocomotionEnv(Env):
             self.asset.data.feet_pos_b = self.body_pos_b
     
     class feet_air_time(mdp.Reward):
-        def __init__(self, env: "LocomotionEnv"):
-            super().__init__(env)
+        def __init__(self, env: "LocomotionEnv", weight: float, enabled: bool=True):
+            super().__init__(env, weight, enabled)
             self.asset = self.env.scene["robot"]
             self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
             self.feet_ids, _ = self.asset.find_bodies(self.env.feet_name_expr)
@@ -288,9 +294,20 @@ class LocomotionEnv(Env):
         def __call__(self):
             first_contact = self.contact_sensor.compute_first_contact(self.env.step_dt)[:, self.feet_ids]
             last_air_time = self.contact_sensor.data.last_air_time[:, self.feet_ids]
-            reward = torch.sum(last_air_time.clamp(max=0.2) * first_contact, dim=1, keepdim=True)
+            reward = torch.sum(last_air_time.clamp(max=0.5) * first_contact, dim=1, keepdim=True)
             return reward
     
+    class feet_contact_count(mdp.Reward):
+        def __init__(self, env: "LocomotionEnv", weight: float, enabled: bool=True):
+            super().__init__(env, weight, enabled)
+            self.asset = self.env.scene["robot"]
+            self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+            self.feet_ids, _ = self.asset.find_bodies(self.env.feet_name_expr)
+
+        def __call__(self):
+            first_contact = self.contact_sensor.compute_first_contact(self.env.step_dt)[:, self.feet_ids]
+            return first_contact.sum(1, keepdim=True)
+
 
 def random_scale(x: torch.Tensor, low: float, high: float):
     return x * (torch.rand_like(x) * (high - low) + low)

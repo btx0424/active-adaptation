@@ -187,43 +187,46 @@ def main(cfg):
 
     pbar = tqdm(collector, total=total_iters)
     
-    for i, data in enumerate(pbar):
-        start = time.perf_counter()
+    try:
+        for i, data in enumerate(pbar):
+            start = time.perf_counter()
+            
+            info = {}
+
+            episode_stats.add(data)
+
+            if len(episode_stats) >= base_env.num_envs:
+                stats = {
+                    "train/" + (".".join(k) if isinstance(k, tuple) else k): torch.mean(v.float()).item() 
+                    for k, v in episode_stats.pop().items(True, True)
+                }
+                info.update(stats)
+            
+            info.update(policy.train_op(data))
+            if hasattr(policy, "step_schedule"):
+                policy.step_schedule(i / total_iters)
+
+            info["env_frames"] = collector._frames
+            info["rollout_fps"] = collector._fps
+            info["training_time"] = time.perf_counter() - start
+            
+            if eval_interval > 0 and (i + 1) % eval_interval == 0:
+                logging.info(f"Eval at {collector._frames} steps.")
+                info.update(evaluate(render=cfg.eval_render))
+                env.train()
+                policy.train()
+            
+            if save_interval > 0  and i % save_interval == 0:
+                save(policy, f"checkpoint_{i}")
+
+            run.log(info)
+
+            print()
+            print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, float)}))
         
-        info = {}
-
-        episode_stats.add(data)
-
-        if len(episode_stats) >= base_env.num_envs:
-            stats = {
-                "train/" + (".".join(k) if isinstance(k, tuple) else k): torch.mean(v.float()).item() 
-                for k, v in episode_stats.pop().items(True, True)
-            }
-            info.update(stats)
-        
-        info.update(policy.train_op(data))
-        if hasattr(policy, "step_schedule"):
-            policy.step_schedule(i / total_iters)
-
-        info["env_frames"] = collector._frames
-        info["rollout_fps"] = collector._fps
-        info["training_time"] = time.perf_counter() - start
-        
-        if eval_interval > 0 and (i + 1) % eval_interval == 0:
-            logging.info(f"Eval at {collector._frames} steps.")
-            info.update(evaluate(render=cfg.eval_render))
-            env.train()
-            policy.train()
-        
-        if save_interval > 0  and i % save_interval == 0:
-            save(policy, f"checkpoint_{i}")
-
-        run.log(info)
-
-        print()
-        print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, float)}))
-    
-    save(policy, "checkpoint_final")
+        save(policy, "checkpoint_final")
+    except KeyboardInterrupt:
+        save(policy, "checkpoint_interrupt")
 
     info = evaluate(render=cfg.eval_render, mode="expert")
     info["env_frames"] = collector._frames
