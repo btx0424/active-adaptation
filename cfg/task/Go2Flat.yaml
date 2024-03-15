@@ -27,22 +27,25 @@ observation:
     contact_indicator: {body_names: ".*_foot"}
 
 reward:
-  linvel_exp: 1.5
-  linvel_projection: 1.2
-  angvel_z_exp: 0.75
-  angvel_xy_l2: 0.02
-  base_height: 0.5
-  linvel_z_l2: 1.0
-  energy_l1: 0.001
-  joint_acc_l2: 2.5e-7
-  joint_torques_l2: 2e-4
-  stand: 0.5
-  orientation: 0.25
-  survival: 0.25
-  action_rate_l2: 0.01
-  action_rate2_l2: 0.01
-  undesired_contact: 1.0
-  feet_air_time: 1.0
+  # linvel_exp: {weight: 1.5}
+  linvel_rational: {weight: 1.5}
+  linvel_projection: {weight: 1.2}
+  angvel_z_exp: {weight: 0.75}
+  angvel_xy_l2: {weight: 0.02}
+  # base_height: {weight: 0.5}
+  linvel_z_l2: {weight: 1.0}
+  energy_l1: {weight: 0.001}
+  joint_acc_l2: {weight: 2.5e-7}
+  joint_torques_l2: {weight: 2e-4}
+  stand: {weight: 0.5}
+  orientation: {weight: 0.25}
+  survival: {weight: 0.25}
+  action_rate_l2: {weight: 0.01}
+  action_rate2_l2: {weight: 0.01}
+  # undesired_contact: 1.0
+  feet_air_time: {weight: 1.0}
+  feet_slip: {weight: 1.0}
+  feet_contact_count: {weight: 1.0, enabled: false}
 
 termination:
   crash: {body_names_expr: ["base", ".*_hip", ".*_thigh"]}
