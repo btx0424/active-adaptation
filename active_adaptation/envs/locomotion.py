@@ -242,11 +242,6 @@ class LocomotionEnv(Env):
         return 0.5 * (heading_b_x + heading_b_x.sign() * heading_b_x.square())
     
     @mdp.reward_func
-    def base_height(self):
-        height = self.scene["robot"].data.feet_pos_b[:, :, 2].mean(1, keepdim=True).abs()
-        return (height / self.target_base_height).square().clamp_max(1.)
-    
-    @mdp.reward_func
     def joint_torques_l2(self):
         return - self.scene["robot"].data.applied_torque.square().sum(dim=-1, keepdim=True)
 
@@ -278,6 +273,15 @@ class LocomotionEnv(Env):
             super().__init__(env, env.feet_name_expr)
             self.asset.data.feet_pos_b = self.body_pos_b
     
+    class base_height(mdp.Reward):
+        def __init__(self, env, target_height: float, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+            self.asset = self.env.scene["robot"]
+            self.target_height = target_height
+        
+        def compute(self) -> torch.Tensor:
+            height = self.asset.data.feet_pos_b[:, :, 2].mean(1, keepdim=True).abs()
+            return - ((height - self.target_height) / self.target_height).square()
 
     class feet_slip(mdp.Reward):
         def __init__(self, env: "LocomotionEnv", weight: float, enabled: bool=True):
@@ -292,8 +296,9 @@ class LocomotionEnv(Env):
             return - (in_contact * feet_vel.norm(dim=-1)).sum(dim=1, keepdim=True)
 
     class feet_air_time(mdp.Reward):
-        def __init__(self, env: "LocomotionEnv", weight: float, enabled: bool=True):
+        def __init__(self, env: "LocomotionEnv", thres: float, weight: float, enabled: bool=True):
             super().__init__(env, weight, enabled)
+            self.thres = thres
             self.asset = self.env.scene["robot"]
             self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
             self.feet_ids, _ = self.asset.find_bodies(self.env.feet_name_expr)
@@ -301,7 +306,7 @@ class LocomotionEnv(Env):
         def compute(self):
             first_contact = self.contact_sensor.compute_first_contact(self.env.step_dt)[:, self.feet_ids]
             last_air_time = self.contact_sensor.data.last_air_time[:, self.feet_ids]
-            reward = torch.sum(last_air_time.clamp(max=0.5) * first_contact, dim=1, keepdim=True)
+            reward = torch.sum((last_air_time - self.thres).clamp(max=0.75) * first_contact, dim=1, keepdim=True)
             return reward
     
     class feet_contact_count(mdp.Reward):

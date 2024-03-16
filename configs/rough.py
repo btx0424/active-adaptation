@@ -77,7 +77,6 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
 class EnvCfg:
 
     max_episode_length: int = 1000
-    target_base_height: float = MISSING
     payload: bool = False
 
     history_length: int = 32
@@ -124,7 +123,6 @@ def LocomotionEnvCfg(task_cfg):
     env_cfg = EnvCfg(
         max_episode_length=task_cfg.max_episode_length,
         payload=task_cfg.payload,
-        target_base_height=0.3,
         scene = LocomotionSceneCfg(
             num_envs=task_cfg.num_envs,
             robot=robot_cfg.replace(prim_path="{ENV_REGEX_NS}/Robot"),

@@ -20,7 +20,6 @@ class Quadruped(LocomotionEnv):
     def __init__(self, cfg):
         super().__init__(cfg)
         self.action_scaling = 0.5
-        self.target_base_height = self.cfg.target_base_height
                 
         self.packet_loss = 0.0
 

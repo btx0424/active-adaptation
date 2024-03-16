@@ -5,7 +5,7 @@ defaults:
   - /base/sim_base@_here_
 
 num_envs: 4096
-max_episode_length: 800
+max_episode_length: 1000
 
 robot: a1
 terrain: plane
