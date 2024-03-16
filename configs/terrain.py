@@ -29,7 +29,7 @@ ROUGH_EASY = TerrainGeneratorCfg(
     sub_terrains={
         "random_rough_hard": HfRandomUniformTerrainCfg(
             proportion=0.4, 
-            noise_range=(0.01, 0.8), 
+            noise_range=(0.01, 0.1), 
             noise_step=0.01, 
             border_width=0.5,
             downsampled_scale=0.2
