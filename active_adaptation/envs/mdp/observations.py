@@ -200,7 +200,9 @@ class contact_indicator(Observation):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
-        self.body_ids, self.body_names = self.asset.find_bodies(body_names)
+        
+        self.articulation_body_ids = self.asset.find_bodies(body_names)[0]
+        self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names)
         self.timing = timing
         
         self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum().to(self.env.device) * 9.81
@@ -223,7 +225,7 @@ class contact_indicator(Observation):
 
     def debug_draw(self):
         self.env.debug_draw.vector(
-            self.asset.data.body_pos_w[:, self.body_ids],
+            self.asset.data.body_pos_w[:, self.articulation_body_ids],
             self.forces / self.default_mass_total,
             color=(1., 1., 1., 1.)
         )

@@ -115,37 +115,32 @@ class LocomotionEnv(Env):
             & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
         )
         self.command_manager.update(resample=should_resample.nonzero().squeeze(-1))
+    
+    def debug_vis(self):
+        robot_pos = (
+            self.robot.data.root_pos_w.cpu()
+            + torch.tensor([0., 0., 0.2])
+        )
+        command_linvel_w = quat_rotate(
+            self.robot.data.root_quat_w,
+            self.command_manager._command_linvel
+        )
+        self.debug_draw.vector(
+            robot_pos, 
+            command_linvel_w,
+            color=(1., 1., 1., 1.)
+        )
+        self.debug_draw.vector(
+            robot_pos,
+            self.command_manager._command_heading,
+            color=(.2, .2, 1., 1.)
+        )
+        self.debug_draw.vector(
+            robot_pos, 
+            self.robot.data.root_lin_vel_w,
+            color=(1., .5, .5, 1.)
+        )
 
-        if self.sim.has_gui() and hasattr(self, "debug_draw"):
-            self.debug_draw.clear()
-            robot_pos = (
-                self.robot.data.root_pos_w.cpu()
-                + torch.tensor([0., 0., 0.2])
-            )
-            command_linvel_w = quat_rotate(
-                self.robot.data.root_quat_w,
-                self.command_manager._command_linvel
-            )
-            self.debug_draw.vector(
-                robot_pos, 
-                command_linvel_w,
-                color=(1., 1., 1., 1.)
-            )
-            self.debug_draw.vector(
-                robot_pos,
-                self.command_manager._command_heading,
-                color=(.2, .2, 1., 1.)
-            )
-            self.debug_draw.vector(
-                robot_pos, 
-                self.robot.data.root_lin_vel_w,
-                color=(1., .5, .5, 1.)
-            )
-            for group in self.observation_funcs.values():
-                for obs in group.values():
-                    obs.debug_draw()
-            for rand in self.randomizations.values():
-                rand.debug_draw()
 
     def render(self, mode: str = "human"):
         robot_pos = self.robot.data.root_pos_w[self.lookat_env_i].cpu()
@@ -219,23 +214,17 @@ class LocomotionEnv(Env):
         linvel_b = self.scene["robot"].data.root_lin_vel_b[:, :2]
         linvel_error = square_norm(linvel_b - self.command_manager._command_linvel[:, :2])
         return torch.exp( - linvel_error / 0.25)
-    
-    @mdp.reward_func
-    def linvel_rational(self):
-        linvel_b = self.scene["robot"].data.root_lin_vel_b[:, :2]
-        linvel_error = square_norm(linvel_b - self.command_manager._command_linvel[:, :2])
-        return 1 / (1 + linvel_error / 0.25)
 
     @mdp.reward_func
     def angvel_z_exp(self):
         angvel_error = (self.command_manager.command[:, [2]] - self.scene["robot"].data.root_ang_vel_b[:, [2]]).square()
         return torch.exp( - angvel_error / 0.25)
     
-    @mdp.reward_func
-    def heading(self):
-        root_quat = self.scene["robot"].data.root_quat_w
-        heading_b_x = quat_rotate_inverse(root_quat, self.command_manager._command_heading)[:, [0]]
-        return 0.5 * (heading_b_x + heading_b_x.sign() * heading_b_x.square())
+    # @mdp.reward_func
+    # def heading(self):
+    #     root_quat = self.scene["robot"].data.root_quat_w
+    #     heading_b_x = quat_rotate_inverse(root_quat, self.command_manager._command_heading)[:, [0]]
+    #     return 0.5 * (heading_b_x + heading_b_x.sign() * heading_b_x.square())
     
     @mdp.reward_func
     def joint_torques_l2(self):

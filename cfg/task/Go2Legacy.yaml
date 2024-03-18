@@ -1,0 +1,85 @@
+name: Go2Legacy
+task: Quadruped
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/Velocity@_here_
+  - _self_
+
+robot: go2
+terrain: legacy
+payload: false
+
+command:
+  _target_: active_adaptation.envs.mdp.CommandPos
+  speed_range: [0.4, 1.7]
+
+observation:
+  policy:
+    command:
+    root_quat_w:
+    root_angvel_b:
+    projected_gravity_b:
+    joint_pos: {noise_std: 0.05}
+    joint_vel: {noise_std: 0.2}
+    prev_actions: 
+    # - "motor_params"
+  priv:
+    root_linvel_b:
+    feet_pos_b:
+    applied_torques: {actuator_name: base_legs}
+    contact_indicator: {body_names: ".*_foot"}
+
+reward:
+  # linvel_exp: {weight: 1.5}
+  linvel_rational: {weight: 2.0}
+  heading_projection: {weight: 0.5}
+  # linvel_projection: {weight: 1.2}
+  # angvel_z_exp: {weight: 0.75}
+  # angvel_xy_l2: {weight: 0.02}
+  base_height_l1: {target_height: 0.3, weight: 2.}
+  # linvel_z_l2: {weight: 1.0}
+  energy_l1: {weight: 5e-4, enabled: true}
+  joint_acc_l2: {weight: 2.5e-7}
+  joint_torques_l2: {weight: 2e-4, enabled: false}
+  stand: {weight: 0.5}
+  orientation: {weight: 0.25}
+  # survival: {weight: 0.25}
+  action_rate_l2: {weight: 0.01}
+  action_rate2_l2: {weight: 0.01}
+  undesired_contact: {body_names: Head.*, weight: 50.}
+  # impact_force: {body_names: .*_foot, weight: 1.0}
+  # feet_air_time: {thres: 0.3, weight: 1.0}
+  feet_slip: {weight: 0.02}
+  feet_contact_count: {weight: 1.0, enabled: false}
+
+termination:
+  crash: {body_names_expr: ["base", ".*_hip", ".*_thigh"]}
+
+randomization:
+  perturb_body_mass:
+    .*: [0.8, 1.2]
+  perturb_body_materials:
+    body_names: ".*_foot"
+    static_friction_range: [0.6, 2.0]
+    dynamic_friction_range: [0.6, 2.0]
+  motor_params:
+    actuator_name: base_legs
+    stiffness_range: [0.7, 1.3]
+    damping_range: [0.7, 1.3]
+  reset_joint_states_scale:
+    pos_scales:
+      .*: [0.8, 1.2]
+
+# reward: # orbit
+#   linvel_projection: 0.5
+#   linvel_xy_exp: 1.5
+#   angvel_z_exp: 0.75
+#   linvel_z_l2: 2.0
+#   angvel_xy_l2: 0.02
+#   joint_torques_l2: 1.0e-5
+#   joint_acc_l2: 2.5e-7
+#   stand: 0.5
+#   # survival: 0.25
+#   action_rate_l2: 0.01
+#   feet_air_time: 1.0

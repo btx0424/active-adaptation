@@ -14,7 +14,26 @@ from dataclasses import MISSING
 
 import omni.isaac.orbit.sim as sim_utils
 
-__all__ = ["ROUGH_HARD", "ROUGH_MEDIUM", "ROUGH_EASY", "FLAT_TERRAIN_CFG", "ROUGH_TERRAIN_CFG"]
+
+ROUGH_LEGACY = TerrainGeneratorCfg(
+    seed=0,
+    size=(8.0, 8.0),
+    border_width=20.0,
+    num_rows=20,
+    num_cols=20,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    use_cache=False,
+    sub_terrains={
+        "random_rough_hard": HfRandomUniformTerrainCfg(
+            proportion=0.5, noise_range=(0.02, 0.10), noise_step=0.02, border_width=0.4
+        ),
+        "random_rough_easy": HfRandomUniformTerrainCfg(
+            proportion=0.5, noise_range=(0.01, 0.05), noise_step=0.01, border_width=0.4
+        ),
+    },
+)
 
 ROUGH_EASY = TerrainGeneratorCfg(
     seed=0,

@@ -106,10 +106,11 @@ class Env(EnvBase):
         self.randomizations = OrderedDict()
         self.observation_funcs = OrderedDict()
         self.reward_funcs = OrderedDict()
-        self.command_manager = hydra.utils.instantiate(self.cfg.command, env=self)
         self._update_callbacks = []
         self._reset_callbacks = []
         self._debug_draw_callbacks = []
+        self.command_manager: mdp.Command = hydra.utils.instantiate(self.cfg.command, env=self)
+        self._debug_draw_callbacks.append(self.command_manager.debug_draw)
 
         for key, params in self.cfg.randomization.items():
             rand = RAND_FUNCS[key](self, **params if params is not None else {})
@@ -154,6 +155,7 @@ class Env(EnvBase):
             self.reward_funcs[key] = reward
             self._update_callbacks.append(reward.update)
             self._reset_callbacks.append(reward.reset)
+            self._debug_draw_callbacks.append(reward.debug_draw)
             reward_spec["stats", key] = UnboundedContinuousTensorSpec(1, device=self.device)
         self.reward_spec = reward_spec.expand(self.num_envs).to(self.device)
         self.stats = self.reward_spec["stats"].zero()
@@ -245,6 +247,12 @@ class Env(EnvBase):
         self.episode_length_buf.add_(1)
         self.time_stamp += 1
 
+        if self.sim.has_gui() and hasattr(self, "debug_draw"):
+            self.debug_draw.clear()
+            for callback in self._debug_draw_callbacks:
+                callback()
+            self.debug_vis()
+
     def _step(self, tensordict: TensorDictBase) -> TensorDictBase:
         # start = time.perf_counter()
         for substep in range(self.cfg.decimation):
@@ -286,6 +294,9 @@ class Env(EnvBase):
             return rgb_data[:, :, :3]
         else:
             raise NotImplementedError
+    
+    def debug_vis(self):
+        pass
     
     def close(self):
         super().close()

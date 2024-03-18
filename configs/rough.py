@@ -112,6 +112,9 @@ def LocomotionEnvCfg(task_cfg):
 
     if task_cfg.terrain == "plane":
         terrain_cfg = FLAT_TERRAIN_CFG
+    elif task_cfg.terrain == "legacy":
+        terrain_cfg = ROUGH_TERRAIN_CFG
+        terrain_cfg.terrain_generator = ROUGH_LEGACY
     elif task_cfg.terrain == "easy":
         terrain_cfg = ROUGH_TERRAIN_CFG
         terrain_cfg.terrain_generator = ROUGH_EASY
