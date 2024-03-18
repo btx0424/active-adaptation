@@ -92,6 +92,7 @@ class EnvCfg:
     decimation: int  = 4
     sim = sim_utils.SimulationCfg(dt=0.005, disable_contact_processing=True)
     
+    command: Dict = MISSING
     reward: Dict[str, float] = MISSING
     observation: Dict[str, List] = MISSING
     termination: List = MISSING
@@ -128,6 +129,7 @@ def LocomotionEnvCfg(task_cfg):
             robot=robot_cfg.replace(prim_path="{ENV_REGEX_NS}/Robot"),
             terrain=terrain_cfg,
         ),
+        command = task_cfg.command,
         reward = task_cfg.reward,
         observation = task_cfg.observation,
         termination = task_cfg.termination,

@@ -10,6 +10,13 @@ robot: go2
 terrain: medium
 payload: false
 
+command:
+  _target_: active_adaptation.envs.mdp.Command1
+  speed_range: [0.4, 2.0]
+  angvel_range: [-1.4, 1.4]
+  base_height_range: [0.2, 0.35]
+  stand_prob: 0.1
+
 observation:
   policy:
     command:

@@ -16,7 +16,7 @@ from torchrl.data import (
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
 
-from .mdp import CommandManager1
+from .mdp import Command1
 from collections import OrderedDict
 
 class Filter:
@@ -65,8 +65,6 @@ class LocomotionEnv(Env):
             self.scene._default_env_origins.cpu() 
             - torch.tensor(self.cfg.viewer.lookat)
         ).norm(dim=-1).argmin()
-
-        self.command_manager = CommandManager1(self)
 
         with torch.device(self.device):
             # self.action_scale = torch.ones(self.num_envs, 1)
@@ -183,8 +181,6 @@ class LocomotionEnv(Env):
     
     @mdp.observation_func
     def command(self):
-        if not hasattr(self, "command_manager"):
-            return torch.zeros(self.num_envs, 3, device=self.device)
         return self.command_manager.command
     
     @mdp.observation_func
@@ -273,15 +269,33 @@ class LocomotionEnv(Env):
             super().__init__(env, env.feet_name_expr)
             self.asset.data.feet_pos_b = self.body_pos_b
     
-    class base_height(mdp.Reward):
+    class base_height_l2(mdp.Reward):
         def __init__(self, env, target_height: float, weight: float, enabled: bool = True):
             super().__init__(env, weight, enabled)
             self.asset = self.env.scene["robot"]
-            self.target_height = target_height
+            if isinstance(target_height, str) and target_height == "command":
+                self.target_height = self.env.command_manager._target_base_height
+            else:
+                self.target_height = float(target_height)
         
         def compute(self) -> torch.Tensor:
             height = self.asset.data.feet_pos_b[:, :, 2].mean(1, keepdim=True).abs()
-            return - ((height - self.target_height) / self.target_height).square()
+            height_errot = (height - self.target_height) / self.target_height
+            return - height_errot.square()
+    
+    class base_height_l1(mdp.Reward):
+        def __init__(self, env, target_height: float, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+            self.asset = self.env.scene["robot"]
+            if isinstance(target_height, str) and target_height == "command":
+                self.target_height = self.env.command_manager._target_base_height
+            else:
+                self.target_height = float(target_height)
+        
+        def compute(self) -> torch.Tensor:
+            height = self.asset.data.feet_pos_b[:, :, 2].mean(1, keepdim=True).abs()
+            height_errot = (height - self.target_height) / self.target_height
+            return - height_errot.abs()
 
     class feet_slip(mdp.Reward):
         def __init__(self, env: "LocomotionEnv", weight: float, enabled: bool=True):

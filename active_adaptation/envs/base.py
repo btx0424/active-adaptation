@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import hydra
 
 from tensordict.tensordict import TensorDictBase, TensorDict
 from torchrl.envs import EnvBase
@@ -105,6 +106,7 @@ class Env(EnvBase):
         self.randomizations = OrderedDict()
         self.observation_funcs = OrderedDict()
         self.reward_funcs = OrderedDict()
+        self.command_manager = hydra.utils.instantiate(self.cfg.command, env=self)
         self._update_callbacks = []
         self._reset_callbacks = []
         self._debug_draw_callbacks = []

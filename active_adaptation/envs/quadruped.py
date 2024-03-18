@@ -92,27 +92,6 @@ class Quadruped(LocomotionEnv):
         cost = - (jpos_error + front_symmetry + back_symmetry) 
         return cost * self.command_manager.is_standing_env.reshape(self.num_envs, 1)
 
-    # @reward_func
-    # def feet_air_time(self):
-    #     last_air_time = self.contact_sensor.data.last_air_time[:, self.foot_indices]
-    #     first_contact = last_air_time > 0.0
-    #     reward = torch.sum((last_air_time - 0.5) * first_contact, dim=1)
-    #     reward *= (self.command_manager.command[:, :2].norm(dim=-1)>0.1)
-    #     return reward.reshape(self.num_envs, -1)
-    
-    class undesired_contact(mdp.Reward):
-        def __init__(self, env):
-            super().__init__(env)
-            self.asset: Articulation = self.env.scene["robot"]
-            self.contact_sensor = self.env.scene["contact_forces"]
-            self.body_ids, self.body_names = self.asset.find_bodies(["Head.*", ".*_calf"])
-            print(f"Penalizing contacts with {self.body_names}")
-        
-        def __call__(self) -> torch.Tensor:
-            contact_forces = self.contact_sensor.data.net_forces_w[:, self.body_ids]
-            contact_forces_norm = contact_forces.norm(dim=-1, keepdim=True).mean(1)
-            return - (contact_forces_norm > 1.0).float()
-
 
 def random_scale(x: torch.Tensor, low: float, high: float):
     return x * (torch.rand_like(x) * (high - low) + low)

@@ -70,9 +70,9 @@ def main(cfg):
         device=base_env.device
     )
 
-    # path = os.path.join(os.path.dirname(__file__), "policy.pt")
-    # torch.save(policy.cpu(), path)
-    # logging.info(F"Export policy to {path}")
+    path = os.path.join(os.path.dirname(__file__), "policy.pt")
+    torch.save(policy.get_rollout_policy("eval").cpu(), path)
+    logging.info(F"Export policy to {path}")
 
     if hasattr(policy, "make_tensordict_primer"):
         transform.append(policy.make_tensordict_primer())

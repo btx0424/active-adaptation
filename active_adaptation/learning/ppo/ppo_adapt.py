@@ -480,6 +480,14 @@ class PPORMAPolicy(TensorDictModuleBase):
         self.exclude_keys = ["_feature", "_feature_expert", "_feature_adapt"]
         self.train_iter = 0
 
+    def get_rollout_policy(self, mode):
+        if mode == "eval":
+            policy = TensorDictSequential(
+                self.adapt_module,
+                self.actor_adapt,
+            )
+        return copy.deepcopy(policy)
+
     def make_adapt_policy(self, fake_input: TensorDictBase):
 
         self.actor_adapt: ProbabilisticActor = ProbabilisticActor(
