@@ -107,10 +107,16 @@ class Command1(Command):
 
 class CommandPos(Command):
 
-    def __init__(self, env, speed_range=(0.7, 1.4)):
+    def __init__(
+        self, 
+        env, 
+        speed_range=(0.7, 1.4),
+        offset_range=(2.0, 4.0)
+    ):
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
         self.speed_range = speed_range
+        self.offset_range = offset_range
         with torch.device(self.device):
             self.target_speed = torch.zeros(self.num_envs, 1)
             self.target_pos_w = torch.zeros(self.num_envs, 3)
@@ -137,16 +143,18 @@ class CommandPos(Command):
             self.robot.data.root_quat_w, direction_w
         )
         self._command_linvel[:, :2] = direction_b[:, :2] * command_speed
-        self._command_heading[:, :2] = direction_b[:, :2]
-        self._command_heading[self.is_standing_env, 0] = 1.
-        self._command_heading[self.is_standing_env, 1] = 0.
-        
+        self._command_heading[:, :2] = torch.where(
+            self.is_standing_env,
+            torch.tensor([1., 0.], device=self.device),
+            direction_b[:, :2]
+        )
+
         self.command[:, :2] = self._command_linvel[:, :2]
         self.command[:, 2:4] = self._command_heading[:, :2]
     
     def sample_commands(self, env_ids: torch.Tensor):
         robot_pos_w = self.robot.data.root_pos_w[env_ids, :2]
-        d = sample_uniform(env_ids.shape, 2.0, 4.0, device=self.device)
+        d = sample_uniform(env_ids.shape, *self.offset_range, device=self.device)
         a = torch.rand(len(env_ids), device=self.device) * torch.pi * 2.
         offset = torch.stack([a.cos(), a.sin()], 1) * d.unsqueeze(1)
         self.target_pos_w[env_ids, :2] = robot_pos_w + offset

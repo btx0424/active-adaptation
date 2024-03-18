@@ -12,7 +12,8 @@ payload: false
 
 command:
   _target_: active_adaptation.envs.mdp.CommandPos
-  speed_range: [0.4, 1.7]
+  speed_range: [0.4, 2.0]
+  offset_range: [2.0, 4.0]
 
 observation:
   policy:
