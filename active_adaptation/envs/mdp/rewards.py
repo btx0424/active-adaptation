@@ -74,7 +74,8 @@ def survival(self):
 
 @reward_func
 def linvel_z_l2(self):
-    return - self.scene["robot"].data.root_lin_vel_b[:, [2]].square()
+    asset: Articulation = self.scene["robot"]
+    return - asset.data.root_lin_vel_b[:, [2]].square()
 
 @reward_func
 def angvel_xy_l2(self):
@@ -96,15 +97,15 @@ class undesired_contact(Reward):
         contact = self.contact_sensor.data.current_contact_time[:, self.body_ids] > 0.
         return - contact.float().sum(1, keepdim=True)
 
-    def debug_draw(self):
-        self.env.debug_draw.point(
-            # self.contact_sensor.data.pos_w[:, self.body_ids],
-            self.asset.data.body_pos_w[:, self.articulation_body_ids],
-            color=(1., .6, .4, 1.),
-            size=20,
-        )
+    # def debug_draw(self):
+    #     self.env.debug_draw.point(
+    #         # self.contact_sensor.data.pos_w[:, self.body_ids],
+    #         self.asset.data.body_pos_w[:, self.articulation_body_ids],
+    #         color=(1., .6, .4, 1.),
+    #         size=20,
+    #     )
 
-class impact_force(Reward):
+class impact_force_l2(Reward):
     def __init__(self, env, body_names, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
@@ -117,7 +118,7 @@ class impact_force(Reward):
     def compute(self) -> torch.Tensor:
         first_contact = self.contact_sensor.compute_first_contact(self.env.step_dt)[:, self.body_ids]
         force = self.contact_sensor.data.net_forces_w.norm(dim=-1)[:, self.body_ids] / self.default_mass_total
-        return - (force * first_contact).sum(1, True)
+        return - (force.square() * first_contact).sum(1, True)
 
 
 class linvel_rational(Reward):
@@ -158,6 +159,25 @@ class heading_projection(Reward):
     def compute(self) -> torch.Tensor:
         target_heading_b = normalize(self.env.command_manager._command_heading)
         return target_heading_b[:, [0]]
+
+
+class linacc_z_l2(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.prev_linvel_z = torch.zeros(self.env.num_envs, device=self.env.device)
+        self.linacc_z = torch.zeros(self.env.num_envs, device=self.env.device)
+    
+    def reset(self, env_ids):
+        self.prev_linvel_z[env_ids] = 0.
+        self.linacc_z[env_ids] = 0.
+    
+    def update(self):
+        self.linacc_z[:] = (self.asset.data.root_lin_vel_b[:, 2] - self.prev_linvel_z) / self.env.step_dt
+        self.prev_linvel_z[:] = self.asset.data.root_lin_vel_b[:, 2]
+
+    def compute(self) -> torch.Tensor:
+        return - self.linacc_z.square().unsqueeze(1)
 
 
 def normalize(x: torch.Tensor):

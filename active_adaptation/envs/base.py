@@ -239,9 +239,8 @@ class Env(EnvBase):
         return flags.any(dim=-1, keepdim=True)
 
     def _update(self):
-        for group, funcs in self.observation_funcs.items():
-            for name, func in funcs.items():
-                func.update()
+        for callback in self._update_callbacks:
+            callback()
         if self.sim.has_gui():
             self.sim.render()
         self.episode_length_buf.add_(1)

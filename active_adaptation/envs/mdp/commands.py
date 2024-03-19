@@ -139,9 +139,11 @@ class CommandPos(Command):
 
         direction_w = torch.zeros(self.num_envs, 3, device=self.device)
         direction_w[:, :2] = pos_diff_xy / distance_xy.clamp(1e-6)
+        current_speed = (self.robot.data.root_lin_vel_w * direction_w).sum(-1, True)
         direction_b = quat_rotate_inverse(
             self.robot.data.root_quat_w, direction_w
         )
+        command_speed = current_speed + (command_speed - current_speed).clamp_max(1.)
         self._command_linvel[:, :2] = direction_b[:, :2] * command_speed
         self._command_heading[:, :2] = torch.where(
             self.is_standing_env,

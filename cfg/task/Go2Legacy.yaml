@@ -7,13 +7,13 @@ defaults:
   - _self_
 
 robot: go2
-terrain: legacy
+terrain: easy
 payload: false
 
 command:
   _target_: active_adaptation.envs.mdp.CommandPos
-  speed_range: [0.4, 2.0]
-  offset_range: [2.0, 4.0]
+  speed_range: [0.4, 2.4]
+  offset_range: [3.0, 5.0]
 
 observation:
   policy:
@@ -30,6 +30,8 @@ observation:
     feet_pos_b:
     applied_torques: {actuator_name: base_legs}
     contact_indicator: {body_names: ".*_foot"}
+  height_scan:
+    height_scan: {prim_path: base}
 
 reward:
   # linvel_exp: {weight: 1.5}
@@ -37,6 +39,7 @@ reward:
   heading_projection: {weight: 0.5}
   # linvel_projection: {weight: 1.2}
   # angvel_z_exp: {weight: 0.75}
+  linacc_z_l2: {weight: 0.01}
   # angvel_xy_l2: {weight: 0.02}
   base_height_l1: {target_height: 0.3, weight: 2.}
   # linvel_z_l2: {weight: 1.0}
@@ -49,7 +52,7 @@ reward:
   action_rate_l2: {weight: 0.01}
   action_rate2_l2: {weight: 0.01}
   undesired_contact: {body_names: Head.*, weight: 50.}
-  # impact_force: {body_names: .*_foot, weight: 1.0}
+  impact_force_l2: {body_names: .*_foot, weight: 1.0, enabled: false}
   # feet_air_time: {thres: 0.3, weight: 1.0}
   feet_slip: {weight: 0.02}
   feet_contact_count: {weight: 1.0, enabled: false}
