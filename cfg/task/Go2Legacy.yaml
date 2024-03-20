@@ -34,12 +34,12 @@ observation:
     height_scan: {prim_path: base}
 
 reward:
-  # linvel_exp: {weight: 1.5}
-  linvel_rational: {weight: 2.0}
+  linvel_exp: {weight: 2.0}
+  # linvel_rational: {weight: 2.0}
   heading_projection: {weight: 0.5}
   # linvel_projection: {weight: 1.2}
   # angvel_z_exp: {weight: 0.75}
-  linacc_z_l2: {weight: 0.01}
+  linacc_z_l2: {weight: 0.002}
   # angvel_xy_l2: {weight: 0.02}
   base_height_l1: {target_height: 0.3, weight: 2.}
   # linvel_z_l2: {weight: 1.0}

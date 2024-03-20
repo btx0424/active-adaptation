@@ -151,6 +151,36 @@ class linvel_rational(Reward):
         return 1 / (1. + linvel_error / self.sigma)
 
 
+class linvel_exp(Reward):
+    def __init__(
+        self, 
+        env, 
+        weight: float, 
+        enabled: bool = True, 
+        frame:str = "body", 
+        sigma: float=0.25, 
+        dim: int=3
+    ):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        assert frame.startswith("w") or frame.startswith("b")
+        self.frame = frame
+        self.sigma = sigma
+        self.dim = dim
+    
+    def compute(self) -> torch.Tensor:
+        if self.frame.startswith("w"):
+            linvel = self.asset.data.root_lin_vel_w[:, :self.dim]
+        else:
+            linvel = self.asset.data.root_lin_vel_b[:, :self.dim]
+        linvel_error = (
+            (linvel - self.env.command_manager._command_linvel[:, :self.dim])
+            .square()
+            .sum(-1, True)
+        )
+        return torch.exp(- linvel_error / self.sigma)
+
+
 class heading_projection(Reward):
     def __init__(self, env, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
