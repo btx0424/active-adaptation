@@ -85,7 +85,8 @@ class LocomotionEnv(Env):
 
     def _reset_idx(self, env_ids: torch.Tensor):
         init_root_state = self.init_root_state[env_ids]
-        init_root_state[:, :3] += self.scene.env_origins[env_ids]
+        origins = self.scene.env_origins[torch.randint(0, self.scene.num_envs, (len(env_ids),), device=self.device)]
+        init_root_state[:, :3] += origins
         
         self.robot.write_root_state_to_sim(
             init_root_state, 
@@ -159,6 +160,7 @@ class LocomotionEnv(Env):
             self.last_action.lerp_(action.squeeze(-1), self.action_alpha)
 
             pos_target = self.last_action * self.action_scaling + self.default_joint_pos
+            pos_target = pos_target.clamp(-torch.pi, torch.pi)
             self.robot.set_joint_position_target(pos_target)
         self.robot.write_data_to_sim()
 
@@ -167,7 +169,7 @@ class LocomotionEnv(Env):
         asset = self.scene["robot"]
         height_scanner = self.scene.sensors["height_scanner"]
         if not hasattr(height_scanner, "_view"):
-            return torch.zeros(self.num_envs, 1, 11, 17, deivce=self.device)
+            return torch.zeros((self.num_envs, 1, 11, 17), device=self.device)
         else:
             root_pos_w = asset.data.root_pos_w
             ray_hits_w = height_scanner.data.ray_hits_w

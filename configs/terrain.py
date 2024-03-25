@@ -78,7 +78,7 @@ ROUGH_EASY = TerrainGeneratorCfg(
 ROUGH_MEDIUM = TerrainGeneratorCfg(
     seed=0,
     size=(8.0, 8.0),
-    border_width=20.0,
+    border_width=40.0,
     num_rows=10,
     num_cols=20,
     horizontal_scale=0.1,
@@ -87,22 +87,17 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
     use_cache=False,
     sub_terrains={
         "random_rough_hard": HfRandomUniformTerrainCfg(
-            proportion=0.6, noise_range=(0.02, 0.05), noise_step=0.01, border_width=0.4
+            proportion=0.4, noise_range=(0.02, 0.1), noise_step=0.02, border_width=0.5
+        ),
+        "random_rough_easy": HfRandomUniformTerrainCfg(
+            proportion=0.2, noise_range=(0.01, 0.05), noise_step=0.01, border_width=0.5
         ),
         "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
-            proportion=0.15, slope_range=(0.0, 0.3), platform_width=1.0, border_width=0.25
+            proportion=0.1, slope_range=(0.0, 0.3), platform_width=1.0, border_width=0.25
         ),
         "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
-            proportion=0.15, slope_range=(0.0, 0.3), platform_width=1.0, border_width=0.25
+            proportion=0.1, slope_range=(0.0, 0.3), platform_width=1.0, border_width=0.25
         ),
-        # "pyramid_stairs_inv": MeshInvertedPyramidStairsTerrainCfg(
-        #     proportion=0.15,
-        #     step_height_range=(0.05, 0.23),
-        #     step_width=0.3,
-        #     platform_width=3.0,
-        #     border_width=1.0,
-        #     holes=False,
-        # ),
         "pyramid_stairs": MeshPyramidStairsTerrainCfg(
             proportion=0.2,
             step_height_range=(0.05, 0.2),

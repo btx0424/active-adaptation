@@ -9,6 +9,7 @@ from torchrl.data import (
     BinaryDiscreteTensorSpec, 
     UnboundedContinuousTensorSpec
 )
+import builtins
 
 from omni.isaac.orbit.scene import InteractiveScene
 from omni.isaac.orbit.sim import SimulationContext
@@ -64,8 +65,10 @@ class Env(EnvBase):
             self.scene = InteractiveScene(self.cfg.scene)
         print("[INFO]: Scene manager: ", self.scene)
 
-        with Timer("[INFO]: Time taken for simulation reset"):
-            self.sim.reset()
+        if builtins.ISAAC_LAUNCHED_FROM_TERMINAL is False:
+            print("[INFO]: Starting the simulation. This may take a few seconds. Please wait...")
+            with Timer("[INFO]: Time taken for simulation start"):
+                self.sim.reset()
         for _ in range(4):
             self.sim.step(render=True)
         

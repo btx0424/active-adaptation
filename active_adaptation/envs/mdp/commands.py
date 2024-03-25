@@ -50,6 +50,7 @@ class Command1(Command):
     ):
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
+        self.height_scanner = env.scene.sensors.get("height_scanner", None)
         self.speed_range = speed_range
         self.base_height_range = base_height_range
         self.angvel_range = angvel_range
@@ -58,19 +59,21 @@ class Command1(Command):
         with torch.device(env.device):
             self._target_yaw = torch.zeros(env.num_envs)
             self._target_base_height = torch.zeros(env.num_envs, 1)
-            self._command_stand = torch.zeros(env.num_envs, 1)
-            self._command_linvel = torch.zeros(env.num_envs, 3)
-            self._command_angvel_yaw = torch.zeros(env.num_envs)
-            self._command_heading = torch.zeros(env.num_envs, 3)
+            self._target_heading = torch.zeros(env.num_envs, 3)
+
+            self._command_direction = torch.zeros(env.num_envs, 3)
             self._command_speed = torch.zeros(env.num_envs, 1)
+            self._command_linvel = torch.zeros(env.num_envs, 3)
+
+            self._command_stand = torch.zeros(env.num_envs, 1)
+            self._command_angvel_yaw = torch.zeros(env.num_envs)
             
             self.command = torch.zeros(env.num_envs, self.command_dim)
-            self.command_prev = torch.zeros(env.num_envs, self.command_dim)
         self.is_standing_env = self._command_stand
+        self._command_heading = self._target_heading
 
     def reset(self, env_ids: torch.Tensor):
         self.sample_commands(env_ids)
-        self.command_prev[env_ids] = self.command[env_ids]
 
     def update(self, resample: torch.Tensor=None):
         if resample is not None and len(resample) > 0:
@@ -79,8 +82,19 @@ class Command1(Command):
         yaw_diff = self._target_yaw - self.robot.data.heading_w
         self._command_angvel_yaw[:] = math_utils.wrap_to_pi(yaw_diff).clamp(*self.angvel_range)
 
-        self.command_prev[:] = self.command
-        self.command[:, :2] = self._command_linvel[:, :2]
+        command_speed = self._command_speed
+        if self.height_scanner is not None:
+            height_scan_z: torch.Tensor = self.height_scanner.data.ray_hits_w[:, :, [2]]
+            near_stairs = height_scan_z.max(1)[0] - height_scan_z.min(1)[0] > 0.2
+            assert near_stairs.shape == command_speed.shape
+            command_speed = torch.where(
+                near_stairs,
+                command_speed.clamp(max=1.0),
+                command_speed
+            )
+        self._command_linvel[:, :2] = command_speed * self._command_direction[:, :2]
+        
+        self.command[:, :2] = command_speed * self._command_direction[:, :2]
         self.command[:, 2] = self._command_angvel_yaw
 
     def sample_commands(self, env_ids: torch.Tensor):
@@ -91,13 +105,13 @@ class Command1(Command):
         
         self._command_stand[env_ids] = stand.float().unsqueeze(1)
         self._command_speed[env_ids] = speed.unsqueeze(1)
-        self._command_linvel[env_ids, 0] = speed * a.cos()
-        self._command_linvel[env_ids, 1] = speed * a.sin()
+        self._command_direction[env_ids, 0] = a.cos()
+        self._command_direction[env_ids, 1] = a.sin()
         
         yaw = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
         self._target_yaw[env_ids] = yaw
-        self._command_heading[env_ids, 0] = yaw.cos()
-        self._command_heading[env_ids, 1] = yaw.sin()
+        self._target_heading[env_ids, 0] = yaw.cos()
+        self._target_heading[env_ids, 1] = yaw.sin()
         
         self._target_base_height[env_ids] = sample_uniform(
             env_ids.shape, *self.base_height_range, self.env.device
@@ -115,6 +129,7 @@ class CommandPos(Command):
     ):
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
+        self.height_scanner = env.scene.sensors.get("height_scanner", None)
         self.speed_range = speed_range
         self.offset_range = offset_range
         with torch.device(self.device):
