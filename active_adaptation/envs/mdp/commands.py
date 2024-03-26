@@ -92,6 +92,10 @@ class Command1(Command):
                 command_speed.clamp(max=1.0),
                 command_speed
             )
+        self.is_standing_env[:] = torch.logical_and(
+            self._command_angvel_yaw.unsqueeze(1) < 0.1,
+            self._command_speed < 0.2
+        )
         self._command_linvel[:, :2] = command_speed * self._command_direction[:, :2]
         
         self.command[:, :2] = command_speed * self._command_direction[:, :2]
@@ -103,10 +107,9 @@ class Command1(Command):
         speed = torch.zeros(len(env_ids), device=self.device).uniform_(*self.speed_range)
         speed = speed * (~stand).float()
         
-        self._command_stand[env_ids] = stand.float().unsqueeze(1)
         self._command_speed[env_ids] = speed.unsqueeze(1)
         self._command_direction[env_ids, 0] = a.cos()
-        self._command_direction[env_ids, 1] = a.sin()
+        self._command_direction[env_ids, 1] = a.sin() * 0.6
         
         yaw = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
         self._target_yaw[env_ids] = yaw

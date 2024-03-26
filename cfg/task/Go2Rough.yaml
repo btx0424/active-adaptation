@@ -36,14 +36,14 @@ observation:
     applied_torques: {actuator_name: base_legs}
     motor_failure: {actuator_name: base_legs}
     contact_indicator: {body_names: ".*_foot"}
-    body_materials: {body_names: ".*_foot"}
+    # body_materials: {body_names: ".*_foot"}
   
   height_scan:
     height_scan: {prim_path: base}
 
 reward:
   linvel_exp: {weight: 1.5}
-  # linvel_projection: {weight: 1.2}
+  linvel_projection: {weight: 0.75}
   angvel_z_exp: {weight: 0.75}
   angvel_xy_l2: {weight: 0.02}
   base_height_l1: {target_height: 0.3, weight: 2.}
@@ -55,6 +55,7 @@ reward:
   orientation: {weight: 0.25}
   survival: {weight: 0.25}
   action_rate_l2: {weight: 0.01}
+  action_rate2_l2: {weight: 0.01}
   feet_slip: {weight: 1.0}
   undesired_contact: {weight: 50., body_names: Head.*}
 

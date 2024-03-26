@@ -87,16 +87,29 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
     use_cache=False,
     sub_terrains={
         "random_rough_hard": HfRandomUniformTerrainCfg(
-            proportion=0.4, noise_range=(0.02, 0.1), noise_step=0.02, border_width=0.5
+            proportion=0.4,
+            noise_range=(0.02, 0.1),
+            noise_step=0.02,
+            border_width=0.5,
+            downsampled_scale=0.2
         ),
         "random_rough_easy": HfRandomUniformTerrainCfg(
-            proportion=0.2, noise_range=(0.01, 0.05), noise_step=0.01, border_width=0.5
+            proportion=0.2,
+            noise_range=(0.01, 0.05),
+            noise_step=0.01,
+            border_width=0.5
         ),
         "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
-            proportion=0.1, slope_range=(0.0, 0.3), platform_width=1.0, border_width=0.25
+            proportion=0.1,
+            slope_range=(0.0, 0.25),
+            platform_width=1.0,
+            border_width=0.25
         ),
         "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
-            proportion=0.1, slope_range=(0.0, 0.3), platform_width=1.0, border_width=0.25
+            proportion=0.1,
+            slope_range=(0.0, 0.25),
+            platform_width=1.0,
+            border_width=0.25
         ),
         "pyramid_stairs": MeshPyramidStairsTerrainCfg(
             proportion=0.2,

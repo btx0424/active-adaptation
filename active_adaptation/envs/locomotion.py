@@ -77,7 +77,7 @@ class LocomotionEnv(Env):
             
         # set by subclass
         self.resample_interval = 300
-        self.resample_prob = 0.6
+        self.resample_prob = 0.75
 
     @property
     def action_dim(self):
@@ -155,7 +155,7 @@ class LocomotionEnv(Env):
         if substep == 0:
             # random packet loss: repeat previous actions
             self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
-            self.action_buf[:, :, 0] = tensordict["action"]
+            self.action_buf[:, :, 0] = tensordict["action"].clamp(-10, 10)
             action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
             self.last_action.lerp_(action.squeeze(-1), self.action_alpha)
 
