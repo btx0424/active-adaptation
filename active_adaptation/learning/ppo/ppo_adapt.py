@@ -94,10 +94,10 @@ class PPOConfig:
 
 cs = ConfigStore.instance()
 cs.store("rma_train", node=PPOConfig, group="algo")
-cs.store("rma_adapt", node=PPOConfig(phase="adapt", checkpoint_path=MISSING), group="algo")
-cs.store("rma_adapt_rnn", node=PPOConfig(adapt_arch="rnn", phase="adapt", checkpoint_path=None), group="algo")
-cs.store("rma_finetune", node=PPOConfig(phase="finetune", checkpoint_path=MISSING), group="algo")
-cs.store("rma_finetune_rnn", node=PPOConfig(adapt_arch="rnn", phase="finetune", checkpoint_path=MISSING), group="algo")
+cs.store("rma_adapt", node=PPOConfig(phase="adapt"), group="algo")
+cs.store("rma_adapt_rnn", node=PPOConfig(adapt_arch="rnn", phase="adapt"), group="algo")
+cs.store("rma_finetune", node=PPOConfig(phase="finetune"), group="algo")
+cs.store("rma_finetune_rnn", node=PPOConfig(adapt_arch="rnn", phase="finetune"), group="algo")
 
 class TConv(nn.Module):
     def __init__(self, out_dim: int, activation=nn.Mish) -> None:
@@ -396,12 +396,6 @@ class PPORMAPolicy(TensorDictModuleBase):
             self.adaptation_loss = ELBO(self.adapt_module).to(self.device)
         else:
             raise ValueError(self.cfg.adaptation_loss)
-
-        # self.rb = rb.TensorDictPrioritizedReplayBuffer(
-        #     alpha=0.7, beta=0.9,
-        #     priority_key="error", reduction="mean",
-        #     storage=rb.ListStorage(max_size=observation_spec.shape[0] * 4)
-        # )
 
         if "rnn" in self.cfg.adapt_arch:
             fake_input["is_init"] = torch.ones(fake_input.shape[0], 1, dtype=torch.bool, device=self.device)

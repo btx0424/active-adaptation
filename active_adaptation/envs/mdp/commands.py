@@ -46,7 +46,9 @@ class Command1(Command):
         speed_range=(0.5, 2.0),
         angvel_range=(-1.0, 1.0),
         base_height_range=(0.2, 0.4),
-        stand_prob=0.1
+        resample_interval: int = 300,
+        resample_prob: float = 0.75,
+        stand_prob=0.2,
     ):
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
@@ -54,7 +56,10 @@ class Command1(Command):
         self.speed_range = speed_range
         self.base_height_range = base_height_range
         self.angvel_range = angvel_range
-        self.sand_prob = stand_prob
+
+        self.resample_interval = resample_interval
+        self.resample_prob = resample_prob
+        self.stand_prob = stand_prob
 
         with torch.device(env.device):
             self._target_yaw = torch.zeros(env.num_envs)
@@ -65,7 +70,7 @@ class Command1(Command):
             self._command_speed = torch.zeros(env.num_envs, 1)
             self._command_linvel = torch.zeros(env.num_envs, 3)
 
-            self._command_stand = torch.zeros(env.num_envs, 1)
+            self._command_stand = torch.zeros(env.num_envs, 1, dtype=bool)
             self._command_angvel_yaw = torch.zeros(env.num_envs)
             
             self.command = torch.zeros(env.num_envs, self.command_dim)
@@ -73,11 +78,15 @@ class Command1(Command):
         self._command_heading = self._target_heading
 
     def reset(self, env_ids: torch.Tensor):
-        self.sample_commands(env_ids)
+        self.sample_vel_command(env_ids)
+        self.sample_yaw_command(env_ids)
 
-    def update(self, resample: torch.Tensor=None):
-        if resample is not None and len(resample) > 0:
-            self.sample_commands(resample)
+    def update(self):
+        interval_reached = (self.env.episode_length_buf + 1) % self.resample_interval == 0
+        resample_vel = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
+        resample_yaw = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
+        self.sample_vel_command(resample_vel.nonzero().squeeze(-1))
+        self.sample_yaw_command(resample_yaw.nonzero().squeeze(-1))
         
         yaw_diff = self._target_yaw - self.robot.data.heading_w
         self._command_angvel_yaw[:] = math_utils.wrap_to_pi(yaw_diff).clamp(*self.angvel_range)
@@ -98,19 +107,20 @@ class Command1(Command):
         )
         self._command_linvel[:, :2] = command_speed * self._command_direction[:, :2]
         
-        self.command[:, :2] = command_speed * self._command_direction[:, :2]
+        self.command[:, :2] = self._command_linvel[:, :2]
         self.command[:, 2] = self._command_angvel_yaw
 
-    def sample_commands(self, env_ids: torch.Tensor):
+    def sample_vel_command(self, env_ids: torch.Tensor):
         a = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
-        stand = torch.rand(len(env_ids), device=self.device) < self.sand_prob
+        stand = torch.rand(len(env_ids), device=self.device) < self.stand_prob
         speed = torch.zeros(len(env_ids), device=self.device).uniform_(*self.speed_range)
         speed = speed * (~stand).float()
         
         self._command_speed[env_ids] = speed.unsqueeze(1)
         self._command_direction[env_ids, 0] = a.cos()
         self._command_direction[env_ids, 1] = a.sin() * 0.6
-        
+    
+    def sample_yaw_command(self, env_ids: torch.Tensor):
         yaw = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
         self._target_yaw[env_ids] = yaw
         self._target_heading[env_ids, 0] = yaw.cos()
@@ -128,13 +138,18 @@ class CommandPos(Command):
         self, 
         env, 
         speed_range=(0.7, 1.4),
-        offset_range=(2.0, 4.0)
+        offset_range=(2.0, 4.0),
+        resample_interval: int = 300,
+        resample_prob: float = 0.75,
     ):
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
         self.height_scanner = env.scene.sensors.get("height_scanner", None)
         self.speed_range = speed_range
         self.offset_range = offset_range
+        self.resample_interval = resample_interval
+        self.resample_prob = resample_prob
+
         with torch.device(self.device):
             self.target_speed = torch.zeros(self.num_envs, 1)
             self.target_pos_w = torch.zeros(self.num_envs, 3)
@@ -146,9 +161,11 @@ class CommandPos(Command):
     def reset(self, env_ids):
         self.sample_commands(env_ids)
 
-    def update(self, resample: torch.Tensor=None):
-        if resample is not None and len(resample) > 0:
-            self.sample_commands(resample)
+    def update(self):
+        interval_reached = (self.env.episode_length_buf + 1) % self.resample_interval == 0
+        resample = interval_reached & (torch.rand_like(interval_reached) < self.resample_prob)
+        self.sample_commands(resample.nonzero().squeeze(-1))
+
         pos_diff_xy = (self.target_pos_w - self.robot.data.root_pos_w)[:, :2]
         distance_xy = pos_diff_xy.norm(dim=-1, keepdim=True)
         

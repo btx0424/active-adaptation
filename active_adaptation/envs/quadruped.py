@@ -86,7 +86,7 @@ class Quadruped(LocomotionEnv):
     def stand(self):
         if not hasattr(self, "robot"):
             return torch.zeros(self.num_envs, 1)
-        jpos_error = square_norm(self.robot.data.joint_pos - self.robot.data.default_joint_pos)
+        jpos_error = (self.robot.data.joint_pos - self.robot.data.default_joint_pos).abs().sum(dim=1, keepdim=True)
         front_symmetry = self.robot.data.feet_pos_b[:, [0, 1], 1].sum(dim=1, keepdim=True).abs()
         back_symmetry = self.robot.data.feet_pos_b[:, [2, 3], 1].sum(dim=1, keepdim=True).abs()
         cost = - (jpos_error + front_symmetry + back_symmetry) 

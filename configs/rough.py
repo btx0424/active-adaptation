@@ -107,9 +107,6 @@ def LocomotionEnvCfg(task_cfg):
 
     robot_cfg = ROBOTS[task_cfg.robot.lower()]
 
-    for key, actuator in robot_cfg.actuators.items():
-        actuator.friction = 0.02
-
     if task_cfg.terrain == "plane":
         terrain_cfg = FLAT_TERRAIN_CFG
     elif task_cfg.terrain == "legacy":

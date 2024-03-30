@@ -27,10 +27,10 @@ ROUGH_LEGACY = TerrainGeneratorCfg(
     use_cache=False,
     sub_terrains={
         "random_rough_hard": HfRandomUniformTerrainCfg(
-            proportion=0.5, noise_range=(0.02, 0.10), noise_step=0.02, border_width=0.4
+            proportion=0.5, noise_range=(0.0, 0.06), noise_step=0.03, border_width=0.4
         ),
         "random_rough_easy": HfRandomUniformTerrainCfg(
-            proportion=0.5, noise_range=(0.01, 0.05), noise_step=0.01, border_width=0.4
+            proportion=0.5, noise_range=(0.0, 0.05), noise_step=0.01, border_width=0.4
         ),
     },
 )
@@ -87,16 +87,16 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
     use_cache=False,
     sub_terrains={
         "random_rough_hard": HfRandomUniformTerrainCfg(
-            proportion=0.4,
-            noise_range=(0.02, 0.1),
+            proportion=0.3,
+            noise_range=(0.0, 0.1),
             noise_step=0.02,
             border_width=0.5,
             downsampled_scale=0.2
         ),
         "random_rough_easy": HfRandomUniformTerrainCfg(
-            proportion=0.2,
-            noise_range=(0.01, 0.05),
-            noise_step=0.01,
+            proportion=0.3,
+            noise_range=(0.0, 0.05),
+            noise_step=0.02,
             border_width=0.5
         ),
         "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
