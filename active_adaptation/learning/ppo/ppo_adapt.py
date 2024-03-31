@@ -50,7 +50,7 @@ from typing import Any, Iterator, Mapping, Union, Sequence
 
 from ..utils.valuenorm import ValueNorm1
 from ..modules.distributions import IndependentNormal
-from .adaptation import Action, Value, ActionValue, MSE
+from .adaptation import Action, Value, ActionValue, MSE, DotProduct
 from .ppo_rnn import GRU
 from .common import *
 
@@ -385,6 +385,8 @@ class PPORMAPolicy(TensorDictModuleBase):
         
         if self.cfg.adaptation_loss == "mse":
             self.adaptation_loss = MSE(self.adapt_module).to(self.device)
+        elif self.cfg.adaptation_loss == "dot":
+            self.adaptation_loss = DotProduct(self.adapt_module).to(self.device)
         elif self.cfg.adaptation_loss == "action_kl":
             self.adaptation_loss = Action(
                 self.adapt_module,

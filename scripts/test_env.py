@@ -85,6 +85,9 @@ def main(cfg):
     eval_interval = cfg.get("eval_interval", -1)
     save_interval = cfg.get("save_interval", -1)
 
+    log_interval = (base_env.max_episode_length // cfg.algo.train_every) + 1
+    logging.info(f"Log interval: {log_interval} steps")
+
     stats_keys = [
         k for k in env.reward_spec.keys(True, True) 
         if isinstance(k, tuple) and k[0] == "stats"
@@ -195,12 +198,10 @@ def main(cfg):
 
         episode_stats.add(data)
 
-        if len(episode_stats) >= base_env.num_envs:
-            stats = {
-                "train/" + (".".join(k) if isinstance(k, tuple) else k): torch.mean(v.float()).item() 
-                for k, v in episode_stats.pop().items(True, True)
-            }
-            info.update(stats)
+        if i % log_interval == 0:
+            for k, v in sorted(episode_stats.pop().items(True, True)):
+                key = "train/" + (".".join(k) if isinstance(k, tuple) else k)
+                info[key] = torch.mean(v.float()).item()
         
         info.update(policy.train_op(data))
         if hasattr(policy, "step_schedule"):

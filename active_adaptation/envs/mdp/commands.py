@@ -163,7 +163,7 @@ class CommandPos(Command):
 
     def update(self):
         interval_reached = (self.env.episode_length_buf + 1) % self.resample_interval == 0
-        resample = interval_reached & (torch.rand_like(interval_reached) < self.resample_prob)
+        resample = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
         self.sample_commands(resample.nonzero().squeeze(-1))
 
         pos_diff_xy = (self.target_pos_w - self.robot.data.root_pos_w)[:, :2]

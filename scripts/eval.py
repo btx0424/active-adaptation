@@ -20,7 +20,6 @@ from tqdm import tqdm
 from helpers import EpisodeStats, Every
 
 import os
-import time
 import datetime
 
 @hydra.main(config_path="../cfg", config_name="eval", version_base=None)
@@ -70,10 +69,15 @@ def main(cfg):
         device=base_env.device
     )
 
-    # path = os.path.join(os.path.dirname(__file__), "policy.pt")
-    # torch.save(policy.get_rollout_policy("eval").cpu(), path)
-    # logging.info(F"Export policy to {path}")
-
+    try:
+        time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
+        path = os.path.join(os.path.dirname(__file__), f"policy-{time_str}.pt")
+        _policy = policy.get_rollout_policy("eval").cpu()
+        torch.save(_policy, path)
+        logging.info(F"Export policy to {path}")
+    except Exception as e:
+        print(e)
+    
     if hasattr(policy, "make_tensordict_primer"):
         transform.append(policy.make_tensordict_primer())
 

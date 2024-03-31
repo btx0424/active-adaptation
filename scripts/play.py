@@ -13,6 +13,7 @@ from torchrl.envs.transforms import (
     TransformedEnv, Compose, InitTracker
 )
 from active_adaptation.learning import ALGOS
+from collections import OrderedDict
 
 import wandb
 import logging
@@ -20,7 +21,7 @@ from tqdm import tqdm
 from helpers import EpisodeStats, Every
 
 import os
-import time
+import datetime
 
 @hydra.main(config_path="../cfg", config_name="play")
 def main(cfg):
@@ -70,8 +71,10 @@ def main(cfg):
     )
     
     if cfg.export_policy:
-        path = os.path.join(os.path.dirname(__file__), "policy.pt")
-        torch.save(policy.cpu(), path)
+        time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
+        path = os.path.join(os.path.dirname(__file__), f"policy-{time_str}.pt")
+        _policy = policy.get_rollout_policy("eval").cpu()
+        torch.save(_policy, path)
         logging.info(F"Export policy to {path}")
 
     if hasattr(policy, "make_tensordict_primer"):
