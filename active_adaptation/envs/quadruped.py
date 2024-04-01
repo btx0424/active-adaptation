@@ -22,9 +22,6 @@ class Quadruped(LocomotionEnv):
         self.action_scaling = 0.5
                 
         self.packet_loss = 0.0
-
-        self.resample_interval = 300
-        self.resample_prob = 0.6
     
     @property
     def action_dim(self):

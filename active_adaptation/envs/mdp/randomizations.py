@@ -134,7 +134,7 @@ class perturb_body_materials(Randomization):
         body_names,
         static_friction_range = (0.6, 1.0),
         dynamic_friction_range = (0.6, 1.0),
-        restitution_range=(0.0, 0.0),
+        restitution_range=(0.0, 0.2),
         homogeneous: bool=True
     ):
         super().__init__(env)

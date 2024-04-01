@@ -112,6 +112,7 @@ class Env(EnvBase):
         self._update_callbacks = []
         self._reset_callbacks = []
         self._debug_draw_callbacks = []
+        self._step_callbacks = []
         self.command_manager: mdp.Command = hydra.utils.instantiate(self.cfg.command, env=self)
         self._debug_draw_callbacks.append(self.command_manager.debug_draw)
 
@@ -120,6 +121,7 @@ class Env(EnvBase):
             self.randomizations[key] = rand
             self._reset_callbacks.append(rand.reset)
             self._debug_draw_callbacks.append(rand.debug_draw)
+            self._step_callbacks.append(rand.step)
 
         for group, funcs in self.cfg.observation.items():
             self.observation_funcs[group] = OrderedDict()
@@ -151,6 +153,7 @@ class Env(EnvBase):
                 "return": UnboundedContinuousTensorSpec(1),
                 "episode_len": UnboundedContinuousTensorSpec(1),
                 "success": UnboundedContinuousTensorSpec(1),
+                "reward_clip_ratio": UnboundedContinuousTensorSpec(1),
             }
         })
         for key, params in self.cfg.reward.items():
@@ -159,6 +162,7 @@ class Env(EnvBase):
             self._update_callbacks.append(reward.update)
             self._reset_callbacks.append(reward.reset)
             self._debug_draw_callbacks.append(reward.debug_draw)
+            self._step_callbacks.append(reward.step)
             reward_spec["stats", key] = UnboundedContinuousTensorSpec(1, device=self.device)
         self.reward_spec = reward_spec.expand(self.num_envs).to(self.device)
         self.stats = self.reward_spec["stats"].zero()
@@ -231,8 +235,11 @@ class Env(EnvBase):
             self.stats[key].add_(reward)
             if reward_func.enabled:
                 rewards.append(reward)
-        reward = sum(rewards).clip(0.)
+        reward = sum(rewards)
+        neg_rewar = reward < 0.
+        reward = reward.clamp(min=0.)
         self.stats["return"].add_(reward)
+        self.stats["reward_clip_ratio"].add_(neg_rewar.float())
         self.stats["episode_len"][:] = self.episode_length_buf.unsqueeze(1)
         self.stats["success"][:] = (self.episode_length_buf >= self.max_episode_length * 0.9).unsqueeze(1).float()
         return {"reward": reward, "stats": self.stats.clone()}
@@ -262,8 +269,8 @@ class Env(EnvBase):
             # self.scene.write_data_to_sim()
             self.sim.step(render=False)
             self.scene.update(self.physics_dt)
-            for rand in self.randomizations.values():
-                rand.step(substep)
+            for callback in self._step_callbacks:
+                callback(substep)
         # end = time.perf_counter()
         # print(end - start, self.cfg.decimation)
         self._update()
@@ -301,7 +308,6 @@ class Env(EnvBase):
         pass
     
     def close(self):
-        super().close()
         if not self._is_closed:
             # destructor is order-sensitive
             del self.scene
@@ -309,6 +315,6 @@ class Env(EnvBase):
             self.sim.clear_all_callbacks()
             self.sim.clear_instance()
             # update closing status
-            self._is_closed = True
+            super().close()
 
 

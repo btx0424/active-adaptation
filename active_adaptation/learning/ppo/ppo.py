@@ -164,6 +164,7 @@ class PPOPolicy(TensorDictModuleBase):
         infos = {k: v.mean().item() for k, v in torch.stack(infos).items()}
         if self.cfg.train_model:
             infos.update(self.aux_model.train_op(tensordict))
+        infos["value_mean"] = tensordict["ret"].mean().item()
         return infos
 
     @torch.no_grad()
