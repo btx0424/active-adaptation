@@ -39,7 +39,7 @@ class LocomotionEnv(Env):
 
     def __init__(self, cfg):
         super().__init__(cfg)
-        self.action_scaling = 0.5
+        self.action_scaling = self.cfg.action_scaling
 
         self.robot = self.scene.articulations["robot"]
         self.feet_indices, self.feet_names = self.robot.find_bodies(self.feet_name_expr)
@@ -151,18 +151,6 @@ class LocomotionEnv(Env):
             pos_target = pos_target.clamp(-torch.pi, torch.pi)
             self.robot.set_joint_position_target(pos_target)
         self.robot.write_data_to_sim()
-
-    @mdp.observation_func
-    def height_scan(self, prim_path):
-        asset = self.scene["robot"]
-        height_scanner = self.scene.sensors["height_scanner"]
-        if not hasattr(height_scanner, "_view"):
-            return torch.zeros((self.num_envs, 1, 11, 17), device=self.device)
-        else:
-            root_pos_w = asset.data.root_pos_w
-            ray_hits_w = height_scanner.data.ray_hits_w
-            height_scan = root_pos_w[:, [2]].unsqueeze(1) - ray_hits_w[:, :, [2]]
-            return height_scan.reshape(self.num_envs, 1, 11, 17).clamp(-2., 2.)
     
     @mdp.observation_func
     def command(self):
@@ -274,47 +262,9 @@ class LocomotionEnv(Env):
                 self.target_height = float(target_height)
         
         def compute(self) -> torch.Tensor:
-            height = self.asset.data.feet_pos_b[:, :, 2].mean(1, keepdim=True).abs()
+            height = self.asset.data.feet_pos_b[:, :, 2].min(1, keepdim=True)[0].abs()
             height_errot = (height - self.target_height) / self.target_height
             return - height_errot.abs()
-
-    class feet_slip(mdp.Reward):
-        def __init__(self, env: "LocomotionEnv", weight: float, enabled: bool=True):
-            super().__init__(env, weight, enabled)
-            self.asset = self.env.scene["robot"]
-            self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
-            self.feet_ids, _ = self.asset.find_bodies(self.env.feet_name_expr)
-        
-        def compute(self) -> torch.Tensor:
-            in_contact = self.contact_sensor.data.current_contact_time[:, self.feet_ids] > 0.02
-            feet_vel = self.asset.data.body_lin_vel_w[:, self.feet_ids, :2]
-            return - (in_contact * feet_vel.norm(dim=-1).square()).sum(dim=1, keepdim=True)
-
-    class feet_air_time(mdp.Reward):
-        def __init__(self, env: "LocomotionEnv", thres: float, weight: float, enabled: bool=True):
-            super().__init__(env, weight, enabled)
-            self.thres = thres
-            self.asset = self.env.scene["robot"]
-            self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
-            self.feet_ids, _ = self.asset.find_bodies(self.env.feet_name_expr)
-
-        def compute(self):
-            first_contact = self.contact_sensor.compute_first_contact(self.env.step_dt)[:, self.feet_ids]
-            last_air_time = self.contact_sensor.data.last_air_time[:, self.feet_ids]
-            reward = torch.sum((last_air_time - self.thres) * first_contact, dim=1, keepdim=True)
-            reward *= (~self.env.command_manager.is_standing_env)
-            return reward
-    
-    class feet_contact_count(mdp.Reward):
-        def __init__(self, env: "LocomotionEnv", weight: float, enabled: bool=True):
-            super().__init__(env, weight, enabled)
-            self.asset = self.env.scene["robot"]
-            self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
-            self.feet_ids, _ = self.asset.find_bodies(self.env.feet_name_expr)
-
-        def compute(self):
-            first_contact = self.contact_sensor.compute_first_contact(self.env.step_dt)[:, self.feet_ids]
-            return first_contact.sum(1, keepdim=True)
 
     class feet_force_distribution(mdp.Reward):
         def __init__(self, env, weight: float, enabled: bool = True):

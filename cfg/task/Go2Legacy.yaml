@@ -12,7 +12,7 @@ payload: false
 
 command:
   _target_: active_adaptation.envs.mdp.CommandPos
-  speed_range: [0.4, 2.4]
+  speed_range: [0.4, 2.0]
   offset_range: [3.0, 5.0]
 
 observation:
@@ -25,13 +25,17 @@ observation:
     joint_vel: {noise_std: 0.2}
     prev_actions: 
     # - "motor_params"
+    # root_linvel_b:
+    # feet_pos_b:
+    # feet_vel_b:
   priv:
     root_linvel_b:
     feet_pos_b:
+    # feet_vel_b:
     applied_torques: {actuator_name: base_legs}
     contact_indicator: {body_names: ".*_foot"}
-  height_scan:
-    height_scan: {prim_path: base}
+  # height_scan:
+  #   height_scan: {prim_path: base}
 
 reward:
   linvel_exp: {weight: 2.0}
@@ -52,9 +56,9 @@ reward:
   action_rate_l2: {weight: 0.01}
   action_rate2_l2: {weight: 0.01}
   undesired_contact: {body_names: Head.*, weight: 50.}
-  impact_force_l2: {body_names: .*_foot, weight: 1.0, enabled: false}
+  # impact_force_l2: {body_names: .*_foot, weight: 1.0, enabled: false}
   # feet_air_time: {thres: 0.3, weight: 1.0}
-  feet_slip: {weight: 0.02}
+  # feet_slip: {weight: 0.02}
   feet_contact_count: {weight: 1.0, enabled: false}
 
 termination:
@@ -67,6 +71,7 @@ randomization:
     body_names: ".*_foot"
     static_friction_range: [0.6, 2.0]
     dynamic_friction_range: [0.6, 2.0]
+    restitution_range: [0.0, 0.2]
   motor_params:
     actuator_name: base_legs
     stiffness_range: [0.7, 1.3]

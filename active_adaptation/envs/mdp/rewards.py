@@ -270,5 +270,58 @@ class tracking_error_exp(Reward):
         return torch.exp(- self.asset.data._tracking_error / 0.5)
 
 
+class feet_slip(Reward):
+    def __init__(self, env: "LocomotionEnv", body_names: str, weight: float, enabled: bool=True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+
+        self.articulation_body_ids = self.asset.find_bodies(body_names)[0]
+        self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names)
+        self.body_ids = torch.tensor(self.body_ids, device=self.env.device)
+    
+    def compute(self) -> torch.Tensor:
+        in_contact = self.contact_sensor.data.current_contact_time[:, self.body_ids] > 0.02
+        feet_vel = self.asset.data.body_lin_vel_w[:, self.articulation_body_ids, :2]
+        return - (in_contact * feet_vel.norm(dim=-1).square()).sum(dim=1, keepdim=True)
+
+
+class feet_air_time(Reward):
+    def __init__(self, env: "LocomotionEnv", body_names: str, thres: float, weight: float, enabled: bool=True):
+        super().__init__(env, weight, enabled)
+        self.thres = thres
+        self.asset: Articulation = self.env.scene["robot"]
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+
+        self.articulation_body_ids = self.asset.find_bodies(body_names)[0]
+        self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names)
+        self.body_ids = torch.tensor(self.body_ids, device=self.env.device)
+        self.reward = torch.zeros(self.num_envs, 1, device=self.env.device)
+
+    def compute(self):
+        first_contact = self.contact_sensor.compute_first_contact(self.env.step_dt)[:, self.body_ids]
+        last_air_time = self.contact_sensor.data.last_air_time[:, self.body_ids]
+        self.reward = torch.sum((last_air_time - self.thres) * first_contact, dim=1, keepdim=True)
+        self.reward *= (~self.env.command_manager.is_standing_env)
+        return self.reward
+
+
+class feet_contact_count(Reward):
+    def __init__(self, env: "LocomotionEnv", body_names: str, weight: float, enabled: bool=True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+
+        self.articulation_body_ids = self.asset.find_bodies(body_names)[0]
+        self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names)
+        self.body_ids = torch.tensor(self.body_ids, device=self.env.device)
+        self.first_contact = torch.zeros(self.num_envs, len(self.body_ids), device=self.env.device)
+
+    def compute(self):
+        self.first_contact[:] = self.contact_sensor.compute_first_contact(self.env.step_dt)[:, self.body_ids]
+        return self.first_contact.sum(1, keepdim=True)
+
+
+
 def normalize(x: torch.Tensor):
     return x / x.norm(dim=-1, keepdim=True).clamp_min(1e-6)

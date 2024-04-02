@@ -138,7 +138,8 @@ class Command2(Command):
         env, 
         linvel_x_range=(-1.0, 1.0),
         linvel_y_range=(-1.0, 1.0),
-        angvel_range=(-1, 1), 
+        angvel_range=(-1, 1),
+        yaw_stiffness_range=(0.5, 0.6),
         base_height_range=(0.2, 0.4), 
         resample_interval: int = 300, 
         resample_prob: float = 0.75, 
@@ -149,6 +150,7 @@ class Command2(Command):
         self.linvel_x_range = linvel_x_range
         self.linvel_y_range = linvel_y_range
         self.angvel_range = angvel_range
+        self.yaw_stiffness_range = yaw_stiffness_range
         self.base_height_range = base_height_range
         self.resample_interval = resample_interval
         self.resample_prob = resample_prob
@@ -159,6 +161,7 @@ class Command2(Command):
             self._command_linvel = torch.zeros(self.num_envs, 3)
             self._target_yaw = torch.zeros(self.num_envs)
             self._target_heading = torch.zeros(self.num_envs, 3)
+            self._yaw_stiffness = torch.zeros(self.num_envs)
             self._command_heading = self._target_heading
 
             self._target_base_height = torch.zeros(self.num_envs, 1)
@@ -178,7 +181,7 @@ class Command2(Command):
 
         yaw_diff = self._target_yaw - self.robot.data.heading_w
         self.target_angvel = torch.clamp(
-            0.5 * math_utils.wrap_to_pi(yaw_diff), 
+            self._yaw_stiffness * math_utils.wrap_to_pi(yaw_diff), 
             min=self.angvel_range[0],
             max=self.angvel_range[1]
         )
@@ -201,6 +204,7 @@ class Command2(Command):
         self._target_yaw[env_ids] = yaw
         self._target_heading[env_ids, 0] = yaw.cos()
         self._target_heading[env_ids, 1] = yaw.sin()
+        self._yaw_stiffness[env_ids] = sample_uniform(env_ids.shape, *self.yaw_stiffness_range, self.device)
         
         target_base_height = sample_uniform(env_ids.shape, *self.base_height_range, self.device)
         self._target_base_height[env_ids] = target_base_height.unsqueeze(1)

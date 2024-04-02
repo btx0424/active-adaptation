@@ -7,7 +7,7 @@ defaults:
   - _self_
 
 robot: go2
-terrain: plane
+terrain: easy
 payload: false
 
 # command:
@@ -19,9 +19,10 @@ payload: false
 
 command:
   _target_: active_adaptation.envs.mdp.Command2
-  linvel_x_range: [-1.0, 1.0]
-  linvel_y_range: [-0.4, 0.4]
+  linvel_x_range: [-1.0, 1.2]
+  linvel_y_range: [-0.5, 0.5]
   angvel_range: [-1.0, 1.0]
+  yaw_stiffness_range: [0.5, 0.6]
   base_height_range: [0.25, 0.35]
   stand_prob: 0.1
 
@@ -39,20 +40,21 @@ observation:
   priv:
     root_linvel_b:
     feet_pos_b:
+    feet_height_map: {feet_names: .*foot }
     # feet_vel_b:
     applied_torques: {actuator_name: base_legs}
-    contact_indicator: {body_names: ".*_foot"}
+    # contact_indicator: {body_names: ".*_foot"}
 
 reward:
-  linvel_exp:         {weight: 1.0, enabled: true}
-  angvel_z_exp:       {weight: 0.5, enabled: true}
-  # linvel_rational:    {weight: 1.5, enabled: true}
+  linvel_exp:         {weight: 1.0, enabled: true, dim: 3}
+  linvel_rational:    {weight: 0.5, enabled: true, dim: 3}
+  angvel_z_exp:       {weight: 0.75, enabled: true}
   # linvel_projection:  {weight: 0.5, enabled: false}
   # linvel_and_height:  {weight: 2.0}
   # linacc_z_l2:        {weight: 0.002}
   angvel_xy_l2:       {weight: 0.05, enabled: true}
   linvel_z_l2:        {weight: 2.0, enabled: true}
-  base_height_l1:     {weight: 1.0, enabled: false, target_height: 0.3}
+  base_height_l1:     {weight: 1.0, enabled: true, target_height: 0.3}
   # energy_l1:          {weight: 0.0002, enabled: true}
   joint_acc_l2:       {weight: 2.5e-7, enabled: true}
   joint_torques_l2:   {weight: 2.0e-4, enabled: true}
@@ -62,10 +64,10 @@ reward:
   action_rate_l2:     {weight: 0.01, enabled: true}
   # action_rate2_l2:    {weight: 0.01}
   # impact_force: {body_names: .*_foot, weight: 1.0}
-  feet_air_time:      {weight: 1.0, enabled: true, thres: 0.5}
-  feet_slip:          {weight: 1.0, enabled: false}
-  feet_contact_count: {weight: 1.0, enabled: false}
-  undesired_contact:  {body_names: Head.*, weight: 50.}
+  feet_air_time:      {weight: 0.5, enabled: false, body_names: .*_foot, thres: 0.5}
+  feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
+  feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
+  undesired_contact:  {body_names: [Head.*, .*_calf], weight: 10.}
 
 termination:
   crash: {body_names_expr: ["base", ".*_hip", ".*_thigh"]}

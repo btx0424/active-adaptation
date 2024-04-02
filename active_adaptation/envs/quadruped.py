@@ -16,12 +16,6 @@ from . import mdp
 class Quadruped(LocomotionEnv):
 
     feet_name_expr = ".*_foot"
-
-    def __init__(self, cfg):
-        super().__init__(cfg)
-        self.action_scaling = 0.5
-                
-        self.packet_loss = 0.0
     
     @property
     def action_dim(self):

@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from omni.isaac.orbit.assets import Articulation
 from omni.isaac.orbit.actuators import DCMotor, ImplicitActuator
+from omni.isaac.orbit.sensors import RayCaster
 from typing import Union
 import logging
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
@@ -312,6 +313,28 @@ class push(Randomization):
             self.forces / self.default_mass_total,
             color=(1., 0.8, 1., 1.)
         )
+
+
+class stumble(Randomization):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_ids, self.body_names = self.asset.find_bodies(".*_foot")
+        self.num_feet = len(self.body_ids)
+        self.feet_height: RayCaster = self.env.scene["feet_height"]
+    
+    def step(self, substep):
+        feet_height = self.asset.data.feet_height_map.mean(-1).reshape(-1)
+        feet_lin_vel_w = self.asset.data.body_lin_vel_w[:, self.body_ids].reshape(-1, 3)
+        feet_quat_w = self.asset.data.body_quat_w[:, self.body_ids].reshape(-1, 4)
+        stumble = (feet_height < 0.08) & (torch.rand_like(feet_height) < 0.5)
+        forces = torch.where(
+            stumble.unsqueeze(1),
+            quat_rotate_inverse(feet_quat_w, - 0.9 * feet_lin_vel_w * self.env.physics_dt),
+            torch.zeros(self.num_envs * self.num_feet, 3, device=self.env.device)
+        )
+        torques = torch.zeros_like(forces)
+        self.asset.set_external_force_and_torque(forces, torques, body_ids=self.body_ids)
 
 
 def random_scale(x: torch.Tensor, low: float, high: float, homogeneous: bool=False):

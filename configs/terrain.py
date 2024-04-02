@@ -6,8 +6,10 @@ from omni.isaac.orbit.terrains import (
     TerrainGeneratorCfg,
     MeshPlaneTerrainCfg,
     HfPyramidStairsTerrainCfg,
+    HfInvertedPyramidStairsTerrainCfg,
     MeshInvertedPyramidStairsTerrainCfg,
-    MeshPyramidStairsTerrainCfg
+    MeshPyramidStairsTerrainCfg,
+    MeshRandomGridTerrainCfg
 )
 from omni.isaac.orbit.terrains.config.rough import ROUGH_TERRAINS_CFG as ROUGH_HARD
 from dataclasses import MISSING
@@ -38,39 +40,38 @@ ROUGH_LEGACY = TerrainGeneratorCfg(
 ROUGH_EASY = TerrainGeneratorCfg(
     seed=0,
     size=(8.0, 8.0),
-    border_width=20.0,
+    border_width=30.0,
     num_rows=10,
-    num_cols=20,
+    num_cols=10,
     horizontal_scale=0.1,
     vertical_scale=0.005,
     slope_threshold=0.75,
     use_cache=False,
     sub_terrains={
-        "random_rough_hard": HfRandomUniformTerrainCfg(
-            proportion=0.35, noise_range=(0.02, 0.10), noise_step=0.02, border_width=0.5
+        "flat": MeshPlaneTerrainCfg(
+            proportion=0.4,
         ),
-        "random_rough_easy": HfRandomUniformTerrainCfg(
-            proportion=0.35, noise_range=(0.01, 0.05), noise_step=0.01, border_width=0.5
+        "boxes": MeshRandomGridTerrainCfg(
+            proportion=0.2, 
+            grid_width=0.45, 
+            grid_height_range=(0.02, 0.05), 
+            platform_width=2.0
         ),
-        "random_rough": HfRandomUniformTerrainCfg(
-            proportion=0.1, 
-            noise_range=(0.01, 0.1), 
-            noise_step=0.02, 
-            border_width=0.5,
-            downsampled_scale=0.3,
-            slope_threshold=None,
+        "pyramid_stairs": MeshPyramidStairsTerrainCfg(
+            proportion=0.2,
+            step_height_range=(0.05, 0.10),
+            step_width=0.35,
+            platform_width=3.5,
+            border_width=1.0,
+            holes=False,
         ),
-        "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
-            proportion=0.1, 
-            slope_range=(0.0, 0.3), 
-            platform_width=1.0, 
-            border_width=0.25
-        ),
-        "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
-            proportion=0.1, 
-            slope_range=(0.0, 0.3), 
-            platform_width=1.0, 
-            border_width=0.25
+        "pyramid_stairs_inv": MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.2,
+            step_height_range=(0.05, 0.10),
+            step_width=0.35,
+            platform_width=3.5,
+            border_width=1.0,
+            holes=False,
         ),
     },
 )
@@ -99,26 +100,34 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
             noise_step=0.02,
             border_width=0.5
         ),
-        "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
-            proportion=0.1,
-            slope_range=(0.0, 0.25),
-            platform_width=1.0,
-            border_width=0.25
-        ),
-        "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
-            proportion=0.1,
-            slope_range=(0.0, 0.25),
-            platform_width=1.0,
-            border_width=0.25
-        ),
+        # "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
+        #     proportion=0.1,
+        #     slope_range=(0.0, 0.25),
+        #     platform_width=1.0,
+        #     border_width=0.25
+        # ),
+        # "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
+        #     proportion=0.1,
+        #     slope_range=(0.0, 0.25),
+        #     platform_width=1.0,
+        #     border_width=0.25
+        # ),
         "pyramid_stairs": MeshPyramidStairsTerrainCfg(
             proportion=0.2,
-            step_height_range=(0.05, 0.2),
-            step_width=0.3,
+            step_height_range=(0.05, 0.15),
+            step_width=0.35,
             platform_width=3.0,
             border_width=1.0,
             holes=False,
         ),
+        # "pyramid_stairs_inv": MeshInvertedPyramidStairsTerrainCfg(
+        #     proportion=0.2,
+        #     step_height_range=(0.05, 0.15),
+        #     step_width=0.35,
+        #     platform_width=3.0,
+        #     border_width=1.0,
+        #     holes=False,
+        # ),
     },
 )
 

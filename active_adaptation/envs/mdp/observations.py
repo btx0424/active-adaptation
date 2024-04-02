@@ -2,7 +2,7 @@ import torch
 import abc
 
 from omni.isaac.orbit.assets import Articulation
-from omni.isaac.orbit.sensors import ContactSensor
+from omni.isaac.orbit.sensors import ContactSensor, RayCaster
 
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
@@ -322,6 +322,57 @@ class body_materials(Observation):
 
     def __call__(self):
         return self.asset.data.body_materials[:, self.body_ids, :2].reshape(self.num_envs, -1)
+
+
+class feet_height_map(Observation):
+    def __init__(self, env, feet_names=".*_foot"):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_ids, self.body_names = self.asset.find_bodies(feet_names)
+        self.num_feet = len(self.body_ids)
+        self.feet_height: RayCaster = self.env.scene["feet_height"]
+        self.feet_height_map = self.asset.data.feet_height_map = torch.zeros(
+            self.num_envs, self.num_feet, self.feet_height.num_rays, device=self.device
+        )
+        self.update()
+    
+    def update(self):
+        self.feet_pos_w = self.asset.data.body_pos_w[:, self.body_ids]
+        self.ray_hits_w = self.feet_height.data.ray_hits_w.reshape(self.num_envs, self.num_feet, -1, 3)
+        self.feet_height_map[:] = self.feet_pos_w.unsqueeze(-2)[..., 2] - self.ray_hits_w[..., 2]
+
+    def __call__(self):
+        return self.feet_height_map.reshape(self.num_envs, -1)
+    
+    # def debug_draw(self):
+    #     self.env.debug_draw.vector(
+    #         self.feet_pos_w.unsqueeze(-2).expand_as(self.ray_hits_w),
+    #         self.ray_hits_w - self.feet_pos_w.unsqueeze(-2),
+    #     )
+
+
+class height_scan(Observation):
+    def __init__(self, env, prim_path):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.height_scan: RayCaster = self.env.scene["height_scanner"]
+        self.update()
+
+    def update(self):
+        self.root_pos_w = self.asset.data.root_pos_w
+        self.ray_hits_w = self.height_scan.data.ray_hits_w.reshape(self.num_envs, -1, 3)
+
+    def __call__(self):
+        height_scan_z = self.root_pos_w.unsqueeze(-2)[..., 2] - self.ray_hits_w[..., 2]
+        return height_scan_z.reshape(-1, 1, 11, 17).clamp(-2., 2.)
+
+    # def debug_draw(self):
+    #     to = self.height_scan.data.ray_hits_w.reshape(-1, 11, 17, 3)[:, :, 0].reshape(-1, 11, 3)
+    #     start = self.root_pos_w.unsqueeze(-2).expand_as(to)
+    #     self.env.debug_draw.vector(
+    #         start,
+    #         to - start,
+    #     )
 
 
 # class incoming_wrench(Observation):
