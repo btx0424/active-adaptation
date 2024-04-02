@@ -73,17 +73,6 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
     #     history_length=1
     # )
 
-    feet_height = RayCasterCfg(
-        class_type=RayCaster,
-        prim_path="{ENV_REGEX_NS}/Robot/.*_foot",
-        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
-        attach_yaw_only=True,
-        pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[0.2, 0.2]),
-        debug_vis=True,
-        mesh_prim_paths=["/World/ground"],
-        history_length=1
-    )
-
 
 @configclass
 class EnvCfg:
@@ -156,13 +145,13 @@ def LocomotionEnvCfg(task_cfg):
     #     env_cfg.scene.height_scanner.prim_path = prim_path
     
     # slightly reduces GPU memory usage
-    # env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21
-    # env_cfg.sim.physx.gpu_max_rigid_patch_count = 2**21
-    # env_cfg.sim.physx.gpu_found_lost_pairs_capacity = 2**21
-    # env_cfg.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**25
-    # env_cfg.sim.physx.gpu_total_aggregate_pairs_capacity = 2**21
-    # env_cfg.sim.physx.gpu_collision_stack_size = 2**25
-    # env_cfg.sim.physx.gpu_heap_capacity = 2**24
+    env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21
+    env_cfg.sim.physx.gpu_max_rigid_patch_count = 2**21
+    env_cfg.sim.physx.gpu_found_lost_pairs_capacity = 2**20
+    env_cfg.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**22
+    env_cfg.sim.physx.gpu_total_aggregate_pairs_capacity = 2**19
+    env_cfg.sim.physx.gpu_collision_stack_size = 2**25
+    env_cfg.sim.physx.gpu_heap_capacity = 2**24
     
     return env_cfg
 

@@ -18,7 +18,7 @@ command:
 observation:
   policy:
     command:
-    root_quat_w:
+    # root_quat_w:
     root_angvel_b:
     projected_gravity_b:
     joint_pos: {noise_std: 0.05}
@@ -38,28 +38,28 @@ observation:
   #   height_scan: {prim_path: base}
 
 reward:
-  linvel_exp: {weight: 2.0}
-  # linvel_rational: {weight: 2.0}
+  linvel_exp:         {weight: 2.0, enabled: true, dim: 3}
+  # linvel_rational:  {weight: 2.0}
   heading_projection: {weight: 0.5}
   # linvel_projection: {weight: 1.2}
   # angvel_z_exp: {weight: 0.75}
-  linacc_z_l2: {weight: 0.002}
+  linacc_z_l2:        {weight: 0.002}
   # angvel_xy_l2: {weight: 0.02}
-  base_height_l1: {target_height: 0.3, weight: 2.}
+  base_height_l1:     {weight: 1., target_height: 0.3}
   # linvel_z_l2: {weight: 1.0}
-  energy_l1: {weight: 5e-4, enabled: true}
-  joint_acc_l2: {weight: 2.5e-7}
-  joint_torques_l2: {weight: 2e-4, enabled: false}
-  stand: {weight: 0.5}
-  orientation: {weight: 0.25}
+  energy_l1:          {weight: 5.0e-4, enabled: true}
+  joint_acc_l2:       {weight: 2.5e-7, enabled: false}
+  joint_torques_l2:   {weight: 2.0e-4, enabled: false}
+  stand:              {weight: 0.5}
+  orientation:        {weight: 0.25}
   # survival: {weight: 0.25}
-  action_rate_l2: {weight: 0.01}
-  action_rate2_l2: {weight: 0.01}
-  undesired_contact: {body_names: Head.*, weight: 50.}
+  action_rate_l2:     {weight: 0.01}
+  action_rate2_l2:    {weight: 0.01}
+  undesired_contact:  {body_names: Head.*, weight: 50.}
   # impact_force_l2: {body_names: .*_foot, weight: 1.0, enabled: false}
-  # feet_air_time: {thres: 0.3, weight: 1.0}
-  # feet_slip: {weight: 0.02}
-  feet_contact_count: {weight: 1.0, enabled: false}
+  feet_air_time:      {weight: 0.5, enabled: false, body_names: .*_foot, thres: 0.5}
+  feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
+  feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
 
 termination:
   crash: {body_names_expr: ["base", ".*_hip", ".*_thigh"]}

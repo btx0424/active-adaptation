@@ -20,7 +20,7 @@ import omni.isaac.orbit.sim as sim_utils
 ROUGH_LEGACY = TerrainGeneratorCfg(
     seed=0,
     size=(8.0, 8.0),
-    border_width=20.0,
+    border_width=30.0,
     num_rows=20,
     num_cols=20,
     horizontal_scale=0.1,
@@ -29,10 +29,16 @@ ROUGH_LEGACY = TerrainGeneratorCfg(
     use_cache=False,
     sub_terrains={
         "random_rough_hard": HfRandomUniformTerrainCfg(
-            proportion=0.5, noise_range=(0.0, 0.06), noise_step=0.03, border_width=0.4
+            proportion=0.4, noise_range=(0.0, 0.08), noise_step=0.02, border_width=0.4
         ),
         "random_rough_easy": HfRandomUniformTerrainCfg(
-            proportion=0.5, noise_range=(0.0, 0.05), noise_step=0.01, border_width=0.4
+            proportion=0.4, noise_range=(0.0, 0.05), noise_step=0.01, border_width=0.4
+        ),
+        "boxes": MeshRandomGridTerrainCfg(
+            proportion=0.2, 
+            grid_width=0.45, 
+            grid_height_range=(0.02, 0.06), 
+            platform_width=2.0
         ),
     },
 )

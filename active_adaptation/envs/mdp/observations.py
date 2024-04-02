@@ -1,11 +1,17 @@
 import torch
+import numpy as np
 import abc
+import einops
 
 from omni.isaac.orbit.assets import Articulation
-from omni.isaac.orbit.sensors import ContactSensor, RayCaster
-
+from omni.isaac.orbit.sensors import ContactSensor, RayCaster, patterns, RayCasterData
+import omni.isaac.orbit.sim as sim_utils
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
+from omni.isaac.orbit.terrains.trimesh.utils import make_plane
+from omni.isaac.orbit.utils.math import convert_quat, quat_apply, quat_apply_yaw
+from omni.isaac.orbit.utils.warp import convert_to_warp_mesh, raycast_mesh
+from pxr import UsdGeom, UsdPhysics
 
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
@@ -325,30 +331,57 @@ class body_materials(Observation):
 
 
 class feet_height_map(Observation):
-    def __init__(self, env, feet_names=".*_foot"):
+    def __init__(self, env, feet_names=".*_foot", nomial_height=0.3):
         super().__init__(env)
+        self.nominal_height = nomial_height
         self.asset: Articulation = self.env.scene["robot"]
         self.body_ids, self.body_names = self.asset.find_bodies(feet_names)
         self.num_feet = len(self.body_ids)
-        self.feet_height: RayCaster = self.env.scene["feet_height"]
-        self.feet_height_map = self.asset.data.feet_height_map = torch.zeros(
-            self.num_envs, self.num_feet, self.feet_height.num_rays, device=self.device
-        )
-        self.update()
+        
+        self._init_raycaster()
+    
+    def _init_raycaster(self):
+        _initialize_warp_meshes("/World/ground", "cuda")
+
+        pattern_cfg = patterns.GridPatternCfg(resolution=0.1, size=[0.2, 0.2])
+        self.ray_starts, self.ray_directions = pattern_cfg.func(pattern_cfg, self.device)
+        self.ray_starts[:, 2] += 1.
+        self.num_rays = len(self.ray_directions)
+
+        shape = (self.num_envs, self.num_feet, self.num_rays)
+
+        # fill the data buffer
+        # self._data.pos_w = torch.zeros(*shape, 3, device=self.device)
+        # self._data.quat_w = torch.zeros(*shape, 4, device=self.device)
+        self.ray_hits_w = torch.zeros(*shape, 3, device=self.device)
+        self.feet_height_map = torch.zeros(shape, device=self.device)
     
     def update(self):
         self.feet_pos_w = self.asset.data.body_pos_w[:, self.body_ids]
-        self.ray_hits_w = self.feet_height.data.ray_hits_w.reshape(self.num_envs, self.num_feet, -1, 3)
+        self.feet_quat_w = self.asset.data.body_quat_w[:, self.body_ids]
+        shape = (self.num_envs, self.num_feet, self.num_rays, -1)
+        ray_starts_w = quat_apply_yaw(
+            self.feet_quat_w.unsqueeze(-2).expand(shape),
+            self.ray_starts.reshape(1, 1, -1, 3).expand(shape),
+        )
+        ray_starts_w += self.feet_pos_w.unsqueeze(-2)
+        self.ray_hits_w[:] = raycast_mesh(
+            ray_starts_w,
+            self.ray_directions.expand_as(ray_starts_w).clone(),
+            max_dist=10.,
+            mesh=RayCaster.meshes["/World/ground"],
+        )[0]
+
         self.feet_height_map[:] = self.feet_pos_w.unsqueeze(-2)[..., 2] - self.ray_hits_w[..., 2]
 
     def __call__(self):
-        return self.feet_height_map.reshape(self.num_envs, -1)
+        return self.feet_height_map.reshape(self.num_envs, -1) / self.nominal_height
     
     # def debug_draw(self):
-    #     self.env.debug_draw.vector(
-    #         self.feet_pos_w.unsqueeze(-2).expand_as(self.ray_hits_w),
-    #         self.ray_hits_w - self.feet_pos_w.unsqueeze(-2),
-    #     )
+    #     x = self.ray_hits_w.clone()
+    #     x[..., 2] = self.feet_pos_w.unsqueeze(-2)[..., 2]
+    #     d = self.ray_hits_w - x
+    #     self.env.debug_draw.vector(x, d)
 
 
 class height_scan(Observation):
@@ -398,3 +431,34 @@ def symlog(x: torch.Tensor, a: float=1.):
 
 def random_noise(x: torch.Tensor, std: float):
     return x + torch.randn_like(x).clamp(-3., 3.) * std
+
+
+def _initialize_warp_meshes(mesh_prim_path, device):
+    if mesh_prim_path in RayCaster.meshes:
+        return
+
+    # check if the prim is a plane - handle PhysX plane as a special case
+    # if a plane exists then we need to create an infinite mesh that is a plane
+    mesh_prim = sim_utils.get_first_matching_child_prim(
+        mesh_prim_path, lambda prim: prim.GetTypeName() == "Plane"
+    )
+    # if we did not find a plane then we need to read the mesh
+    if mesh_prim is None:
+        # obtain the mesh prim
+        mesh_prim = sim_utils.get_first_matching_child_prim(
+            mesh_prim_path, lambda prim: prim.GetTypeName() == "Mesh"
+        )
+        # check if valid
+        if mesh_prim is None or not mesh_prim.IsValid():
+            raise RuntimeError(f"Invalid mesh prim path: {mesh_prim_path}")
+        # cast into UsdGeomMesh
+        mesh_prim = UsdGeom.Mesh(mesh_prim)
+        # read the vertices and faces
+        points = np.asarray(mesh_prim.GetPointsAttr().Get())
+        indices = np.asarray(mesh_prim.GetFaceVertexIndicesAttr().Get())
+        wp_mesh = convert_to_warp_mesh(points, indices, device=device)
+    else:
+        mesh = make_plane(size=(2e6, 2e6), height=0.0, center_zero=True)
+        wp_mesh = convert_to_warp_mesh(mesh.vertices, mesh.faces, device=device)
+    # add the warp mesh to the list
+    RayCaster.meshes[mesh_prim_path] = wp_mesh
