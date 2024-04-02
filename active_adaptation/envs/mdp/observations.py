@@ -112,6 +112,25 @@ class body_pos(Observation):
         return self.body_pos_b.reshape(self.env.num_envs, -1)
 
 
+class body_vel(Observation):
+    def __init__(self, env, body_names):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_indices, self.body_names = self.asset.find_bodies(body_names)
+        print(f"Track body vel for {self.body_names}")
+        self.body_vel_b = torch.zeros(self.env.num_envs, len(self.body_indices), 3, device=self.env.device)
+
+    def update(self):
+        body_vel_w = self.asset.data.body_lin_vel_w[:, self.body_indices]
+        self.body_vel_b[:] = quat_rotate_inverse(
+            self.asset.data.root_quat_w.unsqueeze(1),
+            body_vel_w
+        )
+        
+    def __call__(self):
+        return self.body_vel_b.reshape(self.env.num_envs, -1)
+
+
 def observation_func(func):
 
     class ObsFunc(Observation):

@@ -81,6 +81,7 @@ class LocomotionEnv(Env):
         init_root_state = self.init_root_state[env_ids]
         origins = self.scene.env_origins[torch.randint(0, self.scene.num_envs, (len(env_ids),), device=self.device)]
         init_root_state[:, :3] += origins
+        init_root_state[:, 3:7] = sample_quat(len(env_ids), device=self.device)
         
         self.robot.write_root_state_to_sim(
             init_root_state, 
@@ -107,20 +108,22 @@ class LocomotionEnv(Env):
             self.robot.data.root_pos_w.cpu()
             + torch.tensor([0., 0., 0.2])
         )
-        command_linvel_w = quat_rotate(
-            self.robot.data.root_quat_w,
-            self.command_manager._command_linvel
-        )
+        if hasattr(self.command_manager, "_command_linvel"):
+            command_linvel_w = quat_rotate(
+                self.robot.data.root_quat_w,
+                self.command_manager._command_linvel
+            )
         self.debug_draw.vector(
             robot_pos, 
             command_linvel_w,
             color=(1., 1., 1., 1.)
         )
-        self.debug_draw.vector(
-            robot_pos,
-            self.command_manager._command_heading,
-            color=(.2, .2, 1., 1.)
-        )
+        if hasattr(self.command_manager, "_command_heading"):
+            self.debug_draw.vector(
+                robot_pos,
+                self.command_manager._command_heading,
+                color=(.2, .2, 1., 1.)
+            )
         self.debug_draw.vector(
             robot_pos, 
             self.robot.data.root_lin_vel_w,
@@ -198,7 +201,10 @@ class LocomotionEnv(Env):
 
     @mdp.reward_func
     def angvel_z_exp(self):
-        angvel_error = (self.command_manager.command[:, [2]] - self.scene["robot"].data.root_ang_vel_b[:, [2]]).square()
+        angvel_error = (
+            self.command_manager.command[:, [2]] 
+            - self.scene["robot"].data.root_ang_vel_b[:, [2]]
+        ).square()
         return torch.exp( - angvel_error / 0.25)
     
     # @mdp.reward_func
@@ -239,6 +245,11 @@ class LocomotionEnv(Env):
             super().__init__(env, env.feet_name_expr)
             self.asset.data.feet_pos_b = self.body_pos_b
     
+    class feet_vel_b(mdp.body_vel):
+        def __init__(self, env: "LocomotionEnv"):
+            super().__init__(env, env.feet_name_expr)
+            self.asset.data.feet_vel_b = self.body_vel_b
+    
     class base_height_l2(mdp.Reward):
         def __init__(self, env, target_height: float, weight: float, enabled: bool = True):
             super().__init__(env, weight, enabled)
@@ -275,9 +286,9 @@ class LocomotionEnv(Env):
             self.feet_ids, _ = self.asset.find_bodies(self.env.feet_name_expr)
         
         def compute(self) -> torch.Tensor:
-            in_contact = self.contact_sensor.compute_first_contact(self.env.step_dt)[:, self.feet_ids]
-            feet_vel = self.asset.data.body_lin_vel_w[:, self.feet_ids]
-            return - (in_contact * feet_vel.norm(dim=-1)).sum(dim=1, keepdim=True)
+            in_contact = self.contact_sensor.data.current_contact_time[:, self.feet_ids] > 0.02
+            feet_vel = self.asset.data.body_lin_vel_w[:, self.feet_ids, :2]
+            return - (in_contact * feet_vel.norm(dim=-1).square()).sum(dim=1, keepdim=True)
 
     class feet_air_time(mdp.Reward):
         def __init__(self, env: "LocomotionEnv", thres: float, weight: float, enabled: bool=True):
@@ -290,7 +301,7 @@ class LocomotionEnv(Env):
         def compute(self):
             first_contact = self.contact_sensor.compute_first_contact(self.env.step_dt)[:, self.feet_ids]
             last_air_time = self.contact_sensor.data.last_air_time[:, self.feet_ids]
-            reward = torch.sum((last_air_time - self.thres).clamp(max=0.75) * first_contact, dim=1, keepdim=True)
+            reward = torch.sum((last_air_time - self.thres) * first_contact, dim=1, keepdim=True)
             reward *= (~self.env.command_manager.is_standing_env)
             return reward
     
@@ -352,3 +363,13 @@ def flip_lr(joints: torch.Tensor):
 def flip_fb(joints: torch.Tensor):
     return joints.reshape(-1, 3, 2, 2).flip(-2).reshape(-1, 12)
 
+def sample_quat(size, device: torch.device = "cpu"):
+    yaw = torch.rand(size, device=device) * 2 * torch.pi
+    # in (w x y z)
+    quat = torch.cat([
+        torch.cos(yaw / 2).unsqueeze(-1),
+        torch.zeros_like(yaw).unsqueeze(-1),
+        torch.zeros_like(yaw).unsqueeze(-1),
+        torch.sin(yaw / 2).unsqueeze(-1),
+    ], dim=-1)
+    return quat

@@ -10,6 +10,17 @@ class Reward:
         self.weight = weight
         self.enabled = enabled
     
+    @property
+    def num_envs(self):
+        return self.env.num_envs
+    
+    @property
+    def device(self):
+        return self.env.device
+    
+    def step(self, substep: int):
+        pass
+
     def update(self):
         pass
 
@@ -181,6 +192,28 @@ class linvel_exp(Reward):
         return torch.exp(- linvel_error / self.sigma)
 
 
+class linvel_and_height(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+    
+    def compute(self) -> torch.Tensor:
+        command = self.env.command_manager.command
+        linvel = self.asset.data.root_lin_vel_b
+        linvel_error = (
+            (linvel - self.env.command_manager._command_linvel)
+            .square()
+            .sum(-1, True)
+        )
+        print(command)
+        height_error = (
+            (self.asset.data.root_pos_w[:, 2] - command[:, 3])
+            .square()
+            .unsqueeze(1)
+        )
+        return torch.exp(- linvel_error / 0.25) * torch.exp(- height_error / 0.25)
+
+
 class heading_projection(Reward):
     def __init__(self, env, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
@@ -208,6 +241,33 @@ class linacc_z_l2(Reward):
 
     def compute(self) -> torch.Tensor:
         return - self.linacc_z.square().unsqueeze(1)
+
+
+class test_joint_acc(Reward):
+    def __init__(self, env, weight: float, enabled: bool = False):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+
+        with torch.device(self.device):
+            self.joint_acc = torch.zeros(self.num_envs, self.asset.num_joints)
+
+    def reset(self, env_ids):
+        self.joint_acc[env_ids] = 0.
+    
+    def step(self, substep: int):
+        self.joint_acc.lerp_(self.asset.data.joint_acc, 0.9)
+    
+    def compute(self) -> torch.Tensor:
+        return (self.joint_acc - self.asset.data.joint_acc).square().sum(-1, True)
+
+
+class tracking_error_exp(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+    
+    def compute(self) -> torch.Tensor:
+        return torch.exp(- self.asset.data._tracking_error / 0.5)
 
 
 def normalize(x: torch.Tensor):

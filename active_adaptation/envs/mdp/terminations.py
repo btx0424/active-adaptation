@@ -40,3 +40,14 @@ class crash(Termination):
         undesired_contact = (contact_forces.norm(dim=-1) > 1.).any(dim=1)
         terminated = (fall_over | undesired_contact).unsqueeze(1)
         return terminated
+
+
+class tracking_error(Termination):
+    def __init__(self, env, tracking_error_threshold):
+        super().__init__(env)
+        self.tracking_error_threshold = tracking_error_threshold
+        self.asset: Articulation = self.env.scene["robot"]
+    
+    def __call__(self) -> torch.Tensor:
+        return self.asset.data._tracking_error > self.tracking_error_threshold
+

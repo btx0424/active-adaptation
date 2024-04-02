@@ -10,7 +10,7 @@ total_frames: 150_000_000
 max_iters: -1
 eval_interval: -1
 eval_render: false
-save_interval: 300
+save_interval: 150
 seed: 0
 
 camera_follow: true
