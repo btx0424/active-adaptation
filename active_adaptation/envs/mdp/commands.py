@@ -187,6 +187,7 @@ class Command2(Command):
         )
         self.command[:, :2] = self._command_linvel[:, :2]
         self.command[:, 2] = self.target_angvel
+        # self.command[:, :2] = torch.tensor([1.5, 0.], device=self.device)
     
     def sample_vel_command(self, env_ids: torch.Tensor):
         linvel = torch.zeros(len(env_ids), 2, device=self.device)

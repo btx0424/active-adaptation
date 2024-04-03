@@ -49,23 +49,23 @@ observation:
 reward:
   linvel_exp:         {weight: 1.0, enabled: true, dim: 3}
   linvel_rational:    {weight: 0.5, enabled: true, dim: 3}
-  angvel_z_exp:       {weight: 0.75, enabled: true}
+  angvel_z_exp:       {weight: 0.5, enabled: true}
   linvel_projection:  {weight: 0.5, enabled: false}
   # linvel_and_height:  {weight: 2.0}
-  linacc_z_l2:        {weight: 0.002}
+  linacc_z_l2:        {weight: 0.005}
   angvel_xy_l2:       {weight: 0.05, enabled: true}
   linvel_z_l2:        {weight: 2.0, enabled: true}
   base_height_l1:     {weight: 1.0, enabled: true, target_height: 0.3}
-  # energy_l1:          {weight: 0.0002, enabled: true}
-  joint_acc_l2:       {weight: 2.5e-7, enabled: true}
+  energy_l1:          {weight: 0.0002, enabled: true}
+  joint_acc_l2:       {weight: 2.5e-7, enabled: false}
   joint_torques_l2:   {weight: 2.0e-4, enabled: true}
-  # stand: {weight: 0.5}
+  stand:              {weight: 0.5}
   orientation:        {weight: 1.0, enabled: false}
   # survival:           {weight: 0.25, enabled: false}
   action_rate_l2:     {weight: 0.01, enabled: true}
   # action_rate2_l2:    {weight: 0.01}
   # impact_force: {body_names: .*_foot, weight: 1.0}
-  feet_air_time:      {weight: 0.5, enabled: false, body_names: .*_foot, thres: 0.5}
+  feet_air_time:      {weight: 0.5, enabled: true, body_names: .*_foot, thres: 0.5}
   feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
   undesired_contact:  {body_names: [Head.*, .*_calf], weight: 10.}

@@ -330,7 +330,7 @@ class stumble(Randomization):
         self.friction_coef = torch.zeros(self.num_envs, 1, 1, device=self.device)
     
     def reset(self, env_ids: torch.Tensor):
-        self.friction_coef[env_ids] = sample_uniform((len(env_ids), 1, 1), 0.1, 0.2, self.device)
+        self.friction_coef[env_ids] = sample_uniform((len(env_ids), 1, 1), 0.0, 0.2, self.device)
 
     def step(self, substep):
         # feet_height = self.asset.data.feet_height_map.mean(-1).reshape(-1)

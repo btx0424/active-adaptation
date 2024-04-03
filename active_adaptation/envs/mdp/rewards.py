@@ -190,7 +190,7 @@ class linvel_exp(Reward):
             .sum(-1, True)
         )
         self.asset.data.linvel_exp = torch.exp(- linvel_error / self.sigma)
-        return self.asset.data.linvel_exp
+        return self.asset.data.linvel_exp * -self.asset.data.projected_gravity_b[:, 2].unsqueeze(1)
 
 
 class angvel_z_exp(Reward):
@@ -303,11 +303,20 @@ class feet_slip(Reward):
 
 
 class feet_air_time(Reward):
-    def __init__(self, env: "LocomotionEnv", body_names: str, thres: float, weight: float, enabled: bool=True):
+    def __init__(
+        self, 
+        env: "LocomotionEnv", 
+        body_names: str, 
+        thres: float, 
+        weight: float, 
+        enabled: bool=True,
+        condition_on_linvel: bool=True,
+    ):
         super().__init__(env, weight, enabled)
         self.thres = thres
         self.asset: Articulation = self.env.scene["robot"]
         self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+        self.condition_on_linvel = condition_on_linvel
 
         self.articulation_body_ids = self.asset.find_bodies(body_names)[0]
         self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names)
@@ -319,6 +328,8 @@ class feet_air_time(Reward):
         last_air_time = self.contact_sensor.data.last_air_time[:, self.body_ids]
         self.reward = torch.sum((last_air_time - self.thres) * first_contact, dim=1, keepdim=True)
         self.reward *= (~self.env.command_manager.is_standing_env)
+        if self.condition_on_linvel:
+            self.reward *= self.asset.data.linvel_exp
         return self.reward
 
 
