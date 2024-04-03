@@ -186,14 +186,6 @@ class LocomotionEnv(Env):
         command_linvel_b = self.command_manager._command_linvel[:, :2]
         projection = (linvel_b * command_linvel_b).sum(dim=-1, keepdim=True) 
         return projection.clamp_max(self.command_manager._command_speed)
-
-    @mdp.reward_func
-    def angvel_z_exp(self):
-        angvel_error = (
-            self.command_manager.command[:, [2]] 
-            - self.scene["robot"].data.root_ang_vel_b[:, [2]]
-        ).square()
-        return torch.exp( - angvel_error / 0.25)
     
     # @mdp.reward_func
     # def heading(self):

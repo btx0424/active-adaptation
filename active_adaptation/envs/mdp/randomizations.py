@@ -6,7 +6,10 @@ from omni.isaac.orbit.sensors import RayCaster
 from typing import Union
 import logging
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
+from active_adaptation.utils.helpers import batchify
 from typing import Dict, Tuple
+
+quat_rotate_inverse = batchify(quat_rotate_inverse)
 
 class Randomization:
     def __init__(self, env):
@@ -279,11 +282,13 @@ class reset_joint_states_scale(Randomization):
 
 
 class push(Randomization):
-    def __init__(self, env, body_names, min_interval=100):
+    def __init__(self, env, body_names, force_range = (0.2, 0.9), min_interval=100):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.body_indices, self.body_names = self.asset.find_bodies(body_names)
+        self.num_bodies = len(self.body_indices)
         self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum() * 9.81
+        self.force_range = force_range
         self.min_interval = min_interval
         
         with torch.device(self.env.device):
@@ -302,9 +307,10 @@ class push(Randomization):
             i = i & ((t - self.last_push) > self.min_interval)
             self.last_push = torch.where(i, t, self.last_push)
 
-            push_forces = torch.rand_like(self.forces) * self.default_mass_total
-            push_forces[:, :, 2] = 0.
-            self.forces = torch.where(i, push_forces, self.forces * 0.8)
+            push_forces = torch.zeros_like(self.forces)
+            push_forces[:, :, 0].uniform_(*self.force_range)
+            push_forces[:, :, 1].uniform_(*self.force_range)
+            self.forces = torch.where(i, push_forces * self.default_mass_total, self.forces * 0.8)
         self.asset.set_external_force_and_torque(self.forces, self.torques, body_ids=self.body_indices)
 
     def debug_draw(self):
@@ -321,21 +327,32 @@ class stumble(Randomization):
         self.asset: Articulation = self.env.scene["robot"]
         self.body_ids, self.body_names = self.asset.find_bodies(".*_foot")
         self.num_feet = len(self.body_ids)
-        self.feet_height: RayCaster = self.env.scene["feet_height"]
+        self.friction_coef = torch.zeros(self.num_envs, 1, 1, device=self.device)
     
+    def reset(self, env_ids: torch.Tensor):
+        self.friction_coef[env_ids] = sample_uniform((len(env_ids), 1, 1), 0.1, 0.2, self.device)
+
     def step(self, substep):
-        feet_height = self.asset.data.feet_height_map.mean(-1).reshape(-1)
-        feet_lin_vel_w = self.asset.data.body_lin_vel_w[:, self.body_ids].reshape(-1, 3)
-        feet_quat_w = self.asset.data.body_quat_w[:, self.body_ids].reshape(-1, 4)
-        stumble = (feet_height < 0.08) & (torch.rand_like(feet_height) < 0.5)
+        # feet_height = self.asset.data.feet_height_map.mean(-1).reshape(-1)
+        feet_height = self.asset.data.body_pos_w[:, self.body_ids, 2]
+        feet_lin_vel_w = self.asset.data.body_lin_vel_w[:, self.body_ids]
+        feet_quat_w = self.asset.data.body_quat_w[:, self.body_ids]
+        stumble = (feet_height < 0.05) & (torch.rand_like(feet_height) < 0.5)
+        self.forces_w = - self.friction_coef * feet_lin_vel_w / self.env.physics_dt
+        self.forces_w[..., 2] = 0.
         forces = torch.where(
-            stumble.unsqueeze(1),
-            quat_rotate_inverse(feet_quat_w, - 0.9 * feet_lin_vel_w * self.env.physics_dt),
-            torch.zeros(self.num_envs * self.num_feet, 3, device=self.env.device)
+            stumble.unsqueeze(-1),
+            quat_rotate_inverse(feet_quat_w, self.forces_w),
+            torch.zeros(self.num_envs, self.num_feet, 3, device=self.env.device)
         )
         torques = torch.zeros_like(forces)
         self.asset.set_external_force_and_torque(forces, torques, body_ids=self.body_ids)
 
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.asset.data.body_pos_w[:, self.body_ids],
+            self.forces_w * self.env.physics_dt,
+        )
 
 def random_scale(x: torch.Tensor, low: float, high: float, homogeneous: bool=False):
     if homogeneous:

@@ -189,7 +189,23 @@ class linvel_exp(Reward):
             .square()
             .sum(-1, True)
         )
-        return torch.exp(- linvel_error / self.sigma)
+        self.asset.data.linvel_exp = torch.exp(- linvel_error / self.sigma)
+        return self.asset.data.linvel_exp
+
+
+class angvel_z_exp(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+    
+    def compute(self) -> torch.Tensor:
+        angvel_error = (
+            self.env.command_manager.command[:, 2] 
+            - self.asset.data.root_ang_vel_b[:, 2]
+        ).square().unsqueeze(1)
+        r = torch.exp(- angvel_error / 0.25)
+        r = (0.5 + 0.5 * self.asset.data.linvel_exp) * r
+        return r
 
 
 class linvel_and_height(Reward):

@@ -7,7 +7,7 @@ defaults:
   - _self_
 
 robot: go2
-terrain: easy
+terrain: plane
 payload: false
 
 # command:
@@ -19,7 +19,7 @@ payload: false
 
 command:
   _target_: active_adaptation.envs.mdp.Command2
-  linvel_x_range: [-1.0, 1.2]
+  linvel_x_range: [-1.0, 1.25]
   linvel_y_range: [-0.5, 0.5]
   angvel_range: [-1.0, 1.0]
   yaw_stiffness_range: [0.5, 0.6]
@@ -40,7 +40,8 @@ observation:
   priv:
     root_linvel_b:
     feet_pos_b:
-    feet_height_map: {feet_names: .*foot }
+    # feet_height:
+    # feet_height_map: {feet_names: .*foot }
     # feet_vel_b:
     applied_torques: {actuator_name: base_legs}
     # contact_indicator: {body_names: ".*_foot"}
@@ -51,7 +52,7 @@ reward:
   angvel_z_exp:       {weight: 0.75, enabled: true}
   linvel_projection:  {weight: 0.5, enabled: false}
   # linvel_and_height:  {weight: 2.0}
-  # linacc_z_l2:        {weight: 0.002}
+  linacc_z_l2:        {weight: 0.002}
   angvel_xy_l2:       {weight: 0.05, enabled: true}
   linvel_z_l2:        {weight: 2.0, enabled: true}
   base_height_l1:     {weight: 1.0, enabled: true, target_height: 0.3}
@@ -86,6 +87,8 @@ randomization:
   reset_joint_states_scale:
     pos_scales:
       .*: [0.8, 1.2]
+  # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
+  stumble:
 
 # reward: # orbit
 #   linvel_projection: 0.5

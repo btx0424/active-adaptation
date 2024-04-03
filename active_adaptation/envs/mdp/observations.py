@@ -330,6 +330,18 @@ class body_materials(Observation):
         return self.asset.data.body_materials[:, self.body_ids, :2].reshape(self.num_envs, -1)
 
 
+class feet_height(Observation):
+    def __init__(self, env, feet_names=".*_foot", nomial_height=0.3):
+        super().__init__(env)
+        self.nominal_height = nomial_height
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_ids, self.body_names = self.asset.find_bodies(feet_names)
+        self.num_feet = len(self.body_ids)
+    
+    def __call__(self) -> torch.Tensor:
+        return self.asset.data.body_pos_w[:, self.body_ids, 2].reshape(self.num_envs, -1) / self.nominal_height
+
+
 class feet_height_map(Observation):
     def __init__(self, env, feet_names=".*_foot", nomial_height=0.3):
         super().__init__(env)

@@ -131,6 +131,7 @@ def LocomotionEnvCfg(task_cfg):
             num_envs=task_cfg.num_envs,
             robot=robot_cfg.replace(prim_path="{ENV_REGEX_NS}/Robot"),
             terrain=terrain_cfg,
+            replicate_physics=False,
         ),
         command = task_cfg.command,
         reward = task_cfg.reward,
@@ -145,13 +146,13 @@ def LocomotionEnvCfg(task_cfg):
     #     env_cfg.scene.height_scanner.prim_path = prim_path
     
     # slightly reduces GPU memory usage
-    env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21
-    env_cfg.sim.physx.gpu_max_rigid_patch_count = 2**21
-    env_cfg.sim.physx.gpu_found_lost_pairs_capacity = 2**20
-    env_cfg.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**22
-    env_cfg.sim.physx.gpu_total_aggregate_pairs_capacity = 2**19
-    env_cfg.sim.physx.gpu_collision_stack_size = 2**25
-    env_cfg.sim.physx.gpu_heap_capacity = 2**24
+    # env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21
+    # env_cfg.sim.physx.gpu_max_rigid_patch_count = 2**21
+    # env_cfg.sim.physx.gpu_found_lost_pairs_capacity = 2**20
+    # env_cfg.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**22
+    env_cfg.sim.physx.gpu_total_aggregate_pairs_capacity = 2**22
+    # env_cfg.sim.physx.gpu_collision_stack_size = 2**25
+    # env_cfg.sim.physx.gpu_heap_capacity = 2**24
     
     return env_cfg
 

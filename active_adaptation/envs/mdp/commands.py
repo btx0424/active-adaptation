@@ -191,6 +191,10 @@ class Command2(Command):
     def sample_vel_command(self, env_ids: torch.Tensor):
         linvel = torch.zeros(len(env_ids), 2, device=self.device)
         linvel[:, 0].uniform_(*self.linvel_x_range)
+        linvel[:, 0] = torch.where(
+            torch.rand(len(env_ids), device=self.device) < 0.2, 
+            linvel[:, 0].abs(), linvel[:, 0]
+        )
         linvel[:, 1].uniform_(*self.linvel_y_range)
         speed = linvel.norm(dim=-1, keepdim=True)
         stand = (speed < 0.3) | (torch.rand(len(env_ids), 1, device=self.device) < self.stand_prob)
@@ -326,10 +330,10 @@ class CommandPos(Command):
             direction_b[:, :2]
         )
 
-        # self.command[:, :2] = self._command_linvel[:, :2]
-        # self.command[:, 2:4] = self._command_heading[:, :2]
-        self.command[:, :2] = torch.tensor([0., 0], device=self.device)
-        self.command[:, 2:4] = torch.tensor([1., 0], device=self.device)
+        self.command[:, :2] = self._command_linvel[:, :2]
+        self.command[:, 2:4] = self._command_heading[:, :2]
+        # self.command[:, :2] = torch.tensor([0., 0], device=self.device)
+        # self.command[:, 2:4] = torch.tensor([1., 0], device=self.device)
     
     def sample_commands(self, env_ids: torch.Tensor):
         robot_pos_w = self.robot.data.root_pos_w[env_ids, :2]
