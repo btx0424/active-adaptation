@@ -16,12 +16,6 @@ class Humanoid(LocomotionEnv):
     
     feet_name_expr = ".*ankle_link"
 
-    def __init__(self, cfg):
-        super().__init__(cfg)
-        self.action_scaling = 0.5
-        self.robot = self.scene.articulations["robot"]        
-        self.motor_joint_indices = slice(None)
-
     @property
     def action_dim(self):
         return 19

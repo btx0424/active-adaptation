@@ -322,11 +322,21 @@ class push(Randomization):
 
 
 class stumble(Randomization):
-    def __init__(self, env):
+    def __init__(
+        self, 
+        env,
+        body_names: str,
+        stumble_height: float=0.05,
+        friction_range=(0.0, 0.2),
+    ):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
-        self.body_ids, self.body_names = self.asset.find_bodies(".*_foot")
+        self.body_ids, self.body_names = self.asset.find_bodies(body_names)
         self.num_feet = len(self.body_ids)
+
+        self.body_ids = torch.as_tensor(self.body_ids, device=self.device)
+        self.stumble_height = stumble_height
+        self.friction_range = friction_range
         self.friction_coef = torch.zeros(self.num_envs, 1, 1, device=self.device)
     
     def reset(self, env_ids: torch.Tensor):
@@ -337,7 +347,7 @@ class stumble(Randomization):
         feet_height = self.asset.data.body_pos_w[:, self.body_ids, 2]
         feet_lin_vel_w = self.asset.data.body_lin_vel_w[:, self.body_ids]
         feet_quat_w = self.asset.data.body_quat_w[:, self.body_ids]
-        stumble = (feet_height < 0.05) & (torch.rand_like(feet_height) < 0.5)
+        stumble = (feet_height < self.stumble_height) & (torch.rand_like(feet_height) < 0.5)
         self.forces_w = - self.friction_coef * feet_lin_vel_w / self.env.physics_dt
         self.forces_w[..., 2] = 0.
         forces = torch.where(
