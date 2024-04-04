@@ -362,10 +362,21 @@ class feet_height_map(Observation):
     def _init_raycaster(self, resolution, size):
         _initialize_warp_meshes("/World/ground", "cuda")
 
-        pattern_cfg = patterns.GridPatternCfg(resolution=resolution, size=size)
-        self.ray_starts, self.ray_directions = pattern_cfg.func(pattern_cfg, self.device)
-        self.ray_starts[:, 2] += 10.
-        self.num_rays = len(self.ray_directions)
+        # pattern_cfg = patterns.GridPatternCfg(resolution=resolution, size=size)
+        # self.ray_starts, self.ray_directions = pattern_cfg.func(pattern_cfg, self.device)
+        # self.ray_starts[:, 2] += 10.
+        self.ray_starts = torch.tensor(
+            [
+                [0., 0., 10.], 
+                [0., 0.1, 10.],
+                [0., -0.1, 10.],
+                [0.1, 0., 10.],
+                [-0.1, 0., 10.],
+            ],
+            device=self.device
+        )
+        self.ray_directions = torch.tensor([0., 0., -1.], device=self.device)
+        self.num_rays = len(self.ray_starts)
 
         shape = (self.num_envs, self.num_feet, self.num_rays)
 
