@@ -128,7 +128,7 @@ def LocomotionEnvCfg(task_cfg):
         action_scaling=task_cfg.action_scaling,
         payload=task_cfg.payload,
         scene = LocomotionSceneCfg(
-            num_envs=task_cfg.num_envs,
+            num_envs=task_cfg.num_envs,                                                                                                                                                         
             robot=robot_cfg.replace(prim_path="{ENV_REGEX_NS}/Robot"),
             terrain=terrain_cfg,
             replicate_physics=False,

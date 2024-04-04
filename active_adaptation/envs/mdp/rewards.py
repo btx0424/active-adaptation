@@ -307,7 +307,8 @@ class feet_slip(Reward):
     def compute(self) -> torch.Tensor:
         in_contact = self.contact_sensor.data.current_contact_time[:, self.body_ids] > 0.02
         feet_vel = self.asset.data.body_lin_vel_w[:, self.articulation_body_ids, :2]
-        return - (in_contact * feet_vel.norm(dim=-1).square()).sum(dim=1, keepdim=True)
+        slip = (in_contact * feet_vel.norm(dim=-1).square()).sum(dim=1, keepdim=True)
+        return - slip * self.asset.data.linvel_exp
 
 
 class feet_air_time(Reward):

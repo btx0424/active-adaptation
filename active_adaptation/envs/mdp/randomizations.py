@@ -229,9 +229,10 @@ class JointFriction(Randomization):
 
 
 class reset_joint_states_uniform(Randomization):
-    def __init__(self, env, pos_ranges: Dict[str, tuple]):
+    def __init__(self, env, pos_ranges: Dict[str, tuple], rel: bool=False):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
+        self.rel = rel
         
         self.joint_ids = []
         self.pos_ranges = []
@@ -247,6 +248,8 @@ class reset_joint_states_uniform(Randomization):
     def reset(self, env_ids: torch.Tensor):
         shape = (len(env_ids), len(self.joint_ids))
         init_pos = sample_uniform(shape, *self.pos_ranges, self.env.device)
+        if self.rel:
+            init_pos += self.default_joint_pos[env_ids]
         init_vel = self.default_joint_vel[env_ids]
         self.asset.write_joint_state_to_sim(
             init_pos, init_vel, self.joint_ids, env_ids.unsqueeze(1)

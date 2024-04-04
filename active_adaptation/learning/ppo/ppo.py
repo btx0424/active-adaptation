@@ -93,7 +93,6 @@ class PPOPolicy(TensorDictModuleBase):
         
         actor_module=TensorDictModule(
             nn.Sequential(
-                # nn.LayerNorm(observation_dim),
                 make_mlp([512, 256, 256], nn.Mish), 
                 Actor(self.action_dim)
             ),
@@ -109,7 +108,6 @@ class PPOPolicy(TensorDictModuleBase):
         
         self.critic = TensorDictModule(
             nn.Sequential(
-                # nn.LayerNorm(observation_dim),
                 make_mlp([512, 256, 256], nn.Mish), 
                 nn.LazyLinear(1)
             ),
@@ -118,6 +116,31 @@ class PPOPolicy(TensorDictModuleBase):
 
         self.actor(fake_input)
         self.critic(fake_input)
+
+        self.opt = torch.optim.Adam(
+            [
+                {"params": self.actor.parameters()},
+                {"params": self.critic.parameters()}
+            ],
+            lr=cfg.lr
+        )
+
+        if "priv" in observation_spec.keys():
+            self.critic_priv = TensorDictSequential(
+                CatTensors(
+                    [("observation", "policy"), ("observation", "priv")],
+                    "observation_full", del_keys=False
+                ),
+                TensorDictModule(
+                    nn.Sequential(
+                        make_mlp([512, 256, 256], nn.Mish), 
+                        nn.LazyLinear(1)
+                    ),
+                    [self.OBS_KEY], ["state_value"]
+                )
+            ).to(self.device)
+            self.critic_priv(fake_input)
+            self.opt.add_param_group({"params": self.critic_priv.parameters()})
         
         if self.cfg.checkpoint_path is not None:
             state_dict = torch.load(self.cfg.checkpoint_path)
@@ -128,19 +151,9 @@ class PPOPolicy(TensorDictModuleBase):
                     nn.init.orthogonal_(module.weight, 0.01)
                     nn.init.constant_(module.bias, 0.)
             
-            self.actor.apply(init_)
-            self.critic.apply(init_)
+            for m in self.children():
+                m.apply(init_)
 
-        if self.cfg.train_model:
-            self.aux_model = AuxModel(observation_spec).to(self.device)
-
-        self.opt = torch.optim.Adam(
-            [
-                {"params": self.actor.parameters()},
-                {"params": self.critic.parameters()}
-            ],
-            lr=cfg.lr
-        )
         self.value_norm = ValueNorm1(input_shape=1).to(self.device)
     
     # @torch.compile
@@ -153,10 +166,9 @@ class PPOPolicy(TensorDictModuleBase):
     # @torch.compile
     def train_op(self, tensordict: TensorDict):
         infos = []
+        self._compute_advantage(tensordict)
 
         for epoch in range(self.cfg.ppo_epochs):
-            if epoch == 0 or self.cfg.recompute_adv:
-                self._compute_advantage(tensordict)
             batch = make_batch(tensordict, self.cfg.num_minibatches)
             for minibatch in batch:
                 infos.append(self._update(minibatch))
@@ -168,9 +180,16 @@ class PPOPolicy(TensorDictModuleBase):
         return infos
 
     @torch.no_grad()
-    def _compute_advantage(self, tensordict: TensorDict, subtract_mean: bool=False):
-        values = self.critic(tensordict)["state_value"]
-        next_values = self.critic(tensordict["next"])["state_value"]
+    def _compute_advantage(
+        self, 
+        tensordict: TensorDict,
+        critic: TensorDictModule, 
+        subtract_mean: bool=False,
+        adv_key: str="adv",
+        ret_key: str="ret"
+    ):
+        values = critic(tensordict)["state_value"]
+        next_values = critic(tensordict["next"])["state_value"]
 
         rewards = tensordict[self.REWARD_KEY]
         dones = tensordict[self.DONE_KEY]
@@ -188,8 +207,8 @@ class PPOPolicy(TensorDictModuleBase):
         else:
             adv = adv / adv_std.clip(1e-7)
 
-        tensordict.set("adv", adv)
-        tensordict.set("ret", ret)
+        tensordict.set(adv_key, adv)
+        tensordict.set(ret_key, ret)
         return tensordict
 
     def _update(self, tensordict: TensorDict):

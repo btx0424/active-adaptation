@@ -94,9 +94,6 @@ class LocomotionEnv(Env):
 
         self.scene.reset(env_ids)
         self.scene.update(dt=self.physics_dt)
-        for _, randomization in self.randomizations.items():
-            randomization.reset(env_ids)
-        
         self.command_manager.reset(env_ids=env_ids)
     
     def _update(self):

@@ -343,21 +343,28 @@ class feet_height(Observation):
 
 
 class feet_height_map(Observation):
-    def __init__(self, env, feet_names=".*_foot", nomial_height=0.3):
+    def __init__(
+        self, 
+        env, 
+        feet_names=".*_foot", 
+        nomial_height=0.3,
+        resolution: float=0.1,
+        size=[0.15, 0.15],
+    ):
         super().__init__(env)
         self.nominal_height = nomial_height
         self.asset: Articulation = self.env.scene["robot"]
         self.body_ids, self.body_names = self.asset.find_bodies(feet_names)
         self.num_feet = len(self.body_ids)
         
-        self._init_raycaster()
+        self._init_raycaster(resolution, size)
     
-    def _init_raycaster(self):
+    def _init_raycaster(self, resolution, size):
         _initialize_warp_meshes("/World/ground", "cuda")
 
-        pattern_cfg = patterns.GridPatternCfg(resolution=0.1, size=[0.2, 0.2])
+        pattern_cfg = patterns.GridPatternCfg(resolution=resolution, size=size)
         self.ray_starts, self.ray_directions = pattern_cfg.func(pattern_cfg, self.device)
-        self.ray_starts[:, 2] += 1.
+        self.ray_starts[:, 2] += 10.
         self.num_rays = len(self.ray_directions)
 
         shape = (self.num_envs, self.num_feet, self.num_rays)
@@ -380,7 +387,7 @@ class feet_height_map(Observation):
         self.ray_hits_w[:] = raycast_mesh(
             ray_starts_w,
             self.ray_directions.expand_as(ray_starts_w).clone(),
-            max_dist=10.,
+            max_dist=100.,
             mesh=RayCaster.meshes["/World/ground"],
         )[0]
 
@@ -389,11 +396,11 @@ class feet_height_map(Observation):
     def __call__(self):
         return self.feet_height_map.reshape(self.num_envs, -1) / self.nominal_height
     
-    # def debug_draw(self):
-    #     x = self.ray_hits_w.clone()
-    #     x[..., 2] = self.feet_pos_w.unsqueeze(-2)[..., 2]
-    #     d = self.ray_hits_w - x
-    #     self.env.debug_draw.vector(x, d)
+    def debug_draw(self):
+        x = self.ray_hits_w.clone()
+        x[..., 2] = self.feet_pos_w.unsqueeze(-2)[..., 2]
+        d = self.ray_hits_w - x
+        self.env.debug_draw.vector(x, d)
 
 
 class height_scan(Observation):

@@ -1,4 +1,5 @@
 import torch
+from functorch.experimental.control_flow import _unstack_pytree
 import hydra
 import numpy as np
 import einops
@@ -70,15 +71,30 @@ def main(cfg):
         device=base_env.device
     )
     
-    if cfg.export_policy:
-        time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
-        path = os.path.join(os.path.dirname(__file__), f"policy-{time_str}.pt")
-        _policy = policy.get_rollout_policy("eval").cpu()
-        torch.save(_policy, path)
-        logging.info(F"Export policy to {path}")
-
     if hasattr(policy, "make_tensordict_primer"):
         transform.append(policy.make_tensordict_primer())
+    
+    if cfg.export_policy:
+        import time
+        time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
+        fake_input = env.observation_spec[0].zero().cpu()
+        fake_input["is_init"] = torch.tensor(1, dtype=bool)
+        fake_input["context_adapt_hx"] = torch.zeros(128)
+        fake_input = fake_input.unsqueeze(0)
+
+        def test(m, x):
+            start = time.perf_counter()
+            for _ in range(1000):
+                m(x)
+            return (time.perf_counter() - start) / 1000
+        
+        FILE_PATH = os.path.dirname(__file__)
+        _policy = policy.get_rollout_policy("eval").cpu()
+        
+        print(f"Inference time of policy: {test(_policy, fake_input)}")
+
+        torch.save(_policy, os.path.join(FILE_PATH, f"policy-{time_str}.pt"))
+
 
     frames_per_batch = env.num_envs * cfg.algo.train_every
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
