@@ -121,12 +121,10 @@ def main(cfg):
             policy.mode = mode
 
         from tqdm import tqdm
-        t = tqdm(total=base_env.max_episode_length)
         def record_frame(*args, **kwargs):
             if render:
                 frame = base_env.render(mode="rgb_array")
                 frames.append(frame)
-            t.update(2)
         
         with set_exploration_type(exploration_type):
             trajs = env.rollout(
@@ -162,7 +160,7 @@ def main(cfg):
             frames.clear()
             info["recording"] = wandb.Video(
                 video_array, 
-                fps=0.5 / (cfg.sim.dt * cfg.sim.substeps), 
+                fps=1 / base_env.step_dt,
                 format="mp4"
             )
         
@@ -199,7 +197,7 @@ def main(cfg):
 
         episode_stats.add(data)
 
-        if i % log_interval == 0:
+        if i % log_interval == 0 and len(episode_stats):
             for k, v in sorted(episode_stats.pop().items(True, True)):
                 key = "train/" + (".".join(k) if isinstance(k, tuple) else k)
                 info[key] = torch.mean(v.float()).item()
@@ -231,6 +229,14 @@ def main(cfg):
     info = evaluate(render=cfg.eval_render, mode="expert")
     info["env_frames"] = collector._frames
     run.log(info)
+
+    try:
+        path = os.path.join(run.dir, f"policy.pt")
+        _policy = policy.get_rollout_policy("eval").cpu()
+        torch.save(_policy, path)
+        logging.info(F"Export policy to {path}")
+    except:
+        pass
 
     wandb.finish()
     

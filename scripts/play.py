@@ -109,10 +109,10 @@ def main(cfg):
         episode_stats.add(data)
 
         if len(episode_stats) >= base_env.num_envs:
-            info = {
-                "train/" + (".".join(k) if isinstance(k, tuple) else k): torch.mean(v.float()).item() 
-                for k, v in episode_stats.pop().items(True, True)
-            }
+            info = {}
+            for k, v in sorted(episode_stats.pop().items(True, True)):
+                if isinstance(v, torch.Tensor):
+                    info["train/" + (".".join(k) if isinstance(k, tuple) else k)] = torch.mean(v.float()).item()
 
             print()
             print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, float)}))

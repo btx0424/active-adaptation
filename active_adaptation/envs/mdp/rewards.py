@@ -70,7 +70,8 @@ def energy_l2(self):
 @reward_func
 def joint_acc_l2(self):
     asset: Articulation = self.scene["robot"]
-    return - asset.data.joint_acc.square().sum(dim=-1, keepdim=True)
+    r = - asset.data.joint_acc.square().sum(dim=-1, keepdim=True)
+    return 0.5 * r + 0.5 * self.scene["robot"].data.linvel_exp
 
 
 @reward_func
@@ -91,6 +92,12 @@ def linvel_z_l2(self):
 @reward_func
 def angvel_xy_l2(self):
     return - self.scene["robot"].data.root_ang_vel_b[:, :2].square().sum(-1, True)
+
+@reward_func
+def heading_yaw(self):
+    asset: Articulation = self.scene["robot"]
+    yaw_diff = self.command_manager.command[:, 2].abs()
+    return  - yaw_diff.unsqueeze(1)
 
 
 class undesired_contact(Reward):
@@ -128,7 +135,8 @@ class impact_force_l2(Reward):
     
     def compute(self) -> torch.Tensor:
         first_contact = self.contact_sensor.compute_first_contact(self.env.step_dt)[:, self.body_ids]
-        force = self.contact_sensor.data.net_forces_w.norm(dim=-1)[:, self.body_ids] / self.default_mass_total
+        contact_forces = self.contact_sensor.data.net_forces_w_history.norm(dim=-1).mean(1)
+        force = contact_forces[:, self.body_ids] / self.default_mass_total
         return - (force.square() * first_contact).sum(1, True)
 
 

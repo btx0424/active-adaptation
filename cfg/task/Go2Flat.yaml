@@ -51,20 +51,21 @@ reward:
   linvel_rational:    {weight: 0.5, enabled: true, dim: 3}
   angvel_z_exp:       {weight: 0.5, enabled: true}
   linvel_projection:  {weight: 0.5, enabled: false}
+  heading_yaw:        {weight: 0.5, enabled: true}
   # linvel_and_height:  {weight: 2.0}
   linacc_z_l2:        {weight: 0.005}
   angvel_xy_l2:       {weight: 0.05, enabled: true}
   linvel_z_l2:        {weight: 2.0, enabled: true}
   base_height_l1:     {weight: 1.0, enabled: true, target_height: 0.3}
   energy_l1:          {weight: 0.0002, enabled: true}
-  joint_acc_l2:       {weight: 2.5e-7, enabled: false}
+  joint_acc_l2:       {weight: 2.5e-7, enabled: true}
   joint_torques_l2:   {weight: 2.0e-4, enabled: true}
   stand:              {weight: 0.5}
   orientation:        {weight: 1.0, enabled: false}
   # survival:           {weight: 0.25, enabled: false}
   action_rate_l2:     {weight: 0.01, enabled: true}
   # action_rate2_l2:    {weight: 0.01}
-  # impact_force: {body_names: .*_foot, weight: 1.0}
+  # impact_force_l2:    {weight: 1.0, enabled: false, body_names: .*_foot}
   feet_air_time:      {weight: 0.5, enabled: true, body_names: .*_foot, thres: 0.5}
   feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
@@ -88,7 +89,7 @@ randomization:
     pos_scales:
       .*: [0.8, 1.2]
   # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
-  stumble:
+  stumble: {body_names: .*_foot}
 
 # reward: # orbit
 #   linvel_projection: 0.5
