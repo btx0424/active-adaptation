@@ -96,7 +96,7 @@ def main(cfg):
     episode_stats = EpisodeStats(stats_keys)
     collector = SyncDataCollector(
         env,
-        policy=policy,
+        policy=policy.get_rollout_policy("train"),
         frames_per_batch=frames_per_batch,
         total_frames=total_frames,
         device=cfg.sim.device,
