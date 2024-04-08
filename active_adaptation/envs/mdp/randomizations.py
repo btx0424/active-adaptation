@@ -342,15 +342,20 @@ class stumble(Randomization):
         self.friction_range = friction_range
         self.friction_coef = torch.zeros(self.num_envs, 1, 1, device=self.device)
     
+    def startup(self):
+        self.feet_height: torch.Tensor = self.asset.data.feet_height
+
     def reset(self, env_ids: torch.Tensor):
         self.friction_coef[env_ids] = sample_uniform((len(env_ids), 1, 1), 0.0, 0.2, self.device)
 
     def step(self, substep):
         # feet_height = self.asset.data.feet_height_map.mean(-1).reshape(-1)
-        feet_height = self.asset.data.body_pos_w[:, self.body_ids, 2]
         feet_lin_vel_w = self.asset.data.body_lin_vel_w[:, self.body_ids]
         feet_quat_w = self.asset.data.body_quat_w[:, self.body_ids]
-        stumble = (feet_height < self.stumble_height) & (torch.rand_like(feet_height) < 0.5)
+        stumble = (
+            (self.feet_height < self.stumble_height) 
+            & (torch.rand_like(self.feet_height) < 0.5)
+        )
         self.forces_w = - self.friction_coef * feet_lin_vel_w / self.env.physics_dt
         self.forces_w[..., 2] = 0.
         forces = torch.where(
@@ -365,6 +370,7 @@ class stumble(Randomization):
         self.env.debug_draw.vector(
             self.asset.data.body_pos_w[:, self.body_ids],
             self.forces_w * self.env.physics_dt,
+            color=(1., 0.6, 0., 1.)
         )
 
 def random_scale(x: torch.Tensor, low: float, high: float, homogeneous: bool=False):

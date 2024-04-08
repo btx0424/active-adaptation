@@ -261,10 +261,12 @@ class motor_params(Observation):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.motors = self.asset.actuators[actuator_name]
+        self.defalut_stiffness = self.motors.stiffness.clone()
+        self.default_damping = self.motors.damping.clone()
     
     def __call__(self) -> torch.Tensor:
-        stiffness = self.motors.stiffness
-        damping  = self.motors.damping
+        stiffness = (self.motors.stiffness / self.defalut_stiffness) * 2. - 1.
+        damping  = (self.motors.damping / self.default_damping) * 2. - 1.
         return torch.cat([stiffness, damping], dim=-1)
 
 
@@ -385,6 +387,7 @@ class feet_height_map(Observation):
         # self._data.quat_w = torch.zeros(*shape, 4, device=self.device)
         self.ray_hits_w = torch.zeros(*shape, 3, device=self.device)
         self.feet_height_map = torch.zeros(shape, device=self.device)
+        self.asset.data.feet_height = self.feet_height_map[:, :, 0]
     
     def update(self):
         self.feet_pos_w = self.asset.data.body_pos_w[:, self.body_ids]

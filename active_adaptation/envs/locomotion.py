@@ -105,22 +105,6 @@ class LocomotionEnv(Env):
             self.robot.data.root_pos_w.cpu()
             + torch.tensor([0., 0., 0.2])
         )
-        if hasattr(self.command_manager, "_command_linvel"):
-            command_linvel_w = quat_rotate(
-                self.robot.data.root_quat_w,
-                self.command_manager._command_linvel
-            )
-        self.debug_draw.vector(
-            robot_pos, 
-            command_linvel_w,
-            color=(1., 1., 1., 1.)
-        )
-        if hasattr(self.command_manager, "_command_heading"):
-            self.debug_draw.vector(
-                robot_pos,
-                self.command_manager._command_heading,
-                color=(.2, .2, 1., 1.)
-            )
         self.debug_draw.vector(
             robot_pos, 
             self.robot.data.root_lin_vel_w,

@@ -46,7 +46,7 @@ ROUGH_LEGACY = TerrainGeneratorCfg(
 ROUGH_EASY = TerrainGeneratorCfg(
     seed=0,
     size=(8.0, 8.0),
-    border_width=30.0,
+    border_width=40.0,
     num_rows=10,
     num_cols=10,
     horizontal_scale=0.1,
@@ -55,7 +55,13 @@ ROUGH_EASY = TerrainGeneratorCfg(
     use_cache=False,
     sub_terrains={
         "flat": MeshPlaneTerrainCfg(
-            proportion=0.4,
+            proportion=0.2,
+        ),
+        "random_rough_easy": HfRandomUniformTerrainCfg(
+            proportion=0.3,
+            noise_range=(0.0, 0.05),
+            noise_step=0.02,
+            border_width=0.5
         ),
         "boxes": MeshRandomGridTerrainCfg(
             proportion=0.2, 
@@ -64,7 +70,7 @@ ROUGH_EASY = TerrainGeneratorCfg(
             platform_width=2.0
         ),
         "pyramid_stairs": MeshPyramidStairsTerrainCfg(
-            proportion=0.2,
+            proportion=0.15,
             step_height_range=(0.05, 0.10),
             step_width=0.35,
             platform_width=3.5,
@@ -72,7 +78,7 @@ ROUGH_EASY = TerrainGeneratorCfg(
             holes=False,
         ),
         "pyramid_stairs_inv": MeshInvertedPyramidStairsTerrainCfg(
-            proportion=0.2,
+            proportion=0.15,
             step_height_range=(0.05, 0.10),
             step_width=0.35,
             platform_width=3.5,

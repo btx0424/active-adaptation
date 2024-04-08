@@ -205,12 +205,27 @@ class angvel_z_exp(Reward):
     def __init__(self, env, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
+        self.target_angvel: torch.Tensor = self.env.command_manager._command_angvel
     
     def compute(self) -> torch.Tensor:
         angvel_error = (
-            self.env.command_manager.command[:, 2] 
-            - self.asset.data.root_ang_vel_b[:, 2]
-        ).square().unsqueeze(1)
+            (self.target_angvel - self.asset.data.root_ang_vel_b[:, 2])
+            .square()
+            .unsqueeze(1)
+        )
+        r = torch.exp(- angvel_error / 0.25)
+        return r
+
+
+class angvel_z_exp_shaped(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.target_angvel: torch.Tensor = self.env.command_manager._command_angvel
+    
+    def compute(self) -> torch.Tensor:
+        angvel_error = (self.target_angvel - self.asset.data.root_ang_vel_b[:, 2]).unsqueeze(1)
+        angvel_error = shaped_error(angvel_error)
         r = torch.exp(- angvel_error / 0.25)
         r = (0.5 + 0.5 * self.asset.data.linvel_exp) * r
         return r
@@ -361,3 +376,9 @@ class feet_contact_count(Reward):
 
 def normalize(x: torch.Tensor):
     return x / x.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+
+def shaped_error(error: torch.Tensor):
+    """
+    Shaped error for reward shaping.
+    """
+    return torch.maximum(error.abs(), error.square())

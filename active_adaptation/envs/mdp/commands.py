@@ -2,21 +2,10 @@ import torch
 import math
 
 from omni.isaac.orbit.assets import Articulation
-from omni.isaac.orbit.envs.mdp.commands import UniformVelocityCommand, UniformVelocityCommandCfg
 import omni.isaac.orbit.utils.math as math_utils
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
+from omni.isaac.orbit.utils.math import quat_apply_yaw
 
-COMMAND_CFG = UniformVelocityCommandCfg(
-    asset_name="robot",
-    resampling_time_range=(10.0, 10.0),
-    rel_standing_envs=0.02,
-    rel_heading_envs=1.0,
-    heading_command=True,
-    debug_vis=False,
-    ranges=UniformVelocityCommandCfg.Ranges(
-        lin_vel_x=(-1.0, 1.0), lin_vel_y=(-1.0, 1.0), ang_vel_z=(-1.0, 1.0), heading=(-math.pi, math.pi)
-    ),
-)
 
 class Command:
     def __init__(self, env) -> None:
@@ -157,20 +146,24 @@ class Command2(Command):
         self.stand_prob = stand_prob
 
         with torch.device(self.device):
-            self._command_speed = torch.zeros(self.num_envs, 1)
-            self._command_linvel = torch.zeros(self.num_envs, 3)
-            self._target_yaw = torch.zeros(self.num_envs)
-            self._target_heading = torch.zeros(self.num_envs, 3)
-            self._yaw_stiffness = torch.zeros(self.num_envs)
-            self._command_heading = self._target_heading
-
-            self._target_base_height = torch.zeros(self.num_envs, 1)
             self.command = torch.zeros(self.num_envs, 4)
+            self.yaw_stiffness = torch.zeros(self.num_envs)
             self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
+
+            self._command_speed = torch.zeros(self.num_envs, 1)
+            self._command_direction = torch.zeros(self.num_envs, 3)
+            self._command_linvel = torch.zeros(self.num_envs, 3)
+            self._command_angvel = torch.zeros(self.num_envs)
+
+            self._target_yaw = torch.zeros(self.num_envs)
+            self._target_base_height = torch.zeros(self.num_envs, 1)
+
+            self._distance_to_cover = torch.zeros(self.num_envs, 1)
         
     def reset(self, env_ids):
         self.sample_vel_command(env_ids)
         self.sample_yaw_command(env_ids)
+        self._distance_to_cover[env_ids] = 0.
     
     def update(self):
         interval_reached = (self.env.episode_length_buf + 1) % self.resample_interval == 0
@@ -180,13 +173,23 @@ class Command2(Command):
         self.sample_yaw_command(resample_yaw.nonzero().squeeze(-1))
 
         yaw_diff = self._target_yaw - self.robot.data.heading_w
-        self.target_angvel = torch.clamp(
-            self._yaw_stiffness * math_utils.wrap_to_pi(yaw_diff), 
+        self._command_angvel[:] = torch.clamp(
+            self.yaw_stiffness * math_utils.wrap_to_pi(yaw_diff), 
             min=self.angvel_range[0],
             max=self.angvel_range[1]
         )
+
+        # this is used for terminating episodes where the robot is inactive due to whatever reason
+        actual_speed = (self.robot.data.root_lin_vel_b * self._command_direction).sum(-1, True)
+        speed_diff = (
+            (self._command_speed - actual_speed) / 
+            torch.where(self._command_speed > 1e-6, self._command_speed, torch.ones_like(self._command_speed))
+        )
+        self._distance_to_cover[:] = (self._distance_to_cover + speed_diff * self.env.step_dt) * 0.98
+
         self.command[:, :2] = self._command_linvel[:, :2]
-        self.command[:, 2] = self.target_angvel
+        self.command[:, 2] = self._command_angvel
+        self.command[:, 3] = self._distance_to_cover.squeeze(1)
         # self.command[:, :2] = torch.tensor([1.0, 0.], device=self.device)
     
     def sample_vel_command(self, env_ids: torch.Tensor):
@@ -198,22 +201,41 @@ class Command2(Command):
         )
         linvel[:, 1].uniform_(*self.linvel_y_range)
         speed = linvel.norm(dim=-1, keepdim=True)
+        direction = linvel / speed.clamp(1e-6)
         stand = (speed < 0.3) | (torch.rand(len(env_ids), 1, device=self.device) < self.stand_prob)
         speed = speed * (~stand)
-        self._command_linvel[env_ids, :2] = linvel * (~stand)
+
         self._command_speed[env_ids] = speed
+        self._command_direction[env_ids, :2] = direction
+        self._command_linvel[env_ids, :2] = direction * speed
         self.is_standing_env[env_ids] = stand
 
     def sample_yaw_command(self, env_ids: torch.Tensor):
         yaw = torch.rand(len(env_ids), device=self.device) * torch.pi * 2 - torch.pi
         self._target_yaw[env_ids] = yaw
-        self._target_heading[env_ids, 0] = yaw.cos()
-        self._target_heading[env_ids, 1] = yaw.sin()
-        self._yaw_stiffness[env_ids] = sample_uniform(env_ids.shape, *self.yaw_stiffness_range, self.device)
+        self.yaw_stiffness[env_ids] = sample_uniform(env_ids.shape, *self.yaw_stiffness_range, self.device)
         
         target_base_height = sample_uniform(env_ids.shape, *self.base_height_range, self.device)
         self._target_base_height[env_ids] = target_base_height.unsqueeze(1)
         self.command[env_ids, 3] = target_base_height
+
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.robot.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
+            quat_apply_yaw(self.robot.data.root_quat_w, self._command_linvel),
+            color=(1., 1., 1., 1.)
+        )
+        self.env.debug_draw.vector(
+            self.robot.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
+            torch.stack([self._target_yaw.cos(), self._target_yaw.sin(), torch.zeros_like(self._target_yaw)], 1),
+            color=(.2, .2, 1., 1.)
+        )
+        zeros = torch.zeros(self.num_envs, 1, device=self.device)
+        self.env.debug_draw.vector(
+            self.robot.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
+            torch.stack([zeros, zeros, self._distance_to_cover], 1),
+            color=(.2, 1., .2, 1.)
+        )
 
 
 class CommandPosTracking(Command):

@@ -50,7 +50,8 @@ observation:
 reward:
   linvel_exp:         {weight: 1.0, enabled: true, dim: 3}
   linvel_rational:    {weight: 0.5, enabled: true, dim: 3}
-  angvel_z_exp:       {weight: 0.5, enabled: true}
+  angvel_z_exp:       {weight: 0.5, enabled: false}
+  angvel_z_exp_shaped: {weight: 0.5, enabled: true}
   linvel_projection:  {weight: 0.5, enabled: false}
   # heading_yaw:        {weight: 0.5, enabled: true}
   # linvel_and_height:  {weight: 2.0}
@@ -90,7 +91,7 @@ randomization:
     pos_scales:
       .*: [0.8, 1.2]
   # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
-  # stumble: {body_names: .*_foot}
+  stumble: {body_names: .*_foot}
 
 # reward: # orbit
 #   linvel_projection: 0.5
