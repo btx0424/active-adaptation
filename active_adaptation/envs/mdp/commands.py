@@ -184,7 +184,7 @@ class Command2(Command):
         speed_diff = (
             (self._command_speed - actual_speed) / 
             torch.where(self._command_speed > 1e-6, self._command_speed, torch.ones_like(self._command_speed))
-        )
+        ).clamp(0.)
         self._distance_to_cover[:] = (self._distance_to_cover + speed_diff * self.env.step_dt) * 0.98
 
         self.command[:, :2] = self._command_linvel[:, :2]

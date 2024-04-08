@@ -62,24 +62,15 @@ class motor_params(Randomization):
             self.motors._saturation_effort = self.default_strength.clone()
         elif isinstance(self.motors, ImplicitActuator):
             self.default_strength = self.motors.effort_limit
-
-        if self.homogeneous:
-            self.randomized_stiffness = torch.ones_like(self.default_damping.mean(-1, True))
-            self.randomized_damping = torch.ones_like(self.default_damping.mean(-1, True))
-            self.randomized_strength = torch.ones_like(self.default_strength.mean(-1, True))
-        else:
-            self.randomized_stiffness = torch.ones_like(self.default_stiffness)
-            self.randomized_damping = torch.ones_like(self.default_damping)
-            self.randomized_strength = torch.ones_like(self.default_strength)
         
     def reset(self, env_ids: torch.Tensor=slice(None)):
-        stiffness, self.randomized_stiffness[env_ids] = random_scale(
+        stiffness, _ = random_scale(
             self.default_stiffness[env_ids], *self.stiffness_range, self.homogeneous
         )
-        damping, self.randomized_damping[env_ids] = random_scale(
+        damping, _ = random_scale(
             self.default_damping[env_ids], *self.damping_range, self.homogeneous
         )
-        strength, self.randomized_strength[env_ids] = random_scale(
+        strength, _ = random_scale(
             self.default_strength[env_ids], *self.strength_range, self.homogeneous
         )
         self.motors.stiffness[env_ids] = stiffness
@@ -139,7 +130,7 @@ class perturb_body_materials(Randomization):
         static_friction_range = (0.6, 1.0),
         dynamic_friction_range = (0.6, 1.0),
         restitution_range=(0.0, 0.2),
-        homogeneous: bool=True
+        homogeneous: bool=False
     ):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
@@ -352,14 +343,11 @@ class stumble(Randomization):
         # feet_height = self.asset.data.feet_height_map.mean(-1).reshape(-1)
         feet_lin_vel_w = self.asset.data.body_lin_vel_w[:, self.body_ids]
         feet_quat_w = self.asset.data.body_quat_w[:, self.body_ids]
-        stumble = (
-            (self.feet_height < self.stumble_height) 
-            & (torch.rand_like(self.feet_height) < 0.5)
-        )
+        stumble_prob = ((self.stumble_height - self.feet_height) / self.stumble_height).clamp(0., 1.)
         self.forces_w = - self.friction_coef * feet_lin_vel_w / self.env.physics_dt
         self.forces_w[..., 2] = 0.
         forces = torch.where(
-            stumble.unsqueeze(-1),
+            (torch.rand_like(self.feet_height) < stumble_prob).unsqueeze(-1),
             quat_rotate_inverse(feet_quat_w, self.forces_w),
             torch.zeros(self.num_envs, self.num_feet, 3, device=self.env.device)
         )

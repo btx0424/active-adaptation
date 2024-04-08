@@ -53,8 +53,6 @@ def main(cfg):
     env_cfg.sim.physx.gpu_collision_stack_size = 2**24
     env_cfg.sim.physx.gpu_heap_capacity = 2**24
 
-    env_cfg.history_length = cfg.task.history_length
-
     base_env = TASKS[cfg.task.task](env_cfg)
     transform = Compose(
         InitTracker(),
@@ -106,7 +104,7 @@ def main(cfg):
     episode_stats = EpisodeStats(stats_keys)
     collector = SyncDataCollector(
         env,
-        policy=policy,
+        policy=policy.get_rollout_policy("eval"),
         frames_per_batch=frames_per_batch,
         total_frames=total_frames,
         device=cfg.sim.device,

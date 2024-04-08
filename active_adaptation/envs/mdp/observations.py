@@ -257,16 +257,25 @@ class contact_indicator(Observation):
 
 
 class motor_params(Observation):
-    def __init__(self, env, actuator_name: str):
+    def __init__(self, env, actuator_name: str, homogeneous: bool=False):
         super().__init__(env)
+        self.homogeneous = homogeneous
         self.asset: Articulation = self.env.scene["robot"]
         self.motors = self.asset.actuators[actuator_name]
         self.defalut_stiffness = self.motors.stiffness.clone()
         self.default_damping = self.motors.damping.clone()
+        self.stiffness = self.motors.stiffness
+        self.damping = self.motors.damping
+
+        if self.homogeneous:
+            self.defalut_stiffness = self.defalut_stiffness[..., 0].unsqueeze(-1)
+            self.default_damping = self.default_damping[..., 0].unsqueeze(-1)
+            self.stiffness = self.stiffness[..., 0].unsqueeze(-1)
+            self.damping = self.damping[..., 0].unsqueeze(-1)
     
     def __call__(self) -> torch.Tensor:
-        stiffness = (self.motors.stiffness / self.defalut_stiffness) * 2. - 1.
-        damping  = (self.motors.damping / self.default_damping) * 2. - 1.
+        stiffness = (self.stiffness / self.defalut_stiffness) - 1.
+        damping  = (self.damping / self.default_damping) - 1.
         return torch.cat([stiffness, damping], dim=-1)
 
 
@@ -323,13 +332,17 @@ class external_forces(Observation):
 
 
 class body_materials(Observation):
-    def __init__(self, env, body_names):
+    def __init__(self, env, body_names, homogeneous: bool=False):
         super().__init__(env)
+        self.homogeneous = homogeneous
         self.asset: Articulation = self.env.scene["robot"]
         self.body_ids, self.body_names = self.asset.find_bodies(body_names)
+        self.body_ids = torch.as_tensor(self.body_ids, device=self.device)
+        if self.homogeneous:
+            self.body_ids = self.body_ids[0]
 
     def __call__(self):
-        return self.asset.data.body_materials[:, self.body_ids, :2].reshape(self.num_envs, -1)
+        return self.asset.data.body_materials[:, self.body_ids].reshape(self.num_envs, -1)
 
 
 class feet_height(Observation):
