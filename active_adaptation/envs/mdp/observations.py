@@ -440,6 +440,20 @@ class height_scan(Observation):
     #         to - start,
     #     )
 
+class prev_actions(Observation):
+    def __init__(self, env, steps: int=1):
+        super().__init__(env)
+        self.steps = steps
+
+        with torch.device(self.device):
+            self.prev_action = torch.zeros(self.num_envs, self.env.action_spec.shape[-1], self.steps)
+    
+    def update(self):
+        self.prev_action[:] = self.env.action_buf[:, :, :self.steps]
+    
+    def __call__(self):
+        return self.prev_action.reshape(self.num_envs, -1)
+
 
 # class incoming_wrench(Observation):
 #     def __init__(self, env):

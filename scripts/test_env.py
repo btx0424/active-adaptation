@@ -59,12 +59,10 @@ def main(cfg):
     env_cfg = LocomotionEnvCfg(cfg.task)
     
     base_env = TASKS[cfg.task.task](env_cfg)
-    transform = Compose(
-        InitTracker(),
-        # VecNorm(in_keys=["policy"], out_keys=["policy"]),
-        # CatFrames(4, -1, ["policy"], ["priv"]),
-        # History(["policy"], steps=16)
-    )
+    transform = Compose(InitTracker())
+    if cfg.task.short_history:
+        transform.append(CatFrames(4, -1, ["policy"], ["policy"]))
+
     env = TransformedEnv(base_env, transform)
     env.set_seed(0)
 

@@ -11,6 +11,4 @@ robot: a1
 terrain: plane
 
 action_scaling: 0.5
-command_interval: 250
-command_speed: [0.4, 2.4]
-history_length: 32
+short_history: false

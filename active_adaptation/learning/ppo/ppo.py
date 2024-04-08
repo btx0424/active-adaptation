@@ -72,7 +72,7 @@ class PPOPolicy(TensorDictModuleBase):
 
         self.entropy_coef = 0.001
         self.clip_param = self.cfg.clip_param
-        self.critic_loss_fn = nn.HuberLoss(delta=10)
+        self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(0.99, 0.95)
 
@@ -102,9 +102,9 @@ class PPOPolicy(TensorDictModuleBase):
 
         self.critic_priv = TensorDictSequential(
             CatTensors(
-                [OBS_KEY, OBS_PRIV_KEY], ("observation", "policy_priv"), del_keys=False
+                [OBS_KEY, OBS_PRIV_KEY], "policy_priv", del_keys=False
             ),
-            TensorDictModule(make_critic(), [("observation", "policy_priv")], ["state_value"])
+            TensorDictModule(make_critic(), ["policy_priv"], ["state_value"])
         ).to(self.device)
 
         self.actor(fake_input)
@@ -129,15 +129,16 @@ class PPOPolicy(TensorDictModuleBase):
                     nn.init.orthogonal_(module.weight, 0.01)
                     nn.init.constant_(module.bias, 0.)
             
-            for m in self.children():
-                m.apply(init_)
+            self.actor.apply(init_)
+            self.critic.apply(init_)
+            self.critic_priv.apply(init_)
 
         self.value_norm = ValueNorm1(input_shape=1).to(self.device)
     
     def get_rollout_policy(self, mode: str="train"):
         policy = TensorDictSequential(
             self.actor,
-        ).select_out_keys(*self.actor.in_keys, ACTION_KEY, "sample_log_prob", "collector")
+        ).select_out_keys(*self.actor.in_keys, ACTION_KEY, "sample_log_prob", "collector", "is_init")
         return policy
 
     # @torch.compile
@@ -154,7 +155,7 @@ class PPOPolicy(TensorDictModuleBase):
             for minibatch in batch:
                 infos.append(self._update(minibatch))
         
-        infos = {k: v.mean().item() for k, v in torch.stack(infos).items()}
+        infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         infos["value_mean"] = tensordict["ret"].mean().item()
         infos["priv_adv_larger"] = priv_adv_larger.float().mean().item()
         infos["priv_ret_larget"] = priv_ret_larger.float().mean().item()
@@ -201,10 +202,12 @@ class PPOPolicy(TensorDictModuleBase):
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["state_value"]
         value_loss = self.critic_loss_fn(b_returns, values)
+        value_loss = (value_loss * (~tensordict["is_init"])).mean()
 
         b_returns_priv = tensordict["ret_priv"]
         values_priv = self.critic_priv(tensordict)["state_value"]
         value_loss_priv = self.critic_loss_fn(b_returns_priv, values_priv)
+        value_loss_priv = (value_loss_priv * (~tensordict["is_init"])).mean()
         
         loss = policy_loss + entropy_loss + value_loss + value_loss_priv
         self.opt.zero_grad()
@@ -218,6 +221,7 @@ class PPOPolicy(TensorDictModuleBase):
         return TensorDict({
             "policy_loss": policy_loss,
             "value_loss": value_loss,
+            "value_loss_priv": value_loss_priv,
             "entropy": entropy,
             "actor_grad_norm": actor_grad_norm,
             "critic_grad_norm": critic_grad_norm,

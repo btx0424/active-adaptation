@@ -150,12 +150,6 @@ class LocomotionEnv(Env):
         return self.scene["robot"].data.root_lin_vel_b
     
     @mdp.observation_func
-    def prev_actions(self):
-        if not hasattr(self, "action_buf"):
-            return torch.zeros(self.num_envs, self.action_dim * 4, device=self.device)
-        return self.action_buf.reshape(self.num_envs, -1)
-    
-    @mdp.observation_func
     def applied_action(self):
         if not hasattr(self, "last_action"):
             return torch.zeros(self.num_envs, self.action_dim, device=self.device)
