@@ -228,15 +228,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             self._actor_expert,
             self._critic_expert
         )
-        self.critic_expert = TensorDictSequential(
-            self.encoder_priv,
-            self._critic_expert,
-        )
-        self.critic_adapt = TensorDictSequential(
-            self.encoder_priv,
-            self.adapt_module,
-            self._critic_adapt,
-        )
 
         # lazy initialization
         with torch.device(self.device):
@@ -289,7 +280,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                     nn.init.constant_(module.bias, 0.)
             
             self.actor_critic_expert.apply(init_)
-            
+            self.adapt_module.apply(init_)
+
             self.classifer_a.apply(init_)
             self.classifer_b.apply(init_)
 
@@ -311,53 +303,61 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 self.encoder_priv,
                 self._actor_expert,
             )
-            policy.select_out_keys(
-                *self.observation_spec.keys(),
-                ACTION_KEY, 
-                "sample_log_prob", 
-                "collector", 
-                "is_init",
-                "context_adapt_hx"
-            )
-        elif self.phase == "adapt":
+        elif self.phase == "adapt" or self.phase == "finetune":
             policy = TensorDictSequential(
                 self.adapt_module,
                 self._actor_adapt,
             )
         else:
             raise NotImplementedError
+        policy.select_out_keys(
+            *self.observation_spec.keys(),
+            ACTION_KEY, 
+            "sample_log_prob", 
+            "collector", 
+            "is_init",
+            "context_adapt_hx"
+        )
         return policy
     
     def train_op(self, tensordict: TensorDict):
         infos = {}
-        if self.phase == "train":
-            infos.update(self.train_expert(tensordict.to_tensordict()))
-            infos.update(self.train_adaptation(tensordict.to_tensordict()))
-            hard_copy_(self._actor_expert, self._actor_adapt)
-        elif self.phase == "adapt":
-            infos.update(self.train_adaptation(tensordict.to_tensordict()))
-            infos.update(self.train_target(tensordict.to_tensordict()))
+        match self.phase:
+            case "train":
+                infos.update(self.train_expert(tensordict.to_tensordict()))
+                infos.update(self.train_adaptation(tensordict.to_tensordict()))
+                hard_copy_(self._actor_expert, self._actor_adapt)
+            case "adapt":
+                infos.update(self.train_adaptation(tensordict.to_tensordict()))
+            case "finetune":
+                infos.update(self.train_adaptation(tensordict.to_tensordict()))
+                infos.update(self.train_target(tensordict.to_tensordict()))
+            case _:
+                raise NotImplementedError
         self.num_updates += 1
         return infos
     
     def train_expert(self, tensordict: TensorDict):
         infos = []
-        self._compute_advantage(tensordict, self.critic_expert, "adv_expert", "ret_expert", value_norm=self.value_norm_a)
-        # self._compute_advantage(tensordict, self.critic_adapt, "adv_adapt", "ret_adapt", value_norm=self.value_norm_b)
+        with torch.no_grad():
+            self.encoder_priv(tensordict)
+            self.adapt_module(tensordict)
+        self._compute_advantage(tensordict, self._critic_expert, "adv_expert", "ret_expert", value_norm=self.value_norm_a)
+        self._compute_advantage(tensordict, self._critic_adapt, "adv_adapt", "ret_adapt", value_norm=self.value_norm_b)
 
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches)
             for minibatch in batch:
                 self.encoder_priv(minibatch)
-                info_expert = self._update_actor_critic(minibatch, self._actor_expert, self._critic_expert, self.opt_expert, "adv_expert", "ret_expert")
-                infos.append(info_expert)
-                # with torch.no_grad():
-                #     self.encoder_priv(minibatch)
-                    # self.adapt_module(minibatch)
-                # info_adapt = self._update_actor_critic(minibatch, None, self._critic_adapt, self.opt_target, "adv_adapt", "ret_adapt")
-                # infos.append(TensorDict({f"adapt/{k}": v for k, v in info_adapt.items()}, []))
+                info = self._update_actor_critic(minibatch, self._actor_expert, self._critic_expert, self.opt_expert, "adv_expert", "ret_expert")
+                with torch.no_grad():
+                    self.encoder_priv(minibatch)
+                    self.adapt_module(minibatch)
+                info_adapt = self._update_actor_critic(minibatch, None, self._critic_adapt, self.opt_target, "adv_adapt", "ret_adapt")
+                info.update({f"adapt/{k}": v for k, v in info_adapt.items()})
+                infos.append(info)
                 
-        infos = {k: v.mean() for k, v in torch.stack(infos).items()}
+        infos = {k: v.mean() for k, v in torch.stack(infos).items(True, True)}
         if "ret_expert" in tensordict.keys():
             infos["value_mean_expert"] = self.value_norm_a.denormalize(tensordict["ret_expert"]).mean()
         if "ret_adapt" in tensordict.keys():
@@ -366,8 +366,11 @@ class PPOAdaptPolicy(TensorDictModuleBase):
     
     def train_target(self, tensordict: TensorDict):
         infos = []
-        self._compute_advantage(tensordict, self.critic_adapt, "adv_adapt", "ret_adapt")
-        self._compute_advantage(tensordict, self.critic_expert, "adv_expert", "ret_expert")
+        with torch.no_grad():
+            self.encoder_priv(tensordict)
+            self.adapt_module(tensordict)
+        self._compute_advantage(tensordict, self._critic_expert, "adv_expert", "ret_expert", value_norm=self.value_norm_a)
+        self._compute_advantage(tensordict, self._critic_adapt, "adv_adapt", "ret_adapt", value_norm=self.value_norm_b)
 
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every)
@@ -380,16 +383,18 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 infos.append(info_expert)
                 infos.append(TensorDict({f"adapt/{k}": v for k, v in info_target.items()}, []))
         
-        infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
-        infos["value_mean_expert"] = tensordict["ret_expert"].mean().item()
-        infos["value_mean_adapt"] = tensordict["ret_adapt"].mean().item()
-        return infos
+        infos = {k: v.mean() for k, v in torch.stack(infos).items(True, True)}
+        if "ret_expert" in tensordict.keys():
+            infos["value_mean_expert"] = self.value_norm_a.denormalize(tensordict["ret_expert"]).mean()
+        if "ret_adapt" in tensordict.keys():
+            infos["value_mean_adapt"] = self.value_norm_b.denormalize(tensordict["ret_adapt"]).mean()
+        return {k: v.item() for k, v in sorted(infos.items())}
     
     def train_adaptation(self, tensordict: TensorDict):
         infos = []
 
         for epoch in range(2):
-            batch = make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every)
+            batch = make_batch(tensordict, 8, self.cfg.train_every)
             for minibatch in batch:
                 infos.append(self._update_adaptation(minibatch))
     
@@ -482,15 +487,15 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             self.classifer_a(tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_expert),
             self.classifer_a(tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_adapt)
         )
-        losses["classifier_b_loss"], acc_b = self._cross_entropy(
-            self.classifer_b(tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_expert),
-            self.classifer_b(tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_adapt)
-        )
-        self.opt_adapt.zero_grad()
-        sum(losses.values()).backward()
-        self.opt_adapt.step()
         losses["classifier_a_acc"] = acc_a
-        losses["classifier_b_acc"] = acc_b
+        # losses["classifier_b_loss"], acc_b = self._cross_entropy(
+        #     self.classifer_b(tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_expert),
+        #     self.classifer_b(tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_adapt)
+        # )
+        # losses["classifier_b_acc"] = acc_b
+        self.opt_adapt.zero_grad()
+        sum(v for k, v in losses.items() if k.endswith("loss")).backward()
+        self.opt_adapt.step()
         return losses
 
     def _feature_mse(self, tensordict: TensorDict):
