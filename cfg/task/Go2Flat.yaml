@@ -39,15 +39,20 @@ observation:
     # motor_params: {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     # body_materials: {body_names: .*foot, homogeneous: "${task.homogeneous}"}
     # root_linvel_b:
+    # # feet_pos_b:
+    # feet_height_map: {feet_names: .*foot }
+    # applied_torques: {actuator_name: base_legs}
   priv:
     root_linvel_b:
     feet_pos_b:
-    joint_acc:
-    # feet_height:
+    # feet_vel_b:
     feet_height_map: {feet_names: .*foot }
-    feet_vel_b:
     applied_torques: {actuator_name: base_legs}
-    contact_indicator: {body_names: ".*_foot"}
+    # joint_acc:
+    # feet_height:
+    motor_params: {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
+    body_materials: {body_names: .*foot, homogeneous: "${task.homogeneous}"}
+    # contact_indicator: {body_names: ".*_foot"}
 
 reward:
   linvel_exp:         {weight: 1.0, enabled: true, dim: 3}
@@ -97,7 +102,7 @@ randomization:
     pos_scales:
       .*: [0.8, 1.2]
   # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
-  stumble: {body_names: .*_foot}
+  # stumble: {body_names: .*_foot}
 
 # reward: # orbit
 #   linvel_projection: 0.5
