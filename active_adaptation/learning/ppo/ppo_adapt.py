@@ -47,8 +47,10 @@ class PPOConfig:
     train_every: int = 32
     ppo_epochs: int = 4
     num_minibatches: int = 16
-    lr: float = 1e-3
+    lr: float = 5e-4
     clip_param: float = 0.2
+
+    context_dim: int = 128
 
     phase: str = "train"
     checkpoint_path: Union[str, None] = None
@@ -141,8 +143,6 @@ class ClassifierB(nn.Module):
 
 class PPOAdaptPolicy(TensorDictModuleBase):
     
-    context_dim: int = 128
-
     def __init__(
         self, 
         cfg: PPOConfig, 
@@ -165,64 +165,43 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         fake_input = observation_spec.zero()
         
         self.encoder_priv = TensorDictModule(
-            make_mlp([self.context_dim]), [OBS_PRIV_KEY], ["context_expert"]
+            make_mlp([self.cfg.context_dim]), [OBS_PRIV_KEY], ["context_expert"]
         ).to(self.device)
         
         self.adapt_module = TensorDictModule(
-            GRUModule(self.context_dim), 
+            GRUModule(self.cfg.context_dim), 
             [OBS_KEY, "is_init", "context_adapt_hx"], 
             ["context_adapt", ("next", "context_adapt_hx")]
         ).to(self.device)
         
-        def make_actor():
-            return nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim))
+        def make_actor(context_key: str) -> ProbabilisticActor:
+            actor_module = nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim))
+            actor = ProbabilisticActor(
+                module=TensorDictSequential(
+                    # TensorDictModule(make_mlp([self.context_dim]), [OBS_PRIV_KEY], ["context_expert"]),
+                    CatTensors([OBS_KEY, context_key], "actor_feature", del_keys=False),
+                    TensorDictModule(actor_module, ["actor_feature"], ["loc", "scale"])
+                ),
+                # module=TensorDictSequential(
+                #     CatTensors([OBS_KEY, OBS_PRIV_KEY], "actor_feature", del_keys=False),
+                #     TensorDictModule(make_actor(), ["actor_feature"], ["loc", "scale"])
+                # ),
+                in_keys=["loc", "scale"],
+                out_keys=[ACTION_KEY],
+                distribution_class=IndependentNormal,
+                return_log_prob=True
+            ).to(self.device)
+            return actor
         
         def make_critic():
             return nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1))
         
         # expert actor with priviledged information
-        self._actor_expert: ProbabilisticActor = ProbabilisticActor(
-            module=TensorDictSequential(
-                # TensorDictModule(make_mlp([self.context_dim]), [OBS_PRIV_KEY], ["context_expert"]),
-                CatTensors([OBS_KEY, "context_expert"], "actor_feature", del_keys=False),
-                TensorDictModule(make_actor(), ["actor_feature"], ["loc", "scale"])
-            ),
-            # module=TensorDictSequential(
-            #     CatTensors([OBS_KEY, OBS_PRIV_KEY], "actor_feature", del_keys=False),
-            #     TensorDictModule(make_actor(), ["actor_feature"], ["loc", "scale"])
-            # ),
-            in_keys=["loc", "scale"],
-            out_keys=[ACTION_KEY],
-            distribution_class=IndependentNormal,
-            return_log_prob=True
-        ).to(self.device)
-
+        self._actor_expert = make_actor("context_expert")
         # expert actor with estimated information used for compute estimation error
-        self.__actor_expert: ProbabilisticActor = ProbabilisticActor(
-            module=TensorDictSequential(
-                TensorDictModule(make_mlp([512]), [OBS_KEY], ["actor_obs_feature"]),
-                CatTensors(["actor_obs_feature", "context_adapt"], "actor_feature", del_keys=False),
-                TensorDictModule(make_actor(), ["actor_feature"], ["loc", "scale"])
-            ),
-            in_keys=["loc", "scale"],
-            out_keys=[ACTION_KEY],
-            distribution_class=IndependentNormal,
-            return_log_prob=True
-        ).to(self.device)
-        # self.__actor_expert.requires_grad_(False)
-
-        self._actor_adapt: ProbabilisticActor = ProbabilisticActor(
-            module=TensorDictSequential(
-                TensorDictModule(make_mlp([512]), [OBS_KEY], ["actor_obs_feature"]),
-                TensorDictModule(make_mlp([self.context_dim]), [OBS_PRIV_KEY], ["context_expert"]),
-                CatTensors(["actor_obs_feature", "context_adapt"], "actor_feature", del_keys=False),
-                TensorDictModule(make_actor(), ["actor_feature"], ["loc", "scale"])
-            ),
-            in_keys=["loc", "scale"],
-            out_keys=[ACTION_KEY],
-            distribution_class=IndependentNormal,
-            return_log_prob=True
-        ).to(self.device)
+        self.__actor_expert = make_actor("context_adapt")
+        # target actor with estimated information
+        self._actor_adapt = make_actor("context_adapt")
 
         # expert critic with priviledged information
         self._critic_expert = TensorDictSequential(
@@ -237,8 +216,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
 
         # expert critic with both priviledged and estimated information to be unbiased
         self._critic_adapt = TensorDictSequential(
-            TensorDictModule(make_mlp([512]), [OBS_KEY], ["critic_obs_feature"]),
-            CatTensors(["critic_obs_feature", "context_expert", "context_adapt"], "critic_feature", del_keys=False),
+            CatTensors([OBS_KEY, "context_expert", "context_adapt"], "critic_feature", del_keys=False),
             TensorDictModule(make_critic(), ["critic_feature"], ["state_value"])
         ).to(self.device)
 
@@ -316,7 +294,9 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             self.classifer_b.apply(init_)
 
         self.phase = self.cfg.phase
-        self.value_norm = ValueNorm1(input_shape=1).to(self.device)
+        self.num_updates = 0
+        self.value_norm_a = ValueNorm1(input_shape=1).to(self.device)
+        self.value_norm_b = ValueNorm1(input_shape=1).to(self.device)
     
     def make_tensordict_primer(self):
         num_envs = self.observation_spec.shape[0]
@@ -352,34 +332,37 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         infos = {}
         if self.phase == "train":
             infos.update(self.train_expert(tensordict.to_tensordict()))
-            # infos.update(self.train_adaptation(tensordict.to_tensordict()))
-            # hard_copy_(self._actor_expert, self._actor_adapt)
+            infos.update(self.train_adaptation(tensordict.to_tensordict()))
+            hard_copy_(self._actor_expert, self._actor_adapt)
         elif self.phase == "adapt":
             infos.update(self.train_adaptation(tensordict.to_tensordict()))
             infos.update(self.train_target(tensordict.to_tensordict()))
+        self.num_updates += 1
         return infos
     
     def train_expert(self, tensordict: TensorDict):
         infos = []
-        self._compute_advantage(tensordict, self.critic_expert, "adv_expert", "ret_expert", update_value_norm=True)
-        # self._compute_advantage(tensordict, self.critic_adapt, "adv_adapt", "ret_adapt")
+        self._compute_advantage(tensordict, self.critic_expert, "adv_expert", "ret_expert", value_norm=self.value_norm_a)
+        # self._compute_advantage(tensordict, self.critic_adapt, "adv_adapt", "ret_adapt", value_norm=self.value_norm_b)
 
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches)
             for minibatch in batch:
-                # self.encoder_priv(minibatch)
+                self.encoder_priv(minibatch)
                 info_expert = self._update_actor_critic(minibatch, self._actor_expert, self._critic_expert, self.opt_expert, "adv_expert", "ret_expert")
                 infos.append(info_expert)
                 # with torch.no_grad():
                 #     self.encoder_priv(minibatch)
-                #     self.adapt_module(minibatch)
+                    # self.adapt_module(minibatch)
                 # info_adapt = self._update_actor_critic(minibatch, None, self._critic_adapt, self.opt_target, "adv_adapt", "ret_adapt")
                 # infos.append(TensorDict({f"adapt/{k}": v for k, v in info_adapt.items()}, []))
                 
-        infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
-        infos["value_mean_expert"] = tensordict["ret_expert"].mean().item()
-        # infos["value_mean_adapt"] = tensordict["ret_adapt"].mean().item()
-        return infos
+        infos = {k: v.mean() for k, v in torch.stack(infos).items()}
+        if "ret_expert" in tensordict.keys():
+            infos["value_mean_expert"] = self.value_norm_a.denormalize(tensordict["ret_expert"]).mean()
+        if "ret_adapt" in tensordict.keys():
+            infos["value_mean_adapt"] = self.value_norm_b.denormalize(tensordict["ret_adapt"]).mean()
+        return {k: v.item() for k, v in sorted(infos.items())}
     
     def train_target(self, tensordict: TensorDict):
         infos = []
@@ -410,7 +393,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             for minibatch in batch:
                 infos.append(self._update_adaptation(minibatch))
     
-        infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
+        infos = {f"adapt/{k}": v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         return infos
 
     @torch.no_grad()
@@ -420,6 +403,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         critic: TensorDictModule, 
         adv_key: str="adv",
         ret_key: str="ret",
+        value_norm: ValueNorm1=None,
         update_value_norm: bool=True,
     ):
         values = critic(tensordict)["state_value"]
@@ -427,15 +411,15 @@ class PPOAdaptPolicy(TensorDictModuleBase):
 
         rewards = tensordict[REWARD_KEY]
         dones = tensordict[DONE_KEY]
-        values = self.value_norm.denormalize(values)
-        next_values = self.value_norm.denormalize(next_values)
+        values = value_norm.denormalize(values)
+        next_values = value_norm.denormalize(next_values)
 
         adv, ret = self.gae(rewards, dones, values, next_values)
         adv = normalize(adv, subtract_mean=True)
 
         if update_value_norm:
-            self.value_norm.update(ret)
-        ret = self.value_norm.normalize(ret)
+            value_norm.update(ret)
+        ret = value_norm.normalize(ret)
 
         tensordict.set(adv_key, adv)
         tensordict.set(ret_key, ret)
@@ -477,12 +461,14 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         
         opt.zero_grad()
         sum(losses.values()).backward()
-        if actor is not None:
-            actor_grad_norm = nn.utils.clip_grad.clip_grad_norm_(actor.parameters(), 10)
-            losses["actor_grad_norm"] = actor_grad_norm
-        if critic is not None:
-            critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(critic.parameters(), 10)
-            losses["critic_grad_norm"] = critic_grad_norm
+        # if actor is not None:
+        #     actor_grad_norm = nn.utils.clip_grad.clip_grad_norm_(actor.parameters(), 10)
+        #     losses["actor_grad_norm"] = actor_grad_norm
+        # if critic is not None:
+        #     critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(critic.parameters(), 10)
+        #     losses["critic_grad_norm"] = critic_grad_norm
+        for param_group in opt.param_groups:
+            nn.utils.clip_grad_norm_(param_group["params"], 10)
         opt.step()
         return losses
 
@@ -492,17 +478,19 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         with torch.no_grad():
             action_expert = self._actor_expert(tensordict)[ACTION_KEY]
             action_adapt = self._actor_adapt(tensordict)[ACTION_KEY]
-        losses["classifier_a"] = self._least_square(
+        losses["classifier_a_loss"], acc_a = self._least_square(
             self.classifer_a(tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_expert),
             self.classifer_a(tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_adapt)
         )
-        losses["classifier_b"] = self._least_square(
+        losses["classifier_b_loss"], acc_b = self._cross_entropy(
             self.classifer_b(tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_expert),
             self.classifer_b(tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_adapt)
         )
         self.opt_adapt.zero_grad()
         sum(losses.values()).backward()
         self.opt_adapt.step()
+        losses["classifier_a_acc"] = acc_a
+        losses["classifier_b_acc"] = acc_b
         return losses
 
     def _feature_mse(self, tensordict: TensorDict):
@@ -522,7 +510,14 @@ class PPOAdaptPolicy(TensorDictModuleBase):
     def _least_square(self, true: torch.Tensor, false: torch.Tensor):
         loss_true = F.mse_loss(true, torch.ones_like(true))
         loss_false = F.mse_loss(false, -torch.ones_like(false))
-        return loss_true + loss_false
+        acc = ((true > 0).float().mean() + (false < 0).float().mean()) / 2
+        return loss_true + loss_false, acc
+    
+    def _cross_entropy(self, true: torch.Tensor, false: torch.Tensor):
+        loss_true = F.binary_cross_entropy_with_logits(true, torch.ones_like(true))
+        loss_false = F.binary_cross_entropy_with_logits(false, torch.zeros_like(false))
+        acc = ((true.sigmoid() > 0.5).float().mean() + (false.sigmoid() < 0.5).float().mean()) / 2
+        return loss_true + loss_false, acc
     
 
 def normalize(x: torch.Tensor, subtract_mean: bool=False):
