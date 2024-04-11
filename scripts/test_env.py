@@ -127,7 +127,7 @@ def main(cfg):
         with set_exploration_type(exploration_type):
             trajs = env.rollout(
                 max_steps=base_env.max_episode_length,
-                policy=policy,
+                policy=policy.get_rollout_policy("eval").to(base_env.device),
                 callback=Every(record_frame, 2),
                 auto_reset=True,
                 break_when_any_done=False,
@@ -158,7 +158,7 @@ def main(cfg):
             frames.clear()
             info["recording"] = wandb.Video(
                 video_array, 
-                fps=1 / base_env.step_dt,
+                fps=0.5 / base_env.step_dt,
                 format="mp4"
             )
         

@@ -51,8 +51,6 @@ def main(cfg):
     env_cfg.sim.physx.gpu_collision_stack_size = 2**24
     env_cfg.sim.physx.gpu_heap_capacity = 2**24
 
-    env_cfg.history_length = cfg.task.history_length
-
     base_env = TASKS[cfg.task.task](env_cfg)
     transform = Compose(
         InitTracker(),
@@ -115,7 +113,7 @@ def main(cfg):
         with set_exploration_type(exploration_type):
             trajs = env.rollout(
                 max_steps=base_env.max_episode_length,
-                policy=policy,
+                policy=policy.get_rollout_policy("eval").to(base_env.device),
                 callback=record_frame,
                 auto_reset=True,
                 break_when_any_done=False,
