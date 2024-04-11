@@ -343,15 +343,12 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             case "train":
                 infos.update(self.train_expert(tensordict.to_tensordict()))
                 infos.update(self.train_adaptation(tensordict.to_tensordict()))
-                hard_copy_(self._actor_expert, self._actor_adapt)
             case "adapt":
                 infos.update(self.train_adaptation(tensordict.to_tensordict()))
                 infos.update(self.train_target(tensordict.to_tensordict(), train_actor=False))
-                soft_copy_(self.adapt_module, self.adapt_module_ema)
             case "finetune":
                 infos.update(self.train_adaptation(tensordict.to_tensordict()))
                 infos.update(self.train_target(tensordict.to_tensordict(), train_actor=True))
-                soft_copy_(self.adapt_module, self.adapt_module_ema)
             case _:
                 raise NotImplementedError
         self.num_updates += 1
@@ -371,11 +368,18 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             batch = make_batch(tensordict, self.cfg.num_minibatches)
             for minibatch in batch:
                 self.encoder_priv(minibatch)
-                info = self._update_actor_critic(minibatch, self._actor_expert, self._critic_expert, self.opt_expert, "adv_expert", "ret_expert")
-                info_adapt = self._update_actor_critic(minibatch, None, self._critic_adapt, self.opt_target, "adv_adapt", "ret_adapt")
+                info = self._update_actor_critic(
+                    minibatch, self._actor_expert, self._critic_expert, self.opt_expert, "adv_expert", "ret_expert"
+                )
+                info_adapt = self._update_actor_critic(
+                    minibatch.detach(), None, self._critic_adapt, self.opt_target, "adv_adapt", "ret_adapt"
+                )
                 info.update({f"adapt/{k}": v for k, v in info_adapt.items()})
                 infos.append(info)
-                
+        
+        hard_copy_(self._actor_expert, self.__actor_expert)
+        hard_copy_(self._actor_expert, self._actor_adapt)
+        
         infos = {k: v.mean() for k, v in torch.stack(infos).items(True, True)}
         if "ret_expert" in tensordict.keys():
             infos["value_mean_expert"] = self.value_norm_a.denormalize(tensordict["ret_expert"]).mean()
@@ -410,8 +414,10 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 with torch.no_grad():
                     minibatch = self.encoder_priv(minibatch).detach()
                     minibatch = self.adapt_module_ema(minibatch).detach()
-                info = self._update_actor_critic(minibatch, None, self._critic_expert, self.opt_expert, "adv_expert", "ret_expert")
-                info_target = self._update_actor_critic(minibatch, actor, self._critic_adapt, self.opt_target, adv_key, "ret_adapt")
+                info = self._update_actor_critic(
+                    minibatch, None, self._critic_expert, self.opt_expert, "adv_expert", "ret_expert")
+                info_target = self._update_actor_critic(
+                    minibatch, actor, self._critic_adapt, self.opt_target, adv_key, "ret_adapt")
                 info.update({f"adapt/{k}": v for k, v in info_target.items()})
                 infos.append(info)
         
@@ -432,6 +438,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             batch = make_batch(tensordict, 8, self.cfg.train_every)
             for minibatch in batch:
                 infos.append(self._update_adaptation(minibatch))
+        soft_copy_(self.adapt_module, self.adapt_module_ema)
     
         infos = {f"adapt/{k}": v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         with torch.no_grad():

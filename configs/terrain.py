@@ -70,7 +70,7 @@ ROUGH_EASY = TerrainGeneratorCfg(
             platform_width=2.0
         ),
         "pyramid_stairs": MeshPyramidStairsTerrainCfg(
-            proportion=0.15,
+            proportion=0.10,
             step_height_range=(0.05, 0.10),
             step_width=0.35,
             platform_width=3.5,
@@ -78,12 +78,18 @@ ROUGH_EASY = TerrainGeneratorCfg(
             holes=False,
         ),
         "pyramid_stairs_inv": MeshInvertedPyramidStairsTerrainCfg(
-            proportion=0.15,
+            proportion=0.10,
             step_height_range=(0.05, 0.10),
             step_width=0.35,
             platform_width=3.5,
             border_width=1.0,
             holes=False,
+        ),
+        "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
+            proportion=0.10,
+            slope_range=(0.0, 0.25),
+            platform_width=1.0,
+            border_width=0.25
         ),
     },
 )
