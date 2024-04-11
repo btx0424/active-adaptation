@@ -51,10 +51,12 @@ class PPOConfig:
     clip_param: float = 0.2
     recompute_adv: bool = False
 
+    hack: bool = False # debug option, which gives actor access to the privileged information
     checkpoint_path: Union[str, None] = None
 
 cs = ConfigStore.instance()
 cs.store("ppo_ji", node=PPOConfig, group="algo")
+cs.store("ppo_ji_hack", node=PPOConfig(hack=True), group="algo")
 
 class GRU(nn.Module):
     def __init__(
@@ -153,7 +155,7 @@ class PPOPolicy(TensorDictModuleBase):
         actor_module = nn.Sequential(make_mlp([512, 256, 256], nn.Mish), Actor(self.action_dim))
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=TensorDictSequential(
-                CatTensors([OBS_KEY, "priv_estimate"], "policy_estimate", del_keys=False),
+                CatTensors([OBS_KEY, OBS_PRIV_KEY if self.cfg.hack else "priv_estimate"], "policy_estimate", del_keys=False),
                 TensorDictModule(actor_module, ["policy_estimate"], ["loc", "scale"])
             ),
             in_keys=["loc", "scale"],
