@@ -23,6 +23,7 @@
 
 from .ppo import PPOPolicy
 from .ppo_adapt import PPOAdaptPolicy
+from .ppo_ji import PPOPolicy as PPOJi
 from .ppo_rma import PPORMAPolicy
 from .ppo_rnn import PPORNNPolicy
 from .ppo_tconv import PPOTConvPolicy
@@ -43,6 +44,7 @@ ALGOS = {
     "ppo_model": PPOModelPolicy,
     "ppo_guided": PPOGuidedPolicy,
     "ppo_adapt": PPOAdaptPolicy,
+    "ppo_ji": PPOJi,
     "ppo_rma": PPORMAPolicy,
     "final": PPOFinalPolicy,
     "ppg": PPGPolicy,

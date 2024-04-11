@@ -149,7 +149,7 @@ def LocomotionEnvCfg(task_cfg):
     # env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21
     # env_cfg.sim.physx.gpu_max_rigid_patch_count = 2**21
     # env_cfg.sim.physx.gpu_found_lost_pairs_capacity = 2**20
-    # env_cfg.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**22
+    env_cfg.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**26
     env_cfg.sim.physx.gpu_total_aggregate_pairs_capacity = 2**22
     # env_cfg.sim.physx.gpu_collision_stack_size = 2**25
     # env_cfg.sim.physx.gpu_heap_capacity = 2**24

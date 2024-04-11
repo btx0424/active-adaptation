@@ -29,7 +29,7 @@ import einops
 
 from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuousTensorSpec
 from torchrl.modules import ProbabilisticActor
-from torchrl.envs.transforms import CatTensors, TensorDictPrimer
+from torchrl.envs.transforms import CatTensors, TensorDictPrimer, ExcludeTransform
 from tensordict import TensorDict
 from tensordict.nn import TensorDictModuleBase, TensorDictModule, TensorDictSequential
 
@@ -182,7 +182,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self.adapt_module_ema = TensorDictModule(
             GRUModule(self.cfg.context_dim),
             [OBS_KEY, "is_init", "context_adapt_hx"],
-            ["context_adapt"]
+            ["context_adapt", ("next", "context_adapt_hx")]
         ).to(self.device)
         
         def make_actor(context_key: str) -> ProbabilisticActor:
@@ -318,23 +318,18 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         if self.phase == "train":
             policy = TensorDictSequential(
                 self.encoder_priv,
+                self.adapt_module_ema,
                 self._actor_expert,
+                ExcludeTransform("actor_feature", "loc", "scale")
             )
         elif self.phase == "adapt" or self.phase == "finetune":
             policy = TensorDictSequential(
                 self.adapt_module_ema,
                 self._actor_adapt,
+                ExcludeTransform("actor_feature", "loc", "scale")
             )
         else:
             raise NotImplementedError
-        policy.select_out_keys(
-            *self.observation_spec.keys(),
-            ACTION_KEY, 
-            "sample_log_prob", 
-            "collector", 
-            "is_init",
-            "context_adapt_hx"
-        )
         return policy
     
     def train_op(self, tensordict: TensorDict):
