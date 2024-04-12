@@ -216,8 +216,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
 
         # expert critic with priviledged information
         self._critic_expert = TensorDictSequential(
-            # TensorDictModule(make_mlp([self.context_dim]), [OBS_PRIV_KEY], ["context_expert"]),
-            CatTensors([OBS_KEY, "context_expert"], "critic_feature", del_keys=False),
+            CatTensors([OBS_KEY, OBS_PRIV_KEY], "critic_feature", del_keys=False),
             TensorDictModule(make_critic(), ["critic_feature"], ["state_value"])
         ).to(self.device)
         # self._critic_expert = TensorDictSequential(
@@ -227,7 +226,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
 
         # expert critic with both priviledged and estimated information to be unbiased
         self._critic_adapt = TensorDictSequential(
-            CatTensors([OBS_KEY, "context_expert", "context_adapt"], "critic_feature", del_keys=False),
+            CatTensors([OBS_KEY, OBS_PRIV_KEY, "context_adapt"], "critic_feature", del_keys=False),
             TensorDictModule(make_critic(), ["critic_feature"], ["state_value"])
         ).to(self.device)
 

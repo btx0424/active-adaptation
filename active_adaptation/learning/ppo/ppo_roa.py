@@ -35,8 +35,8 @@ from tensordict import TensorDict
 from tensordict.nn import TensorDictModuleBase, TensorDictModule, TensorDictSequential
 
 from hydra.core.config_store import ConfigStore
-from dataclasses import dataclass
-from typing import Union
+from dataclasses import dataclass, field
+from typing import Union, List
 from collections import namedtuple
 
 from ..utils.valuenorm import ValueNorm1
@@ -70,7 +70,7 @@ class PPOConfig:
 
     checkpoint_path: Union[str, None] = None
 
-    context_dim: int = 64
+    encoder_dims: List[int] = field(default_factory=lambda: [64])
     regularize: bool = True
     adapt_update_interval: int = 1
     lambda_schedule: tuple = (0., 1., 0., 1.)
@@ -78,6 +78,7 @@ class PPOConfig:
 
 cs = ConfigStore.instance()
 cs.store("ppo_roa", node=PPOConfig, group="algo")
+cs.store("ppo_roa_noreg", node=PPOConfig(regularize=False), group="algo")
 
 
 class GRU(nn.Module):
@@ -154,7 +155,7 @@ class PPOROAPolicy(TensorDictModuleBase):
 
         self.entropy_coef = 0.001
         self.clip_param = 0.1
-        self.critic_loss_fn = nn.HuberLoss(delta=10)
+        self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(0.99, 0.95)
         self.value_norm = ValueNorm1(input_shape=1).to(self.device)
@@ -167,11 +168,11 @@ class PPOROAPolicy(TensorDictModuleBase):
             fake_input["context_adapt_hx"] = torch.zeros(fake_input.shape[0], 128)
         
         self.encoder_priv = TensorDictModule(
-            make_mlp([self.cfg.context_dim]), [OBS_PRIV_KEY], ["context_expert"]
+            make_mlp(self.cfg.encoder_dims), [OBS_PRIV_KEY], ["context_expert"]
         ).to(self.device)
         
         self.adapt_module = TensorDictModule(
-            GRUModule(self.cfg.context_dim), 
+            GRUModule(self.cfg.encoder_dims[-1]), 
             [OBS_KEY, "is_init", "context_adapt_hx"], 
             ["context_adapt", ("next", "context_adapt_hx")]
         ).to(self.device)
@@ -222,7 +223,6 @@ class PPOROAPolicy(TensorDictModuleBase):
             
             self.encoder_priv.apply(init_)
             self.actor_expert.apply(init_)
-            self.actor_adapt.apply(init_)
             self.critic.apply(init_)
             self.adapt_module.apply(init_)
 
@@ -265,6 +265,14 @@ class PPOROAPolicy(TensorDictModuleBase):
         return policy
 
     def train_op(self, tensordict: TensorDict):
+        infos = {}
+        infos.update(self.train_expert(tensordict.to_tensordict()))
+        infos.update(self.train_adaptation(tensordict.to_tensordict()))            
+        self.n_updates += 1
+        infos["lambda"] = self.lmbda
+        return infos
+    
+    def train_expert(self, tensordict: TensorDictBase):
         infos = []
         self._compute_advantage(tensordict, self.critic, "adv", "ret", update_value_norm=True)
 
@@ -276,19 +284,21 @@ class PPOROAPolicy(TensorDictModuleBase):
 
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         infos["value_mean"] = self.value_norm.denormalize(tensordict["ret"]).mean().item()
-        infos["lambda"] = self.lmbda
+        return infos
+    
+    def train_adaptation(self, tensordict: TensorDictBase):
+        infos = []
+        with torch.no_grad():
+            self.encoder_priv(tensordict)
         
-        if self.n_updates % self.cfg.adapt_update_interval == 0:
-            with torch.no_grad():
-                self.encoder_priv(tensordict)
-            infos_adapt = []
-            for epoch in range(2):
-                batch = make_batch(tensordict, 8, self.cfg.train_every)
-                for minibatch in batch:
-                    infos_adapt.append(self._update_adaptation(minibatch))
-            infos.update({k: v.mean().item() for k, v in sorted(torch.stack(infos_adapt).items())})
+        for epoch in range(2):
+            batch = make_batch(tensordict, 8, self.cfg.train_every)
+            for minibatch in batch:
+                infos.append(self._update_adaptation(minibatch))
         
-        self.n_updates += 1
+        infos = ({k: v.mean().item() for k, v in sorted(torch.stack(infos).items())})
+        with torch.no_grad():
+            infos["adapt/action_kl"] = self._action_kl(tensordict).item()
         return infos
 
     @torch.no_grad()
@@ -365,3 +375,12 @@ class PPOROAPolicy(TensorDictModuleBase):
         losses["adapt/adapt_module_grad_norm"] = nn.utils.clip_grad_norm_(self.adapt_module.parameters(), 10)
         self.opt_adapt.step()
         return TensorDict(losses, [])
+    
+    def _action_kl(self, tensordict: TensorDict, reduce: bool=True):
+        with torch.no_grad():
+            dist1 = self.actor_expert.get_dist(tensordict)
+        dist2 = self.actor_adapt.get_dist(self.adapt_module(tensordict))
+        kl = D.kl_divergence(dist2, dist1).unsqueeze(-1)
+        if reduce:
+            kl = kl.mean()
+        return kl
