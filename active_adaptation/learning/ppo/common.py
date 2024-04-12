@@ -240,3 +240,10 @@ class SimNorm(nn.Module):
 def collect_info(infos, prefix=""):
     return {prefix+k: v.mean().item() for k, v in torch.stack(infos).items()}
 
+
+def normalize(x: torch.Tensor, subtract_mean: bool=False):
+    if subtract_mean:
+        return (x - x.mean()) / x.std().clamp(1e-7)
+    else:
+        return x  / x.std().clamp(1e-7)
+

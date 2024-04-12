@@ -352,10 +352,10 @@ class PPOAdaptPolicy(TensorDictModuleBase):
     def train_expert(self, tensordict: TensorDict):
         infos = []
         with torch.no_grad():
-            self.encoder_priv(tensordict)
-            self.adapt_module(tensordict)
+            # self.encoder_priv(tensordict)
+            # self.adapt_module(tensordict)
             self.encoder_priv(tensordict["next"])
-            self.adapt_module(tensordict["next"])
+            self.adapt_module_ema(tensordict["next"])
         self._compute_advantage(tensordict, self._critic_expert, "adv_expert", "ret_expert", value_norm=self.value_norm_a)
         self._compute_advantage(tensordict, self._critic_adapt, "adv_adapt", "ret_adapt", value_norm=self.value_norm_b)
 
@@ -386,8 +386,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         infos = []
 
         with torch.no_grad():
-            self.encoder_priv(tensordict)
-            self.adapt_module_ema(tensordict)
+            # self.encoder_priv(tensordict)
+            # self.adapt_module_ema(tensordict)
             self.encoder_priv(tensordict["next"])
             self.adapt_module_ema(tensordict["next"])
             action_kl = self._action_kl(tensordict["next"], reduce=False)
@@ -534,6 +534,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         # losses["classifier_b_acc"] = acc_b
         self.opt_adapt.zero_grad()
         sum(v for k, v in losses.items() if k.endswith("loss")).backward()
+        for param_group in self.opt_adapt.param_groups:
+            nn.utils.clip_grad_norm_(param_group["params"], 10)
         self.opt_adapt.step()
         return losses
 
