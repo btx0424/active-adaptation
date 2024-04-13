@@ -109,19 +109,12 @@ def LocomotionEnvCfg(task_cfg):
 
     robot_cfg = ROBOTS[task_cfg.robot.lower()]
 
-    if task_cfg.terrain == "plane":
-        terrain_cfg = FLAT_TERRAIN_CFG
-    elif task_cfg.terrain == "legacy":
+    terrain = task_cfg.get("terrain", "plane")
+    if not terrain == "plane":
         terrain_cfg = ROUGH_TERRAIN_CFG
-        terrain_cfg.terrain_generator = ROUGH_LEGACY
-    elif task_cfg.terrain == "easy":
-        terrain_cfg = ROUGH_TERRAIN_CFG
-        terrain_cfg.terrain_generator = ROUGH_EASY
-    elif task_cfg.terrain == "medium":
-        terrain_cfg = ROUGH_TERRAIN_CFG
-        terrain_cfg.terrain_generator = ROUGH_MEDIUM
+        terrain_cfg.terrain_generator = TERRAINS[task_cfg.terrain]
     else:
-        raise ValueError(task_cfg.terrain)
+        terrain_cfg = FLAT_TERRAIN_CFG
     
     env_cfg = EnvCfg(
         max_episode_length=task_cfg.max_episode_length,
@@ -131,7 +124,7 @@ def LocomotionEnvCfg(task_cfg):
             num_envs=task_cfg.num_envs,                                                                                                                                                         
             robot=robot_cfg.replace(prim_path="{ENV_REGEX_NS}/Robot"),
             terrain=terrain_cfg,
-            replicate_physics=False,
+            replicate_physics=True,
         ),
         command = task_cfg.command,
         reward = task_cfg.reward,

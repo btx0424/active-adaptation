@@ -46,7 +46,8 @@ observation:
     root_linvel_b:
     feet_pos_b:
     # feet_vel_b:
-    feet_height_map: {feet_names: .*foot }
+    # feet_height_map: {feet_names: .*foot }
+    # last_contact: {body_names: .*foot}
     applied_torques: {actuator_name: base_legs}
     # joint_acc:
     # feet_height:

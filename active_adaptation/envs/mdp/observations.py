@@ -337,12 +337,22 @@ class body_materials(Observation):
         self.homogeneous = homogeneous
         self.asset: Articulation = self.env.scene["robot"]
         self.body_ids, self.body_names = self.asset.find_bodies(body_names)
-        self.body_ids = torch.as_tensor(self.body_ids, device=self.device)
-        if self.homogeneous:
-            self.body_ids = self.body_ids[0]
 
+        num_shapes_per_body = []
+        for link_path in self.asset.root_physx_view.link_paths[0]:
+            link_physx_view = self.asset._physics_sim_view.create_rigid_body_view(link_path)  # type: ignore
+            num_shapes_per_body.append(link_physx_view.max_shapes)
+        cumsum = np.cumsum([0,] + num_shapes_per_body)
+        self.shape_ids = torch.cat([
+            torch.arange(cumsum[i], cumsum[i+1]) 
+            for i in self.body_ids
+        ]).to(self.device)
+
+        if self.homogeneous:
+            self.shape_ids = self.shape_ids[0]
+        
     def __call__(self):
-        return self.asset.data.body_materials[:, self.body_ids].reshape(self.num_envs, -1)
+        return self.asset.data.body_materials[:, self.shape_ids].reshape(self.num_envs, -1)
 
 
 class feet_height(Observation):
@@ -467,6 +477,46 @@ class prev_actions(Observation):
     def __call__(self):
         return self.prev_action.reshape(self.num_envs, -1)
 
+
+class last_contact(Observation):
+    def __init__(self, env, body_names: str):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+        self.articulation_body_ids = self.asset.find_bodies(body_names)[0]
+
+        self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names)
+
+        with torch.device(self.device):
+            self.body_ids = torch.as_tensor(self.body_ids)
+            self.has_contact = torch.zeros(self.num_envs, len(self.body_ids), 1, dtype=bool)
+            self.last_contact_pos_w = torch.zeros(self.num_envs, len(self.body_ids), 3)
+        self.body_pos_w = self.asset.data.body_pos_w[:, self.articulation_body_ids]
+        
+    def reset(self, env_ids: torch.Tensor):
+        self.has_contact[env_ids] = False
+    
+    def update(self):
+        first_contact = self.contact_sensor.compute_first_contact(self.env.step_dt)[:, self.body_ids].unsqueeze(-1)
+        self.has_contact.logical_or_(first_contact)
+        self.body_pos_w = self.asset.data.body_pos_w[:, self.articulation_body_ids]
+        self.last_contact_pos_w = torch.where(
+            first_contact,
+            self.body_pos_w,
+            self.last_contact_pos_w
+        )
+    
+    def __call__(self):
+        distance_xy = (self.body_pos_w[:, :, :2] - self.last_contact_pos_w[:, :, :2]).norm(dim=-1)
+        distance_z = self.body_pos_w[:, :, 2] - self.last_contact_pos_w[:, :, 2]
+        distance = torch.stack([distance_xy, distance_z], dim=-1)
+        return (distance * self.has_contact).reshape(self.num_envs, -1)
+
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.body_pos_w,
+            torch.where(self.has_contact, self.last_contact_pos_w, self.body_pos_w) - self.body_pos_w
+        )
 
 # class incoming_wrench(Observation):
 #     def __init__(self, env):

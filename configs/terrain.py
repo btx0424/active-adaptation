@@ -16,34 +16,7 @@ from dataclasses import MISSING
 
 import omni.isaac.orbit.sim as sim_utils
 
-
-ROUGH_LEGACY = TerrainGeneratorCfg(
-    seed=0,
-    size=(8.0, 8.0),
-    border_width=30.0,
-    num_rows=20,
-    num_cols=20,
-    horizontal_scale=0.1,
-    vertical_scale=0.005,
-    slope_threshold=0.75,
-    use_cache=False,
-    sub_terrains={
-        "random_rough_hard": HfRandomUniformTerrainCfg(
-            proportion=0.4, noise_range=(0.0, 0.08), noise_step=0.02, border_width=0.4
-        ),
-        "random_rough_easy": HfRandomUniformTerrainCfg(
-            proportion=0.4, noise_range=(0.0, 0.05), noise_step=0.01, border_width=0.4
-        ),
-        "boxes": MeshRandomGridTerrainCfg(
-            proportion=0.2, 
-            grid_width=0.45, 
-            grid_height_range=(0.02, 0.06), 
-            platform_width=2.0
-        ),
-    },
-)
-
-ROUGH_EASY = TerrainGeneratorCfg(
+ROUGH_MEDIUM = TerrainGeneratorCfg(
     seed=0,
     size=(8.0, 8.0),
     border_width=40.0,
@@ -94,7 +67,7 @@ ROUGH_EASY = TerrainGeneratorCfg(
     },
 )
 
-ROUGH_MEDIUM = TerrainGeneratorCfg(
+ROUGH_EASY = TerrainGeneratorCfg(
     seed=0,
     size=(8.0, 8.0),
     border_width=40.0,
@@ -105,50 +78,35 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
     slope_threshold=0.75,
     use_cache=False,
     sub_terrains={
-        "random_rough_hard": HfRandomUniformTerrainCfg(
-            proportion=0.3,
-            noise_range=(0.0, 0.1),
-            noise_step=0.02,
-            border_width=0.5,
-            downsampled_scale=0.2
+        "flat": MeshPlaneTerrainCfg(
+            proportion=0.20,
         ),
         "random_rough_easy": HfRandomUniformTerrainCfg(
-            proportion=0.3,
+            proportion=0.20,
             noise_range=(0.0, 0.05),
-            noise_step=0.02,
+            noise_step=0.01,
             border_width=0.5
         ),
-        # "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
-        #     proportion=0.1,
-        #     slope_range=(0.0, 0.25),
-        #     platform_width=1.0,
-        #     border_width=0.25
-        # ),
-        # "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
-        #     proportion=0.1,
-        #     slope_range=(0.0, 0.25),
-        #     platform_width=1.0,
-        #     border_width=0.25
-        # ),
-        "pyramid_stairs": MeshPyramidStairsTerrainCfg(
-            proportion=0.2,
-            step_height_range=(0.05, 0.15),
-            step_width=0.35,
-            platform_width=3.0,
-            border_width=1.0,
-            holes=False,
+        "boxes": MeshRandomGridTerrainCfg(
+            proportion=0.20, 
+            grid_width=0.45, 
+            grid_height_range=(0.02, 0.05), 
+            platform_width=2.0
         ),
-        # "pyramid_stairs_inv": MeshInvertedPyramidStairsTerrainCfg(
-        #     proportion=0.2,
-        #     step_height_range=(0.05, 0.15),
-        #     step_width=0.35,
-        #     platform_width=3.0,
-        #     border_width=1.0,
-        #     holes=False,
-        # ),
+        "pyramid_slope_inv": HfPyramidSlopedTerrainCfg(
+            proportion=0.20,
+            slope_range=(0.0, 0.20),
+            platform_width=1.0,
+            border_width=0.25
+        ),
+        "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
+            proportion=0.20,
+            slope_range=(0.0, 0.20),
+            platform_width=1.0,
+            border_width=0.25
+        ),
     },
 )
-
 
 ROUGH_TERRAIN_CFG = TerrainImporterCfg(
     prim_path="/World/ground",
@@ -180,3 +138,8 @@ FLAT_TERRAIN_CFG = TerrainImporterCfg(
         improve_patch_friction=True
     ),
 )
+
+TERRAINS = {
+    "medium": ROUGH_MEDIUM,
+    "easy": ROUGH_EASY,
+}
