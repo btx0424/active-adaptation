@@ -237,6 +237,7 @@ def main(cfg):
         pass
 
     wandb.finish()
+    exit(0)
     
     base_env.close()
     simulation_app.close()

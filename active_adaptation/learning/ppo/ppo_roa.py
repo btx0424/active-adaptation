@@ -70,7 +70,7 @@ class PPOConfig:
 
     checkpoint_path: Union[str, None] = None
 
-    encoder_dims: List[int] = field(default_factory=lambda: [64])
+    encoder_dims: List[int] = field(default_factory=lambda: [128])
     regularize: bool = True
     adapt_update_interval: int = 1
     lambda_schedule: tuple = (0., 1., 0., 1.)
