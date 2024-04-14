@@ -51,8 +51,11 @@ class PPOConfig:
     clip_param: float = 0.2
 
     context_dim: int = 128
+    adapt_loss: str = "feature_mse"
+    adapt_reward: bool = False
     tune_alpha: bool = True
     target_kl: float = 1.0
+    unbiased_critic: bool = True # whether use critic_adapt or critic_expert during finetuning
 
     phase: str = "train"
     checkpoint_path: Union[str, None] = None
@@ -398,7 +401,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             self.adapt_module_ema(_tensordict["next"])
             del _tensordict["next", "next"]
             action_kl = self._action_kl(_tensordict.to_tensordict(), reduce=False)
-            _tensordict[REWARD_KEY] = _tensordict[REWARD_KEY] - self.log_alpha.exp() * action_kl
+            if self.cfg.adapt_reward:
+                _tensordict[REWARD_KEY] = _tensordict[REWARD_KEY] - self.log_alpha.exp() * action_kl
 
         self._compute_advantage(tensordict, self._critic_expert, "adv_expert", "ret_expert", value_norm=self.value_norm_a)
         self._compute_advantage(tensordict, self._critic_adapt, "adv_adapt", "ret_adapt", value_norm=self.value_norm_b)
@@ -412,8 +416,11 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             self.opt_alpha.step()
 
         actor = self._actor_adapt if train_actor else None
-        # adv_key = "adv_expert"
-        adv_key = "adv_adapt"
+        if self.cfg.unbiased_critic:
+            adv_key = "adv_adapt"
+        else:
+            adv_key = "adv_expert"
+        
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches)
             for minibatch in batch:
@@ -529,16 +536,18 @@ class PPOAdaptPolicy(TensorDictModuleBase):
 
     def _update_adaptation(self, tensordict: TensorDictBase):
         losses = TensorDict({}, [])
-        losses["adaptation_loss"] = self._feature_mse(tensordict)
-        # losses["adaptation_loss"] = self._action_kl(tensordict)
-        with torch.no_grad():
-            action_expert = self._actor_expert(tensordict)[ACTION_KEY]
-            action_adapt = self._actor_adapt(tensordict)[ACTION_KEY]
-        losses["classifier_a_loss"], acc_a = self._least_square(
-            self.classifer_a(tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_expert),
-            self.classifer_a(tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_adapt)
-        )
-        losses["classifier_a_acc"] = acc_a
+        match self.cfg.adapt_loss:
+            case "feature_mse": losses["adaptation_loss"] = self._feature_mse(tensordict)
+            case "action_kl": losses["adaptation_loss"] = self._action_kl(tensordict)
+            case _: raise NotImplementedError
+        # with torch.no_grad():
+        #     action_expert = self._actor_expert(tensordict)[ACTION_KEY]
+        #     action_adapt = self._actor_adapt(tensordict)[ACTION_KEY]
+        # losses["classifier_a_loss"], acc_a = self._least_square(
+        #     self.classifer_a(tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_expert),
+        #     self.classifer_a(tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_adapt)
+        # )
+        # losses["classifier_a_acc"] = acc_a
         # losses["classifier_b_loss"], acc_b = self._cross_entropy(
         #     self.classifer_b(tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_expert),
         #     self.classifer_b(tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY], action_adapt)
