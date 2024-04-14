@@ -172,6 +172,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
 
         self.observation_spec = observation_spec
         fake_input = observation_spec.zero()
+        print(fake_input.shapes)
 
         self.log_alpha = nn.Parameter(torch.tensor(0.))
         self.opt_alpha = torch.optim.Adam([self.log_alpha], lr=1e-2)

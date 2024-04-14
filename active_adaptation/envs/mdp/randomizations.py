@@ -3,6 +3,7 @@ import numpy as np
 from omni.isaac.orbit.assets import Articulation
 from omni.isaac.orbit.actuators import DCMotor, ImplicitActuator
 from omni.isaac.orbit.sensors import RayCaster
+import omni.isaac.orbit.utils.string as string_utils
 from typing import Union
 import logging
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
@@ -179,14 +180,13 @@ class perturb_body_mass(Randomization):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.default_masses = self.asset.root_physx_view.get_masses()[0]
-        self.mass_ranges = torch.ones(self.asset.num_bodies, 2)
 
-        for body_name_expr, (low, high) in perturb_ranges.items():
-            body_ids, body_names = self.asset.find_bodies(body_name_expr)
-            print(f"Default mass of {body_names}: \n"
-                  f"{[round(i, 2) for i in self.default_masses[body_ids].tolist()]}")
-            self.mass_ranges[body_ids, 0] = low
-            self.mass_ranges[body_ids, 1] = high
+        self.body_ids, self.body_names, values = string_utils.resolve_matching_names_values(
+            perturb_ranges, self.asset.body_names
+        )
+        self.mass_ranges = torch.tensor(values)
+        print(self.body_names)
+        print(self.default_masses[self.body_ids])
 
     def startup(self):
         logging.info("Randomize body masses upon startup.")

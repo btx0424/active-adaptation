@@ -355,6 +355,23 @@ class body_materials(Observation):
         return self.asset.data.body_materials[:, self.shape_ids].reshape(self.num_envs, -1)
 
 
+class body_mass(Observation):
+    def __init__(self, env, body_names, homogeneous: bool=False):
+        super().__init__(env)
+        self.homogeneous = homogeneous
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_ids, self.body_names = self.asset.find_bodies(body_names)
+        
+        self.default_masses = self.asset.root_physx_view.get_masses()[0][self.body_ids]
+        self.masses = torch.zeros_like(self.default_masses, device=self.device)
+    
+    def startup(self):
+        self.masses = (self.asset.root_physx_view.get_masses()[:, self.body_ids] / self.default_masses).to(self.device) - 1.
+    
+    def __call__(self) -> torch.Tensor:
+        return self.masses.reshape(self.num_envs, -1)
+    
+
 class feet_height(Observation):
     def __init__(self, env, feet_names=".*_foot", nomial_height=0.3):
         super().__init__(env)

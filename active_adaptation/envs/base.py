@@ -109,6 +109,7 @@ class Env(EnvBase):
         self.randomizations = OrderedDict()
         self.observation_funcs = OrderedDict()
         self.reward_funcs = OrderedDict()
+        self._startup_callbacks = []
         self._update_callbacks = []
         self._reset_callbacks = []
         self._debug_draw_callbacks = []
@@ -119,6 +120,7 @@ class Env(EnvBase):
         for key, params in self.cfg.randomization.items():
             rand = RAND_FUNCS[key](self, **params if params is not None else {})
             self.randomizations[key] = rand
+            self._startup_callbacks.append(rand.startup)
             self._reset_callbacks.append(rand.reset)
             self._debug_draw_callbacks.append(rand.debug_draw)
             self._step_callbacks.append(rand.step)
@@ -128,12 +130,14 @@ class Env(EnvBase):
             for key, params in funcs.items():
                 obs = OBS_FUNCS[key](self, **(params if params is not None else {}))
                 self.observation_funcs[group][key] = obs
+                self._startup_callbacks.append(obs.startup)
                 self._update_callbacks.append(obs.update)
                 self._reset_callbacks.append(obs.reset)
                 self._debug_draw_callbacks.append(obs.debug_draw)
         
-        for rand in self.randomizations.values():
-            rand.startup()
+        for callback in self._startup_callbacks:
+            callback()
+        
         self.sim.physics_sim_view.flush()
         
         obs = self._compute_observation()
