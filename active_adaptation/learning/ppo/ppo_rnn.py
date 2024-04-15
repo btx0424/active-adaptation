@@ -35,11 +35,11 @@ from tensordict import TensorDict
 from tensordict.nn import TensorDictModule, TensorDictSequential, TensorDictModuleBase
 
 from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuousTensorSpec
-from torchrl.envs import CatTensors, TensorDictPrimer
+from torchrl.envs import CatTensors, TensorDictPrimer, ExcludeTransform
 from torchrl.modules import ProbabilisticActor
 
 from ..modules.distributions import IndependentNormal
-from .common import Actor, GAE, make_mlp
+from .common import *
 from ..utils.valuenorm import ValueNorm1
 
 
@@ -143,6 +143,20 @@ class GRU(nn.Module):
             return output, einops.repeat(hx, "b h -> b t h", t=T)
 
 
+class GRUModule(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+        self.mlp = make_mlp([256, 256])
+        self.gru = GRU(input_size=256, hidden_size=128, allow_none=False)
+        self.out = make_mlp([256])
+    
+    def forward(self, obs, is_init, hx):
+        obs_feature = self.mlp(obs)
+        rnn_feature, hx = self.gru(obs_feature, is_init, hx)
+        feature = self.out(torch.cat([rnn_feature, rnn_feature], dim=-1))
+        return feature, hx.contiguous()
+
+
 @dataclass
 class PPOConfig:
     name: str = "ppo_rnn"
@@ -166,13 +180,6 @@ cs = ConfigStore.instance()
 cs.store("ppo_gru", node=PPOConfig, group="algo")
 cs.store("ppo_lstm", node=PPOConfig(rnn="lstm"), group="algo")
 
-OBS_KEY = "policy" # OBS_KEY
-OBS_PRIV_KEY = "priv"
-OBS_HIST_KEY = "history"
-ACTION_KEY = "action" # ACTION_KEY
-REWARD_KEY = ("next", "reward") # ("agents", "reward")
-# DONE_KEY = ("next", "done")
-DONE_KEY = ("next", "terminated")
 
 class PPORNNPolicy(TensorDictModuleBase):
     def __init__(
@@ -190,91 +197,32 @@ class PPORNNPolicy(TensorDictModuleBase):
 
         self.entropy_coef = 0.001
         self.clip_param = 0.1
-        self.critic_loss_fn = nn.HuberLoss(delta=10)
+        self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
         self.gae = GAE(0.99, 0.95)
         self.action_dim = action_spec.shape[-1]
 
         fake_input = observation_spec.zero()
 
-        if cfg.rnn == "gru":
-
-            def make_rnn(branch: str):
-                return TensorDictModule(
-                    GRU(256, self.cfg.hidden_size, allow_none=False),
-                    ["feature", "is_init", f"{branch}_hx"],
-                    ["feature", ("next", f"{branch}_hx")],
-                )
-
-        elif cfg.rnn == "lstm":
-
-            def make_rnn(branch: str):
-                return TensorDictModule(
-                    LSTM(256, self.cfg.hidden_size, allow_none=False),
-                    ["feature", "is_init", f"{branch}_hx", f"{branch}_cx"],
-                    ["feature", ("next", f"{branch}_hx"), ("next", f"{branch}_cx")],
-                )
-
-        else:
-            raise NotImplementedError(self.cfg.rnn)
-
-        if cfg.priv:
-            def make_encoder():
-                return TensorDictSequential(
-                    TensorDictModule(
-                        make_mlp([128, 128]), [OBS_PRIV_KEY], ["context"]
-                    ),
-                    CatTensors(["feature", "context"], "feature", del_keys=False),
-                )
-
-            actor = TensorDictSequential(
-                TensorDictModule(
-                    make_mlp([256, 256]), [OBS_KEY], ["feature"]
-                ),
-                make_rnn(branch="actor"),
-                make_encoder(),
-                TensorDictModule(
-                    nn.Sequential(make_mlp([256]), Actor(self.action_dim)),
-                    ["feature"], ["loc", "scale"]
-                ),
-            ).to(self.device)
-            self.critic = TensorDictSequential(
-                TensorDictModule(
-                    make_mlp([256, 256]), [OBS_KEY], ["feature"]
-                ),
-                make_rnn(branch="critic"),
-                make_encoder(),
-                TensorDictModule(
-                    nn.Sequential(make_mlp([256]), nn.LazyLinear(1)),
-                    ["feature"], ["state_value"]
-                ),
-            ).to(self.device)
-        else:
-            actor = TensorDictSequential(
-                TensorDictModule(
-                    make_mlp([512, 256]), [OBS_KEY], ["feature"]
-                ),
-                make_rnn(branch="actor"),
-                TensorDictModule(Actor(self.action_dim), ["feature"], ["loc", "scale"]),
-            ).to(self.device)
-            self.critic = TensorDictSequential(
-                TensorDictModule(
-                    make_mlp([512, 256]), [OBS_KEY], ["feature"]
-                ),
-                make_rnn(branch="critic"),
-                TensorDictModule(nn.LazyLinear(1), ["feature"], ["state_value"]),
-            ).to(self.device)
-
         self.actor: ProbabilisticActor = ProbabilisticActor(
-            module=actor,
+            module=TensorDictSequential(
+                TensorDictModule(GRUModule(128), [OBS_KEY, "is_init", "actor_hx"], ["actor_feature", ("next", "actor_hx")]),
+                TensorDictModule(Actor(self.action_dim), ["actor_feature"], ["loc", "scale"])
+            ),
             in_keys=["loc", "scale"],
             out_keys=[ACTION_KEY],
             distribution_class=IndependentNormal,
             return_log_prob=True,
         ).to(self.device)
 
+        critic_module = nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1))
+        self.critic = TensorDictSequential(
+            CatTensors([OBS_KEY, OBS_PRIV_KEY], "policy_priv", del_keys=False),
+            TensorDictModule(critic_module, ["policy_priv"], ["state_value"])
+        ).to(self.device)
+
         self._maybe_init_state(fake_input)
-        self.actor(fake_input.unsqueeze(1))
-        self.critic(fake_input.unsqueeze(1))
+        self.actor(fake_input)
+        self.critic(fake_input)
 
         if self.cfg.checkpoint_path is not None:
             state_dict = torch.load(self.cfg.checkpoint_path)
@@ -296,71 +244,60 @@ class PPORNNPolicy(TensorDictModuleBase):
 
     def _maybe_init_state(self, tensordict: TensorDict):
         shape = tensordict.get(OBS_KEY).shape[:-1]
-        if self.cfg.rnn == "gru":
-            for key in ("actor_hx", "critic_hx"):
-                if key not in tensordict.keys():
-                    tensordict.set(
-                        key,
-                        torch.zeros(*shape, self.cfg.hidden_size, device=self.device),
-                    )
-        elif self.cfg.rnn == "lstm":
-            for key in ("actor_hx", "actor_cx", "critic_hx", "critic_cx"):
-                if key not in tensordict.keys():
-                    tensordict.set(
-                        key,
-                        torch.zeros(*shape, self.cfg.hidden_size, device=self.device),
-                    )
+        with torch.device(self.device):
+            tensordict["is_init"] = torch.ones(tensordict.shape[0], 1, dtype=bool)
+            zeros = torch.zeros(*shape, self.cfg.hidden_size)
+            if self.cfg.rnn == "gru":
+                for key in ("actor_hx", "critic_hx"):
+                    if key not in tensordict.keys():
+                        tensordict.set(key, zeros)
+            elif self.cfg.rnn == "lstm":
+                for key in ("actor_hx", "actor_cx", "critic_hx", "critic_cx"):
+                    if key not in tensordict.keys():
+                        tensordict.set(key, zeros)
         return tensordict
 
-    def __call__(self, tensordict: TensorDict):
-        # self._maybe_init_state(tensordict)
-        tensordict = self.actor(tensordict)
-        tensordict = self.critic(tensordict)
-        tensordict = tensordict.exclude("loc", "scale", "feature", inplace=True)
-        return tensordict
+    def get_rollout_policy(self, mode: str):
+        return TensorDictSequential(
+            self.actor,
+            ExcludeTransform("actor_feature", "loc", "scale")
+        )
     
     def make_tensordict_primer(self):
         from torchrl.envs.transforms.transforms import TensorDictPrimer
-
         num_envs = self.observation_spec.shape[0]
         if self.cfg.rnn == "gru":
             return TensorDictPrimer({
                 "actor_hx": UnboundedContinuousTensorSpec((num_envs, 128)),
-                "critic_hx": UnboundedContinuousTensorSpec((num_envs, 128))
             })
         else:
             return TensorDictPrimer({
                 "actor_hx": UnboundedContinuousTensorSpec((num_envs, 128)),
                 "actor_cx": UnboundedContinuousTensorSpec((num_envs, 128)),
-                "critic_hx": UnboundedContinuousTensorSpec((num_envs, 128)),
-                "critic_cx": UnboundedContinuousTensorSpec((num_envs, 128))
             })
 
     def train_op(self, tensordict: TensorDict):
 
         with torch.no_grad():
-            next_tensordict = tensordict["next"].reshape(-1)
-            assert not next_tensordict["is_init"].any()
-            next_values = (
-                self.critic(next_tensordict)["state_value"]
-                .reshape(*tensordict.shape, 1)
-            )
+            self.critic(tensordict)
+            self.critic(tensordict["next"])
 
-        rewards = tensordict[REWARD_KEY]
-        dones = tensordict[DONE_KEY]
-        values = tensordict["state_value"]
-        values = self.value_norm.denormalize(values)
-        next_values = self.value_norm.denormalize(next_values)
+            rewards = tensordict[REWARD_KEY]
+            dones = tensordict[DONE_KEY]
+            values = tensordict["state_value"]
+            next_values = tensordict["next", "state_value"]
+            values = self.value_norm.denormalize(values)
+            next_values = self.value_norm.denormalize(next_values)
 
-        adv, ret = self.gae(rewards, dones, values, next_values)
-        adv_mean = adv.mean()
-        adv_std = adv.std()
-        adv = (adv - adv_mean) / adv_std.clip(1e-7)
-        self.value_norm.update(ret)
-        ret = self.value_norm.normalize(ret)
+            adv, ret = self.gae(rewards, dones, values, next_values)
+            adv_mean = adv.mean()
+            adv_std = adv.std()
+            adv = (adv - adv_mean) / adv_std.clip(1e-7)
+            self.value_norm.update(ret)
+            ret = self.value_norm.normalize(ret)
 
-        tensordict.set("adv", adv)
-        tensordict.set("ret", ret)
+            tensordict.set("adv", adv)
+            tensordict.set("ret", ret)
 
         infos = []
         for epoch in range(self.cfg.ppo_epochs):
@@ -384,15 +321,10 @@ class PPORNNPolicy(TensorDictModuleBase):
         policy_loss = -torch.mean(torch.min(surr1, surr2)) * self.action_dim
         entropy_loss = -self.entropy_coef * torch.mean(entropy)
 
-        b_values = tensordict["state_value"]
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["state_value"]
-        values_clipped = b_values + (values - b_values).clamp(
-            -self.clip_param, self.clip_param
-        )
-        value_loss_clipped = self.critic_loss_fn(b_returns, values_clipped)
-        value_loss_original = self.critic_loss_fn(b_returns, values)
-        value_loss = torch.max(value_loss_original, value_loss_clipped)
+        value_loss = self.critic_loss_fn(b_returns, values)
+        value_loss = (value_loss * (~tensordict["is_init"])).mean()
 
         loss = policy_loss + entropy_loss + value_loss
         self.actor_opt.zero_grad()

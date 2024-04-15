@@ -31,9 +31,7 @@ from .ppo_dual import PPODualPolicy
 from .ppo_roa import PPOROAPolicy
 from .ppo_model import PPOModelPolicy
 from .ppo_guided import PPOGuidedPolicy
-from .final import Policy as PPOFinalPolicy
 from .ppg import PPGPolicy
-from .rma import RMAPolicy
 
 ALGOS = {
     "ppo": PPOPolicy,
@@ -46,7 +44,5 @@ ALGOS = {
     "ppo_adapt": PPOAdaptPolicy,
     "ppo_ji": PPOJi,
     "ppo_rma": PPORMAPolicy,
-    "final": PPOFinalPolicy,
     "ppg": PPGPolicy,
-    "rma": RMAPolicy,
 }
