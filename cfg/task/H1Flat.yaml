@@ -30,14 +30,15 @@ observation:
     prev_actions:
     # - "motor_params"
   priv:
-    # joint_acc:
-    root_linvel_b:
+    applied_action:   {}
+    joint_acc:        {}
+    root_linvel_b:    {}
     feet_pos_b:       {}
     # feet_height:      {feet_names: .*ankle_link}
-    feet_height_map:  {feet_names: .*ankle_link }
+    # feet_height_map:  {feet_names: .*ankle_link }
     applied_torques:  {actuator_name: base_legs}
-    motor_params: {actuator_name: "base_legs"}
-    body_materials: {body_names: ".*ankle_link"}
+    motor_params:     {actuator_name: "base_legs"}
+    body_materials:   {body_names: ".*ankle_link"}
 
 reward:
   linvel_exp:         {weight: 1.5, enabled: true}
@@ -47,10 +48,10 @@ reward:
   # linvel_z_l2:        {weight: 1.0, enabled: true}
   energy_l1:          {weight: 2.0e-4, enabled: true}
   joint_acc_l2:       {weight: 3.5e-8, enabled: true}
-  joint_torques_l2:   {weight: 2.0e-5, enabled: false}
+  joint_torques_l2:   {weight: 2.0e-5, enabled: true}
   # stand: 0.5
   orientation:        {weight: 0.5, enabled: true}
-  survival:           {weight: 1.0, enabled: false}
+  survival:           {weight: 1.0, enabled: true}
   feet_air_time:      {weight: 1.0, enabled: true, body_names: .*ankle_link, thres: 0.5}
   feet_slip:          {weight: 1.0, enabled: false, body_names: .*ankle_link}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*ankle_link}
@@ -72,7 +73,7 @@ randomization:
       torso_joint:  [-1., 1.]
       .*elbow.*:    [-0.8, 0.8]
       .*shoulder.*: [-0.8, 0.8]
-  stumble:  {body_names: ".*ankle_link", stumble_height: 0.05, friction_range: [0.1, 2.0]}
+  # stumble:  {body_names: ".*ankle_link", stumble_height: 0.05, friction_range: [0.1, 2.0]}
 
 termination:
   crash: 

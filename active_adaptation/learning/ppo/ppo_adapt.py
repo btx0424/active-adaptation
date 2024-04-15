@@ -49,8 +49,10 @@ class PPOConfig:
     num_minibatches: int = 16
     lr: float = 5e-4
     clip_param: float = 0.2
+    actor_predict_std: bool = False
 
     context_dim: int = 128
+    context_layer_norm: bool = True
     adapt_loss: str = "feature_mse"
     adapt_reward: bool = False
     tune_alpha: bool = True
@@ -182,7 +184,9 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self.target_kl = self.cfg.target_kl
         
         self.encoder_priv = TensorDictModule(
-            make_mlp([self.cfg.context_dim]), [OBS_PRIV_KEY], ["context_expert"]
+            make_mlp([self.cfg.context_dim], norm="before" if self.cfg.context_layer_norm else None),
+            [OBS_PRIV_KEY],
+            ["context_expert"]
         ).to(self.device)
         
         self.adapt_module = TensorDictModule(
@@ -197,7 +201,10 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         ).to(self.device)
         
         def make_actor(context_key: str) -> ProbabilisticActor:
-            actor_module = nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim))
+            actor_module = nn.Sequential(
+                make_mlp([512, 256, 256]), 
+                Actor(self.action_dim, predict_std=self.cfg.actor_predict_std)
+            )
             actor = ProbabilisticActor(
                 module=TensorDictSequential(
                     # TensorDictModule(make_mlp([self.context_dim]), [OBS_PRIV_KEY], ["context_expert"]),

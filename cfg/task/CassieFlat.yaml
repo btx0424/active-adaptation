@@ -16,7 +16,7 @@ command:
   linvel_x_range: [-0.75, 1.6]
   linvel_y_range: [-0.5, 0.5]
   angvel_range: [-1.0, 1.0]
-  yaw_stiffness_range: [0.5, 0.6]
+  yaw_stiffness_range: [0.5, 0.8]
   base_height_range: [0.25, 0.35]
   stand_prob: 0.1
 
@@ -31,26 +31,28 @@ observation:
     prev_actions:
     # - "motor_params"
   priv:
-    joint_acc:
-    root_linvel_b:
+    applied_action:   {}
+    joint_acc:        {}
+    root_linvel_b:    {}
     feet_pos_b:       {}
-    feet_height:      {feet_names: .*_toe}
+    # feet_height:      {feet_names: .*_toe}
+    # feet_height_map:  {feet_names: .*toe }
     applied_torques:  {actuator_name: legs}
     motor_params:     {actuator_name: legs, homogeneous: "${task.homogeneous}"}
     body_materials:   {body_names: .*toe, homogeneous: "${task.homogeneous}"}
 
 reward:
-  linvel_exp:         {weight: 1.0, enabled: true}
+  linvel_exp:         {weight: 1.5, enabled: true}
   # linacc_z_l2:        {weight: 0.005}
   linvel_projection:  {weight: 1.0, enabled: false}
-  angvel_z_exp:       {weight: 0.5, enabled: true}
+  angvel_z_exp:       {weight: 0.75, enabled: true}
   # linvel_z_l2:        {weight: 1.0, enabled: true}
   energy_l1:          {weight: 2.0e-4, enabled: true}
   joint_acc_l2:       {weight: 3.5e-8, enabled: true}
-  joint_torques_l2:   {weight: 2.0e-5, enabled: false}
+  joint_torques_l2:   {weight: 2.0e-5, enabled: true}
   # stand: 0.5
   orientation:        {weight: 0.5, enabled: true}
-  survival:           {weight: 1.0, enabled: false}
+  survival:           {weight: 1.0, enabled: true}
   feet_air_time:      {weight: 1.0, enabled: true, body_names: .*_toe, thres: 0.5}
   feet_slip:          {weight: 1.0, enabled: false, body_names: .*_toe}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_toe}

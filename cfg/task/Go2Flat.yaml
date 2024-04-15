@@ -43,7 +43,7 @@ observation:
     # feet_height_map: {feet_names: .*foot }
     # applied_torques: {actuator_name: base_legs}
   priv:
-    # applied_action:
+    applied_action:
     root_linvel_b:
     feet_pos_b:
     # feet_vel_b:
@@ -73,7 +73,7 @@ reward:
   joint_torques_l2:   {weight: 2.0e-4, enabled: true}
   stand:              {weight: 0.5}
   orientation:        {weight: 1.0, enabled: false}
-  # survival:           {weight: 1.0, enabled: false}
+  survival:           {weight: 1.0, enabled: true}
   action_rate_l2:     {weight: 0.01, enabled: true}
   # action_rate2_l2:    {weight: 0.01}
   # impact_force_l2:    {weight: 1.0, enabled: false, body_names: .*_foot}
