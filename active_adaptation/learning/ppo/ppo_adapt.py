@@ -233,8 +233,12 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self._actor_adapt = make_actor("context_adapt")
 
         # expert critic with priviledged information
+        if "params" in observation_spec.keys(True, True):
+            critic_in_keys = [OBS_KEY, OBS_PRIV_KEY, "params"]
+        else:
+            critic_in_keys = [OBS_KEY, OBS_PRIV_KEY]
         self._critic_expert = TensorDictSequential(
-            CatTensors([OBS_KEY, OBS_PRIV_KEY], "critic_feature", del_keys=False),
+            CatTensors(critic_in_keys, "critic_feature", del_keys=False),
             TensorDictModule(make_critic(), ["critic_feature"], ["state_value"])
         ).to(self.device)
         # self._critic_expert = TensorDictSequential(
