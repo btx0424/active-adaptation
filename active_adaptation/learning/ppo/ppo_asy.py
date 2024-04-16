@@ -50,6 +50,8 @@ class PPOConfig:
     clip_param: float = 0.2
     recompute_adv: bool = False
 
+    adv_key: str = "adv"
+    marginal_loss: bool = True
     checkpoint_path: Union[str, None] = None
 
 cs = ConfigStore.instance()
@@ -204,46 +206,37 @@ class PPOAsyPolicy(TensorDictModuleBase):
         log_probs = dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy().mean()
 
-        adv = tensordict["adv"]
+        losses = {}
+
+        adv = tensordict[self.cfg.adv_key]
         ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
-        policy_loss = - torch.mean(torch.min(surr1, surr2)) * self.action_dim
-        entropy_loss = - self.entropy_coef * entropy
+        losses["policy_loss"] = - torch.mean(torch.min(surr1, surr2)) * self.action_dim
+        losses["entropy_loss"] = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["state_value"]
-        value_loss = self.critic_loss_fn(b_returns, values)
-        value_loss = (value_loss * (~tensordict["is_init"])).mean()
+        losses["value_loss"] = (self.critic_loss_fn(b_returns, values) * (~tensordict["is_init"])).mean()
 
         b_returns_priv = tensordict["ret_priv"]
         values_priv = self.critic_priv(tensordict)["state_value"]
-        value_loss_priv = self.critic_loss_fn(b_returns_priv, values_priv)
-        value_loss_priv = (value_loss_priv * (~tensordict["is_init"])).mean()
-        marginal_loss = F.mse_loss(tensordict["_state_value"], b_returns)
-        marginal_loss = (marginal_loss * (~tensordict["is_init"])).mean()
+        losses["value_loss_priv"] = (self.critic_loss_fn(b_returns_priv, values_priv) * (~tensordict["is_init"])).mean()
         
-        loss = policy_loss + entropy_loss + value_loss + value_loss_priv + marginal_loss
+        if self.cfg.marginal_loss:
+            marginal_loss = self.critic_loss_fn(tensordict["_state_value"], b_returns)
+            losses["marginal_loss"] = (marginal_loss * (~tensordict["is_init"])).mean()
+
         self.opt.zero_grad()
-        loss.backward()
-        actor_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.actor_expert.parameters(), 10)
-        critic_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 10)
-        critic_priv_grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.critic_priv.parameters(), 10)
+        sum(v for k, v in losses.items()).backward()
+        losses["actor_grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.actor_expert.parameters(), 10)
+        losses["critic_grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 10)
+        losses["critic_priv_grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.critic_priv.parameters(), 10)
         self.opt.step()
-        explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-        explained_var_priv = 1 - F.mse_loss(values_priv, b_returns_priv) / b_returns_priv.var()
-        return TensorDict({
-            "policy_loss": policy_loss,
-            "value_loss": value_loss,
-            "value_loss_priv": value_loss_priv,
-            "marginal_loss": marginal_loss,
-            "entropy": entropy,
-            "actor_grad_norm": actor_grad_norm,
-            "critic_grad_norm": critic_grad_norm,
-            "critic_priv_grad_norm": critic_priv_grad_norm,
-            "explained_var": explained_var,
-            "explained_var_priv": explained_var_priv
-        }, [])
+        losses["explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
+        losses["explained_var_priv"] = 1 - F.mse_loss(values_priv, b_returns_priv) / b_returns_priv.var()
+        losses["entropy"] = entropy
+        return TensorDict(losses, [])
 
 
 def normalize(x: torch.Tensor, subtract_mean: bool=False):
