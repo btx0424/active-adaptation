@@ -54,6 +54,7 @@ observation:
     # feet_height:
     motor_params: {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     body_materials: {body_names: .*foot, homogeneous: "${task.homogeneous}"}
+    body_mass:      {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # contact_indicator: {body_names: ".*_foot"}
 
 reward:
@@ -88,7 +89,8 @@ termination:
 
 randomization:
   perturb_body_mass:
-    (?!payload).*: [0.8, 1.2]
+    (?!(payload|Head.*)).*: [0.8, 1.2]
+    Head.*: [25.0, 250.0]
   perturb_body_materials:
     body_names: ".*_foot"
     static_friction_range: [0.4, 2.0]

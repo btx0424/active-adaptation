@@ -1,4 +1,6 @@
-# hydra.job.chdir: false
+hydra:
+  run:
+    dir: ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}-${task.name}-${algo.name}
 
 headless: true
 offscreen_render: ${eval_render}

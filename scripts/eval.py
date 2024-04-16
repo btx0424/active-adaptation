@@ -34,7 +34,7 @@ def main(cfg):
     
     app_launcher = AppLauncher(
         {"headless": cfg.headless, "offscreen_render": True},
-        # experience=app_experience
+        experience=app_experience
     )
     simulation_app = app_launcher.app
 
@@ -77,7 +77,7 @@ def main(cfg):
         print(e)
     
     if hasattr(policy, "make_tensordict_primer"):
-        transform.append(policy.make_tensordict_primer())
+        env = TransformedEnv(env, policy.make_tensordict_primer())
 
     stats_keys = [
         k for k in env.reward_spec.keys(True, True) 
@@ -94,10 +94,8 @@ def main(cfg):
     ):
         frames = []
 
-        base_env.eval()
         env.eval()
         env.set_seed(seed)
-        policy.eval()
 
         if mode is not None and hasattr(policy, "mode"):
             policy.mode = mode
@@ -192,6 +190,9 @@ def main(cfg):
     
     info = evaluate(render=cfg.eval_render, seed=cfg.seed)
     info = {k: v for k, v in info.items() if isinstance(v, float)}
+    info["task"] = cfg.task.name
+    info["algo"] = cfg.algo.name
+    info["checkpoint_path"] = cfg.algo.checkpoint_path
     print(OmegaConf.to_yaml(info))
     
     time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
