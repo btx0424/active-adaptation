@@ -51,6 +51,8 @@ class PPOConfig:
     clip_param: float = 0.2
     actor_predict_std: bool = False
 
+    aux_epochs: int = 4
+
     context_dim: int = 128
     context_layer_norm: bool = True
     adapt_loss: str = "feature_mse"
@@ -201,15 +203,13 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         ).to(self.device)
         
         def make_actor(context_key: str) -> ProbabilisticActor:
-            actor_module = nn.Sequential(
-                make_mlp([512, 256, 256]), 
-                Actor(self.action_dim, predict_std=self.cfg.actor_predict_std)
-            )
             actor = ProbabilisticActor(
                 module=TensorDictSequential(
                     # TensorDictModule(make_mlp([self.context_dim]), [OBS_PRIV_KEY], ["context_expert"]),
-                    CatTensors([OBS_KEY, context_key], "actor_feature", del_keys=False),
-                    TensorDictModule(actor_module, ["actor_feature"], ["loc", "scale"])
+                    CatTensors([OBS_KEY, context_key], "actor_input", del_keys=False),
+                    TensorDictModule(make_mlp([512, 256, 256]), ["actor_input"], ["actor_feature"]),
+                    TensorDictModule(nn.LazyLinear(1), ["actor_feature"], ["actor_value"]),
+                    TensorDictModule(Actor(self.action_dim, self.cfg.actor_predict_std), ["actor_feature"], ["loc", "scale"])
                 ),
                 # module=TensorDictSequential(
                 #     CatTensors([OBS_KEY, OBS_PRIV_KEY], "actor_feature", del_keys=False),
@@ -282,6 +282,14 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 {"params": self.encoder_priv.parameters()},
                 {"params": self._actor_expert.parameters()},
                 {"params": self._critic_expert.parameters()},
+            ],
+            lr=cfg.lr
+        )
+
+        self.opt_aux = torch.optim.Adam(
+            [
+                {"params": self.encoder_priv.parameters()},
+                {"params": self._actor_expert.parameters()},
             ],
             lr=cfg.lr
         )
@@ -392,11 +400,23 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 )
                 info.update({f"adapt/{k}": v for k, v in info_adapt.items()})
                 infos.append(info)
+        infos = {k: v.mean() for k, v in torch.stack(infos).items(True, True)}
+        
+        if self.cfg.aux_epochs > 0 and self.num_updates % 2 == 0:
+            infos_aux = []
+            with torch.no_grad():
+                self.encoder_priv(tensordict)
+                self._actor_expert.get_dist_params(tensordict)
+            for epoch in range(self.cfg.aux_epochs):
+                for minibatch in make_batch(tensordict, self.cfg.num_minibatches):
+                    self.encoder_priv(minibatch)
+                    infos_aux.append(self._update_aux(minibatch))
+            infos_aux = {k: v.mean() for k, v in torch.stack(infos_aux).items(True, True)}
+            infos.update(infos_aux)
         
         hard_copy_(self._actor_expert, self.__actor_expert)
         hard_copy_(self._actor_expert, self._actor_adapt)
         
-        infos = {k: v.mean() for k, v in torch.stack(infos).items(True, True)}
         if "ret_expert" in tensordict.keys():
             infos["value_mean_expert"] = self.value_norm_a.denormalize(tensordict["ret_expert"]).mean()
         if "ret_adapt" in tensordict.keys():
@@ -570,15 +590,31 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             nn.utils.clip_grad_norm_(param_group["params"], 10)
         self.opt_adapt.step()
         return losses
+    
+    def _update_aux(self, tensordict: TensorDictBase, ret_key: str="ret_expert"):
+        losses = {}
+        dist_old = self._actor_expert.build_dist_from_params(tensordict.to_tensordict())
+        dist_new = self._actor_expert.get_dist(tensordict)
+        losses["aux/kl_loss"] = D.kl_divergence(dist_old, dist_new)
+        losses["aux/value_loss"] = (
+            self.critic_loss_fn(tensordict["actor_value"], tensordict[ret_key]) * (~tensordict["is_init"])
+        )
+        loss = sum(v.mean() for k, v in losses.items())
+        self.opt_aux.zero_grad()
+        loss.backward()
+        for param_group in self.opt_aux.param_groups:
+            nn.utils.clip_grad_norm_(param_group["params"], 5)
+        self.opt_aux.step()
+        return TensorDict(losses, [])
 
-    def _feature_mse(self, tensordict: TensorDict, reduce: bool=True):
+    def _feature_mse(self, tensordict: TensorDictBase, reduce: bool=True):
         self.adapt_module(tensordict)
         if reduce:
             return F.mse_loss(tensordict["context_adapt"], tensordict["context_expert"])
         else:
             return F.mse_loss(tensordict["context_adapt"], tensordict["context_expert"], reduction="none").mean(-1, True)
     
-    def _action_kl(self, tensordict: TensorDict, reduce: bool=True):
+    def _action_kl(self, tensordict: TensorDictBase, reduce: bool=True):
         with torch.no_grad():
             dist1 = self._actor_expert.get_dist(tensordict)
         dist2 = self.__actor_expert.get_dist(self.adapt_module(tensordict))
