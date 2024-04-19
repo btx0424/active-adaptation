@@ -64,7 +64,7 @@ def main(cfg):
         transform.append(CatFrames(4, -1, ["policy"], ["policy"]))
 
     env = TransformedEnv(base_env, transform)
-    env.set_seed(0)
+    env.set_seed(cfg.seed)
 
     # setup policy
     policy = ALGOS[cfg.algo.name](
@@ -74,6 +74,13 @@ def main(cfg):
         env.reward_spec, 
         device=base_env.device
     )
+    import inspect
+    import shutil
+    source_path = inspect.getfile(policy.__class__)
+    target_path = os.path.join(run.dir, source_path.split("/")[-1])
+    shutil.copy(source_path, target_path)
+    wandb.save(target_path, policy="now")
+    
 
     if hasattr(policy, "make_tensordict_primer"):
         transform.append(policy.make_tensordict_primer())

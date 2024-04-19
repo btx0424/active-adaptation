@@ -78,16 +78,19 @@ class PPOAsyPolicy(TensorDictModuleBase):
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(0.99, 0.95)
         self.value_norm = ValueNorm1(input_shape=1).to(self.device)
+        self.value_norm_priv = ValueNorm1(input_shape=1).to(self.device)
 
         self.observation_spec = observation_spec
         fake_input = observation_spec.zero()
         
         self.encoder_priv = TensorDictModule(
-            make_mlp([128]), [OBS_PRIV_KEY], ["context_expert"]
+            # make_mlp([128]), 
+            nn.LazyLinear(128),
+            [OBS_PRIV_KEY], ["context_expert"]
         ).to(self.device)
 
         def make_actor(context_key: str) -> ProbabilisticActor:
-            actor_module = nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim))
+            actor_module = nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim, True))
             actor = ProbabilisticActor(
                 module=TensorDictSequential(
                     CatTensors([OBS_KEY, context_key], "actor_feature", del_keys=False),
@@ -117,17 +120,23 @@ class PPOAsyPolicy(TensorDictModuleBase):
             )
         ).to(self.device)
 
+        self.critic_marg = TensorDictSequential(
+            TensorDictModule(make_critic(1), ["policy_priv"], ["value_marg_error"])
+        ).to(self.device)
+
         self.encoder_priv(fake_input)
         self.actor_expert(fake_input)
         self.critic(fake_input)
         self.critic_priv(fake_input)
+        self.critic_marg(fake_input)
 
         self.opt = torch.optim.Adam(
             [
                 {"params": self.encoder_priv.parameters()},
                 {"params": self.actor_expert.parameters()},
                 {"params": self.critic.parameters()},
-                {"params": self.critic_priv.parameters()}
+                {"params": self.critic_priv.parameters()},
+                {"params": self.critic_marg.parameters()}
             ],
             lr=cfg.lr
         )
@@ -145,6 +154,7 @@ class PPOAsyPolicy(TensorDictModuleBase):
             self.actor_expert.apply(init_)
             self.critic.apply(init_)
             self.critic_priv.apply(init_)
+            self.critic_marg.apply(init_)
     
     def get_rollout_policy(self, mode: str="train"):
         policy = TensorDictSequential(
@@ -156,8 +166,36 @@ class PPOAsyPolicy(TensorDictModuleBase):
     # @torch.compile
     def train_op(self, tensordict: TensorDict):
         infos = []
-        self._compute_advantage(tensordict, self.critic, "adv", "ret", update_value_norm=True)
-        self._compute_advantage(tensordict, self.critic_priv, "adv_priv", "ret_priv", update_value_norm=False)
+        self._compute_advantage(
+            tensordict, 
+            self.critic,
+            self.value_norm,
+            "adv", 
+            "ret",
+            update_value_norm=True
+        )
+        values = tensordict["state_value"]
+        self._compute_advantage(
+            tensordict, 
+            self.critic_priv,
+            self.value_norm_priv,
+            "adv_priv", 
+            "ret_priv", 
+            update_value_norm=True
+        )
+        if self.cfg.marginal_loss:
+            tensordict["marg_error"] = (tensordict["_state_value"] -  values).square()
+            self._compute_advantage(
+                tensordict,
+                self.critic_marg,
+                None,
+                "adv_marg",
+                "ret_marg",
+                "marg_error",
+                "value_marg_error",
+                update_value_norm=True
+            )
+            tensordict["adv_mixed"] = normalize(tensordict["adv_priv"] + tensordict["adv_marg"], subtract_mean=True)
         priv_adv_larger = (tensordict["adv_priv"] > tensordict["adv"])
         priv_ret_larger = (tensordict["ret_priv"] > tensordict["ret"])
         tensordict["adv"] = normalize(tensordict["adv"], subtract_mean=True)
@@ -170,8 +208,11 @@ class PPOAsyPolicy(TensorDictModuleBase):
         
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         infos["value_mean"] = self.value_norm.denormalize(tensordict["ret"]).mean().item()
-        infos["priv_adv_larger"] = priv_adv_larger.float().mean().item()
-        infos["priv_ret_larget"] = priv_ret_larger.float().mean().item()
+        infos["value_priv_mean"] = self.value_norm_priv.denormalize(tensordict["ret_priv"]).mean().item()
+        infos["asy/priv_adv_larger"] = priv_adv_larger.float().mean().item()
+        infos["asy/priv_ret_larget"] = priv_ret_larger.float().mean().item()
+        if self.cfg.marginal_loss:
+            infos["value_marg_mean"] = tensordict["ret_marg"].mean().item()
         return infos
 
     @torch.no_grad()
@@ -179,22 +220,27 @@ class PPOAsyPolicy(TensorDictModuleBase):
         self, 
         tensordict: TensorDict,
         critic: TensorDictModule, 
+        value_norm: ValueNorm1,
         adv_key: str="adv",
         ret_key: str="ret",
+        rew_key: str=REWARD_KEY,
+        value_key: str="state_value",
         update_value_norm: bool=True,
     ):
-        values = critic(tensordict)["state_value"]
-        next_values = critic(tensordict["next"])["state_value"]
+        values = critic(tensordict)[value_key]
+        next_values = critic(tensordict["next"])[value_key]
 
-        rewards = tensordict[REWARD_KEY]
+        rewards = tensordict[rew_key]
         dones = tensordict[DONE_KEY]
-        values = self.value_norm.denormalize(values)
-        next_values = self.value_norm.denormalize(next_values)
+        if value_norm is not None:
+            values = value_norm.denormalize(values)
+            next_values = value_norm.denormalize(next_values)
 
         adv, ret = self.gae(rewards, dones, values, next_values)
-        if update_value_norm:
-            self.value_norm.update(ret)
-        ret = self.value_norm.normalize(ret)
+        if value_norm is not None:
+            if update_value_norm:
+                value_norm.update(ret)
+            ret = value_norm.normalize(ret)
 
         tensordict.set(adv_key, adv)
         tensordict.set(ret_key, ret)
@@ -225,7 +271,13 @@ class PPOAsyPolicy(TensorDictModuleBase):
         
         if self.cfg.marginal_loss:
             marginal_loss = self.critic_loss_fn(tensordict["_state_value"], b_returns)
-            losses["marginal_loss"] = (marginal_loss * (~tensordict["is_init"])).mean()
+            losses["asy/marginal_loss"] = (marginal_loss * (~tensordict["is_init"])).mean()
+            
+            values_marg = self.critic_marg(tensordict)["value_marg_error"]
+            losses["asy/value_loss_marg"] = (
+                self.critic_loss_fn(values_marg, tensordict["ret_marg"])
+                * (~tensordict["is_init"])
+            ).mean()
 
         self.opt.zero_grad()
         sum(v for k, v in losses.items()).backward()
