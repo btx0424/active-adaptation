@@ -61,3 +61,17 @@ class distance_to_cover(Termination):
     def __call__(self) -> torch.Tensor:
         return self.command_manager._distance_to_cover > 0.6
 
+
+class joint_acc_exceeds(Termination):
+    def __init__(self, env, thres: float):
+        super().__init__(env)
+        self.thres = thres
+        self.asset: Articulation = self.env.scene["robot"]
+    
+    def __call__(self) -> torch.Tensor:
+        valid = (self.env.episode_length_buf > 2).unsqueeze(-1)
+        return (
+            valid & 
+            (self.asset.data.joint_acc.abs() > self.thres).any(1, True)
+        )
+
