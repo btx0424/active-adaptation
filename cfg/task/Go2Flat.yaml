@@ -86,7 +86,7 @@ reward:
 
 termination:
   crash: {body_names_expr: [Head.*, "base", ".*_hip", ".*_thigh"]}
-  joint_acc_exceeds: {thres: 3600}
+  # joint_acc_exceeds: {thres: 5000}
   # distance_to_cover: {}
 
 randomization:

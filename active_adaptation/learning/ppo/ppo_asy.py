@@ -104,6 +104,16 @@ class PPOAsyPolicy(TensorDictModuleBase):
             return actor
         
         self.actor_expert = make_actor("context_expert")
+        self.actor_target: ProbabilisticActor = ProbabilisticActor(
+            module=TensorDictModule(
+                nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim, True)),
+                [OBS_KEY], ["loc", "scale"]
+            ),
+            in_keys=["loc", "scale"],
+            out_keys=[ACTION_KEY],
+            distribution_class=IndependentNormal,
+            return_log_prob=True
+        ).to(self.device)
         
         def make_critic(output_dim: int):
             return nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(output_dim))
@@ -116,19 +126,25 @@ class PPOAsyPolicy(TensorDictModuleBase):
             CatTensors([OBS_KEY, OBS_PRIV_KEY], "policy_priv", del_keys=False),
             TensorDictModule(
                 nn.Sequential(make_critic(2), Chunk(2)), 
-                ["policy_priv"], ["state_value", "_state_value"]
+                ["policy_priv"], ["state_value", "marg_value"]
             )
         ).to(self.device)
 
-        self.critic_marg = TensorDictSequential(
-            TensorDictModule(make_critic(1), ["policy_priv"], ["value_marg_error"])
+        self.critic_marg = TensorDictModule(
+            make_critic(1), ["policy_priv"], ["value_marg_error"]
+        ).to(self.device)
+
+        self.aux_pred = TensorDictModule(
+            make_critic(1), ["policy_priv"], ["aux_pred"]
         ).to(self.device)
 
         self.encoder_priv(fake_input)
         self.actor_expert(fake_input)
+        self.actor_target(fake_input)
         self.critic(fake_input)
         self.critic_priv(fake_input)
         self.critic_marg(fake_input)
+        self.aux_pred(fake_input)
 
         self.opt = torch.optim.Adam(
             [
@@ -136,10 +152,13 @@ class PPOAsyPolicy(TensorDictModuleBase):
                 {"params": self.actor_expert.parameters()},
                 {"params": self.critic.parameters()},
                 {"params": self.critic_priv.parameters()},
-                {"params": self.critic_marg.parameters()}
+                {"params": self.critic_marg.parameters()},
+                {"params": self.aux_pred.parameters()}
             ],
             lr=cfg.lr
         )
+
+        self.opt_target = torch.optim.Adam(self.actor_target.parameters(), lr=cfg.lr)
         
         if self.cfg.checkpoint_path is not None:
             state_dict = torch.load(self.cfg.checkpoint_path)
@@ -152,9 +171,11 @@ class PPOAsyPolicy(TensorDictModuleBase):
             
             self.encoder_priv.apply(init_)
             self.actor_expert.apply(init_)
+            self.actor_target.apply(init_)
             self.critic.apply(init_)
             self.critic_priv.apply(init_)
             self.critic_marg.apply(init_)
+            self.aux_pred.apply(init_)
     
     def get_rollout_policy(self, mode: str="train"):
         policy = TensorDictSequential(
@@ -165,6 +186,7 @@ class PPOAsyPolicy(TensorDictModuleBase):
 
     # @torch.compile
     def train_op(self, tensordict: TensorDict):
+        tensordict = tensordict.to_tensordict()
         infos = []
         self._compute_advantage(
             tensordict, 
@@ -184,7 +206,13 @@ class PPOAsyPolicy(TensorDictModuleBase):
             update_value_norm=True
         )
         if self.cfg.marginal_loss:
-            tensordict["marg_error"] = (tensordict["_state_value"] -  values).square()
+            with torch.no_grad():
+                self.aux_pred(tensordict)
+                actor_marg_gap = self._kl(tensordict.to_tensordict())
+                critic_marg_gap = values - tensordict["marg_value"]
+                tensordict.set("actor_marg_gap", actor_marg_gap)
+                tensordict.set("critic_marg_gap", critic_marg_gap)
+                tensordict.set("marg_error", (tensordict["aux_pred"] - actor_marg_gap).square())
             self._compute_advantage(
                 tensordict,
                 self.critic_marg,
@@ -213,6 +241,8 @@ class PPOAsyPolicy(TensorDictModuleBase):
         infos["asy/priv_ret_larget"] = priv_ret_larger.float().mean().item()
         if self.cfg.marginal_loss:
             infos["value_marg_mean"] = tensordict["ret_marg"].mean().item()
+            infos["asy/marg_error"] = tensordict["marg_error"].mean().item()
+        infos.update(self.train_target(tensordict.to_tensordict()))
         return infos
 
     @torch.no_grad()
@@ -250,7 +280,7 @@ class PPOAsyPolicy(TensorDictModuleBase):
         self.encoder_priv(tensordict)
         dist = self.actor_expert.get_dist(tensordict)
         log_probs = dist.log_prob(tensordict[ACTION_KEY])
-        entropy = dist.entropy().mean()
+        entropy = dist.entropy().unsqueeze(-1)
 
         losses = {}
 
@@ -258,37 +288,63 @@ class PPOAsyPolicy(TensorDictModuleBase):
         ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
-        losses["policy_loss"] = - torch.mean(torch.min(surr1, surr2)) * self.action_dim
+        losses["policy_loss"] = - torch.min(surr1, surr2) * self.action_dim
         losses["entropy_loss"] = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["state_value"]
-        losses["value_loss"] = (self.critic_loss_fn(b_returns, values) * (~tensordict["is_init"])).mean()
+        losses["value_loss"] = self.critic_loss_fn(b_returns, values)
 
-        b_returns_priv = tensordict["ret_priv"]
-        values_priv = self.critic_priv(tensordict)["state_value"]
-        losses["value_loss_priv"] = (self.critic_loss_fn(b_returns_priv, values_priv) * (~tensordict["is_init"])).mean()
+        self.critic_priv(tensordict)["state_value"]
+        losses["value_loss_priv"] = (
+            self.critic_loss_fn(tensordict["state_value"], tensordict["ret_priv"])
+            + self.critic_loss_fn(tensordict["marg_value"], tensordict["ret"])
+        )
         
         if self.cfg.marginal_loss:
-            marginal_loss = self.critic_loss_fn(tensordict["_state_value"], b_returns)
-            losses["asy/marginal_loss"] = (marginal_loss * (~tensordict["is_init"])).mean()
+            losses["asy/aux_loss"] = (
+                self.aux_pred(tensordict)["aux_pred"]
+                - tensordict["actor_marg_gap"]
+            ).square()
+    
+            losses["asy/value_loss_marg"] = self.critic_loss_fn(
+                self.critic_marg(tensordict)["value_marg_error"],
+                tensordict["ret_marg"]
+            )
             
-            values_marg = self.critic_marg(tensordict)["value_marg_error"]
-            losses["asy/value_loss_marg"] = (
-                self.critic_loss_fn(values_marg, tensordict["ret_marg"])
-                * (~tensordict["is_init"])
-            ).mean()
-
+        not_first = ~tensordict["is_init"]
         self.opt.zero_grad()
-        sum(v for k, v in losses.items()).backward()
+        losses = {k: (v.reshape(not_first.shape) * not_first).mean() for k, v in losses.items()}
+        sum(losses.values()).backward()
         losses["actor_grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.actor_expert.parameters(), 10)
         losses["critic_grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 10)
         losses["critic_priv_grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.critic_priv.parameters(), 10)
         self.opt.step()
         losses["explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-        losses["explained_var_priv"] = 1 - F.mse_loss(values_priv, b_returns_priv) / b_returns_priv.var()
         losses["entropy"] = entropy
         return TensorDict(losses, [])
+    
+    def train_target(self, tensordict: TensorDictBase):
+        with torch.no_grad():
+            self.encoder_priv(tensordict)
+            self.actor_expert(tensordict)
+
+        losses = []
+        for epoch in range(2):
+            batch = make_batch(tensordict, self.cfg.num_minibatches)
+            for minibatch in batch:
+                loss = self._kl(minibatch).mean()
+                self.opt_target.zero_grad()
+                loss.backward()
+                self.opt_target.step()
+                losses.append(loss)
+        
+        return {"asy/imitation_loss": sum(losses).mean().item()}
+    
+    def _kl(self, tensordict: TensorDictBase):
+        dist_expert = self.actor_expert.build_dist_from_params(tensordict.detach())
+        dist_target = self.actor_target.get_dist(tensordict)
+        return D.kl_divergence(dist_expert, dist_target).unsqueeze(-1)
 
 
 def normalize(x: torch.Tensor, subtract_mean: bool=False):

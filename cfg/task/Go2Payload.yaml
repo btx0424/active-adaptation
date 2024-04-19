@@ -11,8 +11,8 @@ payload: true
 
 observation:
   priv:
-    # body_mass:      {body_names: [Head.*, "base", "payload"]}
-    body_momentum:    {body_names: [Head.*, "base", "payload"]}
+    body_mass:      {body_names: [Head.*, "base", "payload"]}
+    # body_momentum:    {body_names: [Head.*, "base", "payload"]}
 
 randomization:
   perturb_body_mass_log_uniform:

@@ -362,11 +362,15 @@ class body_mass(Observation):
         self.asset: Articulation = self.env.scene["robot"]
         self.body_ids, self.body_names = self.asset.find_bodies(body_names)
         
-        self.default_masses = self.asset.root_physx_view.get_masses()[0][self.body_ids]
-        self.masses = torch.zeros_like(self.default_masses, device=self.device)
+        masses = self.asset.root_physx_view.get_masses()[0]
+        self.default_mass_total = masses.sum()
+        self.masses = torch.zeros_like(masses[self.body_ids], device=self.device)
     
     def startup(self):
-        self.masses = (self.asset.root_physx_view.get_masses()[:, self.body_ids]).to(self.device)
+        self.masses = (
+            self.asset.root_physx_view.get_masses()[:, self.body_ids]
+            / self.default_mass_total.sum()
+        ).to(self.device)
     
     def __call__(self) -> torch.Tensor:
         return self.masses.reshape(self.num_envs, -1)
@@ -378,11 +382,15 @@ class body_momentum(Observation):
         self.homogeneous = homogeneous
         self.asset: Articulation = self.env.scene["robot"]
         self.body_ids, self.body_names = self.asset.find_bodies(body_names)
-        self.default_masses = self.asset.root_physx_view.get_masses()[0][self.body_ids]
-        self.masses = torch.zeros_like(self.default_masses, device=self.device)
+        masses = self.asset.root_physx_view.get_masses()[0]
+        self.default_mass_total = masses.sum()
+        self.masses = torch.zeros_like(masses[self.body_ids], device=self.device)
     
     def startup(self):
-        self.masses = self.asset.root_physx_view.get_masses()[:, self.body_ids].unsqueeze(-1).to(self.device)
+        self.masses = (
+            self.asset.root_physx_view.get_masses()[:, self.body_ids]
+            / self.default_mass_total.sum()
+        ).to(self.device)
         self.body_ids = torch.tensor(self.body_ids, device=self.device)
     
     def __call__(self) -> torch.Tensor:
