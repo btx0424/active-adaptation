@@ -366,13 +366,13 @@ class body_mass(Observation):
         self.masses = torch.zeros_like(self.default_masses, device=self.device)
     
     def startup(self):
-        self.masses = (self.asset.root_physx_view.get_masses()[:, self.body_ids] / self.default_masses).to(self.device) - 1.
+        self.masses = (self.asset.root_physx_view.get_masses()[:, self.body_ids]).to(self.device)
     
     def __call__(self) -> torch.Tensor:
         return self.masses.reshape(self.num_envs, -1)
     
 
-class body_moment(Observation):
+class body_momentum(Observation):
     def __init__(self, env, body_names, homogeneous: bool=False):
         super().__init__(env)
         self.homogeneous = homogeneous
@@ -382,13 +382,13 @@ class body_moment(Observation):
         self.masses = torch.zeros_like(self.default_masses, device=self.device)
     
     def startup(self):
-        self.masses = self.asset.root_physx_view.get_masses()[:, self.body_ids].to(self.device)
+        self.masses = self.asset.root_physx_view.get_masses()[:, self.body_ids].unsqueeze(-1).to(self.device)
         self.body_ids = torch.tensor(self.body_ids, device=self.device)
     
     def __call__(self) -> torch.Tensor:
-        speed = self.asset.data.body_lin_vel_w[:, self.body_ids].norm(dim=-1)
-        moment = self.masses * speed
-        return moment.reshape(self.num_envs, -1)
+        velocity = self.asset.data.body_lin_vel_w[:, self.body_ids]
+        momentum = self.masses * quat_rotate_inverse(self.asset.data.root_quat_w.unsqueeze(1), velocity)
+        return momentum.reshape(self.num_envs, -1)
 
 
 class feet_height(Observation):

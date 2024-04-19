@@ -179,24 +179,42 @@ class perturb_body_mass(Randomization):
     ):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
-        self.default_masses = self.asset.root_physx_view.get_masses()[0]
 
         self.body_ids, self.body_names, values = string_utils.resolve_matching_names_values(
             perturb_ranges, self.asset.body_names
         )
         self.mass_ranges = torch.tensor(values)
         print(self.body_names)
-        print(self.default_masses[self.body_ids])
 
     def startup(self):
-        logging.info("Randomize body masses upon startup.")
-        masses, _ = random_scale(
-            self.default_masses.expand(self.env.num_envs, -1), 
-            self.mass_ranges[:, 0], 
-            self.mass_ranges[:, 1], 
-        )
+        logging.info(f"Randomize body masses of {self.body_names} upon startup.")
+        masses = self.asset.root_physx_view.get_masses().clone()
+        masses[:, self.body_ids] = masses[:, self.body_ids] * uniform(self.mass_ranges[:, 0], self.mass_ranges[:, 1])
         indices = torch.arange(self.asset.num_instances)
         self.asset.root_physx_view.set_masses(masses, indices)
+        assert torch.allclose(self.asset.root_physx_view.get_masses(), masses)
+
+
+class perturb_body_mass_log_uniform(Randomization):
+    def __init__(
+        self, env, **perturb_ranges: Tuple[float, float]
+    ):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+
+        self.body_ids, self.body_names, values = string_utils.resolve_matching_names_values(
+            perturb_ranges, self.asset.body_names
+        )
+        self.mass_ranges = torch.tensor(values)
+        print(self.body_names)
+
+    def startup(self):
+        logging.info(f"Randomize body masses of {self.body_names} upon startup.")
+        masses = self.asset.root_physx_view.get_masses().clone()
+        masses[:, self.body_ids] = masses[:, self.body_ids] * log_uniform(self.mass_ranges[:, 0], self.mass_ranges[:, 1])
+        indices = torch.arange(self.asset.num_instances)
+        self.asset.root_physx_view.set_masses(masses, indices)
+        assert torch.allclose(self.asset.root_physx_view.get_masses(), masses)
 
 
 class JointFriction(Randomization):
@@ -373,6 +391,18 @@ def random_shift(x: torch.Tensor, low: float, high: float):
 
 def sample_uniform(size, low: float, high: float, device: torch.device = "cpu"):
     return torch.rand(size, device=device) * (high - low) + low
+
+def uniform(low: torch.Tensor, high: torch.Tensor):
+    r = torch.rand_like(low)
+    return low + r * (high - low)
+
+def _log_uniform(low: torch.Tensor, high: torch.Tensor):
+    return uniform(low.log(), high.log()).exp()
+
+def log_uniform(low: torch.Tensor, high: torch.Tensor, scaling: float = 4):
+    r = _log_uniform(torch.ones_like(low), torch.ones_like(high) * scaling) / scaling
+    return r * (high - low) + low
+
 
 def angle_mix(a: torch.Tensor, b: torch.Tensor, weight: float=0.1):
     d = a - b

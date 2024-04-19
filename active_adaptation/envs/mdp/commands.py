@@ -217,7 +217,7 @@ class Command2(Command):
         
         target_base_height = sample_uniform(env_ids.shape, *self.base_height_range, self.device)
         self._target_base_height[env_ids] = target_base_height.unsqueeze(1)
-        self.command[env_ids, 3] = target_base_height
+        # self.command[env_ids, 3] = target_base_height
 
     def debug_draw(self):
         self.env.debug_draw.vector(
