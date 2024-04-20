@@ -189,39 +189,16 @@ class perturb_body_mass(Randomization):
     def startup(self):
         logging.info(f"Randomize body masses of {self.body_names} upon startup.")
         masses = self.asset.root_physx_view.get_masses().clone()
+        inertias = self.asset.root_physx_view.get_inertias().clone()
         scale = uniform(
             self.mass_ranges[:, 0].expand_as(masses[:, self.body_ids]),
             self.mass_ranges[:, 1].expand_as(masses[:, self.body_ids])
         )
         masses[:, self.body_ids] *= scale
+        inertias[:, self.body_ids] *= scale.unsqueeze(-1)
         indices = torch.arange(self.asset.num_instances)
         self.asset.root_physx_view.set_masses(masses, indices)
-        assert torch.allclose(self.asset.root_physx_view.get_masses(), masses)
-
-
-class perturb_body_mass_log_uniform(Randomization):
-    def __init__(
-        self, env, **perturb_ranges: Tuple[float, float]
-    ):
-        super().__init__(env)
-        self.asset: Articulation = self.env.scene["robot"]
-
-        self.body_ids, self.body_names, values = string_utils.resolve_matching_names_values(
-            perturb_ranges, self.asset.body_names
-        )
-        self.mass_ranges = torch.tensor(values)
-        print(self.body_names)
-
-    def startup(self):
-        logging.info(f"Randomize body masses of {self.body_names} upon startup.")
-        masses = self.asset.root_physx_view.get_masses().clone()
-        scale = log_uniform(
-            self.mass_ranges[:, 0].expand_as(masses[:, self.body_ids]),
-            self.mass_ranges[:, 1].expand_as(masses[:, self.body_ids])
-        )
-        masses[:, self.body_ids] *= scale
-        indices = torch.arange(self.asset.num_instances)
-        self.asset.root_physx_view.set_masses(masses, indices)
+        self.asset.root_physx_view.set_inertias(inertias, indices)
         assert torch.allclose(self.asset.root_physx_view.get_masses(), masses)
 
 
