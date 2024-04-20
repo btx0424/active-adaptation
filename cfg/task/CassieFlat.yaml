@@ -32,7 +32,7 @@ observation:
     # - "motor_params"
   priv:
     applied_action:   {}
-    joint_acc:        {}
+    # joint_acc:        {}
     root_linvel_b:    {}
     feet_pos_b:       {}
     # feet_height:      {feet_names: .*_toe}
@@ -40,6 +40,7 @@ observation:
     applied_torques:  {actuator_name: legs}
     motor_params:     {actuator_name: legs, homogeneous: "${task.homogeneous}"}
     body_materials:   {body_names: .*toe, homogeneous: "${task.homogeneous}"}
+    body_momentum:    {body_names: "pelvis"}
 
 reward:
   linvel_exp:         {weight: 1.5, enabled: true}

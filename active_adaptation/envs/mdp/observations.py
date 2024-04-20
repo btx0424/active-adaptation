@@ -388,7 +388,7 @@ class body_momentum(Observation):
     
     def startup(self):
         self.masses = (
-            self.asset.root_physx_view.get_masses()[:, self.body_ids]
+            self.asset.root_physx_view.get_masses()[:, self.body_ids].unsqueeze(-1)
             / self.default_mass_total.sum()
         ).to(self.device)
         self.body_ids = torch.tensor(self.body_ids, device=self.device)

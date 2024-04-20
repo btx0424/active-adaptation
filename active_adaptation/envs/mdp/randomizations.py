@@ -189,7 +189,11 @@ class perturb_body_mass(Randomization):
     def startup(self):
         logging.info(f"Randomize body masses of {self.body_names} upon startup.")
         masses = self.asset.root_physx_view.get_masses().clone()
-        masses[:, self.body_ids] = masses[:, self.body_ids] * uniform(self.mass_ranges[:, 0], self.mass_ranges[:, 1])
+        scale = uniform(
+            self.mass_ranges[:, 0].expand_as(masses[:, self.body_ids]),
+            self.mass_ranges[:, 1].expand_as(masses[:, self.body_ids])
+        )
+        masses[:, self.body_ids] *= scale
         indices = torch.arange(self.asset.num_instances)
         self.asset.root_physx_view.set_masses(masses, indices)
         assert torch.allclose(self.asset.root_physx_view.get_masses(), masses)
@@ -211,7 +215,11 @@ class perturb_body_mass_log_uniform(Randomization):
     def startup(self):
         logging.info(f"Randomize body masses of {self.body_names} upon startup.")
         masses = self.asset.root_physx_view.get_masses().clone()
-        masses[:, self.body_ids] = masses[:, self.body_ids] * log_uniform(self.mass_ranges[:, 0], self.mass_ranges[:, 1])
+        scale = log_uniform(
+            self.mass_ranges[:, 0].expand_as(masses[:, self.body_ids]),
+            self.mass_ranges[:, 1].expand_as(masses[:, self.body_ids])
+        )
+        masses[:, self.body_ids] *= scale
         indices = torch.arange(self.asset.num_instances)
         self.asset.root_physx_view.set_masses(masses, indices)
         assert torch.allclose(self.asset.root_physx_view.get_masses(), masses)
@@ -396,13 +404,8 @@ def uniform(low: torch.Tensor, high: torch.Tensor):
     r = torch.rand_like(low)
     return low + r * (high - low)
 
-def _log_uniform(low: torch.Tensor, high: torch.Tensor):
+def log_uniform(low: torch.Tensor, high: torch.Tensor):
     return uniform(low.log(), high.log()).exp()
-
-def log_uniform(low: torch.Tensor, high: torch.Tensor, scaling: float = 4):
-    r = _log_uniform(torch.ones_like(low), torch.ones_like(high) * scaling) / scaling
-    return r * (high - low) + low
-
 
 def angle_mix(a: torch.Tensor, b: torch.Tensor, weight: float=0.1):
     d = a - b
