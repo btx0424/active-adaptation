@@ -51,7 +51,7 @@ class PPOConfig:
     clip_param: float = 0.2
     actor_predict_std: bool = False
 
-    aux_epochs: int = 4
+    aux_epochs: int = -1
 
     context_dim: int = 128
     context_layer_norm: bool = True
@@ -186,7 +186,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self.target_kl = self.cfg.target_kl
         
         self.encoder_priv = TensorDictModule(
-            make_mlp([self.cfg.context_dim], norm="before" if self.cfg.context_layer_norm else None),
+            # make_mlp([self.cfg.context_dim], norm="before" if self.cfg.context_layer_norm else None),
+            nn.Sequential(nn.LazyLinear(self.cfg.context_dim), nn.Mish()),
             [OBS_PRIV_KEY],
             ["context_expert"]
         ).to(self.device)
@@ -205,12 +206,18 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         def make_actor(context_key: str) -> ProbabilisticActor:
             actor = ProbabilisticActor(
                 module=TensorDictSequential(
-                    # TensorDictModule(make_mlp([self.context_dim]), [OBS_PRIV_KEY], ["context_expert"]),
                     CatTensors([OBS_KEY, context_key], "actor_input", del_keys=False),
                     TensorDictModule(make_mlp([512, 256, 256]), ["actor_input"], ["actor_feature"]),
                     TensorDictModule(nn.LazyLinear(1), ["actor_feature"], ["actor_value"]),
                     TensorDictModule(Actor(self.action_dim, self.cfg.actor_predict_std), ["actor_feature"], ["loc", "scale"])
                 ),
+                # module=TensorDictSequential(
+                #     CatTensors([OBS_KEY, context_key], "actor_input", del_keys=False),
+                #     TensorDictModule(
+                #         nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim, self.cfg.actor_predict_std)),
+                #         ["actor_feature"], ["loc", "scale"]
+                #     ),
+                # ),
                 # module=TensorDictSequential(
                 #     CatTensors([OBS_KEY, OBS_PRIV_KEY], "actor_feature", del_keys=False),
                 #     TensorDictModule(make_actor(), ["actor_feature"], ["loc", "scale"])
@@ -223,7 +230,12 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             return actor
         
         def make_critic():
-            return nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1))
+            return nn.Sequential(
+                make_mlp([512], norm=None),
+                # ConsistentDropout(0.1, return_mask=False),
+                make_mlp([256, 256]),
+                nn.LazyLinear(1)
+            )
         
         # expert actor with priviledged information
         self._actor_expert = make_actor("context_expert")

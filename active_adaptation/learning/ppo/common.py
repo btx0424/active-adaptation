@@ -237,6 +237,22 @@ class SimNorm(nn.Module):
         return x.view(*shp)
 
 
+class ConsistentDropout(nn.Module):
+    def __init__(self, p: float, return_mask: bool=True):
+        super().__init__()
+        self.p = p
+        self.scale_factor = 1 / (1- p)
+        self.return_mask = return_mask
+    
+    def forward(self, input: torch.Tensor, mask=None):
+        if mask is None:
+            mask = input.data.bernoulli(self.p)
+        if self.return_mask:
+            return input * mask * self.scale_factor, mask
+        else:
+            return input * mask * self.scale_factor
+
+
 def collect_info(infos, prefix=""):
     return {prefix+k: v.mean().item() for k, v in torch.stack(infos).items()}
 
