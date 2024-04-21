@@ -26,6 +26,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as D
 import einops
+import functools
 
 from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuousTensorSpec
 from torchrl.modules import ProbabilisticActor
@@ -37,7 +38,7 @@ from hydra.core.config_store import ConfigStore
 from dataclasses import dataclass
 from typing import Mapping, Union
 
-from ..utils.valuenorm import ValueNorm1
+from ..utils.valuenorm import ValueNorm1, ValueNormFake
 from ..modules.distributions import IndependentNormal
 from .common import *
 
@@ -49,7 +50,11 @@ class PPOConfig:
     num_minibatches: int = 16
     lr: float = 5e-4
     clip_param: float = 0.2
-    actor_predict_std: bool = False
+
+    actor_predict_std: bool = True
+    orthogonal_init: bool = False
+    layer_norm: bool = False
+    value_norm: bool = False
 
     aux_epochs: int = -1
 
@@ -169,8 +174,16 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(0.99, 0.95)
-        self.value_norm_a = ValueNorm1(input_shape=1).to(self.device)
-        self.value_norm_b = ValueNorm1(input_shape=1).to(self.device)
+        if not cfg.layer_norm:
+            global make_mlp
+            make_mlp = functools.partial(make_mlp, norm=None)
+
+        if cfg.value_norm:
+            value_norm_cls = ValueNorm1
+        else:
+            value_norm_cls = ValueNormFake
+        self.value_norm_a = value_norm_cls(input_shape=1).to(self.device)
+        self.value_norm_b = value_norm_cls(input_shape=1).to(self.device)
         
         self.phase = self.cfg.phase
         self.last_phase = None
@@ -230,12 +243,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             return actor
         
         def make_critic():
-            return nn.Sequential(
-                make_mlp([512], norm=None),
-                # ConsistentDropout(0.1, return_mask=False),
-                make_mlp([256, 256]),
-                nn.LazyLinear(1)
-            )
+            return nn.Sequential(make_mlp([512, 256, 256], norm=None), nn.LazyLinear(1))
         
         # expert actor with priviledged information
         self._actor_expert = make_actor("context_expert")
@@ -323,15 +331,17 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             lr=cfg.lr
         )
         
+        def init_(module):
+            if isinstance(module, nn.Linear):
+                nn.init.orthogonal_(module.weight, 0.01)
+                nn.init.constant_(module.bias, 0.)
+            elif isinstance(module, nn.GRUCell):
+                nn.init.orthogonal_(module.weight_hh)
+        
         if self.cfg.checkpoint_path is not None:
             state_dict = torch.load(self.cfg.checkpoint_path)
             self.load_state_dict(state_dict, strict=False)
-        else:
-            def init_(module):
-                if isinstance(module, nn.Linear):
-                    nn.init.orthogonal_(module.weight, 0.01)
-                    nn.init.constant_(module.bias, 0.)
-            
+        elif self.cfg.orthogonal_init:
             self.actor_critic_expert.apply(init_)
             self.adapt_module.apply(init_)
 
