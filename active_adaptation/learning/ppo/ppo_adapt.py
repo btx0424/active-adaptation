@@ -52,8 +52,8 @@ class PPOConfig:
     clip_param: float = 0.2
 
     actor_predict_std: bool = True
-    orthogonal_init: bool = False
-    layer_norm: bool = False
+    orthogonal_init: bool = True
+    layer_norm: bool = True
     value_norm: bool = False
 
     aux_epochs: int = -1
@@ -198,8 +198,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self.target_kl = self.cfg.target_kl
         
         self.encoder_priv = TensorDictModule(
-            # make_mlp([self.cfg.context_dim], norm="before" if self.cfg.context_layer_norm else None),
-            nn.Sequential(nn.LazyLinear(self.cfg.context_dim), nn.Mish()),
+            make_mlp([self.cfg.context_dim]),
+            # nn.Sequential(nn.LazyLinear(self.cfg.context_dim), nn.Mish()),
             [OBS_PRIV_KEY],
             ["context_expert"]
         ).to(self.device)
@@ -225,11 +225,11 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 module=TensorDictSequential(
                     CatTensors([OBS_KEY, context_key], "actor_input", del_keys=False),
                     TensorDictModule(make_mlp([512, 256, 256]), ["actor_input"], ["actor_feature"]),
+                    TensorDictModule(Actor(self.action_dim, self.cfg.actor_predict_std), ["actor_feature"], ["loc", "scale"]),
                     TensorDictModule(nn.LazyLinear(1), ["actor_feature"], ["actor_value"]),
-                    TensorDictModule(Actor(self.action_dim, self.cfg.actor_predict_std), ["actor_feature"], ["loc", "scale"])
                 ),
                 # module=TensorDictSequential(
-                #     CatTensors([OBS_KEY, context_key], "actor_input", del_keys=False),
+                #     CatTensors([OBS_KEY, context_key], "actor_feature", del_keys=False),
                 #     TensorDictModule(
                 #         nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim, self.cfg.actor_predict_std)),
                 #         ["actor_feature"], ["loc", "scale"]
@@ -247,7 +247,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             return actor
         
         def make_critic():
-            return nn.Sequential(make_mlp([512, 256, 256], norm=None), nn.LazyLinear(1))
+            return nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1))
         
         # expert actor with priviledged information
         self._actor_expert = make_actor("context_expert")
