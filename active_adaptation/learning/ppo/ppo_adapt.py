@@ -427,7 +427,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
 
         # tensordict["adv_obs"] = normalize(tensordict["adv_obs"], True)
         # tensordict["adv_priv"] = normalize(tensordict["adv_priv"], True)
-        tensordict["adv_max"] = torch.max(tensordict["adv_obs"], tensordict["adv_priv"])
+        # tensordict["adv_max"] = torch.max(tensordict["adv_obs"], tensordict["adv_priv"])
         value_obs = self.value_norms["obs"].denormalize(tensordict["value_obs"])
         value_priv = self.value_norms["priv"].denormalize(tensordict["value_priv"])
         tensordict["value_gap"] = value_obs - value_priv
@@ -437,9 +437,9 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             for minibatch in batch:
                 self.encoder_priv(minibatch)
                 losses = {}
-                minibatch["adv_max"] = normalize(minibatch["adv_max"], True)
+                minibatch["adv_priv"] = normalize(minibatch["adv_priv"], True)
                 losses["policy_loss"], losses["entropy_loss"] = self._policy_loss(
-                    minibatch, self._actor_expert, "adv_max")
+                    minibatch, self._actor_expert, "adv_priv")
                 losses["obs_value_loss"] = self._value_loss(
                     minibatch, self._critic_obs, "value_obs", "ret_obs").mean()
                 losses["priv_value_loss"] = self._value_loss(
@@ -536,7 +536,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         infos = {k: v.mean() for k, v in torch.stack(infos).items(True, True)}
         value_adapt = self.value_norms["adapt"].denormalize(tensordict["value_adapt"])
         value_priv = self.value_norms["priv"].denormalize(tensordict["value_priv"])
-        infos["value_gap"] = (value_adapt - value_priv).square().mean()
+        infos["value_gap"] = (value_adapt - value_priv)[~tensordict["is_init"]].square().mean()
         infos["value_adapt"] = value_adapt.mean()
         infos["alpha"] = self.log_alpha.exp()
         return {k: v.item() for k, v in sorted(infos.items())}
