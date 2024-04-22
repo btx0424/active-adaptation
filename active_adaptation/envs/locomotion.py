@@ -42,6 +42,14 @@ class LocomotionEnv(Env):
         self.action_scaling = self.cfg.action_scaling
 
         self.robot = self.scene.articulations["robot"]
+        self.action_split = [act.num_joints for act in self.robot.actuators.values()]
+        self.controlled_joint_ids = []
+        for act in self.robot.actuators.values():
+            ids = act.joint_indices
+            if isinstance(ids, slice):
+                ids = torch.arange(self.robot.num_joints)[ids].tolist()
+            self.controlled_joint_ids.extend(ids)
+
         self.feet_indices, self.feet_names = self.robot.find_bodies(self.feet_name_expr)
         self.num_feet = len(self.feet_indices)
 
@@ -52,7 +60,7 @@ class LocomotionEnv(Env):
         self.init_joint_pos = self.robot.data.default_joint_pos.clone()
         self.init_joint_vel = self.robot.data.default_joint_vel.clone()
         
-        self.default_joint_pos = self.init_joint_pos.clone()
+        self.default_joint_pos = self.init_joint_pos.clone()[:, self.controlled_joint_ids]
         
         try:
             from active_adaptation.utils.debug import DebugDraw
@@ -130,7 +138,7 @@ class LocomotionEnv(Env):
 
             pos_target = self.last_action * self.action_scaling + self.default_joint_pos
             pos_target = pos_target.clamp(-torch.pi, torch.pi)
-            self.robot.set_joint_position_target(pos_target)
+            self.robot.set_joint_position_target(pos_target, self.controlled_joint_ids)
         self.robot.write_data_to_sim()
     
     @mdp.observation_func
