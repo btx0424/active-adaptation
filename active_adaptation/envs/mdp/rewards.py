@@ -109,11 +109,22 @@ class undesired_contact(Reward):
         self.articulation_body_ids = self.asset.find_bodies(body_names)[0]
         self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names)
 
+        self.undesired_contact_cum = \
+            self.asset.data.undesired_contact_cum \
+            = torch.zeros(self.num_envs, 1, device=self.device)
+
         print(f"Penalizing contacts on {self.body_names}.")
     
-    def compute(self) -> torch.Tensor:
+    def reset(self, env_ids):
+        self.undesired_contact_cum[env_ids] = 0.
+    
+    def update(self):
         contact = self.contact_sensor.data.current_contact_time[:, self.body_ids] > 0.
-        return - contact.float().sum(1, keepdim=True)
+        self.undesired_contact = - contact.float().sum(1, keepdim=True)
+        self.undesired_contact_cum.add_(self.undesired_contact)
+
+    def compute(self) -> torch.Tensor:
+        return self.undesired_contact
 
     # def debug_draw(self):
     #     self.env.debug_draw.point(
