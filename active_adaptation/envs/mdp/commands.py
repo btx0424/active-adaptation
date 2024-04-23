@@ -158,12 +158,12 @@ class Command2(Command):
             self._target_yaw = torch.zeros(self.num_envs)
             self._target_base_height = torch.zeros(self.num_envs, 1)
 
-            self._distance_to_cover = torch.zeros(self.num_envs, 1)
+            self._cum_error = torch.zeros(self.num_envs, 1)
         
     def reset(self, env_ids):
         self.sample_vel_command(env_ids)
         self.sample_yaw_command(env_ids)
-        self._distance_to_cover[env_ids] = 0.
+        self._cum_error[env_ids] = 0.
     
     def update(self):
         interval_reached = (self.env.episode_length_buf + 1) % self.resample_interval == 0
@@ -180,16 +180,17 @@ class Command2(Command):
         )
 
         # this is used for terminating episodes where the robot is inactive due to whatever reason
-        actual_speed = (self.robot.data.root_lin_vel_b * self._command_direction).sum(-1, True)
-        speed_diff = (
-            (self._command_speed - actual_speed) / 
-            torch.where(self._command_speed > 1e-6, self._command_speed, torch.ones_like(self._command_speed))
-        ).clamp(0.)
-        self._distance_to_cover[:] = (self._distance_to_cover + speed_diff * self.env.step_dt) * 0.98
+        error = (self.robot.data.root_lin_vel_b[:, :2] - self._command_linvel[:, :2])
+        error = torch.where(
+            self._command_speed > 1e-6,
+            (error / self._command_speed).square().sum(-1, True),
+            error.square().sum(-1, True)
+        )
+        self._cum_error[:] = (self._cum_error + error * self.env.step_dt) * 0.98
 
         self.command[:, :2] = self._command_linvel[:, :2]
         self.command[:, 2] = self._command_angvel
-        self.command[:, 3] = self._distance_to_cover.squeeze(1)
+        self.command[:, 3] = 0 # self._distance_to_cover.squeeze(1)
         # self.command[:, :2] = torch.tensor([1.0, 0.], device=self.device)
     
     def sample_vel_command(self, env_ids: torch.Tensor):
@@ -233,7 +234,7 @@ class Command2(Command):
         zeros = torch.zeros(self.num_envs, 1, device=self.device)
         self.env.debug_draw.vector(
             self.robot.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
-            torch.stack([zeros, zeros, self._distance_to_cover], 1),
+            torch.stack([zeros, zeros, self._cum_error], 1),
             color=(.2, 1., .2, 1.)
         )
 

@@ -52,14 +52,15 @@ class tracking_error(Termination):
         return self.asset.data._tracking_error > self.tracking_error_threshold
 
 
-class distance_to_cover(Termination):
-    def __init__(self, env):
+class cum_error(Termination):
+    def __init__(self, env, thres: float = 0.85):
         super().__init__(env)
         from .commands import Command2
+        self.thres = thres
         self.command_manager: Command2 = self.env.command_manager
     
     def __call__(self) -> torch.Tensor:
-        return self.command_manager._distance_to_cover > 0.6
+        return self.command_manager._cum_error > self.thres
 
 
 class joint_acc_exceeds(Termination):

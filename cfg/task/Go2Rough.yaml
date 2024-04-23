@@ -6,4 +6,4 @@ defaults:
   - /task/Go2Flat@_here_
   - _self_
 
-terrain: easy
+terrain: medium # easy
