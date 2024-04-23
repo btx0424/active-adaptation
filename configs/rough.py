@@ -116,6 +116,10 @@ def LocomotionEnvCfg(task_cfg):
     else:
         terrain_cfg = FLAT_TERRAIN_CFG
     
+    randomizations = dict(task_cfg.get("randomization", {}))
+    scale_range = randomizations.pop("random_scale", (1.0, 1.0))
+    robot_cfg.spawn.scale_range = scale_range
+
     env_cfg = EnvCfg(
         max_episode_length=task_cfg.max_episode_length,
         action_scaling=task_cfg.action_scaling,
@@ -124,13 +128,13 @@ def LocomotionEnvCfg(task_cfg):
             num_envs=task_cfg.num_envs,                                                                                                                                                         
             robot=robot_cfg.replace(prim_path="{ENV_REGEX_NS}/Robot"),
             terrain=terrain_cfg,
-            replicate_physics=True,
+            replicate_physics=False,
         ),
         command = task_cfg.command,
         reward = task_cfg.reward,
         observation = task_cfg.observation,
         termination = task_cfg.termination,
-        randomization = task_cfg.get("randomization", {})
+        randomization = randomizations
     )
     # if "height_scan" not in task_cfg.observation.keys():
     #     env_cfg.scene.height_scanner = None

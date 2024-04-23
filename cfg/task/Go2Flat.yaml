@@ -46,17 +46,16 @@ observation:
     applied_action:
     root_linvel_b:
     feet_pos_b:
-    # feet_vel_b:
-    # feet_height_map: {feet_names: .*foot }
-    # last_contact: {body_names: .*foot}
-    applied_torques: {actuator_name: base_legs}
-    # joint_acc:
+    feet_vel_b:
+    feet_height_map:  {feet_names: .*foot }
+    applied_torques:  {actuator_name: base_legs}
     # feet_height:
-    motor_params: {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
-    body_materials: {body_names: .*foot, homogeneous: "${task.homogeneous}"}
+    motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
+    body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
+    body_scale:       {}
     # body_mass:      {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # body_moment:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
-    # contact_indicator: {body_names: ".*_foot"}
+    # contact_indicator: {body_names: [".*_foot", ".*_calf"]}
 
 reward:
   linvel_exp:         {weight: 1.0, enabled: true, dim: 3}
@@ -83,13 +82,15 @@ reward:
   feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
   undesired_contact:  {body_names: [.*_calf], weight: 2.}
+  step_up:            {weight: 2.0, enabled: true}
 
 termination:
   crash: {body_names_expr: [Head.*, "base", ".*_hip", ".*_thigh"]}
   # joint_acc_exceeds: {thres: 5000}
-  # distance_to_cover: {}
+  cum_error: {thres: 0.80}
 
 randomization:
+  random_scale: [1.0, 1.4]
   perturb_body_mass:
     (?!(payload|Head.*)).*: [0.8, 1.2]
     Head.*: [25.0, 250.0]
@@ -104,6 +105,10 @@ randomization:
     stiffness_range: [0.7, 1.3]
     damping_range: [0.7, 1.3]
     homogeneous: ${task.homogeneous}
+  random_motor_failure:
+    actuator_name: base_legs
+    joint_names: .*_calf_joint
+    failure_prob: 0.0
   reset_joint_states_scale:
     pos_scales:
       .*: [0.8, 1.2]

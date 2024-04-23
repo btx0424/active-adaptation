@@ -13,8 +13,8 @@ from omni.isaac.orbit_assets import (
 )
 
 import omni.isaac.orbit.sim as sim_utils
-from omni.isaac.orbit.sim.utils import bind_physics_material, clone
-from omni.isaac.orbit.sim.spawners.from_files.from_files import _spawn_from_usd_file
+from .spawn import clone
+from omni.isaac.orbit.sim.spawners.from_files.from_files import _spawn_from_usd_file, spawn_from_usd
 from omni.isaac.orbit.actuators import ImplicitActuatorCfg, DCMotorCfg
 
 from omni.isaac.core.materials import PhysicsMaterial
@@ -138,3 +138,6 @@ ROBOTS = {
     "cassie": CASSIE_CFG,
     "h1": H1_CFG
 }
+
+for robot in ROBOTS.values():
+    robot.spawn.func = clone(spawn_from_usd.__wrapped__)

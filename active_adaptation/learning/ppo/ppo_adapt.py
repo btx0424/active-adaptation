@@ -438,6 +438,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         value_obs = self.value_norms["obs"].denormalize(tensordict["value_obs"])
         value_priv = self.value_norms["priv"].denormalize(tensordict["value_priv"])
         tensordict["value_gap"] = value_obs - value_priv
+        tensordict["value_gap_acc"] = self._critic_aux(tensordict)["value_aux"].sign() == tensordict["value_gap"].sign()
 
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches)
@@ -499,6 +500,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         infos["value_gap"] = tensordict["value_gap"].square().mean()
         infos["value_obs"] = value_obs.mean()
         infos["value_priv"] = value_priv.mean()
+        infos["value_gap_acc"] = tensordict["value_gap_acc"].float().mean()
         return {k: v.item() for k, v in sorted(infos.items())}
     
     def train_target(self, tensordict: TensorDict, train_actor: bool):

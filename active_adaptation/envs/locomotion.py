@@ -226,20 +226,6 @@ class LocomotionEnv(Env):
             height = self.asset.data.feet_pos_b[:, :, 2].mean(1, keepdim=True).abs()
             height_errot = (height - self.target_height) / self.target_height
             return - height_errot.square()
-    
-    class base_height_l1(mdp.Reward):
-        def __init__(self, env, target_height: float, weight: float, enabled: bool = True):
-            super().__init__(env, weight, enabled)
-            self.asset = self.env.scene["robot"]
-            if isinstance(target_height, str) and target_height == "command":
-                self.target_height = self.env.command_manager._target_base_height
-            else:
-                self.target_height = float(target_height)
-        
-        def compute(self) -> torch.Tensor:
-            height = self.asset.data.feet_pos_b[:, :, 2].min(1, keepdim=True)[0].abs()
-            height_errot = (height - self.target_height) / self.target_height
-            return - height_errot.abs()
 
     class feet_force_distribution(mdp.Reward):
         def __init__(self, env, weight: float, enabled: bool = True):

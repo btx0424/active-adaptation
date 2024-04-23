@@ -226,8 +226,8 @@ class contact_indicator(Observation):
         self.asset: Articulation = self.env.scene["robot"]
         self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
         
-        self.articulation_body_ids = self.asset.find_bodies(body_names)[0]
-        self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names)
+        self.artc_ids, names = self.asset.find_bodies(body_names, preserve_order=True)
+        self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names, preserve_order=True)
         self.timing = timing
         
         self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum().to(self.env.device) * 9.81
@@ -235,6 +235,7 @@ class contact_indicator(Observation):
 
     def update(self):
         self.forces[:] = self.contact_sensor.data.net_forces_w_history[:, :, self.body_ids].mean(1)
+        # self.forces[:] = self.contact_sensor.data.net_forces_w[:, self.body_ids]
 
     def __call__(self):
         if self.timing:
@@ -243,14 +244,14 @@ class contact_indicator(Observation):
             return torch.cat([
                 current_air_time,
                 current_contact_time,
-                (self.forces / self.default_mass_total).reshape(self.num_envs, -1)
+                (self.forces / self.default_mass_total).reshape(self.num_envs, -1).clip(-5., 5.)
             ], dim=-1)
         else:
-            return (self.forces / self.default_mass_total).reshape(self.num_envs, -1)
+            return (self.forces / self.default_mass_total).reshape(self.num_envs, -1).clip(-5., 5.)
 
     def debug_draw(self):
         self.env.debug_draw.vector(
-            self.asset.data.body_pos_w[:, self.articulation_body_ids],
+            self.asset.data.body_pos_w[:, self.artc_ids],
             self.forces / self.default_mass_total,
             color=(1., 1., 1., 1.)
         )
@@ -455,6 +456,7 @@ class feet_height_map(Observation):
         self.ray_hits_w = torch.zeros(*shape, 3, device=self.device)
         self.feet_height_map = torch.zeros(shape, device=self.device)
         self.asset.data.feet_height = self.feet_height_map[:, :, 0]
+        self.asset.data.feet_height_map = self.feet_height_map
     
     def update(self):
         self.feet_pos_w = self.asset.data.body_pos_w[:, self.body_ids]
@@ -561,6 +563,16 @@ class last_contact(Observation):
             self.body_pos_w,
             torch.where(self.has_contact, self.last_contact_pos_w, self.body_pos_w) - self.body_pos_w
         )
+
+
+class body_scale(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.scales = getattr(self.asset.cfg, "scale", torch.ones(self.num_envs, 1)).to(self.device)
+
+    def __call__(self) -> torch.Tensor:
+        return self.scales
 
 # class incoming_wrench(Observation):
 #     def __init__(self, env):

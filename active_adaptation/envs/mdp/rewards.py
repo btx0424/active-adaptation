@@ -384,6 +384,37 @@ class feet_contact_count(Reward):
         return self.first_contact.sum(1, keepdim=True)
 
 
+class step_up(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.feet_height_map: torch.Tensor = self.asset.data.feet_height_map
+    
+    def compute(self) -> torch.Tensor:
+        is_standing = self.env.command_manager.is_standing_env
+        return - (self.feet_height_map < -0.03).any(-1).float().mean(1, True) * (~is_standing)
+
+
+class base_height_l1(Reward):
+    def __init__(self, env, target_height: float, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        if isinstance(target_height, str) and target_height == "command":
+            self.target_height = self.env.command_manager._target_base_height
+        else:
+            self.target_height = float(target_height)
+        self.scale = self.asset.cfg.spawn.scale
+        if isinstance(self.scale, torch.Tensor):
+            self.scale = self.scale.to(self.device)
+        else:
+            self.scale = torch.tensor(1., device=self.device)
+
+    def compute(self) -> torch.Tensor:
+        target_height = self.target_height * self.scale
+        height = self.asset.data.feet_pos_b[:, :, 2].min(1, keepdim=True)[0].abs()
+        height_errot = (height - target_height) / target_height
+        return - height_errot.abs()
+
 
 def normalize(x: torch.Tensor):
     return x / x.norm(dim=-1, keepdim=True).clamp_min(1e-6)
