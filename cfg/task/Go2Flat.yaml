@@ -56,8 +56,8 @@ observation:
     # body_mass:      {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # body_moment:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # contact_indicator: {body_names: [".*_foot", ".*_calf"]}
-  height_scan:
-    height_scan:      {prim_path: base}
+  # height_scan:
+  #   height_scan:      {prim_path: base}
 
 reward:
   linvel_exp:         {weight: 1.0, enabled: true, dim: 3}
@@ -83,13 +83,13 @@ reward:
   feet_air_time:      {weight: 0.5, enabled: true, body_names: .*_foot, thres: 0.5}
   feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
-  undesired_contact:  {body_names: [.*_calf], weight: 1.}
+  undesired_contact:  {body_names: [.*_calf], weight: 0.5, enabled: true}
   step_up:            {weight: 2.0, enabled: true}
 
 termination:
   crash: {body_names_expr: [Head.*, "base", ".*_hip", ".*_thigh"]}
   # joint_acc_exceeds: {thres: 5000}
-  cum_error: {thres: 0.80}
+  # cum_error: {thres: 0.80}
 
 randomization:
   random_scale: [1.0, 1.2]
