@@ -261,8 +261,11 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             ).to(self.device)
             return actor
         
-        def make_critic():
-            return nn.Sequential(make_mlp([256, 256, 256]), nn.LazyLinear(1))
+        def make_critic(num_outputs: int=1):
+            layers = [make_mlp([256, 256, 256]), nn.LazyLinear(num_outputs)]
+            if num_outputs > 1:
+                layers.append(Chunk(num_outputs))
+            return nn.Sequential(*layers)
         
         # expert actor with privileged information
         self._actor_expert = make_actor("context_expert")
@@ -281,11 +284,11 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self._critic_obs = TensorDictModule(make_critic(), [OBS_KEY], ["value_obs"]).to(self.device)
         self._critic_priv = TensorDictSequential(
             CatTensors(critic_priv_keys, "critic_priv_input", del_keys=False),
-            TensorDictModule(make_critic(), ["critic_priv_input"], ["value_priv"])
+            TensorDictModule(make_critic(2), ["critic_priv_input"], ["value_priv", "critic_aux"])
         ).to(self.device)
-        self._aux_pred = TensorDictModule(
-            make_critic(), ["critic_priv_input"], ["aux_pred"]
-        ).to(self.device)
+        # self._aux_pred = TensorDictModule(
+        #     make_critic(), ["critic_priv_input"], ["aux_pred"]
+        # ).to(self.device)
         self._critic_aux = TensorDictModule(
             make_critic(), ["critic_priv_input"], ["value_aux"]
         ).to(self.device)
@@ -343,7 +346,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             [
                 {"params": self.encoder_priv.parameters()},
                 {"params": self._actor_expert.parameters()},
-                {"params": self._aux_pred.parameters()},
+                # {"params": self._aux_pred.parameters()},
                 {"params": self._critic_priv.parameters()},
                 {"params": self._critic_obs.parameters()},
                 {"params": self._critic_aux.parameters()},
@@ -459,9 +462,9 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             
             value_obs = self.value_norms["obs"].denormalize(tensordict["value_obs"])
             value_priv = self.value_norms["priv"].denormalize(tensordict["value_priv"])
-            aux_pred = self._aux_pred(tensordict)["aux_pred"]
+            aux_pred = tensordict["critic_aux"]
             tensordict["value_gap"] = value_obs - value_priv
-            tensordict["value_gap_error"] = torch.log1p((aux_pred - tensordict["value_gap"]).square())
+            tensordict["value_gap_error"] = (value_priv + aux_pred - value_obs).abs()
             self._compute_advantage(
                 tensordict, self._critic_aux, "value_aux", "adv_aux", "ret_aux", "value_gap_error")
             tensordict["adv_mixed"] = tensordict["adv_priv"] + self.cfg.aux_reward * tensordict["adv_aux"]
@@ -485,10 +488,11 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 losses["value_loss/aux"] = self._value_loss(
                     minibatch, self._critic_aux, "value_aux", "ret_aux").mean()
                 losses["marg_pred_loss"] = F.mse_loss(
-                    self._aux_pred(minibatch)["aux_pred"],
+                    # self._aux_pred(minibatch)["aux_pred"],
+                    minibatch["critic_aux"],
                     minibatch["value_gap"]
                 )
-                losses["nll"] = self._marg(minibatch)["nll"].mean()
+                # losses["nll"] = self._marg(minibatch)["nll"].mean()
 
                 # self.inverse_pred(minibatch)
                 # Q = D.Normal(minibatch["params_loc"], minibatch["params_scale"].exp())
@@ -534,7 +538,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         infos["value_obs"] = value_obs.mean()
         infos["value_priv"] = value_priv.mean()
         infos["value_aux"] = tensordict["value_aux"].mean()
-        infos["value_gap_acc"] = (tensordict["aux_pred"].sign() == tensordict["value_gap"].sign()).float().mean()
+
         return {k: v.item() for k, v in sorted(infos.items())}
     
     def train_target(self, tensordict: TensorDict, train_actor: bool):
