@@ -63,15 +63,15 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
 
     terrain: TerrainImporterCfg = MISSING
 
-    # height_scanner = RayCasterCfg(
-    #     prim_path="{ENV_REGEX_NS}/Robot/pelvis",
-    #     offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
-    #     attach_yaw_only=True,
-    #     pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
-    #     debug_vis=True,
-    #     mesh_prim_paths=["/World/ground"],
-    #     history_length=1
-    # )
+    height_scanner = RayCasterCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/pelvis",
+        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+        attach_yaw_only=True,
+        pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
+        debug_vis=True,
+        mesh_prim_paths=["/World/ground"],
+        history_length=1
+    )
 
 
 @configclass
@@ -136,11 +136,11 @@ def LocomotionEnvCfg(task_cfg):
         termination = task_cfg.termination,
         randomization = randomizations
     )
-    # if "height_scan" not in task_cfg.observation.keys():
-    #     env_cfg.scene.height_scanner = None
-    # else:
-    #     prim_path = "{ENV_REGEX_NS}/Robot/" + task_cfg.observation["height_scan"]["height_scan"]["prim_path"]
-    #     env_cfg.scene.height_scanner.prim_path = prim_path
+    if "height_scan" not in task_cfg.observation.keys():
+        env_cfg.scene.height_scanner = None
+    else:
+        prim_path = "{ENV_REGEX_NS}/Robot/" + task_cfg.observation["height_scan"]["height_scan"]["prim_path"]
+        env_cfg.scene.height_scanner.prim_path = prim_path
     
     # slightly reduces GPU memory usage
     # env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21

@@ -56,6 +56,30 @@ def make_mlp(num_units, activation=nn.Mish, norm="before", dropout=0.):
     return nn.Sequential(*layers)
 
 
+def make_conv(num_channels, activation=nn.LeakyReLU, kernel_sizes=3, flatten: bool=True):
+    layers = []
+    if isinstance(kernel_sizes, int):
+        kernel_sizes = [kernel_sizes] * len(num_channels)
+    for n, k in zip(num_channels, kernel_sizes):
+        layers.append(nn.LazyConv2d(n, kernel_size=k, stride=2, padding=k//2))
+        layers.append(activation())
+    if flatten:
+        layers.append(nn.Flatten())
+    return _FlattenBatch(nn.Sequential(*layers), data_dim=3)
+
+
+class _FlattenBatch(nn.Module):
+    def __init__(self, module, data_dim: int=1):
+        super().__init__()
+        self.module = module
+        self.data_dim = data_dim
+
+    def forward(self, input: torch.Tensor):
+        batch_shape = input.shape[:-self.data_dim]
+        output = self.module(input.flatten(0, len(batch_shape)-1))
+        return output.unflatten(0, batch_shape)
+
+
 def make_batch(tensordict: TensorDict, num_minibatches: int, seq_len: int = -1):
     if seq_len > 1:
         N, T = tensordict.shape

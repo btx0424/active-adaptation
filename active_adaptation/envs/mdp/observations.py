@@ -490,16 +490,22 @@ class height_scan(Observation):
     def __init__(self, env, prim_path):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
-        self.height_scan: RayCaster = self.env.scene["height_scanner"]
+        self.height_scanner: RayCaster = self.env.scene["height_scanner"]
+        self.height_scan = torch.zeros(self.num_envs, 3, 11, 17, device=self.device)
         self.update()
 
+    def reset(self, env_ids):
+        self.height_scan[env_ids] = 0.
+
     def update(self):
-        self.root_pos_w = self.asset.data.root_pos_w
-        self.ray_hits_w = self.height_scan.data.ray_hits_w.reshape(self.num_envs, -1, 3)
+        self.height_scan[:, :-1] = self.height_scan[:, 1:]
+        self.height_scan[:, -1] = (
+            self.asset.data.root_pos_w[:, 2].unsqueeze(1)
+            - self.height_scanner.data.ray_hits_w[:, :, 2]
+        ).reshape(self.num_envs, 11, 17).clamp(-1., 1.)
 
     def __call__(self):
-        height_scan_z = self.root_pos_w.unsqueeze(-2)[..., 2] - self.ray_hits_w[..., 2]
-        return height_scan_z.reshape(-1, 1, 11, 17).clamp(-2., 2.)
+        return self.height_scan
 
     # def debug_draw(self):
     #     to = self.height_scan.data.ray_hits_w.reshape(-1, 11, 17, 3)[:, :, 0].reshape(-1, 11, 3)
