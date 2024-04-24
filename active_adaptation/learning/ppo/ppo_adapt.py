@@ -155,6 +155,21 @@ class ClassifierB(nn.Module):
         return (input_embed * action_embed).sum(dim=-1, keepdim=True)
 
 
+class Marginalizer(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.f = nn.Sequential(make_mlp([64, 64], norm=None), nn.LayerNorm(64))
+        # self.f.requires_grad_(False)
+        self.f_marg = nn.Sequential(make_mlp([64, 64]), nn.LazyLinear(128))
+    
+    def forward(self, obs, state):
+        full_obs = torch.cat([obs, state], -1)
+        f = self.f(full_obs).detach()
+        loc, scale = self.f_marg(obs).chunk(2, -1)
+        nll = - D.Normal(loc, scale.exp()).log_prob(f).sum(-1, True)
+        return nll
+
+
 class PPOAdaptPolicy(TensorDictModuleBase):
     
     def __init__(
@@ -274,6 +289,10 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self._critic_aux = TensorDictModule(
             make_critic(), ["critic_priv_input"], ["value_aux"]
         ).to(self.device)
+        self._marg = TensorDictModule(
+            Marginalizer(), [OBS_KEY, OBS_PRIV_KEY], ["nll"]
+        ).to(self.device)
+        self._marg(fake_input)
 
         # expert critic with both privilged and estimated information to be unbiased
         self._critic_adapt = TensorDictSequential(
@@ -328,6 +347,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 {"params": self._critic_priv.parameters()},
                 {"params": self._critic_obs.parameters()},
                 {"params": self._critic_aux.parameters()},
+                {"params": self._marg.parameters()}
             ],
             lr=cfg.lr
         )
@@ -441,7 +461,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             value_priv = self.value_norms["priv"].denormalize(tensordict["value_priv"])
             aux_pred = self._aux_pred(tensordict)["aux_pred"]
             tensordict["value_gap"] = value_obs - value_priv
-            tensordict["value_gap_error"] = (aux_pred.sign() != tensordict["value_gap"].sign())
+            tensordict["value_gap_error"] = torch.log1p((aux_pred - tensordict["value_gap"]).square())
             self._compute_advantage(
                 tensordict, self._critic_aux, "value_aux", "adv_aux", "ret_aux", "value_gap_error")
             tensordict["adv_mixed"] = tensordict["adv_priv"] + self.cfg.aux_reward * tensordict["adv_aux"]
@@ -468,6 +488,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                     self._aux_pred(minibatch)["aux_pred"],
                     minibatch["value_gap"]
                 )
+                losses["nll"] = self._marg(minibatch)["nll"].mean()
 
                 # self.inverse_pred(minibatch)
                 # Q = D.Normal(minibatch["params_loc"], minibatch["params_scale"].exp())
@@ -513,7 +534,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         infos["value_obs"] = value_obs.mean()
         infos["value_priv"] = value_priv.mean()
         infos["value_aux"] = tensordict["value_aux"].mean()
-        infos["value_gap_acc"] = 1. - tensordict["value_gap_error"].float().mean()
+        infos["value_gap_acc"] = (tensordict["aux_pred"].sign() == tensordict["value_gap"].sign()).float().mean()
         return {k: v.item() for k, v in sorted(infos.items())}
     
     def train_target(self, tensordict: TensorDict, train_actor: bool):
