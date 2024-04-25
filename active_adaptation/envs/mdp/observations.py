@@ -597,6 +597,13 @@ class body_scale(Observation):
 #             color=(1., 1., 0., 1.)
 #         )
 
+class cum_error(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.command_manager = self.env.command_manager
+    
+    def __call__(self) -> torch.Tensor:
+        return self.command_manager._cum_error
 
 def symlog(x: torch.Tensor, a: float=1.):
     return x.sign() * torch.log(x.abs() * a + 1.) / a

@@ -186,7 +186,7 @@ class Command2(Command):
             (error / self._command_speed).square().sum(-1, True),
             error.square().sum(-1, True)
         )
-        self._cum_error[:] = (self._cum_error + error * self.env.step_dt) * 0.98
+        self._cum_error[:] = self._cum_error * 0.98 + error * self.env.step_dt
 
         self.command[:, :2] = self._command_linvel[:, :2]
         self.command[:, 2] = self._command_angvel

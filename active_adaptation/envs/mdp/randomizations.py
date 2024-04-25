@@ -108,7 +108,7 @@ class random_motor_failure(Randomization):
         self._body_ids = self.asset.find_bodies(".*calf.*")[0]
         
     def reset(self, env_ids: torch.Tensor):
-        self.motor_failure[env_ids] = 0.0
+        self.motor_failure[env_ids] = -1.0
         with torch.device(self.device):
             env_ids = env_ids[torch.rand(len(env_ids)) < self.failure_prob]
             i = torch.randint(0, len(self.joint_ids), env_ids.shape)
@@ -119,7 +119,7 @@ class random_motor_failure(Randomization):
 
     def debug_draw(self):
         x = self.asset.data.body_pos_w[:, self._body_ids]
-        x = x[self.motor_failure.bool()]
+        x = x[self.motor_failure > 0.]
         self.env.debug_draw.point(x, color=(0.1, 1.0, 0.1, 0.8), size=20)
 
 
