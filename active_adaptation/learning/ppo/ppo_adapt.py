@@ -463,8 +463,9 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             value_obs = self.value_norms["obs"].denormalize(tensordict["value_obs"])
             value_priv = self.value_norms["priv"].denormalize(tensordict["value_priv"])
             aux_pred = tensordict["critic_aux"]
-            tensordict["value_gap"] = value_obs - value_priv
-            tensordict["value_gap_error"] = (value_priv + aux_pred - value_obs).abs()
+            value_gap = value_obs - value_priv
+            tensordict["value_gap"] = value_gap
+            tensordict["value_gap_error"] = (aux_pred - value_gap).abs() / (1 + value_gap.abs())
             self._compute_advantage(
                 tensordict, self._critic_aux, "value_aux", "adv_aux", "ret_aux", "value_gap_error")
             tensordict["adv_mixed"] = tensordict["adv_priv"] + self.cfg.aux_reward * tensordict["adv_aux"]
