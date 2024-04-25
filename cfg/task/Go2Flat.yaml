@@ -68,12 +68,12 @@ reward:
   # heading_yaw:        {weight: 0.5, enabled: true}
   # linvel_and_height:  {weight: 2.0}
   linacc_z_l2:        {weight: 0.005}
-  angvel_xy_l2:       {weight: 0.05, enabled: true}
+  angvel_xy_l2:       {weight: 0.05, enabled: true, clip_range: [-1., 0.]}
   linvel_z_l2:        {weight: 2.0, enabled: true}
   base_height_l1:     {weight: 1.0, enabled: true, target_height: 0.3}
   energy_l1:          {weight: 0.0002, enabled: true}
-  joint_acc_l2:       {weight: 2.5e-7, enabled: true}
-  joint_torques_l2:   {weight: 2.0e-4, enabled: true}
+  joint_acc_l2:       {weight: 2.5e-7, enabled: true, clip_range: [-1., 0.]}
+  joint_torques_l2:   {weight: 2.0e-4, enabled: true, clip_range: [-1., 0.]}
   stand:              {weight: 0.5}
   orientation:        {weight: 1.0, enabled: false}
   survival:           {weight: 1.0, enabled: true}
@@ -87,7 +87,7 @@ reward:
   step_up:            {weight: 2.0, enabled: true}
 
 termination:
-  crash: {body_names_expr: [Head.*, "base", ".*_hip", ".*_thigh"]}
+  crash: {body_names_expr: [Head.*, "base", ".*_hip"]}
   # joint_acc_exceeds: {thres: 5000}
   # cum_error: {thres: 0.80}
 

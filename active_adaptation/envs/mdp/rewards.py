@@ -5,10 +5,11 @@ from omni.isaac.orbit.sensors import ContactSensor
 from omni.isaac.orbit.assets import Articulation
 
 class Reward:
-    def __init__(self, env, weight: float, enabled: bool=True):
+    def __init__(self, env, weight: float, enabled: bool=True, clip_range=(-torch.inf, +torch.inf)):
         self.env = env
         self.weight = weight
         self.enabled = enabled
+        self.clip_range = clip_range
     
     @property
     def num_envs(self):
@@ -28,7 +29,7 @@ class Reward:
         pass
     
     def __call__(self, *args: torch.Any, **kwds: torch.Any) -> torch.Any:
-        return self.weight * self.compute()
+        return (self.weight * self.compute()).clip(*self.clip_range)
     
     @abc.abstractmethod
     def compute(self) -> torch.Tensor:
@@ -71,7 +72,7 @@ def energy_l2(self):
 def joint_acc_l2(self):
     asset: Articulation = self.scene["robot"]
     r = - asset.data.joint_acc.square().sum(dim=-1, keepdim=True)
-    return 0.5 * r + 0.5 * self.scene["robot"].data.linvel_exp
+    return 0.5 * r + 0.5 * asset.data.linvel_exp
 
 
 @reward_func
@@ -91,7 +92,9 @@ def linvel_z_l2(self):
 
 @reward_func
 def angvel_xy_l2(self):
-    return - self.scene["robot"].data.root_ang_vel_b[:, :2].square().sum(-1, True)
+    asset: Articulation = self.scene["robot"]
+    r = - asset.data.root_ang_vel_b[:, :2].square().sum(-1, True)
+    return 0.5 * r + 0.5 * asset.data.linvel_exp
 
 @reward_func
 def heading_yaw(self):

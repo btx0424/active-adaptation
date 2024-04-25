@@ -464,8 +464,12 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             value_priv = self.value_norms["priv"].denormalize(tensordict["value_priv"])
             aux_pred = tensordict["critic_aux"]
             value_gap = value_obs - value_priv
+            adv_gap = tensordict["adv_obs"] - tensordict["adv_priv"]
             tensordict["value_gap"] = value_gap
-            tensordict["value_gap_error"] = (aux_pred - value_gap).abs() / (1 + value_gap.abs())
+            tensordict["adv_gap"] = adv_gap
+            def _norm(error, gap):
+                return (error / torch.max(error.abs(), gap.abs())).square()
+            tensordict["value_gap_error"] = _norm(aux_pred - value_gap, value_gap)
             self._compute_advantage(
                 tensordict, self._critic_aux, "value_aux", "adv_aux", "ret_aux", "value_gap_error")
             tensordict["adv_mixed"] = tensordict["adv_priv"] + self.cfg.aux_reward * tensordict["adv_aux"]
@@ -536,6 +540,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         hard_copy_(self._actor_expert, self._actor_adapt)
         
         infos["value_gap"] = tensordict["value_gap"].square().mean()
+        infos["adv_gap"] = tensordict["adv_gap"].square().mean()
         infos["value_obs"] = value_obs.mean()
         infos["value_priv"] = value_priv.mean()
         infos["value_aux"] = tensordict["value_aux"].mean()
