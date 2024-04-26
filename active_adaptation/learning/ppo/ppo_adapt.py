@@ -460,26 +460,29 @@ class PPOAdaptPolicy(TensorDictModuleBase):
     
     def train_expert(self, tensordict: TensorDict):
         infos = []
-        with torch.no_grad(), tensordict.view(-1) as _tensordict:
-            self.encoder_priv(_tensordict["next"])
-
-            self._compute_advantage(
-                _tensordict, self._critic_obs, "value_obs", "adv_obs", "ret_obs", value_norm=self.value_norms["obs"])
-            self._compute_advantage(
-                _tensordict, self._critic_priv, "value_priv", "adv_priv", "ret_priv", value_norm=self.value_norms["priv"])
+        
+        with torch.no_grad():
+            with tensordict.view(-1) as _tensordict:
+                self.encoder_priv(_tensordict["next"])
             
-            value_obs = self.value_norms["obs"].denormalize(_tensordict["value_obs"])
-            value_priv = self.value_norms["priv"].denormalize(_tensordict["value_priv"])
-            aux_pred = _tensordict["critic_aux"]
+            self._compute_advantage(
+                tensordict, self._critic_obs, "value_obs", "adv_obs", "ret_obs", value_norm=self.value_norms["obs"])
+            self._compute_advantage(
+                tensordict, self._critic_priv, "value_priv", "adv_priv", "ret_priv", value_norm=self.value_norms["priv"])
+            
+            value_obs = self.value_norms["obs"].denormalize(tensordict["value_obs"])
+            value_priv = self.value_norms["priv"].denormalize(tensordict["value_priv"])
+            aux_pred = tensordict["critic_aux"]
             value_gap = value_obs - value_priv
-            _tensordict["value_gap"] = value_gap
-            _tensordict["adv_gap"] = _tensordict["adv_obs"] - _tensordict["adv_priv"]
+            adv_gap = tensordict["adv_obs"] - tensordict["adv_priv"]
+            tensordict["value_gap"] = value_gap
+            tensordict["adv_gap"] = adv_gap
             def _norm(error, gap):
                 return (error / torch.max(error.abs(), gap.abs())).square()
-            _tensordict["value_gap_error"] = _norm(aux_pred - value_gap, value_gap)
+            tensordict["value_gap_error"] = _norm(aux_pred - value_gap, value_gap)
             self._compute_advantage(
-                _tensordict, self._critic_aux, "value_aux", "adv_aux", "ret_aux", "value_gap_error")
-            _tensordict["adv_mixed"] = _tensordict["adv_priv"] + self.cfg.aux_reward * _tensordict["adv_aux"]
+                tensordict, self._critic_aux, "value_aux", "adv_aux", "ret_aux", "value_gap_error")
+            tensordict["adv_mixed"] = tensordict["adv_priv"] + self.cfg.aux_reward * tensordict["adv_aux"]
         
         # save some memory?
         del tensordict["next"]
