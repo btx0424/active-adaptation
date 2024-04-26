@@ -60,7 +60,7 @@ class PPOConfig:
     aux_epochs: int = -1
 
     context_dim: int = 128
-    adapt_loss: str = "feature_mse"
+    adapt_module: str = "mse"
     adapt_reward: bool = False
     tune_alpha: bool = True
     target_kl: float = 1.0
@@ -246,6 +246,10 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         
         self.adapt_module_a = make_adapt_module()
         self.adapt_module_b = make_adapt_module()
+        self.adapt_modules = {
+            "mse": self.adapt_module_a,
+            "action_kl": self.adapt_module_b,
+        }
         self.adapt_module_ema = make_adapt_module()
         
         def make_actor(context_key: str) -> ProbabilisticActor:
@@ -406,7 +410,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         hard_copy_(self._actor_expert, self.__actor_expert)
 
         self.adapt_module_ema.requires_grad_(False)
-        hard_copy_(self.adapt_module_a, self.adapt_module_ema)
+        hard_copy_(self.adapt_modules[self.cfg.adapt_module], self.adapt_module_ema)
 
         self.log_alpha.data.zero_()
     
@@ -507,7 +511,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                     minibatch["critic_aux"],
                     minibatch["value_gap"]
                 )
-                losses["nll"] = self._marg(minibatch)["nll"].mean()
+                # losses["nll"] = self._marg(minibatch)["nll"].mean()
 
                 # self.inverse_pred(minibatch)
                 # Q = D.Normal(minibatch["params_loc"], minibatch["params_scale"].exp())
@@ -527,7 +531,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 self.opt_expert.zero_grad(set_to_none=True)
                 loss.backward()
                 for param_group in self.opt_expert.param_groups:
-                    nn.utils.clip_grad_norm_(param_group["params"], 5)
+                    nn.utils.clip_grad_norm_(param_group["params"], 2.)
                 self.opt_expert.step()
 
                 infos.append(TensorDict(losses, []))
@@ -565,15 +569,19 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             self.encoder_priv(_tensordict["next"])
             self.adapt_module_ema(_tensordict["next"])
             del _tensordict["next", "next"]
-            action_kl = self._action_kl(_tensordict.to_tensordict(), self.adapt_module_a, reduce=False)
+            action_kl = self._action_kl(_tensordict.copy(), self.adapt_module_a, reduce=False)
             if self.cfg.adapt_reward:
                 _tensordict[REWARD_KEY] = _tensordict[REWARD_KEY] - self.log_alpha.exp() * action_kl
 
         self._compute_advantage(
-            tensordict, self._critic_priv, "value_priv", "adv_priv", "ret_priv", self.value_norms["priv"])
+            tensordict, self._critic_priv, "value_priv", "adv_priv", "ret_priv", value_norm=self.value_norms["priv"])
         self._compute_advantage(
-            tensordict, self._critic_adapt, "value_adapt", "adv_adapt", "ret_adapt", self.value_norms["adapt"])
+            tensordict, self._critic_adapt, "value_adapt", "adv_adapt", "ret_adapt", value_norm=self.value_norms["adapt"])
         tensordict.select(*keys, inplace=True)
+
+        # save some memory?
+        del tensordict["next"]
+        del tensordict["critic_priv_input"]
 
         if self.cfg.tune_alpha:
             # alpha_loss = - self.log_alpha * (action_kl - self.target_kl)
@@ -591,24 +599,21 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches)
             for minibatch in batch:
-                # with torch.no_grad():
-                #     minibatch = self.encoder_priv(minibatch).detach()
-                #     minibatch = self.adapt_module_ema(minibatch).detach()
                 losses = {}
                 if actor is not None:
                     losses["policy_loss"], losses["entropy_loss"] = self._policy_loss(
                         minibatch, self._actor_adapt, adv_key)
-                losses["priv_value_loss"] = self._value_loss(
+                losses["value_loss/priv"] = self._value_loss(
                     minibatch, self._critic_priv, "value_priv", "ret_priv").mean()
-                losses["adapt_value_loss"] = self._value_loss(
+                losses["value_loss/adapt"] = self._value_loss(
                     minibatch, self._critic_adapt, "value_adapt", "ret_adapt").mean()
-                loss = sum(v for k, v in losses.items() if k.endswith("loss"))
+                loss = sum(v for k, v in losses.items() if "loss" in k)
                 
                 self.opt_expert.zero_grad(set_to_none=True)
                 self.opt_target.zero_grad(set_to_none=True)
                 loss.backward()
                 for param_group in self.opt_expert.param_groups:
-                    nn.utils.clip_grad_norm_(param_group["params"], 5)
+                    nn.utils.clip_grad_norm_(param_group["params"], 2.)
                 self.opt_expert.step()
                 self.opt_target.step()
                 infos.append(TensorDict(losses, []))
@@ -626,8 +631,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         infos = []
         with torch.no_grad():
             self.encoder_priv(tensordict)
-            tensordict["critic_feature"] = torch.cat([tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY]], dim=-1)
-            tensordict["action_kl"] = self._action_kl(tensordict.copy(), self.adapt_module_b, reduce=False)
+            # tensordict["critic_feature"] = torch.cat([tensordict[OBS_KEY], tensordict[OBS_PRIV_KEY]], dim=-1)
+            # tensordict["action_kl"] = self._action_kl(tensordict.copy(), self.adapt_module_b, reduce=False)
         
         for epoch in range(2):
             batch = make_batch(tensordict, 8, self.cfg.train_every)
@@ -635,7 +640,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 infos.append(self._update_adaptation(minibatch))
         
         # hard_copy_(self.adapt_module_a, self.adapt_module_ema)
-        soft_copy_(self.adapt_module_a, self.adapt_module_ema, 0.05)
+        soft_copy_(self.adapt_modules[self.cfg.adapt_module], self.adapt_module_ema, 0.05)
     
         infos = {f"adapt/{k}": v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         with torch.no_grad():
@@ -676,10 +681,10 @@ class PPOAdaptPolicy(TensorDictModuleBase):
 
     def _update_adaptation(self, tensordict: TensorDictBase):
         losses = TensorDict({}, [])
-        losses["adapt_module_a_loss"] = self._feature_mse(tensordict.to_tensordict(), self.adapt_module_a)
+        losses["adapt_module_a_loss"] = self._feature_mse(tensordict.copy(), self.adapt_module_a)
         losses["adapt_module_b_loss"] = (
-            self._action_kl(tensordict.to_tensordict(), self.adapt_module_b)
-            + self._feature_mse(tensordict.to_tensordict(), self.adapt_module_b)
+            self._action_kl(tensordict.copy(), self.adapt_module_b)
+            + self._feature_mse(tensordict.copy(), self.adapt_module_b)
         )
         self.opt_adapt.zero_grad()
         sum(v for k, v in losses.items() if k.endswith("loss")).backward()

@@ -31,7 +31,7 @@ observation:
     # - "motor_params"
   priv:
     applied_action:   {}
-    joint_acc:        {}
+    # joint_acc:        {}
     root_linvel_b:    {}
     feet_pos_b:       {}
     # feet_height:      {feet_names: .*ankle_link}
@@ -68,11 +68,11 @@ randomization:
     actuator_name:    base_legs
     stiffness_range:  [0.7, 1.3]
     damping_range:    [0.7, 1.3]
-  reset_joint_states_uniform:
-    pos_ranges:
-      torso_joint:  [-1., 1.]
-      .*elbow.*:    [-0.8, 0.8]
-      .*shoulder.*: [-0.8, 0.8]
+  # reset_joint_states_uniform:
+  #   pos_ranges:
+  #     torso_joint:  [-1., 1.]
+  #     .*elbow.*:    [-0.8, 0.8]
+  #     .*shoulder.*: [-0.8, 0.8]
   # stumble:  {body_names: ".*ankle_link", stumble_height: 0.05, friction_range: [0.1, 2.0]}
 
 termination:
