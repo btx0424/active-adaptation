@@ -30,7 +30,7 @@ import functools
 
 from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuousTensorSpec
 from torchrl.modules import ProbabilisticActor
-from torchrl.envs.transforms import CatTensors, TensorDictPrimer, ExcludeTransform
+from torchrl.envs.transforms import CatTensors, TensorDictPrimer, ExcludeTransform, VecNorm
 from tensordict import TensorDict
 from tensordict.nn import TensorDictModuleBase, TensorDictModule, TensorDictSequential
 
@@ -178,11 +178,13 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         observation_spec: CompositeSpec, 
         action_spec: CompositeSpec, 
         reward_spec: TensorSpec,
-        device
+        vecnorm: VecNorm=None,
+        device: str="cuda:0"
     ):
         super().__init__()
         self.cfg = cfg
         self.device = device
+        self.vecnorm = vecnorm
 
         self.entropy_coef = 0.001
         self.clip_param = self.cfg.clip_param
@@ -415,22 +417,28 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             reset_key="done"
         )
 
-    def get_rollout_policy(self, mode: str="train"):
+    def get_rollout_policy(self, mode: str="train", obs_norm: bool=False):
+        modules = []
+        if obs_norm:
+            if self.vecnorm is None:
+                raise ValueError()
+            modules.append(self.vecnorm.to_observation_norm())
         if self.phase == "train":
-            policy = TensorDictSequential(
+            modules.extend([
                 self.encoder_priv,
                 self.adapt_module_ema,
                 self._actor_expert,
                 ExcludeTransform("actor_input", "actor_feature", "loc", "scale")
-            )
+            ])
         elif self.phase == "adapt" or self.phase == "finetune":
-            policy = TensorDictSequential(
+            modules.extend([
                 self.adapt_module_ema,
                 self._actor_adapt,
                 ExcludeTransform("actor_input", "actor_feature", "loc", "scale")
-            )
+            ])
         else:
             raise NotImplementedError
+        policy = TensorDictSequential(*modules)
         return policy
     
     def train_op(self, tensordict: TensorDict):

@@ -59,7 +59,11 @@ def main(cfg):
     env_cfg = LocomotionEnvCfg(cfg.task)
     
     base_env = TASKS[cfg.task.task](env_cfg)
-    transform = Compose(InitTracker())
+    if cfg.get("vecnorm", True):
+        vecnorm = VecNorm(["policy", "priv"])
+    else:
+        vecnorm = None
+    transform = Compose(InitTracker(), vecnorm)
     if cfg.task.short_history:
         transform.append(CatFrames(4, -1, ["policy"], ["policy"]))
 
@@ -71,7 +75,8 @@ def main(cfg):
         cfg.algo,
         env.observation_spec, 
         env.action_spec, 
-        env.reward_spec, 
+        env.reward_spec,
+        vecnorm,
         device=base_env.device
     )
     import inspect
@@ -240,8 +245,8 @@ def main(cfg):
         _policy = policy.get_rollout_policy("eval").cpu()
         torch.save(_policy, path)
         logging.info(F"Export policy to {path}")
-    except:
-        pass
+    except Exception as e:
+        print(f"Cannot save policy due to {e}")
 
     wandb.finish()
     exit(0)
