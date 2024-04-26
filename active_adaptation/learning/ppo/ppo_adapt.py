@@ -766,7 +766,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
     def state_dict(self):
         state_dict = super().state_dict()
         if "vecnorm._extra_state" in state_dict:
-            state_dict["vecnorm._extra_state"].pop("lock") # TODO: check with torchrl
+            state_dict["vecnorm._extra_state"]["lock"] = None # TODO: check with torchrl
         state_dict["num_frames"] = self.num_frames
         state_dict["phase"] = self.phase
         del state_dict["log_alpha"]
@@ -775,6 +775,10 @@ class PPOAdaptPolicy(TensorDictModuleBase):
     def load_state_dict(self, state_dict, strict=True):
         self.num_frames = state_dict.get("num_frames", 0)
         self.last_phase = state_dict.get("phase", None)
+        if "vecnorm._extra_state" in state_dict:
+            vecnorm_td = state_dict["vecnorm._extra_state"]["td"]
+            state_dict["lock"] = None
+            state_dict["vecnorm._extra_state"]["td"] = vecnorm_td.to(self.device)
         return super().load_state_dict(state_dict, strict=strict)
 
 def dot(a, b):
