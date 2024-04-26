@@ -112,7 +112,7 @@ randomization:
   random_motor_failure:
     actuator_name: base_legs
     joint_names: .*_calf_joint
-    failure_prob: 0.0
+    failure_prob: 0.15
   reset_joint_states_scale:
     pos_scales:
       .*: [0.8, 1.2]

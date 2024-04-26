@@ -60,7 +60,7 @@ def main(cfg):
     
     base_env = TASKS[cfg.task.task](env_cfg)
     if cfg.get("vecnorm", True):
-        vecnorm = VecNorm(["policy", "priv"])
+        vecnorm = VecNorm(list(base_env.observation_spec.keys(True, True)))
     else:
         vecnorm = None
     transform = Compose(InitTracker(), vecnorm)
@@ -183,19 +183,16 @@ def main(cfg):
         return info
     
     def save(policy, checkpoint_name: str, artifact: bool=False):
-        try:
-            ckpt_path = os.path.join(run.dir, f"{checkpoint_name}.pt")
-            torch.save(policy.state_dict(), ckpt_path)
-            if artifact:
-                artifact = wandb.Artifact(
-                    f"{type(base_env).__name__}-{type(policy).__name__}", 
-                    type="model"
-                )
-                artifact.add_file(ckpt_path)
-                run.log_artifact(artifact)
-            logging.info(f"Saved checkpoint to {str(ckpt_path)}")
-        except Exception as e:
-            logging.error(f"Failed to save checkpoint: {e}")
+        ckpt_path = os.path.join(run.dir, f"{checkpoint_name}.pt")
+        torch.save(policy.state_dict(), ckpt_path)
+        if artifact:
+            artifact = wandb.Artifact(
+                f"{type(base_env).__name__}-{type(policy).__name__}", 
+                type="model"
+            )
+            artifact.add_file(ckpt_path)
+            run.log_artifact(artifact)
+        logging.info(f"Saved checkpoint to {str(ckpt_path)}")
 
     pbar = tqdm(collector, total=total_iters)
     
