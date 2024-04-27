@@ -29,7 +29,7 @@ import einops
 
 from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuousTensorSpec
 from torchrl.modules import ProbabilisticActor
-from torchrl.envs.transforms import CatTensors, TensorDictPrimer, ExcludeTransform
+from torchrl.envs.transforms import CatTensors, TensorDictPrimer, ExcludeTransform, VecNorm
 
 from tensordict import TensorDict
 from tensordict.nn import TensorDictModuleBase, TensorDictModule, TensorDictSequential
@@ -37,9 +37,8 @@ from tensordict.nn import TensorDictModuleBase, TensorDictModule, TensorDictSequ
 from hydra.core.config_store import ConfigStore
 from dataclasses import dataclass, field
 from typing import Union, List
-from collections import namedtuple
 
-from ..utils.valuenorm import ValueNorm1
+from ..utils.valuenorm import ValueNorm1, ValueNormFake
 from ..modules.distributions import IndependentNormal
 from .common import *
 
@@ -67,6 +66,9 @@ class PPOConfig:
     ppo_epochs: int = 4
     num_minibatches: int = 16
     lr: float = 5e-4
+
+    orthogonal_init: bool = True
+    value_norm: bool = False
 
     checkpoint_path: Union[str, None] = None
 
@@ -147,18 +149,28 @@ class PPOROAPolicy(TensorDictModuleBase):
         observation_spec: CompositeSpec, 
         action_spec: CompositeSpec, 
         reward_spec: TensorSpec,
+        vecnorm: VecNorm,
         device
     ):
         super().__init__()
         self.cfg = cfg
         self.device = device
+        self.vecnorm = vecnorm
 
         self.entropy_coef = 0.001
         self.clip_param = 0.1
         self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(0.99, 0.95)
-        self.value_norm = ValueNorm1(input_shape=1).to(self.device)
+
+        if cfg.value_norm:
+            value_norm_cls = ValueNorm1
+        else:
+            value_norm_cls = ValueNormFake
+        self.value_norm = value_norm_cls(input_shape=1).to(self.device)
+
+        self.num_frames = 0
+        self.num_updates = 0
 
         self.observation_spec = observation_spec
         fake_input = observation_spec.zero()
@@ -208,19 +220,19 @@ class PPOROAPolicy(TensorDictModuleBase):
         
         self.actor_adapt.requires_grad_(False)
 
+        def init_(module):
+            if isinstance(module, nn.Linear):
+                nn.init.orthogonal_(module.weight, 0.01)
+                nn.init.constant_(module.bias, 0.)
+            if isinstance(module, nn.Conv1d):
+                nn.init.orthogonal_(module.weight, 0.01)
+                nn.init.constant_(module.bias, 0.)
+
         checkpoint_path = parse_path(self.cfg.checkpoint_path)
         if checkpoint_path is not None:
             state_dict = torch.load(checkpoint_path)
             self.load_state_dict(state_dict, strict=True)
-        else:
-            def init_(module):
-                if isinstance(module, nn.Linear):
-                    nn.init.orthogonal_(module.weight, 0.01)
-                    nn.init.constant_(module.bias, 0.)
-                if isinstance(module, nn.Conv1d):
-                    nn.init.orthogonal_(module.weight, 0.01)
-                    nn.init.constant_(module.bias, 0.)
-            
+        elif self.cfg.orthogonal_init:
             self.encoder_priv.apply(init_)
             self.actor_expert.apply(init_)
             self.critic.apply(init_)
@@ -237,7 +249,6 @@ class PPOROAPolicy(TensorDictModuleBase):
         # self.mode = "expert"
         self.lmbda = 0. # regularization
         self.lmbda_schedule = LinearSchedule(*self.cfg.lambda_schedule)
-        self.n_updates = 0
     
     def make_tensordict_primer(self):
         num_envs = self.observation_spec.shape[0]
@@ -268,7 +279,8 @@ class PPOROAPolicy(TensorDictModuleBase):
         infos = {}
         infos.update(self.train_expert(tensordict.to_tensordict()))
         infos.update(self.train_adaptation(tensordict.to_tensordict()))            
-        self.n_updates += 1
+        self.num_frames += tensordict.numel()
+        self.num_updates += 1
         infos["lambda"] = self.lmbda
         return infos
     
@@ -283,7 +295,7 @@ class PPOROAPolicy(TensorDictModuleBase):
         hard_copy_(self.actor_expert, self.actor_adapt)
 
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
-        infos["value_mean"] = self.value_norm.denormalize(tensordict["ret"]).mean().item()
+        infos["value"] = self.value_norm.denormalize(tensordict["ret"]).mean().item()
         return infos
     
     def train_adaptation(self, tensordict: TensorDictBase):
@@ -352,7 +364,7 @@ class PPOROAPolicy(TensorDictModuleBase):
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["state_value"]
         value_loss = self.critic_loss_fn(b_returns, values)
-        losses["value_loss"] = (value_loss * (~tensordict["is_init"])).mean()
+        losses["value_loss/priv"] = (value_loss * (~tensordict["is_init"])).mean()
         
         loss = sum(losses.values())
         self.opt.zero_grad()
@@ -360,7 +372,7 @@ class PPOROAPolicy(TensorDictModuleBase):
         losses["actor_grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.actor_expert.parameters(), 10)
         losses["critic_grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 10)
         self.opt.step()
-        losses["explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
+        losses["explained_var/priv"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
         return TensorDict(losses, [])
     
     def _update_adaptation(self, tensordict: TensorDictBase):
@@ -384,3 +396,18 @@ class PPOROAPolicy(TensorDictModuleBase):
         if reduce:
             kl = kl.mean()
         return kl
+    
+    def state_dict(self):
+        state_dict = super().state_dict()
+        if "vecnorm._extra_state" in state_dict:
+            state_dict["vecnorm._extra_state"]["lock"] = None # TODO: check with torchrl
+        state_dict["num_frames"] = self.num_frames
+        return state_dict
+    
+    def load_state_dict(self, state_dict, strict=True):
+        self.num_frames = state_dict.get("num_frames", 0)
+        if "vecnorm._extra_state" in state_dict:
+            vecnorm_td = state_dict["vecnorm._extra_state"]["td"]
+            state_dict["lock"] = None
+            state_dict["vecnorm._extra_state"]["td"] = vecnorm_td.to(self.device)
+        return super().load_state_dict(state_dict, strict=strict)

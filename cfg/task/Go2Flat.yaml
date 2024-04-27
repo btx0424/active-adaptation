@@ -54,7 +54,7 @@ observation:
     body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
     motor_failure:    {actuator_name: base_legs}
     body_scale:       {}
-    body_moment:      {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
+    body_momentum:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     cum_error:        {}
     # contact_indicator: {body_names: [".*_foot", ".*_calf"]}
   # height_scan:
