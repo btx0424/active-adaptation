@@ -20,7 +20,7 @@ homogeneous: true
 
 command:
   _target_: active_adaptation.envs.mdp.Command2
-  linvel_x_range: [-1.0, 1.25]
+  linvel_x_range: [-1.0, 1.4]
   linvel_y_range: [-0.5, 0.5]
   angvel_range: [-1.0, 1.0]
   yaw_stiffness_range: [0.5, 0.6]
@@ -42,33 +42,34 @@ observation:
     # # feet_pos_b:
     # feet_height_map: {feet_names: .*foot }
     # applied_torques: {actuator_name: base_legs}
-  # priv:
-  #   applied_action:
-  #   root_linvel_b:
-  #   feet_pos_b:
-  #   feet_vel_b:
-  #   feet_height_map:  {feet_names: .*foot }
-  #   applied_torques:  {actuator_name: base_legs}
-  #   # feet_height:
-  #   motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
-  #   body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-  #   motor_failure:    {actuator_name: base_legs}
-  #   cum_error:        {}
-  #   body_scale:       {}
-  #   body_mass:      {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
-    # body_moment:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
+  priv:
+    applied_action:
+    root_linvel_b:
+    feet_pos_b:
+    feet_vel_b:
+    feet_height_map:  {feet_names: .*foot }
+    applied_torques:  {actuator_name: base_legs}
+    # feet_height:
+    motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
+    body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
+    motor_failure:    {actuator_name: base_legs}
+    body_scale:       {}
+    body_moment:      {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
+    cum_error:        {}
     # contact_indicator: {body_names: [".*_foot", ".*_calf"]}
   # height_scan:
   #   height_scan:      {prim_path: base}
-  priv:
-    action_delay:     {}
-    root_linvel_b:
-    motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
-    body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-    body_scale:       {}
-    body_mass:      {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
-  _:
-    feet_pos_b:       {}
+  # priv:
+  #   action_delay:     {}
+  #   root_linvel_b:
+  #   feet_pos_b:
+  #   feet_vel_b:
+  #   motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
+  #   body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
+  #   body_scale:       {}
+  #   body_mass:      {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
+  # _:
+  #   feet_pos_b:       {}
 
 reward:
   linvel_exp:         {weight: 1.0, enabled: true, dim: 3}
@@ -100,12 +101,13 @@ reward:
 termination:
   crash: {body_names_expr: [Head.*, "base", ".*_hip"]}
   # joint_acc_exceeds: {thres: 5000}
-  # cum_error: {thres: 0.80}
+  cum_error: {thres: 0.85}
 
 randomization:
   random_scale: [1.0, 1.2]
   perturb_body_mass:
-    (?!(payload|Head.*)).*: [0.8, 1.2]
+    (?!(payload|base|Head.*)).*: [0.8, 1.2]
+    base: [0.8, 1.5]
     Head.*: [25.0, 250.0]
   perturb_body_materials:
     body_names: ".*_foot"
@@ -121,7 +123,7 @@ randomization:
   random_motor_failure:
     actuator_name: base_legs
     joint_names: .*_calf_joint
-    failure_prob: 0.15
+    failure_prob: 0.0
   reset_joint_states_scale:
     pos_scales:
       .*: [0.8, 1.2]

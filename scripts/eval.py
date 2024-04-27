@@ -10,7 +10,7 @@ from omni_drones.utils.torchrl import SyncDataCollector
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from torchrl.envs.transforms import (
-    TransformedEnv, Compose, InitTracker
+    TransformedEnv, Compose, InitTracker, VecNorm
 )
 from active_adaptation.learning import ALGOS
 
@@ -52,11 +52,13 @@ def main(cfg):
     env_cfg.sim.physx.gpu_heap_capacity = 2**24
 
     base_env = TASKS[cfg.task.task](env_cfg)
-    transform = Compose(
-        InitTracker(),
-    )
+    if cfg.get("vecnorm", True):
+        vecnorm = VecNorm(list(base_env.observation_spec.keys(True, True)))
+    else:
+        vecnorm = None
+    transform = Compose(InitTracker(), vecnorm)
     env = TransformedEnv(base_env, transform)
-    env.set_seed(0)
+    env.set_seed(cfg.seed)
 
     # setup policy
     policy = ALGOS[cfg.algo.name](

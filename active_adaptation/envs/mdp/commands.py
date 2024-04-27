@@ -161,6 +161,7 @@ class Command2(Command):
             self._cum_error = torch.zeros(self.num_envs, 1)
         
     def reset(self, env_ids):
+        self.command[env_ids] = 0.
         self.sample_vel_command(env_ids)
         self.sample_yaw_command(env_ids)
         self._cum_error[env_ids] = 0.
@@ -180,15 +181,15 @@ class Command2(Command):
         )
 
         # this is used for terminating episodes where the robot is inactive due to whatever reason
-        error = (self.robot.data.root_lin_vel_b[:, :2] - self._command_linvel[:, :2])
+        error = (self.robot.data.root_lin_vel_b[:, :2] - self.command[:, :2])
         error = torch.where(
             self._command_speed > 1e-6,
             (error / self._command_speed).square().sum(-1, True),
-            error.square().sum(-1, True)
+            torch.zeros_like(self._command_speed)
         )
         self._cum_error[:] = self._cum_error * 0.98 + error * self.env.step_dt
 
-        self.command[:, :2] = self._command_linvel[:, :2]
+        self.command[:, :2].lerp_(self._command_linvel[:, :2], 0.5)
         self.command[:, 2] = self._command_angvel
         self.command[:, 3] = 0 # self._distance_to_cover.squeeze(1)
         # self.command[:, :2] = torch.tensor([1.0, 0.], device=self.device)

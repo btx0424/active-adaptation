@@ -211,6 +211,9 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self.num_updates = 0
         self.num_frames = 0
 
+        if self.phase != "train":
+            self.vecnorm.eval() # stop updating during "adapt" and "finetune"
+
         self.observation_spec = observation_spec
         fake_input = observation_spec.zero()
         print(fake_input.shapes)
