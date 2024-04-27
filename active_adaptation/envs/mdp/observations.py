@@ -580,6 +580,15 @@ class body_scale(Observation):
     def __call__(self) -> torch.Tensor:
         return self.scales
 
+
+class action_delay(Observation):
+    def __call__(self) -> torch.Tensor:
+        if hasattr(self.env, "delay"):
+            return self.env.delay.float()
+        else:
+            return torch.zeros(self.num_envs, 1, device=self.device)
+
+
 # class incoming_wrench(Observation):
 #     def __init__(self, env):
 #         super().__init__(env)

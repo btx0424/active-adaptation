@@ -42,24 +42,33 @@ observation:
     # # feet_pos_b:
     # feet_height_map: {feet_names: .*foot }
     # applied_torques: {actuator_name: base_legs}
-  priv:
-    applied_action:
-    root_linvel_b:
-    feet_pos_b:
-    feet_vel_b:
-    feet_height_map:  {feet_names: .*foot }
-    applied_torques:  {actuator_name: base_legs}
-    # feet_height:
-    motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
-    body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-    motor_failure:    {actuator_name: base_legs}
-    cum_error:        {}
-    # body_scale:       {}
-    # body_mass:      {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
+  # priv:
+  #   applied_action:
+  #   root_linvel_b:
+  #   feet_pos_b:
+  #   feet_vel_b:
+  #   feet_height_map:  {feet_names: .*foot }
+  #   applied_torques:  {actuator_name: base_legs}
+  #   # feet_height:
+  #   motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
+  #   body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
+  #   motor_failure:    {actuator_name: base_legs}
+  #   cum_error:        {}
+  #   body_scale:       {}
+  #   body_mass:      {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # body_moment:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # contact_indicator: {body_names: [".*_foot", ".*_calf"]}
   # height_scan:
   #   height_scan:      {prim_path: base}
+  priv:
+    action_delay:     {}
+    root_linvel_b:
+    motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
+    body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
+    body_scale:       {}
+    body_mass:      {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
+  _:
+    feet_pos_b:       {}
 
 reward:
   linvel_exp:         {weight: 1.0, enabled: true, dim: 3}
@@ -86,7 +95,7 @@ reward:
   feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
   undesired_contact:  {body_names: [.*_calf], weight: 0.5, enabled: true}
-  step_up:            {weight: 2.0, enabled: true}
+  # step_up:            {weight: 2.0, enabled: true}
 
 termination:
   crash: {body_names_expr: [Head.*, "base", ".*_hip"]}
