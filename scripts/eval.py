@@ -65,7 +65,8 @@ def main(cfg):
         cfg.algo,
         env.observation_spec, 
         env.action_spec, 
-        env.reward_spec, 
+        env.reward_spec,
+        vecnorm,
         device=base_env.device
     )
 
@@ -90,7 +91,7 @@ def main(cfg):
     @torch.no_grad()
     def evaluate(
         seed: int=0, 
-        exploration_type: ExplorationType=ExplorationType.MODE,
+        exploration_type: ExplorationType=ExplorationType.RANDOM,
         render=False,
         mode=None,
     ):

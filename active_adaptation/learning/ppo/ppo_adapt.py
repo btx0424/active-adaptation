@@ -49,7 +49,8 @@ class PPOConfig:
     ppo_epochs: int = 4
     num_minibatches: int = 16
     lr: float = 5e-4
-    clip_param: float = 0.2
+    clip_param: float = 0.1
+    entropy_coef: float = 0.01
 
     actor_predict_std: bool = True
     orthogonal_init: bool = True
@@ -186,7 +187,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self.device = device
         self.vecnorm = vecnorm
 
-        self.entropy_coef = 0.001
+        self.entropy_coef = self.cfg.entropy_coef
         self.clip_param = self.cfg.clip_param
         self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
         self.action_dim = action_spec.shape[-1]

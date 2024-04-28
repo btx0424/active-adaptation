@@ -140,6 +140,30 @@ class Env(EnvBase):
         
         self.sim.physics_sim_view.flush()
         
+        reward_spec = CompositeSpec({
+            "reward": UnboundedContinuousTensorSpec(1),
+            "stats": {
+                "return": UnboundedContinuousTensorSpec(1),
+                "episode_len": UnboundedContinuousTensorSpec(1),
+                "success": UnboundedContinuousTensorSpec(1),
+                "reward_clip_ratio": UnboundedContinuousTensorSpec(1),
+            }
+        })
+        enabled_rewards = 0
+        for key, params in self.cfg.reward.items():
+            reward = REW_FUNCS[key](self, **params)
+            if reward.enabled:
+                enabled_rewards += 1
+            self.reward_funcs[key] = reward
+            self._update_callbacks.append(reward.update)
+            self._reset_callbacks.append(reward.reset)
+            self._debug_draw_callbacks.append(reward.debug_draw)
+            self._step_callbacks.append(reward.step)
+            reward_spec["stats", key] = UnboundedContinuousTensorSpec(1, device=self.device)
+        self._reward_buf = torch.zeros(self.num_envs, enabled_rewards, device=self.device)
+        self.reward_spec = reward_spec.expand(self.num_envs).to(self.device)
+        self.stats = self.reward_spec["stats"].zero()
+
         obs = self._compute_observation()
 
         observation_spec = {}
@@ -150,26 +174,6 @@ class Env(EnvBase):
             shape=[self.num_envs],
             device=self.device
         )
-
-        reward_spec = CompositeSpec({
-            "reward": UnboundedContinuousTensorSpec(1),
-            "stats": {
-                "return": UnboundedContinuousTensorSpec(1),
-                "episode_len": UnboundedContinuousTensorSpec(1),
-                "success": UnboundedContinuousTensorSpec(1),
-                "reward_clip_ratio": UnboundedContinuousTensorSpec(1),
-            }
-        })
-        for key, params in self.cfg.reward.items():
-            reward = REW_FUNCS[key](self, **params)
-            self.reward_funcs[key] = reward
-            self._update_callbacks.append(reward.update)
-            self._reset_callbacks.append(reward.reset)
-            self._debug_draw_callbacks.append(reward.debug_draw)
-            self._step_callbacks.append(reward.step)
-            reward_spec["stats", key] = UnboundedContinuousTensorSpec(1, device=self.device)
-        self.reward_spec = reward_spec.expand(self.num_envs).to(self.device)
-        self.stats = self.reward_spec["stats"].zero()
 
         self.termination_funcs = OrderedDict(
             {
@@ -197,6 +201,7 @@ class Env(EnvBase):
             env_mask = torch.ones(self.num_envs, dtype=bool, device=self.device)
         env_ids = env_mask.nonzero().squeeze(-1)
         self._reset_idx(env_ids)
+        self._reward_buf[env_ids] = 0.
         for name, func in self.randomizations.items():
             func.reset(env_ids)
         for group, funcs in self.observation_funcs.items():
@@ -239,7 +244,8 @@ class Env(EnvBase):
             self.stats[key].add_(reward)
             if reward_func.enabled:
                 rewards.append(reward)
-        reward = sum(rewards)
+        self._reward_buf[:] = torch.cat(rewards, 1)
+        reward = self._reward_buf.sum(1, True)
         neg_rewar = reward < 0.
         reward = reward.clamp(min=0.)
         self.stats["return"].add_(reward)

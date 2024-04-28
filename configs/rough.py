@@ -136,11 +136,14 @@ def LocomotionEnvCfg(task_cfg):
         termination = task_cfg.termination,
         randomization = randomizations
     )
-    if "height_scan" not in task_cfg.observation.keys():
-        env_cfg.scene.height_scanner = None
-    else:
+    if "height_scan" in task_cfg.observation.keys():
         prim_path = "{ENV_REGEX_NS}/Robot/" + task_cfg.observation["height_scan"]["height_scan"]["prim_path"]
         env_cfg.scene.height_scanner.prim_path = prim_path
+    elif "height_scan" in task_cfg.observation.priv.keys():
+        prim_path = "{ENV_REGEX_NS}/Robot/" + task_cfg.observation["priv"]["height_scan"]["prim_path"]
+        env_cfg.scene.height_scanner.prim_path = prim_path
+    else:
+        env_cfg.scene.height_scanner = None
     
     # slightly reduces GPU memory usage
     # env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21

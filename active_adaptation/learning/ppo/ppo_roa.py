@@ -66,6 +66,8 @@ class PPOConfig:
     ppo_epochs: int = 4
     num_minibatches: int = 16
     lr: float = 5e-4
+    clip_param: float = 0.1
+    entropy_coef: float = 0.01
 
     orthogonal_init: bool = True
     value_norm: bool = False
@@ -157,8 +159,8 @@ class PPOROAPolicy(TensorDictModuleBase):
         self.device = device
         self.vecnorm = vecnorm
 
-        self.entropy_coef = 0.001
-        self.clip_param = 0.1
+        self.entropy_coef = self.cfg.entropy_coef
+        self.clip_param = self.cfg.clip_param
         self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(0.99, 0.95)
@@ -310,7 +312,7 @@ class PPOROAPolicy(TensorDictModuleBase):
         
         infos = ({k: v.mean().item() for k, v in sorted(torch.stack(infos).items())})
         with torch.no_grad():
-            infos["adapt/action_kl"] = self._action_kl(tensordict).item()
+            infos["adapt/adapt_module_a_kl"] = self._action_kl(tensordict).item()
         return infos
 
     @torch.no_grad()

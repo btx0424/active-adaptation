@@ -491,12 +491,13 @@ class feet_height_map(Observation):
 
 
 class height_scan(Observation):
-    def __init__(self, env, prim_path):
+    def __init__(self, env, prim_path, flatten: bool=False):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.height_scanner: RayCaster = self.env.scene["height_scanner"]
         self.height_scan = torch.zeros(self.num_envs, 3, 11, 17, device=self.device)
         self.update()
+        self.flatten = flatten
 
     def reset(self, env_ids):
         self.height_scan[env_ids] = 0.
@@ -509,7 +510,10 @@ class height_scan(Observation):
         ).reshape(self.num_envs, 11, 17).clamp(-1., 1.)
 
     def __call__(self):
-        return self.height_scan
+        if self.flatten:
+            return self.height_scan.reshape(self.num_envs, -1)
+        else:
+            return self.height_scan
 
     # def debug_draw(self):
     #     to = self.height_scan.data.ray_hits_w.reshape(-1, 11, 17, 3)[:, :, 0].reshape(-1, 11, 3)
@@ -591,6 +595,11 @@ class action_delay(Observation):
             return self.env.delay.float()
         else:
             return torch.zeros(self.num_envs, 1, device=self.device)
+
+
+class last_rewards(Observation):
+    def __call__(self) -> torch.Tensor:
+        return self.env._reward_buf
 
 
 # class incoming_wrench(Observation):

@@ -395,7 +395,7 @@ class step_up(Reward):
     
     def compute(self) -> torch.Tensor:
         is_standing = self.env.command_manager.is_standing_env
-        return - (self.feet_height_map < -0.03).any(-1).float().mean(1, True) * (~is_standing)
+        return self.feet_height_map.clamp_max(0.).sum((1, 2)).unsqueeze(1) * (~is_standing)
 
 
 class base_height_l1(Reward):
