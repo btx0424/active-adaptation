@@ -40,13 +40,16 @@ observation:
     applied_torques:  {actuator_name: base_legs}
     motor_params:     {actuator_name: "base_legs"}
     body_materials:   {body_names: ".*ankle_link"}
+    body_mass:        {body_names: ["torso_link", "pelvis"]}
     cum_error:        {}
 
 reward:
-  linvel_exp:         {weight: 1.5, enabled: true}
+  linvel_exp:         {weight: 1.0, enabled: true, dim: 2}
+  linvel_rational:    {weight: 1.0, enabled: true, dim: 2}
   linacc_z_l2:        {weight: 0.005}
-  linvel_projection:  {weight: 1.0, enabled: false}
-  angvel_z_exp:       {weight: 0.75, enabled: true}
+  linvel_projection:  {weight: 1.0, enabled: true}
+  angvel_z_exp:       {weight: 1.0, enabled: false}
+  angvel_z_exp_shaped: {weight: 1.0, enabled: true}
   # linvel_z_l2:        {weight: 1.0, enabled: true}
   energy_l1:          {weight: 2.0e-4, enabled: true}
   joint_acc_l2:       {weight: 3.5e-8, enabled: true}
@@ -54,6 +57,7 @@ reward:
   # stand: 0.5
   orientation:        {weight: 0.5, enabled: true}
   survival:           {weight: 1.0, enabled: true}
+  action_rate_l2:     {weight: 0.01, enabled: true}
   feet_air_time:      {weight: 1.0, enabled: true, body_names: .*ankle_link, thres: 0.5}
   feet_slip:          {weight: 1.0, enabled: false, body_names: .*ankle_link}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*ankle_link}
@@ -74,7 +78,7 @@ randomization:
     pos_ranges:
       .*: [-0.1, 0.1]
     rel: true
-  # stumble:  {body_names: ".*ankle_link", stumble_height: 0.05, friction_range: [0.1, 2.0]}
+  # stumble:  {body_names: ".*ankle_link", stumble_height: 0.05, friction_range: [0.1, 1.0]}
 
 termination:
   crash: 
