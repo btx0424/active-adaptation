@@ -107,18 +107,6 @@ class LocomotionEnv(Env):
     def _update(self):
         super()._update()
         self.command_manager.update()
-    
-    def debug_vis(self):
-        robot_pos = (
-            self.robot.data.root_pos_w.cpu()
-            + torch.tensor([0., 0., 0.2])
-        )
-        self.debug_draw.vector(
-            robot_pos, 
-            self.robot.data.root_lin_vel_w,
-            color=(1., .5, .5, 1.)
-        )
-
 
     def render(self, mode: str = "human"):
         robot_pos = self.robot.data.root_pos_w[self.lookat_env_i].cpu()
@@ -152,10 +140,6 @@ class LocomotionEnv(Env):
     @mdp.observation_func
     def projected_gravity_b(self):
         return self.scene["robot"].data.projected_gravity_b
-    
-    @mdp.observation_func
-    def root_linvel_b(self):
-        return self.scene["robot"].data.root_lin_vel_b
     
     @mdp.observation_func
     def applied_action(self):

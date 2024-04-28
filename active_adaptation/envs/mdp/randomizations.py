@@ -58,11 +58,13 @@ class motor_params(Randomization):
         
         self.default_stiffness = self.motors.default_stiffness = self.motors.stiffness.clone()
         self.default_damping = self.motors.default_damping = self.motors.damping.clone()
+        self.default_strength = torch.ones_like(self.default_stiffness)
         if isinstance(self.motors, DCMotor):
-            self.default_strength = torch.full_like(self.default_stiffness, self.motors._saturation_effort)
-            self.motors._saturation_effort = self.default_strength.clone()
+            if isinstance(self.motors._saturation_effort, float):
+                self.default_strength.fill_(self.motors._saturation_effort)
+                self.motors._saturation_effort = self.default_strength.clone()
         elif isinstance(self.motors, ImplicitActuator):
-            self.default_strength = self.motors.effort_limit
+            self.default_strength[:] = self.motors.effort_limit
         
     def reset(self, env_ids: torch.Tensor=slice(None)):
         stiffness, _ = random_scale(
@@ -190,6 +192,7 @@ class perturb_body_mass(Randomization):
         logging.info(f"Randomize body masses of {self.body_names} upon startup.")
         masses = self.asset.root_physx_view.get_masses().clone()
         inertias = self.asset.root_physx_view.get_inertias().clone()
+        print(f"Default masses: {masses[0]}")
         scale = uniform(
             self.mass_ranges[:, 0].expand_as(masses[:, self.body_ids]),
             self.mass_ranges[:, 1].expand_as(masses[:, self.body_ids])

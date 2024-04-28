@@ -165,6 +165,44 @@ def projected_gravity_b(self):
     return self.scene["robot"].data.projected_gravity_b
 
 
+class root_linvel_b(Observation):
+    def __init__(self, env, body_names: str=None):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        if body_names is not None:
+            self.body_ids, self.body_names = self.asset.find_bodies(body_names)
+            self.body_masses = self.asset.root_physx_view.get_masses()[0, self.body_ids]
+            self.body_masses = (self.body_masses / self.body_masses.sum()).unsqueeze(-1).to(self.device)
+            self.body_ids = torch.tensor(self.body_ids, device=self.device)
+        else:
+            self.body_ids = None
+        self.linvel = torch.zeros(self.num_envs, 3, device=self.device)
+    
+    def update(self):
+        if self.body_ids is None:
+            linvel = self.asset.data.root_lin_vel_b
+        else:
+            linvel = quat_rotate_inverse(
+                self.asset.data.root_quat_w,
+                (self.asset.data.body_lin_vel_w[:, self.body_ids] * self.body_masses).sum(1)
+            )
+        self.linvel[:] = linvel
+    
+    def __call__(self) -> torch.Tensor:
+        return self.linvel
+
+    def debug_draw(self):
+        if self.body_ids is None:
+            linvel = self.asset.data.root_lin_vel_w
+        else:
+            linvel = (self.asset.data.body_lin_vel_w[:, self.body_ids] * self.body_masses).mean(1)
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
+            linvel,
+            color=(0.8, 0.1, 0.1, 1.)
+        )
+    
+
 class joint_pos(Observation):
     def __init__(self, env, noise_std: float=0.0):
         super().__init__(env)

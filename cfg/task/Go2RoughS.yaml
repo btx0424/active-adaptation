@@ -1,0 +1,22 @@
+name: Go2RoughS
+task: Quadruped
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/Go2Flat@_here_
+  - _self_
+
+terrain: medium # easy
+homogeneous: false
+
+observation:
+  priv:
+    applied_action:
+    root_linvel_b:
+    feet_pos_b:
+    feet_vel_b:
+    feet_height_map:  {feet_names: .*foot }
+    body_scale:       {}
+    # dynamics states
+    applied_torques:  {actuator_name: base_legs}
+    body_momentum:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}

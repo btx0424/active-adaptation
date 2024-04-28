@@ -51,6 +51,12 @@ UNITREE_A1_CFG = copy.deepcopy(UNITREE_A1_CFG)
 UNITREE_GO1_CFG = copy.deepcopy(UNITREE_GO1_CFG)
 UNITREE_GO2_CFG = copy.deepcopy(UNITREE_GO2_CFG)
 UNITREE_GO2_CFG.init_state.pos = (0., 0., 0.35)
+UNITREE_GO2_CFG.actuators["base_legs"].effort_limit = {
+    "(?!.*_calf_joint).*": 23.5,
+    ".*_calf_joint": 35.5,
+}
+UNITREE_GO2_CFG.actuators["base_legs"].saturation_effort = 35.5
+
 CASSIE_CFG = copy.deepcopy(cassie.CASSIE_CFG)
 
 UNITREE_GO1M_CFG = copy.deepcopy(UNITREE_A1_CFG)
@@ -106,8 +112,8 @@ H1_CFG = ArticulationCfg(
     actuators={
         "base_legs": DCMotorCfg(
             joint_names_expr=[".*"],
-            effort_limit=400.0,
-            saturation_effort=400.0,
+            effort_limit=300.0,
+            saturation_effort=300.0,
             velocity_limit=30.0,
             stiffness={
                 ".*hip.*": 200,

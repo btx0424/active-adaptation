@@ -79,29 +79,29 @@ ROUGH_EASY = TerrainGeneratorCfg(
     use_cache=False,
     sub_terrains={
         "flat": MeshPlaneTerrainCfg(
-            proportion=0.20,
+            proportion=0.30,
         ),
         "random_rough_easy": HfRandomUniformTerrainCfg(
-            proportion=0.20,
+            proportion=0.30,
             noise_range=(0.0, 0.05),
             noise_step=0.01,
             border_width=0.5
         ),
-        "boxes": MeshRandomGridTerrainCfg(
-            proportion=0.20, 
-            grid_width=0.45, 
-            grid_height_range=(0.02, 0.05), 
-            platform_width=2.0
-        ),
+        # "boxes": MeshRandomGridTerrainCfg(
+        #     proportion=0.20, 
+        #     grid_width=0.45, 
+        #     grid_height_range=(0.02, 0.05), 
+        #     platform_width=2.0
+        # ),
         "pyramid_slope_inv": HfPyramidSlopedTerrainCfg(
             proportion=0.20,
-            slope_range=(0.0, 0.20),
+            slope_range=(0.10, 0.20),
             platform_width=1.0,
             border_width=0.25
         ),
         "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
             proportion=0.20,
-            slope_range=(0.0, 0.20),
+            slope_range=(0.10, 0.20),
             platform_width=1.0,
             border_width=0.25
         ),

@@ -133,27 +133,18 @@ class GRUModule(nn.Module):
         return x, hx.contiguous()
 
 
-class ClassifierA(nn.Module):
-    def __init__(self):
+class GRUModuleStoch(nn.Module):
+    def __init__(self, dim: int):
         super().__init__()
-        self.layers = nn.Sequential(make_mlp([512, 256, 128]), nn.LazyLinear(1))
+        self.mlp = make_mlp([128, 128])
+        self.gru = GRU(128, hidden_size=128, allow_none=False)
+        self.out = nn.LazyLinear(dim * 2)
     
-    def forward(self, obs, priv, action):
-        return self.layers(torch.cat([obs, priv, action], dim=-1))
-
-
-class ClassifierB(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.input_embed = nn.Sequential(make_mlp([512, 256]), nn.LazyLinear(64))
-        self.action_embed = nn.Sequential(make_mlp([128, 64]), nn.LazyLinear(64))
-    
-    def forward(self, obs, priv, action):
-        input_embed = self.input_embed(torch.cat([obs, priv], dim=-1))
-        action_embed = self.action_embed(action)
-        input_embed = input_embed / input_embed.norm(dim=-1, keepdim=True).clamp(1e-7)
-        action_embed = action_embed / action_embed.norm(dim=-1, keepdim=True).clamp(1e-7)
-        return (input_embed * action_embed).sum(dim=-1, keepdim=True)
+    def forward(self, x, is_init, hx):
+        x = self.mlp(x)
+        x, hx = self.gru(x, is_init, hx)
+        x_loc, x_scale = self.out(x).chunk(2, -1)
+        return x_loc, x_scale.exp(), hx.contiguous()
 
 
 class Marginalizer(nn.Module):
@@ -241,12 +232,20 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 ["context_expert"]
             ).to(self.device)
         
-        def make_adapt_module():
-            return TensorDictModule(
-                GRUModule(self.context_dim), 
-                [OBS_KEY, "is_init", "context_adapt_hx"], 
-                ["context_adapt", ("next", "context_adapt_hx")]
-            ).to(self.device)
+        def make_adapt_module(stoch: bool = False):
+            if stoch:
+                module = TensorDictModule(
+                    GRUModuleStoch(self.context_dim),
+                    [OBS_KEY, "is_init", "context_adapt_hx"], 
+                    ["context_adapt", "context_adapt_std", ("next", "context_adapt_hx")]
+                ).to(self.device)
+            else:
+                module = TensorDictModule(
+                    GRUModule(self.context_dim), 
+                    [OBS_KEY, "is_init", "context_adapt_hx"], 
+                    ["context_adapt", ("next", "context_adapt_hx")]
+                ).to(self.device)
+            return module
         
         self.adapt_module_a = make_adapt_module()
         self.adapt_module_b = make_adapt_module()
@@ -605,6 +604,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             for minibatch in batch:
                 losses = {}
                 if actor is not None:
+                    minibatch[adv_key] = normalize(minibatch[adv_key])
                     losses["policy_loss"], losses["entropy_loss"] = self._policy_loss(
                         minibatch, self._actor_adapt, adv_key)
                 losses["value_loss/priv"] = self._value_loss(
@@ -686,6 +686,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
     def _update_adaptation(self, tensordict: TensorDictBase):
         losses = TensorDict({}, [])
         losses["adapt_module_a_loss"] = self._feature_mse(tensordict.copy(), self.adapt_module_a)
+        # losses["adapt_module_a_loss"] = self._nll(tensordict.copy(), self.adapt_module_a)
         losses["adapt_module_b_loss"] = (
             self._action_kl(tensordict.copy(), self.adapt_module_b)
             + self._feature_mse(tensordict.copy(), self.adapt_module_b)
@@ -721,6 +722,14 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         else:
             return F.mse_loss(tensordict["context_adapt"], tensordict["context_expert"], reduction="none").mean(-1, True)
     
+    def _nll(self, tensordict: TensorDictBase, adapt_module: TensorDictModule, reduce: bool=True):
+        adapt_module(tensordict)
+        dist = D.Normal(tensordict["context_adapt"], tensordict["context_adapt_std"])
+        nll = -dist.log_prob(tensordict["context_expert"]).mean(-1, True)
+        if reduce:
+            nll = nll.mean()
+        return nll
+
     def _action_kl(self, tensordict: TensorDictBase, adapt_module: TensorDictModule, reduce: bool=True):
         with torch.no_grad():
             dist1 = self._actor_expert.get_dist(tensordict)

@@ -97,7 +97,7 @@ reward:
   feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
   undesired_contact:  {body_names: [.*_calf], weight: 0.25, enabled: true}
-  # step_up:            {weight: 2.0, enabled: true}
+  step_up:            {weight: 4.0, enabled: false}
 
 termination:
   crash: {body_names_expr: [Head.*, "base", ".*_hip"]}
