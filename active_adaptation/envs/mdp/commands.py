@@ -308,6 +308,7 @@ class CommandPos(Command):
         env, 
         speed_range=(0.7, 1.4),
         offset_range=(2.0, 4.0),
+        angvel_range=(-1.0, 1.0),
         resample_interval: int = 300,
         resample_prob: float = 0.75,
     ):
@@ -316,65 +317,93 @@ class CommandPos(Command):
         self.height_scanner = env.scene.sensors.get("height_scanner", None)
         self.speed_range = speed_range
         self.offset_range = offset_range
+        self.angvel_range = angvel_range
         self.resample_interval = resample_interval
         self.resample_prob = resample_prob
 
         with torch.device(self.device):
-            self.target_speed = torch.zeros(self.num_envs, 1)
-            self.target_pos_w = torch.zeros(self.num_envs, 3)
             self.command = torch.zeros(self.num_envs, 4)
-            self._command_linvel = torch.zeros(self.num_envs, 3)
-            self._command_heading = torch.zeros(self.num_envs, 3)
+
+            self._target_yaw = torch.zeros(self.num_envs)
+            self._target_speed = torch.zeros(self.num_envs, 1)
+            self._target_pos_w = torch.zeros(self.num_envs, 3)
+
+            self._command_speed = torch.zeros(self.num_envs, 1)
+            self._command_linvel_b = torch.zeros(self.num_envs, 3)
+            self._command_linvel_w = torch.zeros(self.num_envs, 3)
+            self._command_linvel = self._command_linvel_b
+
+            self._command_angvel = torch.zeros(self.num_envs)
             self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
+            self._cum_error = torch.zeros(self.num_envs, 1)
     
     def reset(self, env_ids):
-        self.sample_commands(env_ids)
+        self.command[env_ids] = 0.
+        self.sample_vel_command(env_ids)
+        self.sample_yaw_command(env_ids)
 
     def update(self):
         interval_reached = (self.env.episode_length_buf + 1) % self.resample_interval == 0
-        resample = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
-        self.sample_commands(resample.nonzero().squeeze(-1))
+        resample_vel = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
+        resample_yaw = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
+        self.sample_vel_command(resample_vel.nonzero().squeeze(-1))
+        self.sample_yaw_command(resample_yaw.nonzero().squeeze(-1))
 
-        pos_diff_xy = (self.target_pos_w - self.robot.data.root_pos_w)[:, :2]
+        pos_diff_xy = (self._target_pos_w - self.robot.data.root_pos_w)[:, :2]
         distance_xy = pos_diff_xy.norm(dim=-1, keepdim=True)
-        
-        command_speed = torch.minimum(distance_xy, self.target_speed)
-        self.is_standing_env[:] = (command_speed < 0.2)
-
         direction_w = torch.zeros(self.num_envs, 3, device=self.device)
         direction_w[:, :2] = pos_diff_xy / distance_xy.clamp(1e-6)
-        current_speed = (self.robot.data.root_lin_vel_w * direction_w).sum(-1, True)
-        direction_b = quat_rotate_inverse(
-            self.robot.data.root_quat_w, direction_w
-        )
-        command_speed = current_speed + (command_speed - current_speed).clamp_max(1.)
-        self._command_linvel[:, :2] = direction_b[:, :2] * command_speed
-        self._command_heading[:, :2] = torch.where(
-            self.is_standing_env,
-            torch.tensor([1., 0.], device=self.device),
-            direction_b[:, :2]
+        direction_b = quat_rotate_inverse(self.robot.data.root_quat_w, direction_w)
+        direction_b[:, 2] = 0.
+        
+        self._command_speed[:] = torch.minimum(distance_xy, self._target_speed)
+        self.is_standing_env[:] = (self._command_speed < 0.2)
+        self._command_linvel_w[:] = direction_w * self._command_speed
+        self._command_linvel_b[:] = direction_b * self._command_speed
+
+        # current_speed = (self.robot.data.root_lin_vel_w * direction_w).sum(-1, True)
+        # command_speed = current_speed + (command_speed - current_speed).clamp_max(1.)
+
+        yaw_diff = self._target_yaw - self.robot.data.heading_w
+        self._command_angvel[:] = torch.clamp(
+            0.6 * math_utils.wrap_to_pi(yaw_diff), 
+            min=self.angvel_range[0],
+            max=self.angvel_range[1]
         )
 
-        self.command[:, :2] = self._command_linvel[:, :2]
-        self.command[:, 2:4] = self._command_heading[:, :2]
-        # self.command[:, :2] = torch.tensor([0., 0], device=self.device)
-        # self.command[:, 2:4] = torch.tensor([1., 0], device=self.device)
+        self.command[:, :2] = self._command_linvel_b[:, :2]
+        self.command[:, 2] = self._command_angvel
     
-    def sample_commands(self, env_ids: torch.Tensor):
+    def sample_vel_command(self, env_ids: torch.Tensor):
         robot_pos_w = self.robot.data.root_pos_w[env_ids, :2]
         d = sample_uniform(env_ids.shape, *self.offset_range, device=self.device)
         a = torch.rand(len(env_ids), device=self.device) * torch.pi * 2.
         offset = torch.stack([a.cos(), a.sin()], 1) * d.unsqueeze(1)
-        self.target_pos_w[env_ids, :2] = robot_pos_w + offset
-        self.target_speed[env_ids, 0] = sample_uniform(env_ids.shape, *self.speed_range, self.device)
+        self._target_pos_w[env_ids, :2] = robot_pos_w + offset
+        self._target_speed[env_ids, 0] = sample_uniform(env_ids.shape, *self.speed_range, self.device)
+
+    def sample_yaw_command(self, env_ids: torch.Tensor):
+        yaw = torch.rand(len(env_ids), device=self.device) * torch.pi * 2 - torch.pi
+        self._target_yaw[env_ids] = yaw
 
     def debug_draw(self):
+        start = self.robot.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device)
+        # self.env.debug_draw.vector(
+        #     start,
+        #     self._command_linvel_w,
+        #     color=(1., 1., 1., 1.),
+        # )
         self.env.debug_draw.vector(
-            self.robot.data.root_pos_w,
-            self.target_pos_w - self.robot.data.root_pos_w,
-            color=(1., .6, .4, 1.),
+            start,
+            quat_rotate(self.robot.data.root_quat_w, self._command_linvel_b),
+            color=(1., .4, .4, 1.),
         )
-        self.env.debug_draw.point(self.target_pos_w, size=20)
+        self.env.debug_draw.vector(
+            self.robot.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
+            torch.stack([self._target_yaw.cos(), self._target_yaw.sin(), torch.zeros_like(self._target_yaw)], 1),
+            color=(.2, .2, 1., 1.)
+        )
+        self.env.debug_draw.point(self._target_pos_w, size=20)
 
 
 def sample_uniform(size, low: float, high: float, device: torch.device = "cpu"):
