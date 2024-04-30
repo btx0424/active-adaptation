@@ -184,7 +184,7 @@ class LocomotionEnv(Env):
     @mdp.reward_func
     def stand(self):
         jpos_error = square_norm(self.scene["robot"].data.joint_pos - self.scene["robot"].data.default_joint_pos)
-        cost = - (jpos_error) * self.command_manager._command_stand
+        cost = - (jpos_error) * self.command_manager.is_standing_env
         return cost
 
     class feet_pos_b(mdp.body_pos):

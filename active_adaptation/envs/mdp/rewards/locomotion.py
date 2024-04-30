@@ -1,3 +1,4 @@
+from math import inf
 import torch
 import abc
 
@@ -251,7 +252,7 @@ class angvel_z_exp(Reward):
     def __init__(self, env, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.target_angvel: torch.Tensor = self.env.command_manager._command_angvel
+        self.target_angvel: torch.Tensor = self.env.command_manager.command_angvel
     
     def compute(self) -> torch.Tensor:
         angvel_error = (
@@ -267,7 +268,7 @@ class angvel_z_exp_shaped(Reward):
     def __init__(self, env, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.target_angvel: torch.Tensor = self.env.command_manager._command_angvel
+        self.target_angvel: torch.Tensor = self.env.command_manager.command_angvel
     
     def compute(self) -> torch.Tensor:
         angvel_error = (self.target_angvel - self.asset.data.root_ang_vel_b[:, 2]).unsqueeze(1)
@@ -450,6 +451,24 @@ class base_height_l1(Reward):
         height = self.asset.data.feet_pos_b[:, :, 2].min(1, keepdim=True)[0].abs()
         height_errot = (height - target_height) / target_height
         return - height_errot.abs()
+
+class quadruped_stand(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf)):
+        super().__init__(env, weight, enabled, clip_range)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids = self.asset.actuators["base_legs"].joint_indices
+
+    def compute(self):
+        jpos_error = (
+            self.asset.data.joint_pos[:, self.joint_ids] - 
+            self.asset.data.default_joint_pos[:, self.joint_ids]
+        ).abs().sum(dim=1, keepdim=True)
+
+        front_symmetry = self.asset.data.feet_pos_b[:, [0, 1], 1].sum(dim=1, keepdim=True).abs()
+        back_symmetry = self.asset.data.feet_pos_b[:, [2, 3], 1].sum(dim=1, keepdim=True).abs()
+        cost = - (jpos_error + front_symmetry + back_symmetry)
+
+        return cost * self.env.command_manager.is_standing_env.reshape(self.num_envs, 1)
 
 
 def normalize(x: torch.Tensor):

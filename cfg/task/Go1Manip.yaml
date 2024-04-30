@@ -12,53 +12,31 @@ payload: false
 homogeneous: true
 
 command:
-  _target_: active_adaptation.envs.mdp.Command2
-  linvel_x_range: [-1.0, 1.25]
-  linvel_y_range: [-0.5, 0.5]
-  angvel_range: [-1.0, 1.0]
-  yaw_stiffness_range: [0.5, 0.6]
-  base_height_range: [0.25, 0.35]
-  stand_prob: 0.1
+  _target_: active_adaptation.envs.mdp.CommandEEPose
+  ee_name: .*ee_gripper_link
+  angvel_range: [-1., 1.]
 
 observation:
   policy:
     command:
-    # root_quat_w:
     root_angvel_b:
     projected_gravity_b:
     joint_pos:    {noise_std: 0.05}
     joint_vel:    {noise_std: 0.2}
     prev_actions: 
-    # motor_params: {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
-    # body_materials: {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-    # root_linvel_b:
-    # # feet_pos_b:
-    # feet_height_map: {feet_names: .*foot }
-    # applied_torques: {actuator_name: base_legs}
   priv:
     applied_action:
     root_linvel_b:
     feet_pos_b:
-    # feet_vel_b:
-    # feet_height_map: {feet_names: .*foot }
-    # last_contact: {body_names: .*foot}
     applied_torques: {actuator_name: base_legs}
-    # joint_acc:
-    # feet_height:
-    motor_params: {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
-    body_materials: {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-    # body_mass:      {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
-    # body_moment:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
-    # contact_indicator: {body_names: ".*_foot"}
+    body_pos:         {body_names: .*ee_gripper_link}
+    # body_vel:         {body_names: .*ee_gripper_link}
 
 reward:
-  linvel_exp:         {weight: 1.0, enabled: true, dim: 3}
-  linvel_rational:    {weight: 0.5, enabled: true, dim: 3}
-  angvel_z_exp:       {weight: 0.5, enabled: false}
-  angvel_z_exp_shaped: {weight: 0.75, enabled: true}
+  linvel_exp:         {weight: 0.2, enabled: true, dim: 3}
+  angvel_z_exp:       {weight: 0.75, enabled: true}
+  angvel_z_exp_shaped: {weight: 0.75, enabled: false}
   linvel_projection:  {weight: 0.5, enabled: false}
-  # heading_yaw:        {weight: 0.5, enabled: true}
-  # linvel_and_height:  {weight: 2.0}
   linacc_z_l2:        {weight: 0.005}
   angvel_xy_l2:       {weight: 0.05, enabled: true}
   linvel_z_l2:        {weight: 2.0, enabled: true}
@@ -66,7 +44,7 @@ reward:
   energy_l1:          {weight: 0.0002, enabled: true}
   joint_acc_l2:       {weight: 2.5e-7, enabled: true}
   joint_torques_l2:   {weight: 2.0e-4, enabled: true}
-  # stand:              {weight: 0.5}
+  quadruped_stand:    {weight: 0.5, enabled: false}
   orientation:        {weight: 1.0, enabled: false}
   survival:           {weight: 1.0, enabled: true}
   action_rate_l2:     {weight: 0.01, enabled: true}
@@ -76,6 +54,8 @@ reward:
   feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
   undesired_contact:  {body_names: [.*_calf], weight: 2.}
+  ee_pose_tracking:   {weight: 1.0, ee_name: .*ee_gripper_link}
+  ee_vel_tracking:    {weight: 0.5, ee_name: .*ee_gripper_link}
 
 termination:
   crash: {body_names_expr: ["base", ".*_hip", ".*_thigh"]}
@@ -92,11 +72,11 @@ randomization:
     dynamic_friction_range: [0.4, 2.0]
     restitution_range: [0.0, 0.2]
     homogeneous: ${task.homogeneous}
-  motor_params:
-    actuator_name: base_legs
-    stiffness_range: [0.7, 1.3]
-    damping_range: [0.7, 1.3]
-    homogeneous: ${task.homogeneous}
+  # motor_params:
+  #   actuator_name: base_legs
+  #   stiffness_range: [0.7, 1.3]
+  #   damping_range: [0.7, 1.3]
+  #   homogeneous: ${task.homogeneous}
   reset_joint_states_scale:
     pos_scales:
       .*: [0.8, 1.2]

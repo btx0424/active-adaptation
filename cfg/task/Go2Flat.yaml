@@ -18,19 +18,19 @@ homogeneous: true
 #   base_height_range: [0.2, 0.35]
 #   stand_prob: 0.1
 
-# command:
-#   _target_: active_adaptation.envs.mdp.Command2
-#   linvel_x_range: [-1.0, 1.4]
-#   linvel_y_range: [-0.5, 0.5]
-#   angvel_range: [-1.0, 1.0]
-#   yaw_stiffness_range: [0.5, 0.6]
-#   base_height_range: [0.25, 0.35]
-#   stand_prob: 0.1
-
 command:
-  _target_: active_adaptation.envs.mdp.CommandPos
-  speed_range: [0.4, 1.3]
-  offset_range: [2.0, 5.0]
+  _target_: active_adaptation.envs.mdp.Command2
+  linvel_x_range: [-1.0, 1.4]
+  linvel_y_range: [-0.5, 0.5]
+  angvel_range: [-1.0, 1.0]
+  yaw_stiffness_range: [0.5, 0.6]
+  base_height_range: [0.25, 0.35]
+  stand_prob: 0.1
+
+# command:
+#   _target_: active_adaptation.envs.mdp.CommandPos
+#   speed_range: [0.4, 1.3]
+#   offset_range: [2.0, 5.0]
 
 observation:
   policy:
@@ -63,8 +63,8 @@ observation:
     cum_error:        {}
     last_rewards:     {}
     # contact_indicator: {body_names: [".*_foot", ".*_calf"]}
-  # height_scan:
-  #   height_scan:      {prim_path: base}
+  height_scan:
+    height_scan:      {prim_path: base}
   # priv:
   #   action_delay:     {}
   #   root_linvel_b:
@@ -92,7 +92,7 @@ reward:
   energy_l1:          {weight: 0.0002, enabled: true}
   joint_acc_l2:       {weight: 2.5e-7, enabled: true, clip_range: [-1., 0.]}
   joint_torques_l2:   {weight: 2.0e-4, enabled: true, clip_range: [-1., 0.]}
-  stand:              {weight: 0.5}
+  quadruped_stand:    {weight: 0.5}
   orientation:        {weight: 1.0, enabled: false}
   survival:           {weight: 1.0, enabled: true}
   action_rate_l2:     {weight: 0.01, enabled: true}
@@ -102,7 +102,7 @@ reward:
   feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
   undesired_contact:  {body_names: [.*_calf], weight: 0.25, enabled: true}
-  step_up:            {weight: 4.0, enabled: false}
+  step_up:            {weight: 4.0, enabled: true}
 
 termination:
   crash: {body_names_expr: [Head.*, "base", ".*_hip"]}

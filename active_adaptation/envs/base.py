@@ -261,7 +261,7 @@ class Env(EnvBase):
     def _update(self):
         for callback in self._update_callbacks:
             callback()
-        if self.sim.has_gui():
+        if self.sim.has_gui() or self.sim.has_rtx_sensors():
             self.sim.render()
         self.episode_length_buf.add_(1)
         self.time_stamp += 1

@@ -114,7 +114,7 @@ def main(cfg):
         with set_exploration_type(exploration_type):
             trajs = env.rollout(
                 max_steps=base_env.max_episode_length,
-                policy=policy.get_rollout_policy("eval").to(base_env.device),
+                policy=policy.get_rollout_policy(mode="eval").to(base_env.device),
                 callback=record_frame,
                 auto_reset=True,
                 break_when_any_done=False,
@@ -133,14 +133,6 @@ def main(cfg):
             k: take_first_episode(v)
             for k, v in trajs[("next", "stats")].cpu().items()
         }
-        if "adaptation_loss" in trajs.keys():
-            adaptation_loss = einops.rearrange(trajs["adaptation_loss"], "n t 1-> n 1 t")
-            kernel = torch.linspace(0, 1, 15).reshape(1, 1, -1)
-            kernel = kernel / kernel.sum()
-            adaptation_loss = torch.conv1d(adaptation_loss, kernel, padding=kernel.shape[-1]//2)
-            adaptation_loss = take_first_episode(adaptation_loss.squeeze())
-        else:
-            adaptation_loss = torch.zeros_like(traj_stats["episode_len"])
         
         info = {
             "eval/stats." + k: torch.mean(v.float()).item() 
@@ -158,37 +150,20 @@ def main(cfg):
                 video_array,
                 fps=1 / base_env.step_dt
             )
-        
-        import matplotlib.pyplot as plt
-        plt.style.use('ggplot')
-
-        fig, axes = plt.subplots(1, 2, figsize=(8, 8))
-        axes[0].hist(traj_stats["return"])
-        axes[1].hist(traj_stats["episode_len"])
-        fig.tight_layout()
-        path = os.path.join(os.path.dirname(__file__), "hist.png")
-        fig.savefig(path)
-
-        fig, axes = plt.subplots(
-            2, 2, figsize=(8, 8), sharex=True,
-            gridspec_kw={"height_ratios": [1, 4], "width_ratios": [4, 1]}
-        )
-        axes[0, 0].hist(traj_stats["return"])
-        axes[1, 0].scatter(traj_stats["return"], adaptation_loss)
-        axes[1, 0].set_xlabel("Episode Reward")
-        axes[1, 0].set_ylabel("Ada./Est. Error")
-        axes[1, 1].hist(adaptation_loss, orientation="horizontal")
-        fig.tight_layout()
-        path = os.path.join(os.path.dirname(__file__), "scatter.png")
-        fig.savefig(path)
 
         time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
-        # torch.save(
-        #     trajs.exclude("context_expert", "context_adapt", "context_adapt_hx", "height_scan"),
-        #     os.path.join(os.path.dirname(__file__), f"trajs-{time_str}.pt")
-        # )
-
-        info["eval/success"] = (traj_stats["episode_len"] > base_env.max_episode_length * 0.9).float().mean().item()
+        path = os.path.join(os.path.dirname(__file__), f"trajs-{time_str}.pt")
+        trajs = trajs.select(
+            ("next", "done"), 
+            ("next", "stats", "return"), 
+            "value_priv",
+            "value_adapt",
+            "context_expert",
+            "context_adapt",
+            "context_adapt_std",
+            strict=False
+        )
+        torch.save(trajs, path)
         return info
     
     info = evaluate(render=cfg.eval_render, seed=cfg.seed)

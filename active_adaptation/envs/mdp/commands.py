@@ -60,7 +60,7 @@ class Command1(Command):
             self._command_linvel = torch.zeros(env.num_envs, 3)
 
             self._command_stand = torch.zeros(env.num_envs, 1, dtype=bool)
-            self._command_angvel_yaw = torch.zeros(env.num_envs)
+            self.command_angvel_yaw = torch.zeros(env.num_envs)
             
             self.command = torch.zeros(env.num_envs, self.command_dim)
         self.is_standing_env = self._command_stand
@@ -78,7 +78,7 @@ class Command1(Command):
         self.sample_yaw_command(resample_yaw.nonzero().squeeze(-1))
         
         yaw_diff = self._target_yaw - self.robot.data.heading_w
-        self._command_angvel_yaw[:] = math_utils.wrap_to_pi(yaw_diff).clamp(*self.angvel_range)
+        self.command_angvel_yaw[:] = math_utils.wrap_to_pi(yaw_diff).clamp(*self.angvel_range)
 
         command_speed = self._command_speed
         if self.height_scanner is not None:
@@ -91,13 +91,13 @@ class Command1(Command):
                 command_speed
             )
         self.is_standing_env[:] = torch.logical_and(
-            self._command_angvel_yaw.unsqueeze(1).abs() < 0.1,
+            self.command_angvel_yaw.unsqueeze(1).abs() < 0.1,
             self._command_speed < 0.2
         )
         self._command_linvel[:, :2] = command_speed * self._command_direction[:, :2]
         
         self.command[:, :2] = self._command_linvel[:, :2]
-        self.command[:, 2] = self._command_angvel_yaw
+        self.command[:, 2] = self.command_angvel_yaw
 
     def sample_vel_command(self, env_ids: torch.Tensor):
         a = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
@@ -153,7 +153,7 @@ class Command2(Command):
             self._command_speed = torch.zeros(self.num_envs, 1)
             self._command_direction = torch.zeros(self.num_envs, 3)
             self._command_linvel = torch.zeros(self.num_envs, 3)
-            self._command_angvel = torch.zeros(self.num_envs)
+            self.command_angvel = torch.zeros(self.num_envs)
 
             self._target_yaw = torch.zeros(self.num_envs)
             self._target_base_height = torch.zeros(self.num_envs, 1)
@@ -174,7 +174,7 @@ class Command2(Command):
         self.sample_yaw_command(resample_yaw.nonzero().squeeze(-1))
 
         yaw_diff = self._target_yaw - self.robot.data.heading_w
-        self._command_angvel[:] = torch.clamp(
+        self.command_angvel[:] = torch.clamp(
             self.yaw_stiffness * math_utils.wrap_to_pi(yaw_diff), 
             min=self.angvel_range[0],
             max=self.angvel_range[1]
@@ -190,7 +190,7 @@ class Command2(Command):
         self._cum_error[:] = self._cum_error * 0.98 + error * self.env.step_dt
 
         self.command[:, :2].lerp_(self._command_linvel[:, :2], 0.5)
-        self.command[:, 2] = self._command_angvel
+        self.command[:, 2] = self.command_angvel
         self.command[:, 3] = 0 # self._distance_to_cover.squeeze(1)
         # self.command[:, :2] = torch.tensor([1.0, 0.], device=self.device)
     
@@ -333,7 +333,7 @@ class CommandPos(Command):
             self._command_linvel_w = torch.zeros(self.num_envs, 3)
             self._command_linvel = self._command_linvel_b
 
-            self._command_angvel = torch.zeros(self.num_envs)
+            self.command_angvel = torch.zeros(self.num_envs)
             self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
             self._cum_error = torch.zeros(self.num_envs, 1)
     
@@ -365,14 +365,14 @@ class CommandPos(Command):
         # command_speed = current_speed + (command_speed - current_speed).clamp_max(1.)
 
         yaw_diff = self._target_yaw - self.robot.data.heading_w
-        self._command_angvel[:] = torch.clamp(
+        self.command_angvel[:] = torch.clamp(
             0.6 * math_utils.wrap_to_pi(yaw_diff), 
             min=self.angvel_range[0],
             max=self.angvel_range[1]
         )
 
         self.command[:, :2] = self._command_linvel_b[:, :2]
-        self.command[:, 2] = self._command_angvel
+        self.command[:, 2] = self.command_angvel
     
     def sample_vel_command(self, env_ids: torch.Tensor):
         robot_pos_w = self.robot.data.root_pos_w[env_ids, :2]
@@ -406,5 +406,104 @@ class CommandPos(Command):
         self.env.debug_draw.point(self._target_pos_w, size=20)
 
 
+class CommandEEPose(Command):
+    def __init__(
+        self, 
+        env,
+        ee_name: str,
+        angvel_range=(-1., 1.),
+    ) -> None:
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.ee_id, self.ee_name = self.asset.find_bodies(ee_name)
+        assert len(self.ee_id) == 1
+        self.ee_id = self.ee_id[0]
+
+        self.angvel_range = angvel_range
+
+        with torch.device(self.device):
+            self.command = torch.zeros(self.num_envs, 2 + 1 + 3 + 3)
+            self.target_yaw = torch.zeros(self.num_envs)
+            self._command_linvel = torch.zeros(self.num_envs, 3)
+            self._command_speed = torch.zeros(self.num_envs, 1)
+            self.command_angvel = torch.zeros(self.num_envs)
+
+            self.command_ee_pos_w = torch.zeros(self.num_envs, 3)
+            self.command_ee_quat_w = torch.zeros(self.num_envs, 4)
+            self.command_ee_forward_w = torch.zeros(self.num_envs, 3)
+            self.command_ee_upward_w = torch.zeros(self.num_envs, 3)
+
+            self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
+
+    def reset(self, env_ids: torch.Tensor):
+        self.command[env_ids] = 0.
+        self.sample_ee(env_ids)
+        self.sample_yaw(env_ids)
+    
+    def update(self):
+        forward = torch.tensor([1., 0., 0.], device=self.device).expand(self.num_envs, -1)
+        upward = torch.tensor([0., 0., 1.], device=self.device).expand(self.num_envs, -1)
+        self.command_ee_forward_w[:] = quat_rotate(self.command_ee_quat_w, forward)
+        self.command_ee_upward_w[:] = quat_rotate(self.command_ee_quat_w, upward)
+
+        ee_forward_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_ee_forward_w)
+        
+        self.is_standing_env[:] = True
+
+        yaw_diff = self.target_yaw - self.asset.data.heading_w
+        self.command_angvel[:] = torch.clamp(
+            0.6 * math_utils.wrap_to_pi(yaw_diff), 
+            min=self.angvel_range[0],
+            max=self.angvel_range[1]
+        )
+        ee_pos_b = quat_rotate_inverse(
+            self.asset.data.root_quat_w,
+            self.command_ee_pos_w - self.asset.data.root_pos_w
+        )
+
+        self.command[:, 2] = self.command_angvel
+        self.command[:, 3:6] = ee_pos_b
+        self.command[:, 6:9] = ee_forward_b
+
+    def sample_ee(self, env_ids: torch.Tensor):
+        root_pos_w = self.asset.data.root_pos_w[env_ids]
+        offset = torch.zeros_like(root_pos_w)
+        offset[:, 0].uniform_(-1.0, 1.0)
+        offset[:, 1].uniform_(-1.0, 1.0)
+        offset[:, 2].uniform_(-0.1, 0.3)
+        self.command_ee_pos_w[env_ids] = root_pos_w + offset
+        self.command_ee_quat_w[env_ids] = sample_quat_yaw(env_ids.shape, self.device)
+
+    def sample_yaw(self, env_ids: torch.Tensor):
+        self.target_yaw[env_ids] = torch.rand(env_ids.shape, device=self.device) * 2 * torch.pi
+
+    def debug_draw(self):
+        ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id]
+        self.env.debug_draw.vector(
+            ee_pos_w,
+            self.command_ee_forward_w * 0.2,
+        )
+        self.env.debug_draw.vector(
+            ee_pos_w,
+            self.command_ee_upward_w * 0.2,
+        )
+        self.env.debug_draw.vector(
+            ee_pos_w,
+            self.command_ee_pos_w - ee_pos_w,
+            color=(0., 0.8, 0., 1.)
+        )
+
+
 def sample_uniform(size, low: float, high: float, device: torch.device = "cpu"):
     return torch.rand(size, device=device) * (high - low) + low
+
+def sample_quat_yaw(size, device: torch.device = "cpu"):
+    yaw = torch.rand(size, device=device) * 2 * torch.pi
+    # in (w x y z)
+    quat = torch.cat([
+        torch.cos(yaw / 2).unsqueeze(-1),
+        torch.zeros_like(yaw).unsqueeze(-1),
+        torch.zeros_like(yaw).unsqueeze(-1),
+        torch.sin(yaw / 2).unsqueeze(-1),
+    ], dim=-1)
+    return quat
