@@ -38,3 +38,25 @@ class EpisodeStats:
 
     def __len__(self):
         return len(self._stats)
+
+
+def make_env(cfg):
+
+    from active_adaptation.envs import TASKS
+    from configs.rough import LocomotionEnvCfg
+    from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker, CatFrames, VecNorm
+
+    env_cfg = LocomotionEnvCfg(cfg.task)
+
+    base_env = TASKS[cfg.task.task](env_cfg)
+    if cfg.get("vecnorm", True):
+        vecnorm = VecNorm(list(base_env.observation_spec.keys(True, True)))
+    else:
+        vecnorm = None
+    transform = Compose(InitTracker(), vecnorm)
+    if cfg.task.short_history:
+        transform.append(CatFrames(4, -1, ["policy"], ["policy"]))
+    
+    env = TransformedEnv(base_env, transform)
+    env.set_seed(cfg.seed)
+    return env, vecnorm

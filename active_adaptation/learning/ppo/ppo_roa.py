@@ -40,6 +40,7 @@ from typing import Union, List
 
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
 from ..modules.distributions import IndependentNormal
+from ..modules.temporal import GRU, TConv
 from .common import *
 
 from active_adaptation.utils.wandb import parse_path
@@ -74,6 +75,7 @@ class PPOConfig:
 
     checkpoint_path: Union[str, None] = None
 
+    adapt_arch: str = "rnn"
     encoder_dims: List[int] = field(default_factory=lambda: [128])
     regularize: bool = True
     adapt_update_interval: int = 1
@@ -83,50 +85,6 @@ class PPOConfig:
 cs = ConfigStore.instance()
 cs.store("ppo_roa", node=PPOConfig, group="algo")
 cs.store("ppo_roa_noreg", node=PPOConfig(regularize=False), group="algo")
-
-
-class GRU(nn.Module):
-    def __init__(
-        self, 
-        input_size, 
-        hidden_size, 
-        allow_none: bool = False,
-        burn_in: bool = False
-    ) -> None:
-        super().__init__()
-        self.gru = nn.GRUCell(input_size, hidden_size)
-        self.ln = nn.LayerNorm(hidden_size)
-        self.allow_none = allow_none
-        self.burn_in = burn_in
-
-    def forward(self, x: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor):
-        if x.ndim == 2: # single step
-
-            N = x.shape[0]
-            if hx is None and self.allow_none:
-                hx = torch.zeros(N, self.gru.hidden_size, device=x.device)
-            assert (hx[is_init.squeeze()] == 0.).all()
-            output = hx = self.gru(x, hx)
-            output = self.ln(output)
-            return output, hx
-
-        elif x.ndim == 3: # multi-step
-
-            N, T = x.shape[:2]
-            if hx is None and self.allow_none:
-                hx = torch.zeros(N, self.gru.hidden_size, device=x.device)
-            else:
-                hx = hx[:, 0]
-            hxs = []
-            reset = 1. - is_init.float().reshape(N, T, 1)
-            for i, x_t, reset_t in zip(range(T), x.unbind(1), reset.unbind(1)):
-                hx = self.gru(x_t, hx * reset_t)
-                if self.burn_in and i < T // 4:
-                    hx = hx.detach()
-                hxs.append(hx)
-            hxs = torch.stack(hxs, dim=1)
-            output = self.ln(hxs)
-            return output, hxs
 
 
 class GRUModule(nn.Module):
@@ -185,11 +143,17 @@ class PPOROAPolicy(TensorDictModuleBase):
             make_mlp(self.cfg.encoder_dims), [OBS_PRIV_KEY], ["context_expert"]
         ).to(self.device)
         
-        self.adapt_module = TensorDictModule(
-            GRUModule(self.cfg.encoder_dims[-1]), 
-            [OBS_KEY, "is_init", "context_adapt_hx"], 
-            ["context_adapt", ("next", "context_adapt_hx")]
-        ).to(self.device)
+        if self.cfg.adapt_arch == "rnn":
+            self.adapt_module = TensorDictModule(
+                GRUModule(self.cfg.encoder_dims[-1]), 
+                [OBS_KEY, "is_init", "context_adapt_hx"], 
+                ["context_adapt", ("next", "context_adapt_hx")]
+            ).to(self.device)
+        else:
+            self.adapt_module = TensorDictModule(
+                TConv(observation_spec["priv"].shape[-1]),
+                [OBS_HIST_KEY], ["context_adapt"]
+            ).to(self.device)
 
         def make_actor(context_key: str) -> ProbabilisticActor:
             actor_module = nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim))

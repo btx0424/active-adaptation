@@ -7,7 +7,7 @@ from omegaconf import OmegaConf
 
 from omni.isaac.orbit.app import AppLauncher
 from omni_drones.utils.wandb import init_wandb
-from active_adaptation.utils.torchrl import StackFrames, SyncDataCollector
+from omni_drones.utils.torchrl import SyncDataCollector
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from torchrl.envs.transforms import (
@@ -19,7 +19,7 @@ from torchrl.envs.transforms import (
     VecNorm
 )
 from active_adaptation.learning import ALGOS, PPODualPolicy
-from helpers import EpisodeStats, Every
+from helpers import EpisodeStats, Every, make_env
 
 import wandb
 import logging
@@ -33,7 +33,7 @@ torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
 
-@hydra.main(config_path="../cfg", config_name="train")
+@hydra.main(config_path="../cfg", config_name="train_hier")
 def main(cfg):
     OmegaConf.resolve(cfg)
     
@@ -50,58 +50,45 @@ def main(cfg):
     )
     simulation_app = app_launcher.app
 
-    from active_adaptation.envs import TASKS
-    from configs.rough import LocomotionEnvCfg
-
     run = init_wandb(cfg)
 
     # setup environment
-    env_cfg = LocomotionEnvCfg(cfg.task)
-    
-    base_env = TASKS[cfg.task.task](env_cfg)
-    if cfg.get("vecnorm", True):
-        vecnorm = VecNorm(list(base_env.observation_spec.keys(True, True)))
-    else:
-        vecnorm = None
-    transform = Compose(InitTracker(), vecnorm)
-
-    long_history = cfg.algo.get("long_history", 0)
-    if long_history > 0:
-        transform.append(StackFrames(long_history, ["policy"], ["policy_h"]))
-    short_history = cfg.algo.get("short_history", 0)
-    if short_history > 0:
-        transform.append(CatFrames(short_history, -1, ["policy"], ["policy"]))
-
-    env = TransformedEnv(base_env, transform)
-    env.set_seed(cfg.seed)
+    env, vecnorm = make_env(cfg)
+    env: TransformedEnv
 
     # setup policy
-    policy = ALGOS[cfg.algo.name](
-        cfg.algo,
+    policy_0 = ALGOS[cfg.policy_0.name](
+        cfg.policy_0,
         env.observation_spec, 
         env.action_spec, 
         env.reward_spec,
         vecnorm,
-        device=base_env.device
+        device=env.device
     )
-    import inspect
-    import shutil
-    source_path = inspect.getfile(policy.__class__)
-    target_path = os.path.join(run.dir, source_path.split("/")[-1])
-    shutil.copy(source_path, target_path)
-    wandb.save(target_path, policy="now")
+
+    policy_1 = ALGOS[cfg.policy_1.name](
+        cfg.policy_1,
+        env.observation_spec, 
+        env.action_spec, 
+        env.reward_spec,
+        vecnorm,
+        device=env.device
+    )
     
+    for policy in (policy_0, policy_1):
+        if hasattr(policy, "make_tensordict_primer"):
+            tensordict_primer = policy.make_tensordict_primer()
+            print(tensordict_primer)
+            env.transform.append(tensordict_primer)
 
-    if hasattr(policy, "make_tensordict_primer"):
-        transform.append(policy.make_tensordict_primer())
-
-    frames_per_batch = env.num_envs * cfg.algo.train_every
+    update_interval = cfg.get("update_interval", 32)
+    frames_per_batch = env.num_envs * update_interval
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
     total_iters = total_frames // frames_per_batch
     eval_interval = cfg.get("eval_interval", -1)
     save_interval = cfg.get("save_interval", -1)
 
-    log_interval = (base_env.max_episode_length // cfg.algo.train_every) + 1
+    log_interval = (env.max_episode_length // update_interval) + 1
     logging.info(f"Log interval: {log_interval} steps")
 
     stats_keys = [
@@ -111,13 +98,13 @@ def main(cfg):
     episode_stats = EpisodeStats(stats_keys)
     collector = SyncDataCollector(
         env,
-        policy=policy.get_rollout_policy("train"),
+        policy=policy_0.get_rollout_policy("train"),
         frames_per_batch=frames_per_batch,
         total_frames=total_frames,
         device=cfg.sim.device,
         return_same_td=True,
     )
-
+    
     @torch.no_grad()
     def evaluate(
         seed: int=0, 
@@ -127,7 +114,6 @@ def main(cfg):
     ):
         frames = []
 
-        base_env.eval()
         env.eval()
         env.set_seed(seed)
         policy.eval()
@@ -138,13 +124,13 @@ def main(cfg):
         from tqdm import tqdm
         def record_frame(*args, **kwargs):
             if render:
-                frame = base_env.render(mode="rgb_array")
+                frame = env.render(mode="rgb_array")
                 frames.append(frame)
         
         with set_exploration_type(exploration_type):
             trajs = env.rollout(
-                max_steps=base_env.max_episode_length,
-                policy=policy.get_rollout_policy("eval").to(base_env.device),
+                max_steps=env.max_episode_length,
+                policy=policy_1.get_rollout_policy("eval").to(env.device),
                 callback=Every(record_frame, 2),
                 auto_reset=True,
                 break_when_any_done=False,
@@ -175,35 +161,27 @@ def main(cfg):
             frames.clear()
             info["recording"] = wandb.Video(
                 video_array, 
-                fps=0.5 / base_env.step_dt,
+                fps=0.5 / env.step_dt,
                 format="mp4"
             )
         
-        # log distributions
-        # df = pd.DataFrame(traj_stats)
-        # table = wandb.Table(dataframe=df)
-        # info["eval/return"] = wandb.plot.histogram(table, "return")
-        # info["eval/episode_len"] = wandb.plot.histogram(table, "episode_len")
-
         return info
-    
+
     def save(policy, checkpoint_name: str, artifact: bool=False):
         ckpt_path = os.path.join(run.dir, f"{checkpoint_name}.pt")
         torch.save(policy.state_dict(), ckpt_path)
         if artifact:
             artifact = wandb.Artifact(
-                f"{type(base_env).__name__}-{type(policy).__name__}", 
+                f"{type(env.base_env).__name__}-{type(policy).__name__}", 
                 type="model"
             )
             artifact.add_file(ckpt_path)
             run.log_artifact(artifact)
         logging.info(f"Saved checkpoint to {str(ckpt_path)}")
-
-    pbar = tqdm(collector, total=total_iters)
     
-    
-    for i, data in enumerate(pbar):
-        start = time.perf_counter()
+    start = time.perf_counter()
+    for i, data in enumerate(collector):
+        iter_start = time.perf_counter()
         
         info = {}
 
@@ -214,26 +192,27 @@ def main(cfg):
                 key = "train/" + (".".join(k) if isinstance(k, tuple) else k)
                 info[key] = torch.mean(v.float()).item()
         
-        info.update(policy.train_op(data))
-        if hasattr(policy, "step_schedule"):
-            policy.step_schedule(i / total_iters)
+        info.update(policy_1.train_op(data))
 
         info["env_frames"] = collector._frames
         info["rollout_fps"] = collector._fps
-        info["training_time"] = time.perf_counter() - start
+        info["training_time"] = time.perf_counter() - iter_start
         
         if eval_interval > 0 and (i + 1) % eval_interval == 0:
             logging.info(f"Eval at {collector._frames} steps.")
             info.update(evaluate(render=cfg.eval_render))
             env.train()
             policy.train()
-        
+
         if save_interval > 0  and i % save_interval == 0:
             save(policy, f"checkpoint_{i}")
 
         run.log(info)
 
-        print()
+        eta = (time.perf_counter() - start) / (i + 1) *  total_iters
+        hours, seconds = divmod(int(eta), 3600)
+        minutes, seconds = divmod(seconds, 60)
+        print(f"Iter {i}/{total_iters}, ETA: {hours:02d}:{minutes:02d}:{seconds:02d}")
         print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, (float, int))}))
     
     save(policy, "checkpoint_final")

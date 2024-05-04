@@ -39,6 +39,7 @@ from typing import Union
 
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
 from ..modules.distributions import IndependentNormal
+from ..modules.temporal import GRU, TConv
 from .common import *
 
 @dataclass
@@ -50,60 +51,17 @@ class PPOConfig:
     lr: float = 5e-4
     clip_param: float = 0.1
     entropy_coef: float = 0.01
-    recompute_adv: bool = False
 
     orthogonal_init: bool = True
     value_norm: bool = False
 
+    se_arch: str = "rnn"
     hack: bool = False # debug option, which gives actor access to the privileged information
     checkpoint_path: Union[str, None] = None
 
 cs = ConfigStore.instance()
 cs.store("ppo_ji", node=PPOConfig, group="algo")
 cs.store("ppo_ji_hack", node=PPOConfig(hack=True), group="algo")
-
-class GRU(nn.Module):
-    def __init__(
-        self, 
-        input_size, 
-        hidden_size, 
-        allow_none: bool = False,
-        burn_in: bool = False
-    ) -> None:
-        super().__init__()
-        self.gru = nn.GRUCell(input_size, hidden_size)
-        self.ln = nn.LayerNorm(hidden_size)
-        self.allow_none = allow_none
-        self.burn_in = burn_in
-
-    def forward(self, x: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor):
-        if x.ndim == 2: # single step
-
-            N = x.shape[0]
-            if hx is None and self.allow_none:
-                hx = torch.zeros(N, self.gru.hidden_size, device=x.device)
-            assert (hx[is_init.squeeze()] == 0.).all()
-            output = hx = self.gru(x, hx)
-            output = self.ln(output)
-            return output, hx
-
-        elif x.ndim == 3: # multi-step
-
-            N, T = x.shape[:2]
-            if hx is None and self.allow_none:
-                hx = torch.zeros(N, self.gru.hidden_size, device=x.device)
-            else:
-                hx = hx[:, 0]
-            output = []
-            reset = 1. - is_init.float().reshape(N, T, 1)
-            for i, x_t, reset_t in zip(range(T), x.unbind(1), reset.unbind(1)):
-                hx = self.gru(x_t, hx * reset_t)
-                if self.burn_in and i < T // 4:
-                    hx = hx.detach()
-                output.append(hx)
-            output = torch.stack(output, dim=1)
-            output = self.ln(output)
-            return output, einops.repeat(hx, "b h -> b t h", t=T)
 
 
 class GRUModule(nn.Module):
@@ -160,11 +118,17 @@ class PPOPolicy(TensorDictModuleBase):
         fake_input = observation_spec.zero()
         
         # the state estimator
-        self.state_estimator = TensorDictModule(
-            GRUModule(observation_spec["priv"].shape[-1]),
-            [OBS_KEY, "is_init", "estimator_hx"],
-            ["priv_estimate", ("next", "estimator_hx")]
-        ).to(self.device)
+        if self.cfg.se_arch == "rnn":
+            self.state_estimator = TensorDictModule(
+                GRUModule(observation_spec["priv"].shape[-1]),
+                [OBS_KEY, "is_init", "estimator_hx"],
+                ["priv_estimate", ("next", "estimator_hx")]
+            ).to(self.device)
+        else:
+            self.state_estimator = TensorDictModule(
+                TConv(observation_spec["priv"].shape[-1]),
+                [OBS_HIST_KEY], ["priv_estimate"]
+            ).to(self.device)
 
         actor_module = nn.Sequential(make_mlp([512, 256, 256], nn.Mish), Actor(self.action_dim))
         self.actor: ProbabilisticActor = ProbabilisticActor(
