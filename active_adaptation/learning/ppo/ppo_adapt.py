@@ -714,6 +714,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         # return super().load_state_dict(state_dict, strict=strict)
         succeed_keys = []
         failed_keys = []
+        if "vecnorm" in state_dict:
+            state_dict["vecnorm"]["_extra_state"]["td"] = state_dict["vecnorm"]["_extra_state"]["td"].to(self.device)
         for name, module in self.named_children():
             _state_dict = state_dict.get(name, {})
             try:
