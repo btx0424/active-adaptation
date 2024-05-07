@@ -5,6 +5,7 @@ import einops
 
 from omni.isaac.orbit.assets import Articulation
 from omni.isaac.orbit.sensors import ContactSensor, RayCaster, patterns, RayCasterData
+from omni.isaac.orbit.sensors import Camera
 import omni.isaac.orbit.sim as sim_utils
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
@@ -664,6 +665,21 @@ class cum_error(Observation):
     
     def __call__(self) -> torch.Tensor:
         return self.command_manager._cum_error
+
+import imageio
+
+class camera(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.camera: Camera = self.env.scene["camera"]
+        self.frame_count = 0
+    
+    def __call__(self) -> torch.Tensor:
+        image = self.camera.data.output["rgb"]
+        imageio.imwrite(f"frame-{self.frame_count}.png", image[0, :, :, :3].cpu())
+        self.frame_count += 1
+        return image / 255.0
+
 
 def symlog(x: torch.Tensor, a: float=1.):
     return x.sign() * torch.log(x.abs() * a + 1.) / a
