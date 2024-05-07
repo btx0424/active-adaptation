@@ -156,9 +156,14 @@ def root_quat_w(self):
     return self.scene["robot"].data.root_quat_w
 
 
-@observation_func
-def root_angvel_b(self):
-    return self.scene["robot"].data.root_ang_vel_b
+class root_angvel_b(Observation):
+    def __init__(self, env, noise_std: float=0.):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.noise_std = noise_std
+    
+    def __call__(self) -> torch.Tensor:
+        return random_noise(self.asset.data.root_ang_vel_b, self.noise_std)
 
 
 @observation_func

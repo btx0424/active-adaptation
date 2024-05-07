@@ -470,7 +470,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             for minibatch in batch:
                 self.encoder_priv(minibatch)
                 losses = {}
-                minibatch["adv_priv"] = normalize(minibatch["adv_mixed"], True)
+                minibatch["adv_priv"] = normalize(minibatch["adv_priv"], True)
                 losses["policy_loss"], losses["entropy_loss"] = self._policy_loss(
                     minibatch, self._actor_expert, "adv_priv")
                 losses["value_loss/obs"] = self._value_loss(
