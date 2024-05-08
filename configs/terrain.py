@@ -1,5 +1,6 @@
 from omni.isaac.orbit.terrains import (
     TerrainImporterCfg,
+    HfTerrainBaseCfg,
     HfRandomUniformTerrainCfg,
     HfPyramidSlopedTerrainCfg,
     HfInvertedPyramidSlopedTerrainCfg,
@@ -9,12 +10,46 @@ from omni.isaac.orbit.terrains import (
     HfInvertedPyramidStairsTerrainCfg,
     MeshInvertedPyramidStairsTerrainCfg,
     MeshPyramidStairsTerrainCfg,
-    MeshRandomGridTerrainCfg
+    MeshRandomGridTerrainCfg,
+    HfDiscreteObstaclesTerrainCfg,
+    MeshRepeatedBoxesTerrainCfg,
+    height_field
 )
 from omni.isaac.orbit.terrains.config.rough import ROUGH_TERRAINS_CFG as ROUGH_HARD
+from omni.isaac.orbit.utils import configclass
 from dataclasses import MISSING
+import numpy as np
 
 import omni.isaac.orbit.sim as sim_utils
+
+
+@height_field.utils.height_field_to_mesh
+def random_grid_terrain(difficulty: float, cfg: "HfRandomGridTerrainCfg"):
+    
+    width_pixels = int(cfg.size[0] / cfg.horizontal_scale)
+    length_pixels = int(cfg.size[1] / cfg.horizontal_scale)
+
+    hf = np.random.uniform(
+        cfg.grid_height_range[0] / cfg.vertical_scale,
+        cfg.grid_height_range[1] / cfg.vertical_scale,
+        (int(cfg.size[0] / cfg.grid_width), int(cfg.size[1] / cfg.grid_width))
+    )
+    x = np.linspace(0, hf.shape[0], width_pixels, endpoint=False).astype(int)
+    y = np.linspace(0, hf.shape[1], length_pixels, endpoint=False).astype(int)
+    hf = hf[x.reshape(-1, 1), y]    
+    return np.rint(hf).astype(np.int16)
+
+
+@configclass
+class HfRandomGridTerrainCfg(HfTerrainBaseCfg):
+    
+    function = random_grid_terrain
+
+    grid_width: float = MISSING
+    """The width of the grid cells (in m)."""
+    grid_height_range: tuple[float, float] = MISSING
+    """The minimum and maximum height of the grid cells (in m)."""
+
 
 ROUGH_MEDIUM = TerrainGeneratorCfg(
     seed=0,
@@ -28,14 +63,33 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
     use_cache=False,
     sub_terrains={
         "flat": MeshPlaneTerrainCfg(
-            proportion=0.2,
+            proportion=0.15,
         ),
         "random_rough_easy": HfRandomUniformTerrainCfg(
-            proportion=0.3,
+            proportion=0.2,
             noise_range=(0.0, 0.05),
-            noise_step=0.01,
+            noise_step=0.02,
             border_width=0.5
         ),
+        # "boxes": MeshRandomGridTerrainCfg(
+        #     proportion=0.20, 
+        #     grid_width=0.45, 
+        #     grid_height_range=(0.02, 0.05), 
+        #     platform_width=2.0
+        # ),
+        "boxes": HfRandomGridTerrainCfg(
+            proportion=0.20, 
+            grid_width=0.45, 
+            grid_height_range=(0.02, 0.05), 
+            platform_width=2.0
+        ),
+        # "box": MeshRepeatedBoxesTerrainCfg(
+        #     proportion=0.15,
+        #     object_params_start=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
+        #         num_objects=36, height=0.1, size=(0.5, 0.5), max_yx_angle=15),
+        #     object_params_end=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
+        #         num_objects=36, height=0.1, size=(0.5, 0.5), max_yx_angle=15),
+        # ),
         "pyramid_stairs": MeshPyramidStairsTerrainCfg(
             proportion=0.10,
             step_height_range=(0.05, 0.15),
