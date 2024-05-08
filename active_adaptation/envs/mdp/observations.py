@@ -282,16 +282,17 @@ class contact_indicator(Observation):
         # self.forces[:] = self.contact_sensor.data.net_forces_w[:, self.body_ids]
 
     def __call__(self):
+        forces = quat_rotate_inverse(self.asset.data.root_quat_w.unsqueeze(1), self.forces) / self.default_mass_total
         if self.timing:
             current_air_time = self.contact_sensor.data.current_air_time[:, self.body_ids].clamp_max(1.)
             current_contact_time = self.contact_sensor.data.current_contact_time[:, self.body_ids].clamp_max(1.)
             return torch.cat([
                 current_air_time,
                 current_contact_time,
-                (self.forces / self.default_mass_total).reshape(self.num_envs, -1).clip(-5., 5.)
+                forces.reshape(self.num_envs, -1).clip(-5., 5.)
             ], dim=-1)
         else:
-            return (self.forces / self.default_mass_total).reshape(self.num_envs, -1).clip(-5., 5.)
+            return forces.reshape(self.num_envs, -1).clip(-5., 5.)
 
     def debug_draw(self):
         self.env.debug_draw.vector(

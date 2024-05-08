@@ -9,7 +9,7 @@ defaults:
 robot: go2
 terrain: plane
 payload: false
-homogeneous: true
+homogeneous: false
 
 # command:
 #   _target_: active_adaptation.envs.mdp.Command1
@@ -40,7 +40,7 @@ observation:
     projected_gravity_b:
     joint_pos:    {noise_std: 0.05}
     joint_vel:    {noise_std: 0.2}
-    prev_actions: 
+    prev_actions: {steps: 4}
     # motor_params: {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     # body_materials: {body_names: .*foot, homogeneous: "${task.homogeneous}"}
     # root_linvel_b:
@@ -55,14 +55,14 @@ observation:
     feet_height_map:  {feet_names: .*foot }
     applied_torques:  {actuator_name: base_legs}
     # feet_height:
-    motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
+    # motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
     motor_failure:    {actuator_name: base_legs}
     body_scale:       {}
     body_momentum:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     cum_error:        {}
     last_rewards:     {}
-    # contact_indicator: {body_names: [".*_foot", ".*_calf"]}
+    contact_indicator: {body_names: [".*_foot"], timing: false}
   height_scan:
     height_scan:      {prim_path: base}
   # priv:
@@ -120,7 +120,7 @@ randomization:
     static_friction_range:  [0.6, 2.0]
     dynamic_friction_range: [0.6, 2.0]
     restitution_range:      [0.0, 0.2]
-    homogeneous: ${task.homogeneous}
+    homogeneous: true # ${task.homogeneous}
   motor_params:
     actuator_name: base_legs
     stiffness_range:  [0.8, 1.2]

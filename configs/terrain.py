@@ -80,15 +80,17 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
         "boxes": HfRandomGridTerrainCfg(
             proportion=0.20, 
             grid_width=0.45, 
-            grid_height_range=(0.02, 0.05), 
-            platform_width=2.0
+            grid_height_range=(0.0, 0.05), 
+            slope_threshold=0.1,
+            border_width=0.5
         ),
         # "box": MeshRepeatedBoxesTerrainCfg(
-        #     proportion=0.15,
+        #     proportion=0.20,
         #     object_params_start=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
         #         num_objects=36, height=0.1, size=(0.5, 0.5), max_yx_angle=15),
         #     object_params_end=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
         #         num_objects=36, height=0.1, size=(0.5, 0.5), max_yx_angle=15),
+        #     platform_width=2.0
         # ),
         "pyramid_stairs": MeshPyramidStairsTerrainCfg(
             proportion=0.10,
