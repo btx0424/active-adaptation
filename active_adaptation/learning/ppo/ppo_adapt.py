@@ -43,6 +43,7 @@ from collections import OrderedDict
 
 from ..utils.valuenorm import ValueNorm1, ValueNormFake, Normalizer
 from ..modules.distributions import IndependentNormal
+from ..modules.ensemble import EnsembleModule
 from .common import *
 
 @dataclass
@@ -65,6 +66,7 @@ class PPOConfig:
 
     context_dim: int = 128
     adapt_module: str = "mse"
+    ensemble: bool = True
     adapt_reward: bool = False
     tune_alpha: bool = True
     target_kl: float = 1.0
@@ -98,7 +100,7 @@ class GRU(nn.Module):
             N = x.shape[0]
             if hx is None and self.allow_none:
                 hx = torch.zeros(N, self.gru.hidden_size, device=x.device)
-            assert (hx[is_init.squeeze()] == 0.).all()
+            # assert (hx[is_init.squeeze()] == 0.).all()
             output = hx = self.gru(x, hx)
             output = self.ln(output)
             return output, hx
@@ -260,6 +262,13 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         
         self.adapt_module_a = make_adapt_module()
         self.adapt_module_a(fake_input)
+        if self.cfg.ensemble:
+            self.adapt_module_a = TensorDictSequential(
+                EnsembleModule(self.adapt_module_a, 4),
+                TensorDictModule(nn.Identity(), ["context_adapt"], ["_context_adapt"]),
+                TensorDictModule(lambda x: torch.mean(x, -2), ["_context_adapt"], ["context_adapt"]),
+                TensorDictModule(lambda x: torch.std(x, -2).mean(-1), ["_context_adapt"], ["context_adapt_std"]),
+            )
         self.adapt_module_b = make_adapt_module()
         self.adapt_module_b(fake_input)
         self.adapt_modules = {
@@ -395,10 +404,11 @@ class PPOAdaptPolicy(TensorDictModuleBase):
     
     def make_tensordict_primer(self):
         num_envs = self.observation_spec.shape[0]
-        return TensorDictPrimer(
-            {"context_adapt_hx": UnboundedContinuousTensorSpec((num_envs, 128), device=self.device)},
-            reset_key="done"
-        )
+        if self.cfg.ensemble:
+            spec = UnboundedContinuousTensorSpec((num_envs, 4, 128), device=self.device)
+        else:
+            spec = UnboundedContinuousTensorSpec((num_envs, 128), device=self.device)
+        return TensorDictPrimer({"context_adapt_hx": spec}, reset_key="done")
 
     def get_rollout_policy(self, mode: str="train"):
         if mode not in ("train", "eval", "deploy"):
@@ -409,7 +419,9 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         
         if mode in ("train", "eval"):
             modules.append(self.encoder_priv)
-        modules.append(self.adapt_module_ema)
+
+        adapt_module = self.adapt_module_ema
+        modules.append(adapt_module)
 
         if self.phase == "train":
             modules.append(self._actor_expert)
@@ -584,7 +596,9 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         infos = {f"adapt/{k}": v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         with torch.no_grad():
             infos["adapt/adapt_module_a_kl"] = self._action_kl(tensordict.copy(), self.adapt_module_a).item()
-            infos["adapt/adapt_module_b_kl"] = self._action_kl(tensordict.copy(), self.adapt_module_b).item()
+            # infos["adapt/adapt_module_b_kl"] = self._action_kl(tensordict.copy(), self.adapt_module_b).item()
+        if self.cfg.ensemble:
+            infos["adapt/ensemble_std"] = tensordict["context_adapt_std"].mean().item()
         return infos
 
     @torch.no_grad()
@@ -622,10 +636,10 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         losses = TensorDict({}, [])
         losses["adapt_module_a_loss"] = self._feature_mse(tensordict.copy(), self.adapt_module_a)
         # losses["adapt_module_a_loss"] = self._nll(tensordict.copy(), self.adapt_module_a)
-        losses["adapt_module_b_loss"] = (
-            self._action_kl(tensordict.copy(), self.adapt_module_b)
-            + self._feature_mse(tensordict.copy(), self.adapt_module_b)
-        )
+        # losses["adapt_module_b_loss"] = (
+        #     self._action_kl(tensordict.copy(), self.adapt_module_b)
+        #     + self._feature_mse(tensordict.copy(), self.adapt_module_b)
+        # )
         self.opt_adapt.zero_grad()
         sum(v for k, v in losses.items() if k.endswith("loss")).backward()
         for param_group in self.opt_adapt.param_groups:
