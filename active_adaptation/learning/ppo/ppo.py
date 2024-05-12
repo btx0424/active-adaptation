@@ -25,18 +25,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as D
+import warnings
 
 from torchrl.data import CompositeSpec, TensorSpec
 from torchrl.modules import ProbabilisticActor
-from torchrl.envs.transforms import CatTensors
+from torchrl.envs.transforms import CatTensors, VecNorm
 from tensordict import TensorDict
 from tensordict.nn import TensorDictModuleBase, TensorDictModule, TensorDictSequential
 
 from hydra.core.config_store import ConfigStore
 from dataclasses import dataclass
 from typing import Union
+from collections import OrderedDict
 
-from ..utils.valuenorm import ValueNorm1
+from ..utils.valuenorm import ValueNorm1, ValueNormFake
 from ..modules.distributions import IndependentNormal
 from .common import *
 
@@ -46,9 +48,10 @@ class PPOConfig:
     train_every: int = 32
     ppo_epochs: int = 4
     num_minibatches: int = 16
-    lr: float = 1e-3
+    lr: float = 5e-4
     clip_param: float = 0.2
     recompute_adv: bool = False
+    value_norm: bool = False
 
     checkpoint_path: Union[str, None] = None
 
@@ -64,23 +67,31 @@ class PPOPolicy(TensorDictModuleBase):
         observation_spec: CompositeSpec, 
         action_spec: CompositeSpec, 
         reward_spec: TensorSpec,
+        vecnorm: VecNorm,
         device
     ):
         super().__init__()
         self.cfg = cfg
         self.device = device
+        self.vecnorm = vecnorm
 
         self.entropy_coef = 0.001
         self.clip_param = self.cfg.clip_param
         self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(0.99, 0.95)
+        
+        if cfg.value_norm:
+            value_norm_cls = ValueNorm1
+        else:
+            value_norm_cls = ValueNormFake
+        self.value_norm = value_norm_cls(input_shape=1).to(self.device)
 
         fake_input = observation_spec.zero()
         
         actor_module=TensorDictModule(
             nn.Sequential(
-                make_mlp([512, 256, 256], nn.Mish), 
+                make_mlp([256, 256, 256], nn.Mish), 
                 Actor(self.action_dim)
             ),
             [OBS_KEY], ["loc", "scale"]
@@ -94,7 +105,7 @@ class PPOPolicy(TensorDictModuleBase):
         ).to(self.device)
         
         def make_critic():
-            return nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1))
+            return nn.Sequential(make_mlp([256, 256, 256]), nn.LazyLinear(1))
         
         self.critic = TensorDictModule(
             make_critic(), [OBS_KEY], ["state_value"]
@@ -132,8 +143,6 @@ class PPOPolicy(TensorDictModuleBase):
             self.actor.apply(init_)
             self.critic.apply(init_)
             self.critic_priv.apply(init_)
-
-        self.value_norm = ValueNorm1(input_shape=1).to(self.device)
     
     def get_rollout_policy(self, mode: str="train"):
         policy = TensorDictSequential(
@@ -229,6 +238,37 @@ class PPOPolicy(TensorDictModuleBase):
             "explained_var": explained_var,
             "explained_var_priv": explained_var_priv
         }, [])
+
+    def state_dict(self):
+        state_dict = OrderedDict()
+        for name, module in self.named_children():
+            state_dict[name] = module.state_dict()
+        if "vecnorm" in state_dict:
+            state_dict["vecnorm"]["_extra_state"]["lock"] = None # TODO: check with torchrl
+        return state_dict
+    
+    def load_state_dict(self, state_dict, strict=True):
+        # self.num_frames = state_dict.get("num_frames", 0)
+        # self.last_phase = state_dict.get("phase", None)
+        # if "vecnorm._extra_state" in state_dict:
+        #     vecnorm_td = state_dict["vecnorm._extra_state"]["td"]
+        #     state_dict["lock"] = None
+        #     state_dict["vecnorm._extra_state"]["td"] = vecnorm_td.to(self.device)
+        # return super().load_state_dict(state_dict, strict=strict)
+        succeed_keys = []
+        failed_keys = []
+        if "vecnorm" in state_dict:
+            state_dict["vecnorm"]["_extra_state"]["td"] = state_dict["vecnorm"]["_extra_state"]["td"].to(self.device)
+        for name, module in self.named_children():
+            _state_dict = state_dict.get(name, {})
+            try:
+                module.load_state_dict(_state_dict, strict=strict)
+                succeed_keys.append(name)
+            except Exception as e:
+                warnings.warn(f"Failed to load state dict for {name}: {str(e)}")
+                failed_keys.append(name)
+        print(f"Successfully loaded {succeed_keys}.")
+        return failed_keys
 
 
 def normalize(x: torch.Tensor, subtract_mean: bool=False):
