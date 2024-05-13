@@ -40,19 +40,17 @@ class SAC(TensorDictModuleBase):
         observation_spec: CompositeSpec, 
         action_spec: CompositeSpec, 
         reward_spec: TensorSpec,
-        vecnorm: VecNorm,
         device
     ):
         super().__init__()
         self.cfg = cfg
         self.device = device
-        self.vecnorm = vecnorm
         self.observation_spec = observation_spec
         self.action_spec = action_spec
 
         fake_input = observation_spec.zero()
         self.action_dim = self.action_spec.shape[-1]
-        self.target_entropy = - self.action_dim
+        self.target_entropy = 0 # - self.action_dim
 
         self.encoder_priv = TensorDictModule(
             make_mlp([self.cfg.context_dim]),
@@ -69,6 +67,7 @@ class SAC(TensorDictModuleBase):
             in_keys=["loc", "scale"],
             out_keys=[ACTION_KEY],
             distribution_class=TanhNormal,
+            distribution_kwargs={"min": -2.0, "max": 2.0},
             return_log_prob=True
         ).to(self.device)
 
@@ -81,9 +80,18 @@ class SAC(TensorDictModuleBase):
             TensorDictModule(make_critic(), ["q_input"], ["Q2"]),
         ).to(self.device)
 
+        self.dynamics = TensorDictSequential(
+            CatTensors([OBS_KEY, OBS_PRIV_KEY, ACTION_KEY], "dyn_input", del_keys=False),
+            TensorDictModule(
+                nn.Sequential(make_mlp([256, 256]), nn.LazyLinear(fake_input[OBS_KEY].shape[-1])),
+                ["dyn_input"], [("next", OBS_KEY)]
+            )
+        ).to(self.device)
+
         self.encoder_priv(fake_input)
         self.actor(fake_input)
         self.qs(fake_input)
+        self.dynamics(fake_input)
 
         self.qs_ema = deepcopy(self.qs)
 
@@ -96,10 +104,11 @@ class SAC(TensorDictModuleBase):
 
         self.opt_actor = torch.optim.Adam(self.actor.parameters(), lr=self.cfg.lr)
         self.opt_critic = torch.optim.Adam(self.qs.parameters(), lr=self.cfg.lr)
+        self.opt_dyn = torch.optim.Adam(self.dynamics.parameters(), lr=cfg.lr)
 
         self.rb = TensorDictReplayBuffer(
             storage=LazyTensorStorage(max_size=2000000),
-            batch_size=4096,
+            batch_size=8192,
             prefetch=2,
         )
         self.multi_step = MultiStepTransform(3, gamma=0.99)
@@ -120,7 +129,7 @@ class SAC(TensorDictModuleBase):
         
         infos = []
 
-        for _ in range(self.cfg.train_every):
+        for _ in range(self.cfg.train_every * 2):
             batch = self.rb.sample().to(self.device)
             infos.append(self.update(batch))
         
@@ -133,6 +142,11 @@ class SAC(TensorDictModuleBase):
     
     def update(self, tensordict: TensorDictBase):
         losses = {}
+
+        losses["dyn_loss"] = self._compute_dyn_loss(tensordict.copy())
+        self.opt_dyn.zero_grad()
+        losses["dyn_loss"].backward()
+        self.opt_dyn.step()
 
         losses["critic_loss"] = self._compute_critic_loss(tensordict)
         self.opt_critic.zero_grad()
@@ -189,15 +203,15 @@ class SAC(TensorDictModuleBase):
         )
         return critic_loss
 
+    def _compute_dyn_loss(self, tensordict: TensorDictBase):
+        pred = self.dynamics(tensordict.copy())["next", OBS_KEY]
+        target = tensordict["next", OBS_KEY]
+        dyn_loss = F.mse_loss(pred, target)
+        return dyn_loss
+
     def state_dict(self):
         state_dict = super().state_dict()
-        if "vecnorm._extra_state" in state_dict:
-            state_dict["vecnorm._extra_state"]["lock"] = None # TODO: check with torchrl
         return state_dict
     
     def load_state_dict(self, state_dict, strict: bool = True):
-        if "vecnorm._extra_state" in state_dict:
-            vecnorm_td = state_dict["vecnorm._extra_state"]["td"]
-            state_dict["lock"] = None
-            state_dict["vecnorm._extra_state"]["td"] = vecnorm_td.to(self.device)
         return super().load_state_dict(state_dict, strict=strict)
