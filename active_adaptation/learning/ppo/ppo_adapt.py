@@ -596,7 +596,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         infos = {f"adapt/{k}": v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         with torch.no_grad():
             infos["adapt/adapt_module_a_kl"] = self._action_kl(tensordict.copy(), self.adapt_module_a).item()
-            # infos["adapt/adapt_module_b_kl"] = self._action_kl(tensordict.copy(), self.adapt_module_b).item()
+            if not self.cfg.ensemble:
+                infos["adapt/adapt_module_b_kl"] = self._action_kl(tensordict.copy(), self.adapt_module_b).item()
         if self.cfg.ensemble:
             infos["adapt/ensemble_std"] = tensordict["context_adapt_std"].mean().item()
         return infos
@@ -636,10 +637,11 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         losses = TensorDict({}, [])
         losses["adapt_module_a_loss"] = self._feature_mse(tensordict.copy(), self.adapt_module_a)
         # losses["adapt_module_a_loss"] = self._nll(tensordict.copy(), self.adapt_module_a)
-        # losses["adapt_module_b_loss"] = (
-        #     self._action_kl(tensordict.copy(), self.adapt_module_b)
-        #     + self._feature_mse(tensordict.copy(), self.adapt_module_b)
-        # )
+        if not self.cfg.ensemble:
+            losses["adapt_module_b_loss"] = (
+                self._action_kl(tensordict.copy(), self.adapt_module_b)
+                + self._feature_mse(tensordict.copy(), self.adapt_module_b)
+            )
         self.opt_adapt.zero_grad()
         sum(v for k, v in losses.items() if k.endswith("loss")).backward()
         for param_group in self.opt_adapt.param_groups:

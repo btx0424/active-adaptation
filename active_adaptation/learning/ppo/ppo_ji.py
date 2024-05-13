@@ -130,7 +130,7 @@ class PPOPolicy(TensorDictModuleBase):
                 [OBS_HIST_KEY], ["priv_estimate"]
             ).to(self.device)
 
-        actor_module = nn.Sequential(make_mlp([512, 256, 256], nn.Mish), Actor(self.action_dim))
+        actor_module = nn.Sequential(make_mlp([256, 256, 256], nn.Mish), Actor(self.action_dim))
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=TensorDictSequential(
                 CatTensors([OBS_KEY, OBS_PRIV_KEY if self.cfg.hack else "priv_estimate"], "policy_estimate", del_keys=False),
@@ -142,7 +142,7 @@ class PPOPolicy(TensorDictModuleBase):
             return_log_prob=True
         ).to(self.device)
         
-        critic_module = nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1))
+        critic_module = nn.Sequential(make_mlp([256, 256, 256]), nn.LazyLinear(1))
         self.critic = TensorDictSequential(
             CatTensors([OBS_KEY, OBS_PRIV_KEY], "policy_priv", del_keys=False),
             TensorDictModule(critic_module, ["policy_priv"], ["state_value"])

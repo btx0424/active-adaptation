@@ -7,3 +7,7 @@ defaults:
   - _self_
 
 terrain: easy
+
+observation:
+  height_scan:
+    height_scan:  {prim_path: pelvis}

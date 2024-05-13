@@ -642,7 +642,7 @@ class action_delay(Observation):
             return torch.zeros(self.num_envs, 1, device=self.device)
 
 
-class last_rewards(Observation):
+class rewards(Observation):
     def __call__(self) -> torch.Tensor:
         return self.env._reward_buf
 
