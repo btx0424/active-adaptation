@@ -56,6 +56,7 @@ class PPOConfig:
     lr: float = 5e-4
     clip_param: float = 0.1
     entropy_coef: float = 0.01
+    vecnorm: Union[str, None] = None
 
     actor_predict_std: bool = True
     orthogonal_init: bool = True
@@ -77,9 +78,9 @@ class PPOConfig:
     checkpoint_path: Union[str, None] = None
 
 cs = ConfigStore.instance()
-cs.store("ppo_adapt_train", node=PPOConfig(phase="train"), group="algo")
-cs.store("ppo_adapt_adapt", node=PPOConfig(phase="adapt"), group="algo")
-cs.store("ppo_adapt_finetune", node=PPOConfig(phase="finetune"), group="algo")
+cs.store("ppo_adapt_train", node=PPOConfig(phase="train", vecnorm="train"), group="algo")
+cs.store("ppo_adapt_adapt", node=PPOConfig(phase="adapt", vecnorm="eval"), group="algo")
+cs.store("ppo_adapt_finetune", node=PPOConfig(phase="finetune", vecnorm="eval"), group="algo")
 
 class GRU(nn.Module):
     def __init__(
@@ -185,10 +186,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self.device = device
         self.observation_spec = observation_spec
 
-        obs_keys = list(observation_spec.keys(True, True))
-        obs_keys.remove("is_init")
-        self.vecnorm = VecNorm(obs_keys)
-
         self.entropy_coef = self.cfg.entropy_coef
         self.clip_param = self.cfg.clip_param
         self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
@@ -215,7 +212,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self.num_frames = 0
 
         fake_input = observation_spec.zero()
-        self.vecnorm._reset(fake_input, fake_input)
 
         # lazy initialization
         with torch.device(self.device):
@@ -422,13 +418,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             modules.append(self._critic_adapt)
             exclude_keys.append("critic_priv_input")
             exclude_keys.append("critic_adapt_input")
-        
-        if self.phase in ("adapt", "finetune") or mode in ("eval", "deploy"):
-            print(colored("[Info]: Not updating obervation normalizer.", "green"))
-            modules.insert(0, self.vecnorm.to_observation_norm())
-        else:
-            print(colored("[Info]: Updating obervation normalizer.", "green"))
-            modules.insert(0, self.vecnorm)
         
         policy = TensorDictSequential(*modules, ExcludeTransform(*exclude_keys))
         return policy

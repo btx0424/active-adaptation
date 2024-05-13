@@ -4,6 +4,7 @@ import hydra
 import numpy as np
 import einops
 from omegaconf import OmegaConf
+from collections import OrderedDict
 
 from omni.isaac.orbit.app import AppLauncher
 from omni_drones.utils.wandb import init_wandb
@@ -18,12 +19,13 @@ from torchrl.envs.transforms import (
     CatFrames,
     VecNorm
 )
-from active_adaptation.learning import ALGOS, PPODualPolicy
+from active_adaptation.learning import ALGOS
 from helpers import EpisodeStats, Every
 
 import wandb
 import logging
 from tqdm import tqdm
+from termcolor import colored
 
 import os
 import time
@@ -57,9 +59,28 @@ def main(cfg):
 
     # setup environment
     env_cfg = LocomotionEnvCfg(cfg.task)
-    
+
     base_env = TASKS[cfg.task.task](env_cfg)
+    obs_keys = list(base_env.observation_spec.keys(True, True))
     transform = Compose(InitTracker())
+
+    checkpoint_path = cfg.checkpoint_path
+    if checkpoint_path is not None:
+        state_dict = torch.load(state_dict)
+    else:
+        state_dict = {}
+
+    assert cfg.vecnorm in ("train", "eval", None)
+    vecnorm = VecNorm(obs_keys)
+    if "vecnorm" in state_dict.keys():
+        print(colored("[Info]: Load VecNorm from checkpoint."))
+        vecnorm.load_state_dict(state_dict["vecnorm"])
+    if cfg.vecnorm == "train":
+        print(colored("[Info]: Updating obervation normalizer.", "green"))
+        transform.append(vecnorm)
+    elif cfg.vecnorm == "eval":
+        print(colored("[Info]: Not updating obervation normalizer.", "green"))
+        transform.append(vecnorm.to_observation_norm())
 
     long_history = cfg.algo.get("long_history", 0)
     if long_history > 0:
@@ -184,7 +205,11 @@ def main(cfg):
     
     def save(policy, checkpoint_name: str, artifact: bool=False):
         ckpt_path = os.path.join(run.dir, f"{checkpoint_name}.pt")
-        torch.save(policy.state_dict(), ckpt_path)
+        state_dict = OrderedDict()
+        state_dict["policy"] = policy.state_dict()
+        if "vecnorm" in locals():
+            state_dict["vecnorm"] = vecnorm.state_dict()
+        torch.save(state_dict, ckpt_path)
         if artifact:
             artifact = wandb.Artifact(
                 f"{type(base_env).__name__}-{type(policy).__name__}", 
