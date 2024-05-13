@@ -59,11 +59,7 @@ def main(cfg):
     env_cfg = LocomotionEnvCfg(cfg.task)
     
     base_env = TASKS[cfg.task.task](env_cfg)
-    if cfg.get("vecnorm", True):
-        vecnorm = VecNorm(list(base_env.observation_spec.keys(True, True)))
-    else:
-        vecnorm = None
-    transform = Compose(InitTracker(), vecnorm)
+    transform = Compose(InitTracker())
 
     long_history = cfg.algo.get("long_history", 0)
     if long_history > 0:
@@ -81,7 +77,6 @@ def main(cfg):
         env.observation_spec, 
         env.action_spec, 
         env.reward_spec,
-        vecnorm,
         device=base_env.device
     )
     import inspect

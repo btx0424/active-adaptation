@@ -54,11 +54,7 @@ def main(cfg):
     env_cfg.sim.physx.gpu_heap_capacity = 2**24
 
     base_env = TASKS[cfg.task.task](env_cfg)
-    if cfg.get("vecnorm", True):
-        vecnorm = VecNorm(list(base_env.observation_spec.keys(True, True)))
-    else:
-        vecnorm = None
-    transform = Compose(InitTracker(), vecnorm)
+    transform = Compose(InitTracker())
     env = TransformedEnv(base_env, transform)
     env.set_seed(0)
 
@@ -68,7 +64,6 @@ def main(cfg):
         env.observation_spec, 
         env.action_spec, 
         env.reward_spec,
-        vecnorm,
         device=base_env.device
     )
     
@@ -90,7 +85,7 @@ def main(cfg):
             return (time.perf_counter() - start) / 1000
         
         FILE_PATH = os.path.dirname(__file__)
-        _policy = policy.get_rollout_policy("eval").cpu()
+        _policy = policy.get_rollout_policy("deploy").cpu()
         
         print(f"Inference time of policy: {test(_policy, fake_input)}")
 

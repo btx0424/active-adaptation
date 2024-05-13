@@ -29,6 +29,7 @@ import einops
 import functools
 import warnings
 import copy
+from termcolor import colored, COLORS
 
 from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuousTensorSpec
 from torchrl.modules import ProbabilisticActor
@@ -177,13 +178,16 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         observation_spec: CompositeSpec, 
         action_spec: CompositeSpec, 
         reward_spec: TensorSpec,
-        vecnorm: VecNorm=None,
         device: str="cuda:0"
     ):
         super().__init__()
         self.cfg = cfg
         self.device = device
-        self.vecnorm = vecnorm
+        self.observation_spec = observation_spec
+
+        obs_keys = list(observation_spec.keys(True, True))
+        obs_keys.remove("is_init")
+        self.vecnorm = VecNorm(obs_keys)
 
         self.entropy_coef = self.cfg.entropy_coef
         self.clip_param = self.cfg.clip_param
@@ -210,11 +214,9 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self.num_updates = 0
         self.num_frames = 0
 
-        if self.phase != "train":
-            self.vecnorm.eval() # stop updating during "adapt" and "finetune"
-
-        self.observation_spec = observation_spec
         fake_input = observation_spec.zero()
+        self.vecnorm._reset(fake_input, fake_input)
+
         # lazy initialization
         with torch.device(self.device):
             fake_input["is_init"] = torch.ones(fake_input.shape[0], 1, dtype=torch.bool)
@@ -319,18 +321,9 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         ).to(self.device)
         # expert critic with both privilged and estimated information to be unbiased
         self._critic_adapt = TensorDictSequential(
-            # CatTensors([OBS_KEY, OBS_PRIV_KEY, "context_adapt"], "critic_adapt_input", del_keys=False),
             CatTensors([*critic_priv_keys, "context_adapt"], "critic_adapt_input", del_keys=False),
             TensorDictModule(make_critic(), ["critic_adapt_input"], ["value_adapt"])
         ).to(self.device)
-
-        self._critic_aux = TensorDictModule(
-            make_critic(), ["critic_priv_input"], ["value_aux"]
-        ).to(self.device)
-        self._marg = TensorDictModule(
-            Marginalizer(), [OBS_KEY, OBS_PRIV_KEY], ["nll"]
-        ).to(self.device)
-        self._marg(fake_input)
 
         self.actor_critic_priv = TensorDictSequential(
             self.encoder_priv,
@@ -343,7 +336,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self._critic_obs(fake_input)
         self._critic_priv(fake_input)
         self._critic_adapt(fake_input)
-        self._critic_aux(fake_input)
 
         self.opt_expert = torch.optim.Adam(
             [
@@ -351,8 +343,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 {"params": self._actor_expert.parameters()},
                 {"params": self._critic_priv.parameters()},
                 {"params": self._critic_obs.parameters()},
-                {"params": self._critic_aux.parameters()},
-                {"params": self._marg.parameters()}
             ],
             lr=cfg.lr
         )
@@ -389,7 +379,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         elif self.cfg.orthogonal_init:
             self.actor_critic_priv.apply(init_)
             self._critic_obs.apply(init_)
-            self._critic_aux.apply(init_)
             self.adapt_module_a.apply(init_)
             self.adapt_module_b.apply(init_)
         
@@ -433,6 +422,13 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             modules.append(self._critic_adapt)
             exclude_keys.append("critic_priv_input")
             exclude_keys.append("critic_adapt_input")
+        
+        if self.phase in ("adapt", "finetune") or mode in ("eval", "deploy"):
+            print(colored("[Info]: Not updating obervation normalizer.", "green"))
+            modules.insert(0, self.vecnorm.to_observation_norm())
+        else:
+            print(colored("[Info]: Updating obervation normalizer.", "green"))
+            modules.insert(0, self.vecnorm)
         
         policy = TensorDictSequential(*modules, ExcludeTransform(*exclude_keys))
         return policy
@@ -714,8 +710,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         state_dict = OrderedDict()
         for name, module in self.named_children():
             state_dict[name] = module.state_dict()
-        if "vecnorm" in state_dict:
-            state_dict["vecnorm"]["_extra_state"]["lock"] = None # TODO: check with torchrl
         state_dict["num_frames"] = self.num_frames
         state_dict["phase"] = self.phase
         return state_dict
@@ -730,17 +724,15 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         # return super().load_state_dict(state_dict, strict=strict)
         succeed_keys = []
         failed_keys = []
-        if "vecnorm" in state_dict:
-            state_dict["vecnorm"]["_extra_state"]["td"] = state_dict["vecnorm"]["_extra_state"]["td"].to(self.device)
         for name, module in self.named_children():
             _state_dict = state_dict.get(name, {})
             try:
                 module.load_state_dict(_state_dict, strict=strict)
                 succeed_keys.append(name)
             except Exception as e:
-                warnings.warn(f"Failed to load state dict for {name}: {str(e)}")
+                print(colored(f"[Warning]: Failed to load state dict for {name}: {str(e)}", "red"))
                 failed_keys.append(name)
-        print(f"Successfully loaded {succeed_keys}.")
+        print(colored(f"[Info] Successfully loaded {succeed_keys}.", "green"))
         self.num_frames = state_dict["num_frames"]
         self.last_phase = state_dict["phase"]
         return failed_keys
