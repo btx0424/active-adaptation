@@ -27,9 +27,8 @@ import torch.nn.functional as F
 import torch.distributions as D
 import einops
 import functools
-import warnings
 import copy
-from termcolor import colored, COLORS
+from termcolor import colored
 
 from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuousTensorSpec
 from torchrl.modules import ProbabilisticActor
@@ -68,7 +67,7 @@ class PPOConfig:
 
     context_dim: int = 128
     adapt_module: str = "mse"
-    ensemble: bool = True
+    ensemble: bool = False
     adapt_reward: bool = False
     tune_alpha: bool = True
     target_kl: float = 1.0
@@ -380,10 +379,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         
         self.__actor_expert(fake_input)
         self.__actor_expert.requires_grad_(False)
-        hard_copy_(self._actor_expert, self.__actor_expert)
 
         self.adapt_module_ema.requires_grad_(False)
-        hard_copy_(self.adapt_modules[self.cfg.adapt_module], self.adapt_module_ema)
 
         self.log_alpha.data.zero_()
     
@@ -722,6 +719,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 print(colored(f"[Warning]: Failed to load state dict for {name}: {str(e)}", "red"))
                 failed_keys.append(name)
         print(colored(f"[Info] Successfully loaded {succeed_keys}.", "green"))
+        hard_copy_(self._actor_expert, self.__actor_expert)
+        hard_copy_(self.adapt_modules[self.cfg.adapt_module], self.adapt_module_ema)
         self.num_frames = state_dict["num_frames"]
         self.last_phase = state_dict["phase"]
         return failed_keys

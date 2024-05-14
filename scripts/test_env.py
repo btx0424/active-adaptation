@@ -3,32 +3,23 @@ import warp
 import hydra
 import numpy as np
 import einops
+import wandb
+import logging
+import os
+import time
+
 from omegaconf import OmegaConf
 from collections import OrderedDict
+from tqdm import tqdm
+
+from torchrl.envs.utils import set_exploration_type, ExplorationType
 
 from omni.isaac.orbit.app import AppLauncher
 from omni_drones.utils.wandb import init_wandb
-from active_adaptation.utils.torchrl import StackFrames, SyncDataCollector
+from active_adaptation.utils.torchrl import SyncDataCollector
 
-from torchrl.envs.utils import set_exploration_type, ExplorationType
-from torchrl.envs.transforms import (
-    TransformedEnv, 
-    Compose, 
-    InitTracker,
-    RewardSum,
-    CatFrames,
-    VecNorm
-)
-from active_adaptation.learning import ALGOS
-from helpers import EpisodeStats, Every
-
-import wandb
-import logging
-from tqdm import tqdm
-from termcolor import colored
-
-import os
-import time
+# local import
+from scripts.helpers import make_env_policy, EpisodeStats
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -52,64 +43,16 @@ def main(cfg):
     )
     simulation_app = app_launcher.app
 
-    from active_adaptation.envs import TASKS
-    from configs.rough import LocomotionEnvCfg
-
     run = init_wandb(cfg)
 
-    # setup environment
-    env_cfg = LocomotionEnvCfg(cfg.task)
+    env, policy, vecnorm = make_env_policy(cfg)
 
-    base_env = TASKS[cfg.task.task](env_cfg)
-    obs_keys = list(base_env.observation_spec.keys(True, True))
-    transform = Compose(InitTracker())
-
-    checkpoint_path = cfg.checkpoint_path
-    if checkpoint_path is not None:
-        state_dict = torch.load(state_dict)
-    else:
-        state_dict = {}
-
-    assert cfg.vecnorm in ("train", "eval", None)
-    vecnorm = VecNorm(obs_keys)
-    if "vecnorm" in state_dict.keys():
-        print(colored("[Info]: Load VecNorm from checkpoint."))
-        vecnorm.load_state_dict(state_dict["vecnorm"])
-    if cfg.vecnorm == "train":
-        print(colored("[Info]: Updating obervation normalizer.", "green"))
-        transform.append(vecnorm)
-    elif cfg.vecnorm == "eval":
-        print(colored("[Info]: Not updating obervation normalizer.", "green"))
-        transform.append(vecnorm.to_observation_norm())
-
-    long_history = cfg.algo.get("long_history", 0)
-    if long_history > 0:
-        transform.append(StackFrames(long_history, ["policy"], ["policy_h"]))
-    short_history = cfg.algo.get("short_history", 0)
-    if short_history > 0:
-        transform.append(CatFrames(short_history, -1, ["policy"], ["policy"]))
-
-    env = TransformedEnv(base_env, transform)
-    env.set_seed(cfg.seed)
-
-    # setup policy
-    policy = ALGOS[cfg.algo.name](
-        cfg.algo,
-        env.observation_spec, 
-        env.action_spec, 
-        env.reward_spec,
-        device=base_env.device
-    )
     import inspect
     import shutil
     source_path = inspect.getfile(policy.__class__)
     target_path = os.path.join(run.dir, source_path.split("/")[-1])
     shutil.copy(source_path, target_path)
     wandb.save(target_path, policy="now")
-    
-
-    if hasattr(policy, "make_tensordict_primer"):
-        transform.append(policy.make_tensordict_primer())
 
     frames_per_batch = env.num_envs * cfg.algo.train_every
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
@@ -117,7 +60,7 @@ def main(cfg):
     eval_interval = cfg.get("eval_interval", -1)
     save_interval = cfg.get("save_interval", -1)
 
-    log_interval = (base_env.max_episode_length // cfg.algo.train_every) + 1
+    log_interval = (env.max_episode_length // cfg.algo.train_every) + 1
     logging.info(f"Log interval: {log_interval} steps")
 
     stats_keys = [
@@ -143,7 +86,6 @@ def main(cfg):
     ):
         frames = []
 
-        base_env.eval()
         env.eval()
         env.set_seed(seed)
         policy.eval()
@@ -154,13 +96,13 @@ def main(cfg):
         from tqdm import tqdm
         def record_frame(*args, **kwargs):
             if render:
-                frame = base_env.render(mode="rgb_array")
+                frame = env.render(mode="rgb_array")
                 frames.append(frame)
         
         with set_exploration_type(exploration_type):
             trajs = env.rollout(
-                max_steps=base_env.max_episode_length,
-                policy=policy.get_rollout_policy("eval").to(base_env.device),
+                max_steps=env.max_episode_length,
+                policy=policy.get_rollout_policy("eval").to(env.device),
                 callback=Every(record_frame, 2),
                 auto_reset=True,
                 break_when_any_done=False,
@@ -191,7 +133,7 @@ def main(cfg):
             frames.clear()
             info["recording"] = wandb.Video(
                 video_array, 
-                fps=0.5 / base_env.step_dt,
+                fps=0.5 / env.step_dt,
                 format="mp4"
             )
         
@@ -212,7 +154,7 @@ def main(cfg):
         torch.save(state_dict, ckpt_path)
         if artifact:
             artifact = wandb.Artifact(
-                f"{type(base_env).__name__}-{type(policy).__name__}", 
+                f"{type(env).__name__}-{type(policy).__name__}", 
                 type="model"
             )
             artifact.add_file(ckpt_path)

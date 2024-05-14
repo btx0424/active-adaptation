@@ -10,16 +10,13 @@ from omni_drones.utils.wandb import init_wandb
 from omni_drones.utils.torchrl import SyncDataCollector
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
-from torchrl.envs.transforms import (
-    TransformedEnv, Compose, InitTracker, VecNorm
-)
+from tensordict.nn import TensorDictSequential
 from active_adaptation.learning import ALGOS
 from collections import OrderedDict
 
 import wandb
 import logging
 from tqdm import tqdm
-from helpers import EpisodeStats, Every
 
 import os
 import datetime
@@ -40,35 +37,8 @@ def main(cfg):
     )
     simulation_app = app_launcher.app
 
-    from active_adaptation.envs import TASKS
-    from configs.rough import LocomotionEnvCfg
-
-    # setup environment
-    env_cfg = LocomotionEnvCfg(cfg.task)
-    env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21
-    env_cfg.sim.physx.gpu_max_rigid_patch_count = 2**21
-    env_cfg.sim.physx.gpu_found_lost_pairs_capacity = 2**20
-    env_cfg.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**22
-    env_cfg.sim.physx.gpu_total_aggregate_pairs_capacity = 2**19
-    env_cfg.sim.physx.gpu_collision_stack_size = 2**24
-    env_cfg.sim.physx.gpu_heap_capacity = 2**24
-
-    base_env = TASKS[cfg.task.task](env_cfg)
-    transform = Compose(InitTracker())
-    env = TransformedEnv(base_env, transform)
-    env.set_seed(0)
-
-    # setup policy
-    policy = ALGOS[cfg.algo.name](
-        cfg.algo,
-        env.observation_spec, 
-        env.action_spec, 
-        env.reward_spec,
-        device=base_env.device
-    )
-    
-    if hasattr(policy, "make_tensordict_primer"):
-        transform.append(policy.make_tensordict_primer())
+    from scripts.helpers import EpisodeStats, make_env_policy
+    env, policy, vecnorm = make_env_policy(cfg)
     
     if cfg.export_policy:
         import time
@@ -85,12 +55,14 @@ def main(cfg):
             return (time.perf_counter() - start) / 1000
         
         FILE_PATH = os.path.dirname(__file__)
-        _policy = policy.get_rollout_policy("deploy").cpu()
+        _policy = TensorDictSequential(
+            vecnorm.to_observation_norm(),
+            policy.get_rollout_policy("deploy")
+        )
         
         print(f"Inference time of policy: {test(_policy, fake_input)}")
 
-        torch.save(_policy, os.path.join(FILE_PATH, f"policy-{time_str}.pt"))
-
+        torch.save(_policy.cpu(), os.path.join(FILE_PATH, f"policy-{time_str}.pt"))
 
     frames_per_batch = env.num_envs * cfg.algo.train_every
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
@@ -118,7 +90,7 @@ def main(cfg):
         info = {}
         episode_stats.add(data)
 
-        if len(episode_stats) >= base_env.num_envs:
+        if len(episode_stats) >= env.num_envs:
             info = {}
             for k, v in sorted(episode_stats.pop().items(True, True)):
                 if isinstance(v, torch.Tensor):
@@ -127,7 +99,7 @@ def main(cfg):
             print()
             print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, float)}))
     
-    base_env.close()
+    env.close()
     simulation_app.close()
 
 
