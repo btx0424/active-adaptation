@@ -67,13 +67,11 @@ class PPOPolicy(TensorDictModuleBase):
         observation_spec: CompositeSpec, 
         action_spec: CompositeSpec, 
         reward_spec: TensorSpec,
-        vecnorm: VecNorm,
         device
     ):
         super().__init__()
         self.cfg = cfg
         self.device = device
-        self.vecnorm = vecnorm
 
         self.entropy_coef = 0.001
         self.clip_param = self.cfg.clip_param
@@ -243,8 +241,6 @@ class PPOPolicy(TensorDictModuleBase):
         state_dict = OrderedDict()
         for name, module in self.named_children():
             state_dict[name] = module.state_dict()
-        if "vecnorm" in state_dict:
-            state_dict["vecnorm"]["_extra_state"]["lock"] = None # TODO: check with torchrl
         return state_dict
     
     def load_state_dict(self, state_dict, strict=True):
@@ -257,8 +253,6 @@ class PPOPolicy(TensorDictModuleBase):
         # return super().load_state_dict(state_dict, strict=strict)
         succeed_keys = []
         failed_keys = []
-        if "vecnorm" in state_dict:
-            state_dict["vecnorm"]["_extra_state"]["td"] = state_dict["vecnorm"]["_extra_state"]["td"].to(self.device)
         for name, module in self.named_children():
             _state_dict = state_dict.get(name, {})
             try:

@@ -71,7 +71,7 @@ def make_env_policy(cfg):
     if cfg.vecnorm == "train":
         print(colored("[Info]: Updating obervation normalizer.", "green"))
         transform.append(vecnorm)
-    elif cfg.vecnorm == "eval":
+    elif cfg.vecnorm == "eval" and vecnorm._td is not None:
         print(colored("[Info]: Not updating obervation normalizer.", "green"))
         transform.append(vecnorm.to_observation_norm())
 

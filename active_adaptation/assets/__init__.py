@@ -50,6 +50,7 @@ def spawn_with_payload(
 UNITREE_A1_CFG = copy.deepcopy(UNITREE_A1_CFG)
 UNITREE_GO1_CFG = copy.deepcopy(UNITREE_GO1_CFG)
 UNITREE_GO2_CFG = copy.deepcopy(UNITREE_GO2_CFG)
+UNITREE_GO2_CFG.spawn.usd_path = f"{ASSET_PATH}/Go2/go2.usd"
 UNITREE_GO2_CFG.init_state.pos = (0., 0., 0.35)
 UNITREE_GO2_CFG.actuators["base_legs"].effort_limit = {
     "(?!.*_calf_joint).*": 23.5,
