@@ -166,9 +166,17 @@ class root_angvel_b(Observation):
         return random_noise(self.asset.data.root_ang_vel_b, self.noise_std)
 
 
-@observation_func
-def projected_gravity_b(self):
-    return self.scene["robot"].data.projected_gravity_b
+class projected_gravity_b(Observation):
+    def __init__(self, env, noise_std: float=0.):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.noise_std = noise_std
+    
+    def __call__(self):
+        projected_gravity_b = self.asset.data.projected_gravity_b
+        noise = torch.randn_like(projected_gravity_b).clip(-3., 3.) * self.noise_std
+        projected_gravity_b += noise
+        return projected_gravity_b / projected_gravity_b.norm(dim=-1, keepdim=True)
 
 
 class root_linvel_b(Observation):

@@ -17,7 +17,7 @@ from active_adaptation.learning import ALGOS
 import wandb
 import logging
 from tqdm import tqdm
-from helpers import EpisodeStats, Every
+from scripts.helpers import EpisodeStats, Every, make_env_policy
 
 import os
 import datetime
@@ -38,37 +38,7 @@ def main(cfg):
     )
     simulation_app = app_launcher.app
 
-    from active_adaptation.envs import TASKS
-    from configs.rough import LocomotionEnvCfg
-
-    # setup environment
-    env_cfg = LocomotionEnvCfg(cfg.task)
-    env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21
-    env_cfg.sim.physx.gpu_max_rigid_patch_count = 2**21
-    env_cfg.sim.physx.gpu_found_lost_pairs_capacity = 2**20
-    env_cfg.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**22
-    env_cfg.sim.physx.gpu_total_aggregate_pairs_capacity = 2**19
-    env_cfg.sim.physx.gpu_collision_stack_size = 2**24
-    env_cfg.sim.physx.gpu_heap_capacity = 2**24
-
-    base_env = TASKS[cfg.task.task](env_cfg)
-    if cfg.get("vecnorm", True):
-        vecnorm = VecNorm(list(base_env.observation_spec.keys(True, True)))
-    else:
-        vecnorm = None
-    transform = Compose(InitTracker(), vecnorm)
-    env = TransformedEnv(base_env, transform)
-    env.set_seed(cfg.seed)
-
-    # setup policy
-    policy = ALGOS[cfg.algo.name](
-        cfg.algo,
-        env.observation_spec, 
-        env.action_spec, 
-        env.reward_spec,
-        vecnorm,
-        device=base_env.device
-    )
+    env, policy, vecnorm = make_env_policy(cfg)
 
     try:
         time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
@@ -104,17 +74,17 @@ def main(cfg):
             policy.mode = mode
 
         from tqdm import tqdm
-        t = tqdm(total=base_env.max_episode_length)
+        t = tqdm(total=env.max_episode_length)
         def record_frame(*args, **kwargs):
             if render:
-                frame = base_env.render(mode="rgb_array")
+                frame = env.render(mode="rgb_array")
                 frames.append(frame)
             t.update(1)
         
         with set_exploration_type(exploration_type):
             trajs = env.rollout(
-                max_steps=base_env.max_episode_length,
-                policy=policy.get_rollout_policy(mode="eval").to(base_env.device),
+                max_steps=env.max_episode_length,
+                policy=policy.get_rollout_policy(mode="eval").to(env.device),
                 callback=record_frame,
                 auto_reset=True,
                 break_when_any_done=False,
@@ -148,7 +118,7 @@ def main(cfg):
             write_video(
                 os.path.join(os.path.dirname(__file__), f"recording-{time_str}.mp4"),
                 video_array,
-                fps=1 / base_env.step_dt
+                fps=1 / env.step_dt
             )
 
         time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
@@ -156,6 +126,7 @@ def main(cfg):
         trajs = trajs.select(
             ("next", "done"), 
             ("next", "stats", "return"), 
+            "value_obs",
             "value_priv",
             "value_adapt",
             "context_expert",
@@ -178,7 +149,7 @@ def main(cfg):
     with open(path, "w") as f:
         OmegaConf.save(info, f)
     
-    base_env.close()
+    env.close()
     simulation_app.close()
 
 

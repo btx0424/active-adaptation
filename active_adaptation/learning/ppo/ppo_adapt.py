@@ -44,6 +44,7 @@ from collections import OrderedDict
 from ..utils.valuenorm import ValueNorm1, ValueNormFake, Normalizer
 from ..modules.distributions import IndependentNormal
 from ..modules.ensemble import EnsembleModule
+from ..modules.evidential import DenseNormalGamma, evidential_regression
 from .common import *
 
 @dataclass
@@ -151,8 +152,23 @@ class GRUModuleStoch(nn.Module):
         x, hx = self.gru(x, is_init, hx)
         x_loc, x_scale = self.out(x).chunk(2, -1)
         x_scale = F.softplus(x_scale)
-        x = x_loc + torch.randn_like(x_loc) * x_scale
-        return x, x_loc, x_scale, hx.contiguous()
+        return x_loc, x_scale, hx.contiguous()
+
+
+class GRUModuleEvidential(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+        self.mlp = make_mlp([128, 128])
+        self.gru = GRU(128, hidden_size=128, allow_none=False)
+        self.out = DenseNormalGamma(dim)
+    
+    def forward(self, x, is_init, hx):
+        x = self.mlp(x)
+        x, hx = self.gru(x, is_init, hx)
+        evi = self.out(x)
+        mu, v, alpha, beta = evi.chunk(4, dim=-1)
+        var = beta / (v * (alpha - 1))
+        return mu, var.sqrt(), evi, hx.contiguous()
 
 
 class Marginalizer(nn.Module):
@@ -187,7 +203,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
 
         self.entropy_coef = self.cfg.entropy_coef
         self.clip_param = self.cfg.clip_param
-        self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
+        # self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
+        self.critic_loss_fn = nn.MSELoss(reduction="none")
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(0.99, 0.95)
         if not cfg.layer_norm:
@@ -226,8 +243,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         if "height_scan" in observation_spec.keys(True, True):
             # the conv_encoder is shared between actor and critic for efficiency
             self.context_dim = self.cfg.context_dim + 16
-            conv_encoder = nn.Sequential(make_conv([8, 16], kernel_sizes=[5, 3]), make_mlp([16]))
-            mlp_encoder = make_mlp([self.cfg.context_dim])
+            conv_encoder = nn.Sequential(make_conv([8, 16], kernel_sizes=[5, 3]), nn.LazyLinear(16))
+            mlp_encoder = nn.Sequential(make_mlp([self.cfg.context_dim]), nn.LazyLinear(cfg.context_dim))
             self.encoder_priv = TensorDictSequential(
                 TensorDictModule(mlp_encoder, [OBS_PRIV_KEY], ["_mlp"]),
                 TensorDictModule(conv_encoder, ["height_scan"], ["cnn"]),
@@ -235,29 +252,35 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             ).to(self.device)
         else:
             self.encoder_priv = TensorDictModule(
-                make_mlp([self.cfg.context_dim]),
+                nn.Sequential(make_mlp([self.cfg.context_dim]), nn.LazyLinear(cfg.context_dim)),
                 [OBS_PRIV_KEY],
                 ["context_expert"]
             ).to(self.device)
         
         self.encoder_priv(fake_input)
         
-        def make_adapt_module(stoch: bool = False):
-            if stoch:
-                module = TensorDictModule(
-                    GRUModuleStoch(self.context_dim),
-                    [OBS_KEY, "is_init", "context_adapt_hx"], 
-                    ["context_adapt", "context_adapt_loc", "context_adapt_std", ("next", "context_adapt_hx")]
-                ).to(self.device)
-            else:
+        def make_adapt_module(mode: str="deter"):
+            if mode == "deter":
                 module = TensorDictModule(
                     GRUModule(self.context_dim), 
                     [OBS_KEY, "is_init", "context_adapt_hx"], 
                     ["context_adapt", ("next", "context_adapt_hx")]
                 ).to(self.device)
+            elif mode == "stoch":
+                module = TensorDictModule(
+                    GRUModuleStoch(self.context_dim),
+                    [OBS_KEY, "is_init", "context_adapt_hx"], 
+                    ["context_adapt", "context_adapt_std", ("next", "context_adapt_hx")]
+                ).to(self.device)
+            elif mode == "evi":
+                module = TensorDictModule(
+                    GRUModuleEvidential(self.context_dim),
+                    [OBS_KEY, "is_init", "context_adapt_hx"],
+                    ["context_adapt", "context_adapt_std", "evidential", ("next", "context_adapt_hx")]
+                ).to(self.device)
             return module
         
-        self.adapt_module_a = make_adapt_module()
+        self.adapt_module_a = make_adapt_module("stoch")
         self.adapt_module_a(fake_input)
         if self.cfg.ensemble:
             self.adapt_module_a = TensorDictSequential(
@@ -411,6 +434,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             modules.append(self._actor_adapt)
         
         if mode == "eval":
+            modules.append(self._critic_obs)
             modules.append(self._critic_priv)
             modules.append(self._critic_adapt)
             exclude_keys.append("critic_priv_input")
@@ -580,8 +604,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             infos["adapt/adapt_module_a_kl"] = self._action_kl(tensordict.copy(), self.adapt_module_a).item()
             if not self.cfg.ensemble:
                 infos["adapt/adapt_module_b_kl"] = self._action_kl(tensordict.copy(), self.adapt_module_b).item()
-        if self.cfg.ensemble:
-            infos["adapt/ensemble_std"] = tensordict["context_adapt_std"].mean().item()
+        if "context_adapt_std" in tensordict.keys():
+            infos["adapt/estimate_std"] = tensordict["context_adapt_std"].mean().item()
         return infos
 
     @torch.no_grad()
@@ -617,8 +641,9 @@ class PPOAdaptPolicy(TensorDictModuleBase):
 
     def _update_adaptation(self, tensordict: TensorDictBase):
         losses = TensorDict({}, [])
-        losses["adapt_module_a_loss"] = self._feature_mse(tensordict.copy(), self.adapt_module_a)
-        # losses["adapt_module_a_loss"] = self._nll(tensordict.copy(), self.adapt_module_a)
+        # losses["adapt_module_a_loss"] = self._feature_mse(tensordict.copy(), self.adapt_module_a)
+        losses["adapt_module_a_loss"] = self._nll(tensordict.copy(), self.adapt_module_a)
+        # losses["adapt_module_a_loss"] = self._evi(tensordict.copy(), self.adapt_module_a)
         if not self.cfg.ensemble:
             losses["adapt_module_b_loss"] = (
                 self._action_kl(tensordict.copy(), self.adapt_module_b)
@@ -641,11 +666,18 @@ class PPOAdaptPolicy(TensorDictModuleBase):
     
     def _nll(self, tensordict: TensorDictBase, adapt_module: TensorDictModule, reduce: bool=True):
         adapt_module(tensordict)
-        dist = D.Normal(tensordict["context_adapt_loc"], tensordict["context_adapt_std"])
+        dist = D.Normal(tensordict["context_adapt"], tensordict["context_adapt_std"])
         nll = -dist.log_prob(tensordict["context_expert"]).sum(-1, True)
         if reduce:
             nll = nll.mean()
         return nll
+    
+    def _evi(self, tensordict: TensorDictBase, adapt_module: TensorDictModule, reduce: bool=True):
+        adapt_module(tensordict)
+        loss = evidential_regression(tensordict["context_expert"], tensordict["evidential"], coeff=0.01).mean(-1, True)
+        if reduce:
+            loss = loss.mean()
+        return loss
 
     def _action_kl(self, tensordict: TensorDictBase, adapt_module: TensorDictModule, reduce: bool=True):
         with torch.no_grad():

@@ -136,10 +136,6 @@ class LocomotionEnv(Env):
     @mdp.observation_func
     def prev_command(self):
         return self.command_manager.command_prev
-
-    @mdp.observation_func
-    def projected_gravity_b(self):
-        return self.scene["robot"].data.projected_gravity_b
     
     @mdp.observation_func
     def applied_action(self):
