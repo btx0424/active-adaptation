@@ -18,11 +18,13 @@ from torchrl.envs.transforms import (
 )
 from active_adaptation.learning import BCPolicy, ALGOS
 
-from helpers import EpisodeStats, Every
+# local import
+from scripts.helpers import make_env_policy, EpisodeStats, Every
 
 import wandb
 import logging
 from tqdm import tqdm
+from collections import OrderedDict
 
 import os
 import time
@@ -30,6 +32,9 @@ import time
 @hydra.main(config_path="../cfg", config_name="train")
 def main(cfg):
     OmegaConf.resolve(cfg)
+    OmegaConf.set_struct(cfg, False)
+
+    cfg.vecnorm = "eval"
     
     # load cheaper kit config in headless
     if cfg.headless:
@@ -44,58 +49,32 @@ def main(cfg):
     )
     simulation_app = app_launcher.app
 
-    from active_adaptation.envs import TASKS
-    from configs.rough import LocomotionEnvCfg
-
     run = init_wandb(cfg)
 
     # setup environment
-    env_cfg = LocomotionEnvCfg(cfg.task)
-    env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21
-    env_cfg.sim.physx.gpu_max_rigid_patch_count = 2**21
-    env_cfg.sim.physx.gpu_found_lost_pairs_capacity = 2**20
-    env_cfg.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**22
-    env_cfg.sim.physx.gpu_total_aggregate_pairs_capacity = 2**19
-    env_cfg.sim.physx.gpu_collision_stack_size = 2**24
-    env_cfg.sim.physx.gpu_heap_capacity = 2**24
-    
-    env_cfg.history_length = cfg.task.history_length
+    env, teacher, vecnorm = make_env_policy(cfg)
 
-    base_env = TASKS[cfg.task.task](env_cfg)
-    transform = Compose(
-        InitTracker(),
-        # CatFrames(4, -1, ["policy"], ["priv"]),
-        # History(["policy"], steps=16)
-    )
-    env = TransformedEnv(base_env, transform)
-    env.set_seed(0)
-
-    # setup policy
-    teacher = ALGOS[cfg.algo.name](
-        cfg.algo,
-        env.observation_spec, 
-        env.action_spec, 
-        env.reward_spec, 
-        device=base_env.device
-    )
     policy = BCPolicy(
         env.observation_spec, 
         env.action_spec, 
-        teacher=teacher,
-        device=base_env.device
+        teacher=teacher.get_rollout_policy("eval"),
+        device=env.device
     )
 
     if hasattr(policy, "make_tensordict_primer"):
-        transform.append(policy.make_tensordict_primer())
+        env.transform.append(policy.make_tensordict_primer())
 
     frames_per_batch = env.num_envs * cfg.algo.train_every
     eval_interval = cfg.get("eval_interval", -1)
     save_interval = cfg.get("save_interval", -1)
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
 
+    log_interval = (env.max_episode_length // cfg.algo.train_every) + 1
+    logging.info(f"Log interval: {log_interval} steps")
+
     stats_keys = [
-        k for k in env.observation_spec.keys(True, True) 
-        if isinstance(k, tuple) and k[0]=="stats"
+        k for k in env.reward_spec.keys(True, True) 
+        if isinstance(k, tuple) and k[0] == "stats"
     ]
     episode_stats = EpisodeStats(stats_keys)
     collector = SyncDataCollector(
@@ -108,19 +87,20 @@ def main(cfg):
     )
     
     def save(policy, checkpoint_name: str, artifact: bool=False):
-        try:
-            ckpt_path = os.path.join(run.dir, f"{checkpoint_name}.pt")
-            torch.save(policy.state_dict(), ckpt_path)
-            if artifact:
-                artifact = wandb.Artifact(
-                    f"{type(base_env).__name__}-{type(policy).__name__}", 
-                    type="model"
-                )
-                artifact.add_file(ckpt_path)
-                run.log_artifact(artifact)
-            logging.info(f"Saved checkpoint to {str(ckpt_path)}")
-        except Exception as e:
-            logging.error(f"Failed to save checkpoint: {e}")
+        ckpt_path = os.path.join(run.dir, f"{checkpoint_name}.pt")
+        state_dict = OrderedDict()
+        state_dict["policy"] = policy.state_dict()
+        if "vecnorm" in locals():
+            state_dict["vecnorm"] = vecnorm.state_dict()
+        torch.save(state_dict, ckpt_path)
+        if artifact:
+            artifact = wandb.Artifact(
+                f"{type(env).__name__}-{type(policy).__name__}", 
+                type="model"
+            )
+            artifact.add_file(ckpt_path)
+            run.log_artifact(artifact)
+        logging.info(f"Saved checkpoint to {str(ckpt_path)}")
 
     pbar = tqdm(collector, total=total_frames//frames_per_batch)
     
@@ -131,12 +111,10 @@ def main(cfg):
 
         episode_stats.add(data)
 
-        if len(episode_stats) >= base_env.num_envs:
-            stats = {
-                "train/" + (".".join(k) if isinstance(k, tuple) else k): torch.mean(v.float()).item() 
-                for k, v in episode_stats.pop().items(True, True)
-            }
-            info.update(stats)
+        if i % log_interval == 0 and len(episode_stats):
+            for k, v in sorted(episode_stats.pop().items(True, True)):
+                key = "train/" + (".".join(k) if isinstance(k, tuple) else k)
+                info[key] = torch.mean(v.float()).item()
         
         info.update(policy.train_op(data))
 
@@ -158,8 +136,9 @@ def main(cfg):
     save(policy, "checkpoint_final")
 
     wandb.finish()
+    exit(0)
     
-    base_env.close()
+    env.close()
     simulation_app.close()
 
 

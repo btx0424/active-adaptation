@@ -31,12 +31,9 @@ class BCPolicy(TensorDictModuleBase):
         self.actor = TensorDictSequential(
             TensorDictModule(GRUModule(256), ["policy", "is_init", "hx"], ["_feature", ("next", "hx")]),
             TensorDictModule(
-                nn.Sequential(
-                    nn.LayerNorm(),
-                    nn.Mish(),
-                    nn.LazyLinear(self.action_dim)
-                ) 
-                ["_feature"], ["action"])
+                nn.Sequential(make_mlp([256]), nn.LazyLinear(self.action_dim)),
+                ["_feature"], ["action"]
+            )
         ).to(self.device)
 
         self.teacher(fake_input)

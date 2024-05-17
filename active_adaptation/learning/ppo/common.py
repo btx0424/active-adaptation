@@ -277,6 +277,17 @@ class ConsistentDropout(nn.Module):
             return input * mask * self.scale_factor
 
 
+class MaskWithEmbedding(nn.Module):
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self.embedding = nn.Parameter(torch.zeros(dim))
+        nn.init.normal_(self.embedding)
+    
+    def forward(self, input, mask):
+        output = torch.where(mask, self.embedding.expand_as(input), input.detach())
+        return output
+
+
 def collect_info(infos, prefix=""):
     return {prefix+k: v.mean().item() for k, v in torch.stack(infos).items()}
 

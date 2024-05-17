@@ -24,6 +24,7 @@ import datetime
 @hydra.main(config_path="../cfg", config_name="play")
 def main(cfg):
     OmegaConf.resolve(cfg)
+    OmegaConf.set_struct(cfg, False)
 
     # load cheaper kit config in headless
     if cfg.headless:
@@ -58,11 +59,11 @@ def main(cfg):
         _policy = TensorDictSequential(
             vecnorm.to_observation_norm(),
             policy.get_rollout_policy("deploy")
-        )
+        ).cpu()
         
         print(f"Inference time of policy: {test(_policy, fake_input)}")
 
-        torch.save(_policy.cpu(), os.path.join(FILE_PATH, f"policy-{time_str}.pt"))
+        torch.save(_policy, os.path.join(FILE_PATH, f"policy-{time_str}.pt"))
 
     frames_per_batch = env.num_envs * cfg.algo.train_every
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch

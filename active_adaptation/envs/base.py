@@ -125,7 +125,11 @@ class Env(EnvBase):
             self._debug_draw_callbacks.append(rand.debug_draw)
             self._step_callbacks.append(rand.step)
 
+        self.mask_groups = []
         for group, funcs in self.cfg.observation.items():
+            mask = funcs.pop("_mask_", False)
+            if mask:
+                self.mask_groups.append(group)
             self.observation_funcs[group] = OrderedDict()
             for key, params in funcs.items():
                 obs = OBS_FUNCS[key](self, **(params if params is not None else {}))
@@ -164,11 +168,21 @@ class Env(EnvBase):
         self.reward_spec = reward_spec.expand(self.num_envs).to(self.device)
         self.stats = self.reward_spec["stats"].zero()
 
-        obs = self._compute_observation()
-
         observation_spec = {}
-        for group, value in obs.items(True, True):
-            observation_spec[group] = UnboundedContinuousTensorSpec(value.shape, device=self.device)
+        self.observation_masks = TensorDict({}, [self.num_envs])
+        self.observation_split = {}
+        for group, funcs in self.observation_funcs.items():
+            tensors = []
+            for obs_name, func in funcs.items():
+                tensors.append(func())
+            split = [tensor.shape[-1] for tensor in tensors]
+            tensor = torch.cat(tensors, -1)
+            observation_spec[group] = UnboundedContinuousTensorSpec(tensor.shape, device=self.device)
+            if group in self.mask_groups:
+                observation_spec[group + "_mask"] = BinaryDiscreteTensorSpec(tensor.shape[-1], tensor.shape, device=self.device, dtype=bool)
+                self.observation_masks[group] = torch.zeros_like(tensor, dtype=bool)
+                self.observation_split[group] = split
+
         self.observation_spec = CompositeSpec(
             observation_spec, 
             shape=[self.num_envs],
@@ -202,13 +216,15 @@ class Env(EnvBase):
         env_ids = env_mask.nonzero().squeeze(-1)
         self._reset_idx(env_ids)
         self._reward_buf[env_ids] = 0.
-        for name, func in self.randomizations.items():
-            func.reset(env_ids)
-        for group, funcs in self.observation_funcs.items():
-            for name, func in funcs.items():
-                func.reset(env_ids)
-        for name, func in self.reward_funcs.items():
-            func.reset(env_ids)
+        for callback in self._reset_callbacks:
+            callback(env_ids)
+        for group in self.mask_groups:
+            # with p=0.5 mask ONE of the observations in `group`
+            self.observation_masks[group][env_ids] = torch.where(
+                (torch.rand(env_ids.shape, device=self.device) < 0.5).unsqueeze(1),
+                torch.zeros_like(self.observation_masks[group][env_ids]),
+                generate_mask(len(env_ids), self.observation_split[group], self.device)
+            )
         self.sim._physics_sim_view.flush()
         self.episode_length_buf[env_ids] = 0
         self.scene.update(self.step_dt)
@@ -227,14 +243,12 @@ class Env(EnvBase):
     def apply_action(self, tensordict: TensorDictBase, substep: int):
         raise NotImplementedError
 
-    def _compute_observation(self, concat: bool=True) -> TensorDictBase:
+    def _compute_observation(self) -> TensorDictBase:
         observation = TensorDict({}, [self.num_envs])
-        if concat:
-            for group, funcs in self.observation_funcs.items():
-                observation[group] = torch.cat([func() for func in funcs.values()], dim=-1)
-        else:
-            for group, funcs in self.observation_funcs.items():
-                observation[group] = {name: func() for name, func in funcs.items()}
+        for group, funcs in self.observation_funcs.items():
+            observation[group] = torch.cat([func() for func in funcs.values()], dim=-1)
+        for group in self.mask_groups:
+            observation[group + "_mask"] = self.observation_masks[group]
         return observation
     
     def _compute_reward(self) -> TensorDictBase:
@@ -327,4 +341,13 @@ class Env(EnvBase):
             # update closing status
             super().close()
 
+
+def generate_mask(size: int, split: torch.Tensor, device: str):
+    if isinstance(size, int):
+        size = (size,)
+    repeats = torch.as_tensor(split, device=device)
+    masks = torch.zeros(*size, len(split), dtype=torch.bool, device=device)
+    masks = masks.scatter(-1, torch.randint(len(split), (*size, 1), device=device), 1)
+    masks = torch.repeat_interleave(masks, repeats, -1)
+    return masks
 

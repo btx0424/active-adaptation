@@ -19,7 +19,7 @@ from omni_drones.utils.wandb import init_wandb
 from active_adaptation.utils.torchrl import SyncDataCollector
 
 # local import
-from scripts.helpers import make_env_policy, EpisodeStats
+from scripts.helpers import make_env_policy, EpisodeStats, Every
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -29,6 +29,7 @@ torch.backends.cudnn.benchmark = False
 @hydra.main(config_path="../cfg", config_name="train")
 def main(cfg):
     OmegaConf.resolve(cfg)
+    OmegaConf.set_struct(cfg, False)
     
     # load cheaper kit config in headless
     if cfg.headless:
