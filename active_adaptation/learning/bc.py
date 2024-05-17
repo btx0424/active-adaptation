@@ -1,3 +1,4 @@
+from typing import Mapping
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,19 +9,31 @@ from tensordict.nn import TensorDictModule, TensorDictModuleBase, TensorDictSequ
 from torchrl.envs.transforms.transforms import TensorDictPrimer
 from torchrl.data import UnboundedContinuousTensorSpec
 
+from hydra.core.config_store import ConfigStore
+from dataclasses import dataclass
+
 from .ppo.common import make_batch, make_mlp
 from .ppo.ppo_adapt import GRUModule
 
+@dataclass
+class BCConfig:
+    name: str = "bc"
+
+cs = ConfigStore.instance()
+cs.store("bc", node=BCConfig, group="algo")
 
 class BCPolicy(TensorDictModuleBase):
     def __init__(
-        self, 
+        self,
+        cfg,
         observation_spec,
         action_spec,
-        teacher,
+        reward_spec,
         device,
+        teacher=None,
     ):
         super().__init__()
+        self.cfg = cfg
         self.observation_spec = observation_spec
         self.action_dim = action_spec.shape[-1]
         self.device = device
@@ -36,7 +49,6 @@ class BCPolicy(TensorDictModuleBase):
             )
         ).to(self.device)
 
-        self.teacher(fake_input)
         self.actor(fake_input)
 
         self.optimizer = torch.optim.Adam(self.actor.parameters(), lr=1e-4)
@@ -49,6 +61,10 @@ class BCPolicy(TensorDictModuleBase):
     
     def forward(self, tensordict: TensorDictBase):
         return self.actor(tensordict)
+    
+    def get_rollout_policy(self, mode: str="train"):
+        policy = self.actor
+        return policy
     
     def train_op(self, tensordict: TensorDictBase):
         with torch.no_grad():
@@ -70,3 +86,5 @@ class BCPolicy(TensorDictModuleBase):
         action_expert = tensordict["action_expert"]
         return F.mse_loss(action, action_expert)
 
+    def load_state_dict(self, state_dict):
+        return super().load_state_dict(state_dict, strict=False)

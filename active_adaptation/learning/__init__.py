@@ -15,5 +15,6 @@ ALGOS = {
     # "ppo_rma": PPORMAPolicy,
     "ppg": PPGPolicy,
     "sac": SAC,
-    "hbc": HBC
+    "hbc": HBC,
+    "bc": BCPolicy
 }

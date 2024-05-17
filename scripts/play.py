@@ -65,7 +65,7 @@ def main(cfg):
 
         torch.save(_policy, os.path.join(FILE_PATH, f"policy-{time_str}.pt"))
 
-    frames_per_batch = env.num_envs * cfg.algo.train_every
+    frames_per_batch = env.num_envs * 32
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
 
     stats_keys = [

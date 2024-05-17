@@ -502,6 +502,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 for param_group in self.opt_expert.param_groups:
                     nn.utils.clip_grad_norm_(param_group["params"], 2.)
                 self.opt_expert.step()
+                losses["value_loss/explained_var_obs"] = 1 - F.mse_loss(minibatch["value_obs"], minibatch["ret_obs"]) / minibatch["ret_obs"].var()
+                losses["value_loss/explained_var_priv"] = 1 - F.mse_loss(minibatch["value_priv"], minibatch["ret_priv"]) / minibatch["ret_priv"].var()
 
                 infos.append(TensorDict(losses, []))
         

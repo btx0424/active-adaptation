@@ -151,7 +151,8 @@ class Command2(Command):
             self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
 
             self._command_speed = torch.zeros(self.num_envs, 1)
-            self._command_direction = torch.zeros(self.num_envs, 3)
+            self._target_direction = torch.zeros(self.num_envs, 3)
+            self._target_linvel = torch.zeros(self.num_envs, 3)
             self._command_linvel = torch.zeros(self.num_envs, 3)
             self.command_angvel = torch.zeros(self.num_envs)
 
@@ -187,9 +188,11 @@ class Command2(Command):
             (error / self._command_speed).square().sum(-1, True),
             torch.zeros_like(self._command_speed)
         )
+        
         self._cum_error[:] = self._cum_error * 0.98 + error * self.env.step_dt
+        self._command_linvel[:] = self._command_linvel + clamp_norm((self._target_linvel - self._command_linvel) * 0.1, max=0.1)
 
-        self.command[:, :2].lerp_(self._command_linvel[:, :2], 0.5)
+        self.command[:, :2] = self._command_linvel[:, :2]
         self.command[:, 2] = self.command_angvel
         self.command[:, 3] = 0 # self._distance_to_cover.squeeze(1)
         # self.command[:, :2] = torch.tensor([1.0, 0.], device=self.device)
@@ -208,8 +211,8 @@ class Command2(Command):
         speed = speed * (~stand)
 
         self._command_speed[env_ids] = speed
-        self._command_direction[env_ids, :2] = direction
-        self._command_linvel[env_ids, :2] = direction * speed
+        self._target_direction[env_ids, :2] = direction
+        self._target_linvel[env_ids, :2] = direction * speed
         self.is_standing_env[env_ids] = stand
 
     def sample_yaw_command(self, env_ids: torch.Tensor):
@@ -507,3 +510,8 @@ def sample_quat_yaw(size, device: torch.device = "cpu"):
         torch.sin(yaw / 2).unsqueeze(-1),
     ], dim=-1)
     return quat
+
+def clamp_norm(x: torch.Tensor, min: float=0, max: float=torch.inf):
+    x_norm = x.norm(dim=-1, keepdim=True).clamp(1e-6)
+    return x / x_norm * x_norm.clamp(min, max)
+

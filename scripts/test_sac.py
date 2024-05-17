@@ -12,8 +12,7 @@ from active_adaptation.utils.torchrl import StackFrames, SyncDataCollector
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from torchrl.data.postprocs import MultiStep
-from active_adaptation.learning import ALGOS
-from helpers import EpisodeStats, Every
+from scripts.helpers import EpisodeStats, make_env_policy, Every
 
 import wandb
 import logging
@@ -47,8 +46,7 @@ def main(cfg):
     run = init_wandb(cfg)
 
     # setup environment
-    from scripts.helpers import EpisodeStats, make_env_policy
-    env, policy = make_env_policy(cfg)
+    env, policy, vecnorm = make_env_policy(cfg)
 
     import inspect
     import shutil
@@ -153,6 +151,8 @@ def main(cfg):
         ckpt_path = os.path.join(run.dir, f"{checkpoint_name}.pt")
         state_dict = OrderedDict()
         state_dict["policy"] = policy.state_dict()
+        if "vecnorm" in locals():
+            state_dict["vecnorm"] = vecnorm.state_dict()
         torch.save(state_dict, ckpt_path)
         if artifact:
             artifact = wandb.Artifact(
