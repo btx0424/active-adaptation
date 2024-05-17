@@ -66,6 +66,7 @@ class PPOConfig:
     aux_reward: float = 0.
     aux_epochs: int = -1
 
+    train_adapt: bool = True
     context_dim: int = 128
     adapt_module: str = "mse"
     ensemble: bool = False
@@ -445,18 +446,32 @@ class PPOAdaptPolicy(TensorDictModuleBase):
     
     def train_op(self, tensordict: TensorDict):
         infos = {}
-        match self.phase:
-            case "train":
-                infos.update(self.train_expert(tensordict.copy()))
+        # match self.phase:
+        #     case "train":
+        #         infos.update(self.train_expert(tensordict.copy()))
+        #         infos.update(self.train_adaptation(tensordict.copy()))
+        #     case "adapt":
+        #         infos.update(self.train_adaptation(tensordict.copy()))
+        #         infos.update(self.train_target(tensordict.copy(), train_actor=False))
+        #     case "finetune":
+        #         infos.update(self.train_adaptation(tensordict.copy()))
+        #         infos.update(self.train_target(tensordict.copy(), train_actor=True))
+        #     case _:
+        #         raise NotImplementedError
+        if self.phase == "train":
+            infos.update(self.train_expert(tensordict.copy()))
+            if self.cfg.train_adapt:
                 infos.update(self.train_adaptation(tensordict.copy()))
-            case "adapt":
+        elif self.phase == "adapt":
+            if self.cfg.train_adapt:
                 infos.update(self.train_adaptation(tensordict.copy()))
-                infos.update(self.train_target(tensordict.copy(), train_actor=False))
-            case "finetune":
+            infos.update(self.train_target(tensordict.copy(), train_actor=False))
+        elif self.phase == "finetune":
+            if self.cfg.train_adapt:
                 infos.update(self.train_adaptation(tensordict.copy()))
-                infos.update(self.train_target(tensordict.copy(), train_actor=True))
-            case _:
-                raise NotImplementedError
+            infos.update(self.train_target(tensordict.copy(), train_actor=True))
+        else:
+            raise NotImplementedError
         self.num_updates += 1
         return infos
     
@@ -575,6 +590,10 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                     nn.utils.clip_grad_norm_(param_group["params"], 2.)
                 self.opt_expert.step()
                 self.opt_target.step()
+
+                losses["value_loss/explained_var_adapt"] = 1 - F.mse_loss(minibatch["value_adapt"], minibatch["ret_adapt"]) / minibatch["ret_adapt"].var()
+                losses["value_loss/explained_var_priv"] = 1 - F.mse_loss(minibatch["value_priv"], minibatch["ret_priv"]) / minibatch["ret_priv"].var()
+
                 infos.append(TensorDict(losses, []))
         
         infos = {k: v.mean() for k, v in torch.stack(infos).items(True, True)}

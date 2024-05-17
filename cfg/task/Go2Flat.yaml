@@ -25,7 +25,7 @@ command:
   angvel_range: [-1.0, 1.0]
   yaw_stiffness_range: [0.5, 0.6]
   base_height_range: [0.25, 0.35]
-  stand_prob: 0.1
+  stand_prob: 0.05
 
 # command:
 #   _target_: active_adaptation.envs.mdp.CommandPos
@@ -36,8 +36,8 @@ observation:
   policy:
     command:
     # root_quat_w:
-    root_angvel_b:
-    projected_gravity_b:
+    root_angvel_b: {noise_std: 0.05}
+    projected_gravity_b: {noise_std: 0.05}
     joint_pos:    {noise_std: 0.05}
     joint_vel:    {noise_std: 0.2}
     prev_actions: {steps: 4}
@@ -48,23 +48,26 @@ observation:
     # feet_height_map: {feet_names: .*foot }
     # applied_torques: {actuator_name: base_legs}
   priv:
+    # _mask_: true # randomly mask one of the items
+    # projected_gravity_b:
+    # joint_pos:
+    # joint_vel:
     applied_action:
     root_linvel_b:
     feet_pos_b:
-    feet_vel_b:
+    # feet_vel_b:
     feet_height_map:  {feet_names: .*foot }
     applied_torques:  {actuator_name: base_legs}
-    # feet_height:
     # motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
-    body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
+    # body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
     motor_failure:    {actuator_name: base_legs}
     body_scale:       {}
-    body_momentum:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
-    cum_error:        {}
-    last_rewards:     {}
+    # body_mass:        {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
+    # body_momentum:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
+    rewards:          {}
     contact_indicator: {body_names: [".*_foot"], timing: false}
-  height_scan:
-    height_scan:      {prim_path: base}
+  # height_scan:
+  #   height_scan:      {prim_path: base}
   # priv:
   #   action_delay:     {}
   #   root_linvel_b:
@@ -98,7 +101,7 @@ reward:
   action_rate_l2:     {weight: 0.01, enabled: true}
   # action_rate2_l2:    {weight: 0.01}
   # impact_force_l2:    {weight: 1.0, enabled: false, body_names: .*_foot}
-  feet_air_time:      {weight: 0.5, enabled: false, body_names: .*_foot, thres: 0.5}
+  feet_air_time:      {weight: 1.0, enabled: true, body_names: .*_foot, thres: 0.5}
   feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
   undesired_contact:  {body_names: [.*_calf], weight: 0.25, enabled: true}
@@ -107,7 +110,7 @@ reward:
 termination:
   crash: {body_names_expr: [Head.*, "base", ".*_hip"]}
   # joint_acc_exceeds: {thres: 5000}
-  cum_error: {thres: 0.85}
+  # cum_error: {thres: 0.85}
 
 randomization:
   random_scale: [1.0, 1.2]

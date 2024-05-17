@@ -1,0 +1,43 @@
+name: Go2Rough
+task: Quadruped
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/Go2Flat@_here_
+  - _self_
+
+terrain: medium # easy
+
+command:
+  _target_: active_adaptation.envs.mdp.Command2
+  linvel_x_range: [-1.0, 1.4]
+  linvel_y_range: [-0.7, 0.7]
+  angvel_range: [-1.0, 1.0]
+  yaw_stiffness_range: [0.5, 0.7]
+  base_height_range: [0.25, 0.35]
+  stand_prob: 0.1
+
+randomization:
+  random_scale: [0.9, 1.3]
+  perturb_body_mass:
+    (?!(payload|base|Head.*)).*: [0.7, 1.3]
+    base: [0.8, 1.5]
+    Head.*: [25.0, 250.0]
+  perturb_body_materials:
+    body_names: ".*_foot"
+    static_friction_range:  [0.2, 2.0]
+    dynamic_friction_range: [0.2, 2.0]
+    restitution_range:      [0.0, 0.2]
+    homogeneous: ${task.homogeneous}
+  motor_params:
+    actuator_name: base_legs
+    stiffness_range: [0.6, 1.4]
+    damping_range: [0.6, 1.4]
+    homogeneous: ${task.homogeneous}
+  random_motor_failure:
+    actuator_name: base_legs
+    joint_names: .*_calf_joint
+    failure_prob: 0.0
+  reset_joint_states_scale:
+    pos_scales:
+      .*: [0.8, 1.2]
