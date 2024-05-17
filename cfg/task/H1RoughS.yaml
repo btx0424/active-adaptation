@@ -11,11 +11,13 @@ terrain: easy
 observation:
   priv:
     applied_action:
-    root_linvel_b:
-    feet_pos_b:
+    root_linvel_b:    {body_names: ["pelvis", "torso_link"]}
+    # feet_pos_b:
     feet_vel_b:
     feet_height_map:  {feet_names: .*ankle_link }
-    body_scale:       {}
     # dynamics states
     applied_torques:  {actuator_name: base_legs}
+    # motor_params:     {actuator_name: base_legs}
     body_momentum:    {body_names: ["pelvis", "torso_link", ".*_hip.*", ".*shoulder.*"]}
+    # body_mass:        {body_names: ["pelvis", "torso_link", ".*_hip.*", ".*shoulder.*"]}
+    rewards: {}

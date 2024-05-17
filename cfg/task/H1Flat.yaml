@@ -23,26 +23,25 @@ observation:
   policy:
     command:
     # root_quat_w:
-    root_angvel_b:
-    projected_gravity_b:
+    root_angvel_b:  {noise_std: 0.05}
+    projected_gravity_b: {noise_std: 0.05}
     joint_pos: {noise_std: 0.05}
     joint_vel: {noise_std: 0.2}
-    prev_actions:
-    # - "motor_params"
-  priv:
-    applied_action:   {}
-    # joint_acc:        {}
-    root_linvel_b:    {}
-    feet_pos_b:       {}
-    feet_vel_b:       {}
-    # feet_height:      {feet_names: .*ankle_link}
-    # feet_height_map:  {feet_names: .*ankle_link }
-    applied_torques:  {actuator_name: base_legs}
-    motor_params:     {actuator_name: "base_legs"}
-    body_materials:   {body_names: ".*ankle_link"}
-    body_mass:        {body_names: ["torso_link", "pelvis"]}
-    cum_error:        {}
-    last_rewards:     {}
+    prev_actions:   {steps: 4}
+  # priv:
+  #   applied_action:   {}
+  #   # joint_acc:        {}
+  #   root_linvel_b:    {}
+  #   feet_pos_b:       {}
+  #   feet_vel_b:       {}
+  #   # feet_height:      {feet_names: .*ankle_link}
+  #   # feet_height_map:  {feet_names: .*ankle_link }
+  #   applied_torques:  {actuator_name: base_legs}
+  #   motor_params:     {actuator_name: "base_legs"}
+  #   body_materials:   {body_names: ".*ankle_link"}
+  #   body_mass:        {body_names: ["torso_link", "pelvis"]}
+  #   cum_error:        {}
+  #   last_rewards:     {}
 
 reward:
   linvel_exp:         {weight: 1.5, body_names: ["pelvis", "torso_link"], enabled: true, dim: 3}
