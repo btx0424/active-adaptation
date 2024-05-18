@@ -25,10 +25,10 @@ observation:
     command:
     # root_quat_w:
     root_angvel_b: {noise_std: 0.05}
-    projected_gravity_b:
-    joint_pos: {noise_std: 0.05}
-    joint_vel: {noise_std: 0.2}
-    prev_actions:
+    projected_gravity_b: {noise_std: 0.05}
+    joint_pos:    {noise_std: 0.05}
+    joint_vel:    {noise_std: 0.2}
+    prev_actions: {steps: 4}
     # - "motor_params"
   # priv:
   #   applied_action:   {}
@@ -46,10 +46,10 @@ observation:
   #   last_rewards:       {}
 
 reward:
-  linvel_exp:         {weight: 1.5, enabled: true}
+  linvel_exp:         {weight: 1.25, enabled: true}
   # linacc_z_l2:        {weight: 0.005}
   linvel_projection:  {weight: 1.0, enabled: false}
-  angvel_z_exp:       {weight: 0.75, enabled: true}
+  angvel_z_exp:       {weight: 1.0, enabled: true}
   # linvel_z_l2:        {weight: 1.0, enabled: true}
   energy_l1:          {weight: 2.0e-4, enabled: true}
   joint_acc_l2:       {weight: 3.5e-8, enabled: true}
@@ -57,7 +57,7 @@ reward:
   # stand: 0.5
   orientation:        {weight: 0.5, enabled: true}
   survival:           {weight: 1.0, enabled: true}
-  feet_air_time:      {weight: 2.0, enabled: true, body_names: .*_toe, thres: 0.5}
+  feet_air_time:      {weight: 2.0, enabled: true, body_names: .*_toe, thres: 0.75}
   feet_slip:          {weight: 1.0, enabled: false, body_names: .*_toe}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_toe}
 
