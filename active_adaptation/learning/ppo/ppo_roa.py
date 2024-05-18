@@ -154,7 +154,7 @@ class PPOROAPolicy(TensorDictModuleBase):
             ).to(self.device)
 
         def make_actor(context_key: str) -> ProbabilisticActor:
-            actor_module = nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim, True))
+            actor_module = nn.Sequential(make_mlp([256, 256, 256]), Actor(self.action_dim, True))
             actor = ProbabilisticActor(
                 module=TensorDictSequential(
                     CatTensors([OBS_KEY, context_key], "actor_feature", del_keys=False),
@@ -170,7 +170,7 @@ class PPOROAPolicy(TensorDictModuleBase):
         self.actor_expert = make_actor("context_expert")
         self.actor_adapt = make_actor("context_adapt")
         
-        critic_module = nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1))
+        critic_module = nn.Sequential(make_mlp([256, 256, 256]), nn.LazyLinear(1))
         self.critic = TensorDictSequential(
             CatTensors([OBS_KEY, OBS_PRIV_KEY], "policy_priv", del_keys=False),
             TensorDictModule(critic_module, ["policy_priv"], ["state_value"])
