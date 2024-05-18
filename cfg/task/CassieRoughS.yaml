@@ -11,6 +11,8 @@ homogeneous: false
 
 observation:
   priv:
+    projected_gravity_b:
+    root_angvel_b:
     applied_action:   {}
     root_linvel_b:    {}
     feet_pos_b:       {}
