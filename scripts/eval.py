@@ -21,6 +21,7 @@ from scripts.helpers import EpisodeStats, Every, make_env_policy
 
 import os
 import datetime
+import termcolor
 
 @hydra.main(config_path="../cfg", config_name="eval", version_base=None)
 def main(cfg):
@@ -71,7 +72,7 @@ def main(cfg):
         env.set_seed(seed)
 
         from tqdm import tqdm
-        t = tqdm(total=env.max_episode_length)
+        t = tqdm(total=env.max_episode_length, miniters=50)
         def record_frame(*args, **kwargs):
             if render:
                 frame = env.render(mode="rgb_array")
@@ -129,8 +130,10 @@ def main(cfg):
             "context_expert",
             "context_adapt",
             "context_adapt_std",
+            "action_kl",
             strict=False
         )
+        print(termcolor.colored(trajs, "light_yellow"))
         torch.save(trajs, path)
         return info
     

@@ -440,6 +440,16 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             modules.append(self._critic_adapt)
             exclude_keys.append("critic_priv_input")
             exclude_keys.append("critic_adapt_input")
+            
+            class _ActionKL(TensorDictModuleBase):
+                in_keys = ["context_expert", "context_adapt"]
+                out_keys = ["action_kl"]
+                def forward(_, tensordict: TensorDictBase):
+                    kl = self._action_kl(tensordict, self.adapt_module_ema, reduce=False)
+                    tensordict["action_kl"] = kl
+                    return tensordict
+            
+            modules.append(_ActionKL())
         
         policy = TensorDictSequential(*modules, ExcludeTransform(*exclude_keys))
         return policy

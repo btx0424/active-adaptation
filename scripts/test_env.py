@@ -160,6 +160,7 @@ def main(cfg):
             )
             artifact.add_file(ckpt_path)
             run.log_artifact(artifact)
+        wandb.save(ckpt_path, policy="now")
         logging.info(f"Saved checkpoint to {str(ckpt_path)}")
 
     pbar = tqdm(collector, total=total_iters)
