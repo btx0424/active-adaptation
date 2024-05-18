@@ -1,0 +1,132 @@
+name: Go2Stand
+task: Quadruped
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/Velocity@_here_
+  - _self_
+
+robot: go2
+terrain: plane
+payload: false
+homogeneous: false
+
+# command:
+#   _target_: active_adaptation.envs.mdp.Command1
+#   speed_range: [0.4, 2.0]
+#   angvel_range: [-1.4, 1.4]
+#   base_height_range: [0.2, 0.35]
+#   stand_prob: 0.1
+
+command:
+  _target_: active_adaptation.envs.mdp.Command2
+  linvel_x_range: [-0.5, 0.5]
+  linvel_y_range: [-0.3, 0.3]
+  angvel_range: [-1.0, 1.0]
+  yaw_stiffness_range: [0.5, 0.6]
+  base_height_range: [0.25, 0.35]
+  stand_prob: 0.05
+
+# command:
+#   _target_: active_adaptation.envs.mdp.CommandPos
+#   speed_range: [0.4, 1.3]
+#   offset_range: [2.0, 5.0]
+
+observation:
+  policy:
+    command:
+    # root_quat_w:
+    root_angvel_b: {noise_std: 0.05}
+    projected_gravity_b: {noise_std: 0.05}
+    joint_pos:    {noise_std: 0.05}
+    joint_vel:    {noise_std: 0.2}
+    prev_actions: {steps: 4}
+    # motor_params: {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
+    # body_materials: {body_names: .*foot, homogeneous: "${task.homogeneous}"}
+    # root_linvel_b:
+    # # feet_pos_b:
+    # feet_height_map: {feet_names: .*foot }
+    # applied_torques: {actuator_name: base_legs}
+  priv:
+    # _mask_: true # randomly mask one of the items
+    # root_angvel_b:
+    # projected_gravity_b:
+    applied_action:
+    root_linvel_b:
+    feet_pos_b:
+    # feet_vel_b:
+    # feet_height_map:  {feet_names: .*foot }
+    applied_torques:  {actuator_name: base_legs}
+    # motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
+    # body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
+    body_scale:       {}
+    # body_mass:        {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
+    # body_momentum:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
+    # rewards:          {}
+    contact_indicator: {body_names: [".*_foot"], timing: false}
+
+reward:
+  linvel_exp:         {weight: 1.0, enabled: false, dim: 3}
+  # linvel_rational:    {weight: 0.5, enabled: true, dim: 3}
+  angvel_z_exp:       {weight: 0.5, enabled: false}
+  angvel_z_exp_shaped: {weight: 0.75, enabled: false}
+  linvel_projection:  {weight: 0.5, enabled: false}
+  # linacc_z_l2:        {weight: 0.005, enabled: false}
+  # angvel_xy_l2:       {weight: 0.05, enabled: true, clip_range: [-1., 0.]}
+  # linvel_z_l2:        {weight: 2.0, enabled: true}
+  # base_height_l1:     {weight: 1.0, enabled: true, target_height: 0.75}
+  energy_l1:          {weight: 0.0002, enabled: true}
+  joint_acc_l2:       {weight: 2.5e-7, enabled: true, clip_range: [-1., 0.]}
+  joint_torques_l2:   {weight: 1.0e-4, enabled: true, clip_range: [-1., 0.]}
+  # quadruped_stand:    {weight: 0.5}
+  # orientation:        {weight: 1.0, enabled: false}
+  stand_up:           {weight: 1.0}
+  survival:           {weight: 1.0, enabled: true}
+  action_rate_l2:     {weight: 0.01, enabled: true}
+  # action_rate2_l2:    {weight: 0.01}
+  # impact_force_l2:    {weight: 1.0, enabled: false, body_names: .*_foot}
+  feet_air_time:      {weight: 0.5, enabled: true, body_names: .*_foot, thres: 0.5}
+  undesired_contact:  {body_names: ["F[L,R]_foot", .*_calf], weight: 0.5, enabled: true}
+
+termination:
+  crash: {body_names_expr: [Head.*, "base", ".*_hip", ".*_calf"], z_thres: 0.2}
+
+randomization:
+  random_scale: [1.0, 1.2]
+  perturb_body_mass:
+    (?!(payload|base|Head.*)).*: [0.8, 1.2]
+    base: [0.8, 1.2]
+    Head.*: [25.0, 250.0]
+  perturb_body_materials:
+    body_names: ".*_foot"
+    static_friction_range:  [0.6, 2.0]
+    dynamic_friction_range: [0.6, 2.0]
+    restitution_range:      [0.0, 0.2]
+    homogeneous: true # ${task.homogeneous}
+  motor_params:
+    actuator_name: base_legs
+    stiffness_range:  [0.8, 1.2]
+    damping_range:    [0.8, 1.2]
+    homogeneous: ${task.homogeneous}
+  # random_motor_failure:
+  #   actuator_name: base_legs
+  #   joint_names: .*_calf_joint
+  #   failure_prob: 0.0
+  reset_joint_states_scale:
+    pos_scales:
+      .*: [0.8, 1.2]
+  # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
+  # stumble: {body_names: .*_foot}
+
+# reward: # orbit
+#   linvel_projection: 0.5
+#   linvel_xy_exp: 1.5
+#   angvel_z_exp: 0.75
+#   linvel_z_l2: 2.0
+#   angvel_xy_l2: 0.02
+#   joint_torques_l2: 1.0e-5
+#   joint_acc_l2: 2.5e-7
+#   stand: 0.5
+#   # survival: 0.25
+#   action_rate_l2: 0.01
+#   feet_air_time: 1.0

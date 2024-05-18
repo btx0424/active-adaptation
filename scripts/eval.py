@@ -25,6 +25,7 @@ import datetime
 @hydra.main(config_path="../cfg", config_name="eval", version_base=None)
 def main(cfg):
     OmegaConf.resolve(cfg)
+    OmegaConf.set_struct(cfg, False)
 
     # load cheaper kit config in headless
     if cfg.headless:
@@ -61,17 +62,13 @@ def main(cfg):
     @torch.no_grad()
     def evaluate(
         seed: int=0, 
-        exploration_type: ExplorationType=ExplorationType.RANDOM,
+        exploration_type: ExplorationType=ExplorationType.MODE,
         render=False,
-        mode=None,
     ):
         frames = []
 
         env.eval()
         env.set_seed(seed)
-
-        if mode is not None and hasattr(policy, "mode"):
-            policy.mode = mode
 
         from tqdm import tqdm
         t = tqdm(total=env.max_episode_length)
@@ -141,7 +138,7 @@ def main(cfg):
     info = {k: v for k, v in info.items() if isinstance(v, float)}
     info["task"] = cfg.task.name
     info["algo"] = cfg.algo.name
-    info["checkpoint_path"] = cfg.algo.checkpoint_path
+    info["checkpoint_path"] = cfg.checkpoint_path
     print(OmegaConf.to_yaml(info))
     
     time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")

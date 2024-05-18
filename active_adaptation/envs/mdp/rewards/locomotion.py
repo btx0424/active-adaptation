@@ -471,6 +471,17 @@ class quadruped_stand(Reward):
         return cost * self.env.command_manager.is_standing_env.reshape(self.num_envs, 1)
 
 
+class stand_up(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf)):
+        super().__init__(env, weight, enabled, clip_range)
+        self.asset: Articulation = self.env.scene["robot"]
+    
+    def compute(self) -> torch.Tensor:
+        return (
+            self.asset.data.root_pos_w[:, 2].clamp(max=0.7).square()
+            -self.asset.data.projected_gravity_b[:, 0]
+        ).unsqueeze(-1)
+
 def normalize(x: torch.Tensor):
     return x / x.norm(dim=-1, keepdim=True).clamp_min(1e-6)
 
