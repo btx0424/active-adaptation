@@ -72,7 +72,8 @@ UNITREE_GO1M_CFG.actuators["arm"] = DCMotorCfg(
 
 H1_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ASSET_PATH}/h1_isaacgym.usd",
+        # usd_path=f"{ASSET_PATH}/h1_isaacgym.usd",
+        usd_path=f"{ASSET_PATH}/h1_isaacgym_white.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,

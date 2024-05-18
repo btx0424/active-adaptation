@@ -282,7 +282,7 @@ class reset_joint_states_scale(Randomization):
 
 
 class push(Randomization):
-    def __init__(self, env, body_names, force_range = (0.2, 0.9), min_interval=100):
+    def __init__(self, env, body_names, force_range = (0.2, 0.9), min_interval=100, decay: float=0.9):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.body_indices, self.body_names = self.asset.find_bodies(body_names)
@@ -290,6 +290,7 @@ class push(Randomization):
         self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum() * 9.81
         self.force_range = force_range
         self.min_interval = min_interval
+        self.decay = decay
         
         with torch.device(self.env.device):
             self.last_push = torch.zeros(self.env.num_envs, len(self.body_indices), 1)
@@ -310,14 +311,14 @@ class push(Randomization):
             push_forces = torch.zeros_like(self.forces)
             push_forces[:, :, 0].uniform_(*self.force_range)
             push_forces[:, :, 1].uniform_(*self.force_range)
-            self.forces = torch.where(i, push_forces * self.default_mass_total, self.forces * 0.8)
+            self.forces = torch.where(i, push_forces * self.default_mass_total, self.forces * self.decay)
         self.asset.set_external_force_and_torque(self.forces, self.torques, body_ids=self.body_indices)
 
     def debug_draw(self):
         self.env.debug_draw.vector(
             self.asset.data.body_pos_w[:, self.body_indices],
             self.forces / self.default_mass_total,
-            color=(1., 0.8, 1., 1.)
+            color=(1., 0.8, .4, 1.)
         )
 
 

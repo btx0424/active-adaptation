@@ -55,8 +55,10 @@ def main(cfg):
     env, teacher, vecnorm = make_env_policy(cfg)
 
     policy = BCPolicy(
+        {},
         env.observation_spec, 
         env.action_spec, 
+        env.reward_spec,
         teacher=teacher.get_rollout_policy("eval"),
         device=env.device
     )
