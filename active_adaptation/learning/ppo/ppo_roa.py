@@ -109,13 +109,11 @@ class PPOROAPolicy(TensorDictModuleBase):
         observation_spec: CompositeSpec, 
         action_spec: CompositeSpec, 
         reward_spec: TensorSpec,
-        vecnorm: VecNorm,
-        device
+        device: str="cuda:0"
     ):
         super().__init__()
         self.cfg = cfg
         self.device = device
-        self.vecnorm = vecnorm
 
         self.entropy_coef = self.cfg.entropy_coef
         self.clip_param = self.cfg.clip_param
@@ -156,7 +154,7 @@ class PPOROAPolicy(TensorDictModuleBase):
             ).to(self.device)
 
         def make_actor(context_key: str) -> ProbabilisticActor:
-            actor_module = nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim))
+            actor_module = nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim, True))
             actor = ProbabilisticActor(
                 module=TensorDictSequential(
                     CatTensors([OBS_KEY, context_key], "actor_feature", del_keys=False),
@@ -365,15 +363,9 @@ class PPOROAPolicy(TensorDictModuleBase):
     
     def state_dict(self):
         state_dict = super().state_dict()
-        if "vecnorm._extra_state" in state_dict:
-            state_dict["vecnorm._extra_state"]["lock"] = None # TODO: check with torchrl
         state_dict["num_frames"] = self.num_frames
         return state_dict
     
     def load_state_dict(self, state_dict, strict=True):
         self.num_frames = state_dict.get("num_frames", 0)
-        if "vecnorm._extra_state" in state_dict:
-            vecnorm_td = state_dict["vecnorm._extra_state"]["td"]
-            state_dict["lock"] = None
-            state_dict["vecnorm._extra_state"]["td"] = vecnorm_td.to(self.device)
         return super().load_state_dict(state_dict, strict=strict)
