@@ -23,6 +23,7 @@
 
 from .ppo import PPOPolicy
 from .ppo_adapt import PPOAdaptPolicy
+from .ppo_stoch import PPOStochPolicy
 from .ppo_asy import PPOAsyPolicy
 from .ppo_ji import PPOPolicy as PPOJi
 # from .ppo_rma import PPORMAPolicy

@@ -12,6 +12,7 @@ ALGOS = {
     "ppo_guided": PPOGuidedPolicy,
     "ppo_adapt": PPOAdaptPolicy,
     "ppo_ji": PPOJi,
+    "ppo_stoch": PPOStochPolicy,
     # "ppo_rma": PPORMAPolicy,
     "ppg": PPGPolicy,
     "sac": SAC,

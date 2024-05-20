@@ -288,6 +288,21 @@ class MaskWithEmbedding(nn.Module):
         return output
 
 
+class NormalExtractor(nn.Module):
+    def __init__(self, include_loc: bool=True, num_samples: int = 1):
+        super().__init__()
+        self.include_loc = include_loc
+        self.num_sample = num_samples
+
+    def forward(self, x: torch.Tensor):
+        x_loc, x_scale = x.chunk(2, -1)
+        x_sample = x_loc.unsqueeze(-2).expand(*x_loc.shape[:-1], self.num_sample, -1)
+        x_sample = x_sample + torch.randn_like(x_sample) * x_scale.exp()
+        if self.include_loc:
+            x_sample = torch.cat([x_sample, x_loc], dim=-2)
+        return x_sample.flatten(-2), x_loc, x_scale
+
+
 def collect_info(infos, prefix=""):
     return {prefix+k: v.mean().item() for k, v in torch.stack(infos).items()}
 
