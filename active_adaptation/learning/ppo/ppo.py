@@ -145,7 +145,7 @@ class PPOPolicy(TensorDictModuleBase):
     def get_rollout_policy(self, mode: str="train"):
         policy = TensorDictSequential(
             self.actor,
-        ).select_out_keys(*self.actor.in_keys, ACTION_KEY, "sample_log_prob", "collector", "is_init")
+        )
         return policy
 
     # @torch.compile

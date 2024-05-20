@@ -157,13 +157,18 @@ def root_quat_w(self):
 
 
 class root_angvel_b(Observation):
-    def __init__(self, env, noise_std: float=0.):
+    def __init__(self, env, noise_std: float=0., yaw_only: bool=False):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.noise_std = noise_std
+        self.yaw_only = yaw_only
     
     def __call__(self) -> torch.Tensor:
-        return random_noise(self.asset.data.root_ang_vel_b, self.noise_std)
+        ang_vel_b = random_noise(self.asset.data.root_ang_vel_b, self.noise_std) 
+        if self.yaw_only:
+            return ang_vel_b[:, 2].reshape(self.num_envs, 1)
+        else:
+            return ang_vel_b
 
 
 class projected_gravity_b(Observation):
