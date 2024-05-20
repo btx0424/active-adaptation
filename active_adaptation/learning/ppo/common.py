@@ -297,9 +297,9 @@ class NormalExtractor(nn.Module):
     def forward(self, x: torch.Tensor):
         x_loc, x_scale = x.chunk(2, -1)
         x_sample = x_loc.unsqueeze(-2).expand(*x_loc.shape[:-1], self.num_sample, -1)
-        x_sample = x_sample + torch.randn_like(x_sample) * x_scale.exp()
+        x_sample = x_sample + torch.randn_like(x_sample) * x_scale.exp().unsqueeze(-2)
         if self.include_loc:
-            x_sample = torch.cat([x_sample, x_loc], dim=-2)
+            x_sample = torch.cat([x_sample, x_loc.unsqueeze(-2)], dim=-2)
         return x_sample.flatten(-2), x_loc, x_scale
 
 
