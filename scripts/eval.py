@@ -102,10 +102,12 @@ def main(cfg):
             for k, v in trajs[("next", "stats")].cpu().items()
         }
         
-        info = {
-            "eval/stats." + k: torch.mean(v.float()).item() 
-            for k, v in traj_stats.items()
-        }
+        info = {}
+        compute_std_for = ["return", "survival"]
+        for k, v in traj_stats.items():
+            info["eval/stats." + k] = torch.mean(v.float()).item()
+            if k in compute_std_for:
+                info["eval/stats." + k + "_std"] = torch.std(v.float()).item()
 
         # log video
         if len(frames):
@@ -145,10 +147,10 @@ def main(cfg):
     print(OmegaConf.to_yaml(info))
     
     time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
-    path = os.path.join(os.path.dirname(__file__), f"eval/{time_str}.yaml")
+    path = os.path.join(os.path.dirname(__file__), f"eval/{cfg.task.name}-{time_str}.yaml")
     with open(path, "w") as f:
         OmegaConf.save(info, f)
-    
+    exit(0)
     env.close()
     simulation_app.close()
 

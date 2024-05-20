@@ -154,7 +154,7 @@ class PPOROAPolicy(TensorDictModuleBase):
             ).to(self.device)
 
         def make_actor(context_key: str) -> ProbabilisticActor:
-            actor_module = nn.Sequential(make_mlp([256, 256, 256]), Actor(self.action_dim, True))
+            actor_module = nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim, True))
             actor = ProbabilisticActor(
                 module=TensorDictSequential(
                     CatTensors([OBS_KEY, context_key], "actor_feature", del_keys=False),
@@ -170,10 +170,10 @@ class PPOROAPolicy(TensorDictModuleBase):
         self.actor_expert = make_actor("context_expert")
         self.actor_adapt = make_actor("context_adapt")
         
-        critic_module = nn.Sequential(make_mlp([256, 256, 256]), nn.LazyLinear(1))
+        critic_module = nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1))
         self.critic = TensorDictSequential(
             CatTensors([OBS_KEY, OBS_PRIV_KEY], "policy_priv", del_keys=False),
-            TensorDictModule(critic_module, ["policy_priv"], ["state_value"])
+            TensorDictModule(critic_module, ["policy_priv"], ["value_priv"])
         ).to(self.device)
         
         self.encoder_priv(fake_input)
@@ -233,9 +233,21 @@ class PPOROAPolicy(TensorDictModuleBase):
                 ExcludeTransform("actor_feature", "loc", "scale")
             )
         elif mode == "eval":
+            class _ActionKL(TensorDictModuleBase):
+                in_keys = ["context_expert", "context_adapt"]
+                out_keys = ["action_kl"]
+                def forward(_, tensordict: TensorDictBase):
+                    kl = self._action_kl(tensordict, reduce=False)
+                    tensordict["action_kl"] = kl
+                    return tensordict
+            
             policy = TensorDictSequential(
+                self.encoder_priv,
                 self.adapt_module,
                 self.actor_adapt,
+                self.critic,
+                _ActionKL(),
+                ExcludeTransform("actor_feature", "loc", "scale")
             )
         return policy
 
@@ -286,8 +298,8 @@ class PPOROAPolicy(TensorDictModuleBase):
         ret_key: str="ret",
         update_value_norm: bool=True,
     ):
-        values = critic(tensordict)["state_value"]
-        next_values = critic(tensordict["next"])["state_value"]
+        values = critic(tensordict)["value_priv"]
+        next_values = critic(tensordict["next"])["value_priv"]
 
         rewards = tensordict[REWARD_KEY]
         dones = tensordict[DONE_KEY]
@@ -326,7 +338,7 @@ class PPOROAPolicy(TensorDictModuleBase):
         losses["entropy_loss"] = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
-        values = self.critic(tensordict)["state_value"]
+        values = self.critic(tensordict)["value_priv"]
         value_loss = self.critic_loss_fn(b_returns, values)
         losses["value_loss/priv"] = (value_loss * (~tensordict["is_init"])).mean()
         
@@ -366,6 +378,6 @@ class PPOROAPolicy(TensorDictModuleBase):
         state_dict["num_frames"] = self.num_frames
         return state_dict
     
-    def load_state_dict(self, state_dict, strict=True):
+    def load_state_dict(self, state_dict, strict=False):
         self.num_frames = state_dict.get("num_frames", 0)
         return super().load_state_dict(state_dict, strict=strict)
