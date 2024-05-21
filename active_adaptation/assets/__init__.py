@@ -74,7 +74,9 @@ CYBERDOG_CFG = copy.deepcopy(UNITREE_A1_CFG)
 CYBERDOG_CFG.spawn.usd_path = f"{ASSET_PATH}/cyberdog2_v2.usd"
 CYBERDOG_CFG.actuators["base_legs"].stiffness = 20.
 CYBERDOG_CFG.actuators["base_legs"].damping = 0.5
-CYBERDOG_CFG.actuators["base_legs"].effort_limit = 25.
+CYBERDOG_CFG.actuators["base_legs"].effort_limit = 12.
+CYBERDOG_CFG.actuators["base_legs"].friction = 0.1
+CYBERDOG_CFG.init_state.pos = (0., 0., 0.33)
 CYBERDOG_CFG.init_state.joint_pos = {
     ".*_hip_joint": 0.0,
     ".*thigh_joint": -0.78,
