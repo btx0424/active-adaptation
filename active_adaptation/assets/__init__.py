@@ -70,6 +70,17 @@ UNITREE_GO1M_CFG.actuators["arm"] = DCMotorCfg(
     saturation_effort=200
 )
 
+CYBERDOG_CFG = copy.deepcopy(UNITREE_A1_CFG)
+CYBERDOG_CFG.spawn.usd_path = f"{ASSET_PATH}/cyberdog2_v2.usd"
+CYBERDOG_CFG.actuators["base_legs"].stiffness = 20.
+CYBERDOG_CFG.actuators["base_legs"].damping = 0.5
+CYBERDOG_CFG.actuators["base_legs"].effort_limit = 25.
+CYBERDOG_CFG.init_state.joint_pos = {
+    ".*_hip_joint": 0.0,
+    ".*thigh_joint": -0.78,
+    ".*calf_joint": 1.22,
+}
+
 H1_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
         # usd_path=f"{ASSET_PATH}/h1_isaacgym.usd",
@@ -144,7 +155,8 @@ ROBOTS = {
     "go1m": UNITREE_GO1M_CFG,
     "go2": UNITREE_GO2_CFG,
     "cassie": CASSIE_CFG,
-    "h1": H1_CFG
+    "h1": H1_CFG,
+    "cyberdog": CYBERDOG_CFG
 }
 
 for robot in ROBOTS.values():
