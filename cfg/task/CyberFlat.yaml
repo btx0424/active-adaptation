@@ -22,7 +22,7 @@ command:
   _target_: active_adaptation.envs.mdp.Command2
   linvel_x_range: [-0.8, 1.0]
   linvel_y_range: [-0.5, 0.5]
-  angvel_range: [-1.0, 1.0]
+  angvel_range: [-1.2, 1.2]
   yaw_stiffness_range: [0.5, 0.6]
   base_height_range: [0.25, 0.35]
   stand_prob: 0.05
@@ -60,7 +60,6 @@ observation:
     applied_torques:  {actuator_name: base_legs}
     # motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     # body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-    motor_failure:    {actuator_name: base_legs}
     body_scale:       {}
     # body_mass:        {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # body_momentum:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
@@ -91,8 +90,8 @@ reward:
   linacc_z_l2:        {weight: 0.002, enabled: false}
   angvel_xy_l2:       {weight: 0.05, enabled: true, clip_range: [-1., 0.]}
   linvel_z_l2:        {weight: 2.0, enabled: true}
-  base_height_l1:     {weight: 1.0, enabled: true, target_height: 0.23}
-  energy_l1:          {weight: 0.0002, enabled: true}
+  base_height_l1:     {weight: 1.0, enabled: true, target_height: 0.25}
+  energy_l1:          {weight: 0.0001, enabled: true}
   joint_acc_l2:       {weight: 1.0e-7, enabled: true, clip_range: [-1., 0.]}
   joint_torques_l2:   {weight: 2.0e-4, enabled: true, clip_range: [-1., 0.]}
   # quadruped_stand:    {weight: 0.5}
@@ -101,7 +100,7 @@ reward:
   action_rate_l2:     {weight: 0.01, enabled: true}
   # action_rate2_l2:    {weight: 0.01}
   # impact_force_l2:    {weight: 1.0, enabled: false, body_names: .*_foot}
-  feet_air_time:      {weight: 0.5, enabled: true, body_names: .*_foot, thres: 0.5}
+  feet_air_time:      {weight: 0.5, enabled: true, body_names: .*_foot, thres: 0.4}
   feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
   undesired_contact:  {body_names: [.*_calf], weight: 0.25, enabled: true}
@@ -113,28 +112,25 @@ termination:
   # cum_error: {thres: 0.85}
 
 randomization:
-  random_scale: [1.0, 1.2]
+  random_scale: [1.0, 1.1]
   perturb_body_mass:
-    (?!(payload|base|Head.*)).*: [0.8, 1.2]
-    base: [0.8, 1.2]
+    (?!(payload|base|Head.*)).*: [0.9, 1.1]
+    base: [0.9, 1.1]
   perturb_body_materials:
     body_names: ".*_foot"
-    static_friction_range:  [0.6, 2.0]
-    dynamic_friction_range: [0.6, 2.0]
+    static_friction_range:  [0.8, 2.0]
+    dynamic_friction_range: [0.8, 2.0]
     restitution_range:      [0.0, 0.2]
     homogeneous: true # ${task.homogeneous}
   motor_params:
     actuator_name: base_legs
-    stiffness_range:  [0.8, 1.2]
-    damping_range:    [0.8, 1.2]
+    stiffness_range:  [0.9, 1.1]
+    damping_range:    [0.9, 1.1]
     homogeneous: ${task.homogeneous}
-  random_motor_failure:
-    actuator_name: base_legs
-    joint_names: .*_calf_joint
-    failure_prob: 0.0
-  reset_joint_states_scale:
-    pos_scales:
-      .*: [0.8, 1.2]
+  reset_joint_states_uniform:
+    pos_ranges:
+      .*: [-0.1, 0.1]
+    rel: true
   # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
   # stumble: {body_names: .*_foot}
 
