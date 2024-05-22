@@ -13,12 +13,13 @@ from omni.isaac.orbit_assets import (
 )
 
 import omni.isaac.orbit.sim as sim_utils
-from .spawn import clone
 from omni.isaac.orbit.sim.spawners.from_files.from_files import _spawn_from_usd_file, spawn_from_usd
 from omni.isaac.orbit.actuators import ImplicitActuatorCfg, DCMotorCfg
 
-from omni.isaac.core.materials import PhysicsMaterial
-from pxr import PhysxSchema
+from .spawn import clone
+from .quadruped import *
+from .humanoid import *
+
 
 ASSET_PATH = os.path.dirname(__file__)
 
@@ -47,109 +48,7 @@ def spawn_with_payload(
 
     return prim
 
-UNITREE_A1_CFG = copy.deepcopy(UNITREE_A1_CFG)
-UNITREE_GO1_CFG = copy.deepcopy(UNITREE_GO1_CFG)
-UNITREE_GO2_CFG = copy.deepcopy(UNITREE_GO2_CFG)
-UNITREE_GO2_CFG.spawn.usd_path = f"{ASSET_PATH}/Go2/go2.usd"
-UNITREE_GO2_CFG.init_state.pos = (0., 0., 0.35)
-UNITREE_GO2_CFG.actuators["base_legs"].effort_limit = {
-    "(?!.*_calf_joint).*": 23.5,
-    ".*_calf_joint": 35.5,
-}
-UNITREE_GO2_CFG.actuators["base_legs"].saturation_effort = 35.5
-
 CASSIE_CFG = copy.deepcopy(cassie.CASSIE_CFG)
-
-UNITREE_GO1M_CFG = copy.deepcopy(UNITREE_A1_CFG)
-UNITREE_GO1M_CFG.spawn.usd_path = f"{ASSET_PATH}/widowGo1.usd"
-UNITREE_GO1M_CFG.actuators["arm"] = DCMotorCfg(
-    joint_names_expr=[".*widow_(waist|shoulder|elbow)"],
-    stiffness=80.0,
-    velocity_limit=2.0,
-    damping=4.0,
-    saturation_effort=200
-)
-
-CYBERDOG_CFG = copy.deepcopy(UNITREE_A1_CFG)
-CYBERDOG_CFG.spawn.usd_path = f"{ASSET_PATH}/cyberdog2_v2.usd"
-CYBERDOG_CFG.actuators["base_legs"].stiffness = 20.
-CYBERDOG_CFG.actuators["base_legs"].damping = 0.5
-CYBERDOG_CFG.actuators["base_legs"].effort_limit = 12.
-CYBERDOG_CFG.actuators["base_legs"].friction = 0.02
-CYBERDOG_CFG.init_state.pos = (0., 0., 0.33)
-CYBERDOG_CFG.init_state.joint_pos = {
-    ".*_hip_joint": 0.0,
-    ".*thigh_joint": -0.78,
-    ".*calf_joint": 1.22,
-}
-
-H1_CFG = ArticulationCfg(
-    spawn=sim_utils.UsdFileCfg(
-        # usd_path=f"{ASSET_PATH}/h1_isaacgym.usd",
-        usd_path=f"{ASSET_PATH}/h1_isaacgym_white.usd",
-        activate_contact_sensors=True,
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            disable_gravity=False,
-            retain_accelerations=False,
-            linear_damping=0.0,
-            angular_damping=0.0,
-            max_linear_velocity=1000.0,
-            max_angular_velocity=1000.0,
-            max_depenetration_velocity=1.0,
-        ),
-        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=False, solver_position_iteration_count=4, solver_velocity_iteration_count=0
-        ),
-    ),
-    init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 1.0),
-        joint_pos={
-            '.*knee_joint': 0.8,
-            '.*ankle_joint': -0.4,
-            '.*hip_pitch_joint': -0.4,
-            'left_hip_yaw_joint' : 0. ,   
-            'left_hip_roll_joint' : 0,               
-            'right_hip_yaw_joint' : 0., 
-            'right_hip_roll_joint' : 0, 
-            'torso_joint' : 0., 
-            'left_shoulder_pitch_joint' : 0., 
-            'left_shoulder_roll_joint' : 0, 
-            'left_shoulder_yaw_joint' : 0.,
-            'left_elbow_joint'  : 0.0,
-            'right_shoulder_pitch_joint' : 0.,
-            'right_shoulder_roll_joint' : 0.0,
-            'right_shoulder_yaw_joint' : 0.,
-            'right_elbow_joint' : 0.0,
-        },
-        joint_vel={".*": 0.0},
-    ),
-    soft_joint_pos_limit_factor=0.9,
-    actuators={
-        "base_legs": DCMotorCfg(
-            joint_names_expr=[".*"],
-            effort_limit=300.0,
-            saturation_effort=300.0,
-            velocity_limit=30.0,
-            stiffness={
-                ".*hip.*": 200,
-                ".*knee.*": 300,
-                ".*ankle.*": 40,
-                "torso_joint": 300,
-                ".*shoulder.*": 100,
-                ".*elbow.*": 100
-            },
-            damping={
-                ".*hip.*": 5,
-                ".*knee.*": 6,
-                ".*ankle.*": 2,
-                "torso_joint": 6,
-                ".*shoulder.*": 2,
-                ".*elbow.*": 2
-            },
-            friction=0.0,
-        ),
-    },
-)
 
 ROBOTS = {
     "a1": UNITREE_A1_CFG,
@@ -158,6 +57,7 @@ ROBOTS = {
     "go2": UNITREE_GO2_CFG,
     "cassie": CASSIE_CFG,
     "h1": H1_CFG,
+    "cy1": CY1_CFG,
     "cyberdog": CYBERDOG_CFG
 }
 

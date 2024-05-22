@@ -368,6 +368,21 @@ class stumble(Randomization):
             color=(1., 0.6, 0., 1.)
         )
 
+
+class random_joint_friction(Randomization):
+    def __init__(self, env, actuator_name: str, friction_range):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joints = self.asset.actuators[actuator_name]
+        self.friction_range = friction_range
+    
+    def startup(self):
+        print(f"Randomize joint friction of joints {self.joints.joint_names}, {self.joints.joint_indices}")
+        friction = torch.zeros_like(self.joints.friction)
+        friction.uniform_(*self.friction_range)
+        self.asset.write_joint_friction_to_sim(friction, joint_ids=self.joints.joint_indices)
+
+
 def random_scale(x: torch.Tensor, low: float, high: float, homogeneous: bool=False):
     if homogeneous:
         u = torch.rand(*x.shape[:1], 1, device=x.device)

@@ -18,5 +18,6 @@ class Humanoid(LocomotionEnv):
 
     @property
     def action_dim(self):
-        return 19
+        robot = self.scene["robot"]
+        return robot.num_joints
     

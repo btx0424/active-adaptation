@@ -50,9 +50,6 @@ class LocomotionEnv(Env):
                 ids = torch.arange(self.robot.num_joints)[ids].tolist()
             self.controlled_joint_ids.extend(ids)
 
-        self.feet_indices, self.feet_names = self.robot.find_bodies(self.feet_name_expr)
-        self.num_feet = len(self.feet_indices)
-
         self.contact_sensor: ContactSensor = self.scene.sensors.get("contact_forces", None)
         self.height_scanner: RayCaster = self.scene.sensors.get("height_scanner", None)
 
