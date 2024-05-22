@@ -31,11 +31,11 @@ observation:
     applied_action:   {}
   #   # joint_acc:        {}
     root_linvel_b:    {}
-  #   feet_pos_b:       {}
+    feet_pos_b:       {feet_names: .*leg_link6}
   #   feet_vel_b:       {}
   #   # feet_height:      {feet_names: .*ankle_link}
-  #   # feet_height_map:  {feet_names: .*ankle_link }
-  #   applied_torques:  {actuator_name: base_legs}
+    feet_height_map:  {feet_names: .*leg_link6 }
+    applied_torques:  {actuator_name: base_legs}
   #   motor_params:     {actuator_name: "base_legs"}
   #   body_materials:   {body_names: ".*ankle_link"}
   #   body_mass:        {body_names: ["torso_link", "pelvis"]}
@@ -43,7 +43,7 @@ observation:
   #   last_rewards:     {}
 
 reward:
-  linvel_exp:         {weight: 1.5, body_names: ["pelvis", "torso"], enabled: true, dim: 3}
+  linvel_exp:         {weight: 1.5, body_names: ["base_link", "waist_yaw_link"], enabled: true, dim: 3}
   linacc_z_l2:        {weight: 0.005}
   linvel_projection:  {weight: 1.0, enabled: true}
   angvel_z_exp:       {weight: 1.0, enabled: false}
@@ -62,12 +62,12 @@ reward:
 
 randomization:
   # push:     {body_names: ["pelvis", ".*shoulder_pitch_link"]}
-  perturb_body_mass:
-    .*: [0.7, 1.3]
-  perturb_body_materials:
-    body_names: ".*leg_link6"
-    static_friction_range: [0.6, 2.0]
-    dynamic_friction_range: [0.6, 2.0]
+  # perturb_body_mass:
+  #   .*: [0.7, 1.3]
+  # perturb_body_materials:
+  #   body_names: ".*leg_link6"
+  #   static_friction_range: [0.6, 2.0]
+  #   dynamic_friction_range: [0.6, 2.0]
   motor_params:
     actuator_name:    base_legs
     stiffness_range:  [0.7, 1.3]
@@ -76,8 +76,8 @@ randomization:
     pos_ranges:
       .*: [-0.4, 0.4]
     rel: true
-  stumble:  {body_names: ".*leg_link6", stumble_height: 0.04, friction_range: [0.1, 0.6]}
+  # stumble:  {body_names: ".*leg_link6", stumble_height: 0.04, friction_range: [0.1, 0.6]}
 
 termination:
   crash: 
-    body_names_expr: ["pelvis", "torso"]
+    body_names_expr: ["waist_yaw_link"]
