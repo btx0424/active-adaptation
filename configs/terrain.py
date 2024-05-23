@@ -51,6 +51,29 @@ class HfRandomGridTerrainCfg(HfTerrainBaseCfg):
     """The minimum and maximum height of the grid cells (in m)."""
 
 
+FLAT = TerrainGeneratorCfg(
+    seed=0,
+    size=(8.0, 8.0),
+    border_width=40.0,
+    num_rows=10,
+    num_cols=10,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    use_cache=False,
+    sub_terrains={
+        "flat": MeshPlaneTerrainCfg(
+            proportion=0.5,
+        ),
+        "random_rough_easy": HfRandomUniformTerrainCfg(
+            proportion=0.5,
+            noise_range=(0.0, 0.05),
+            noise_step=0.02,
+            border_width=0.5
+        ),
+    },
+)
+
 ROUGH_MEDIUM = TerrainGeneratorCfg(
     seed=0,
     size=(8.0, 8.0),
@@ -198,4 +221,5 @@ FLAT_TERRAIN_CFG = TerrainImporterCfg(
 TERRAINS = {
     "medium": ROUGH_MEDIUM,
     "easy": ROUGH_EASY,
+    "flat": FLAT
 }
