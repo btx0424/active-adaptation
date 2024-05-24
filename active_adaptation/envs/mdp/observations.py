@@ -10,7 +10,7 @@ import omni.isaac.orbit.sim as sim_utils
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from omni.isaac.orbit.terrains.trimesh.utils import make_plane
-from omni.isaac.orbit.utils.math import convert_quat, quat_apply, quat_apply_yaw
+from omni.isaac.orbit.utils.math import convert_quat, quat_apply, quat_apply_yaw, yaw_quat
 from omni.isaac.orbit.utils.warp import convert_to_warp_mesh, raycast_mesh
 from pxr import UsdGeom, UsdPhysics
 
@@ -101,38 +101,43 @@ class joint_vel_buffer(BufferedObs):
 
 
 class body_pos(Observation):
-    def __init__(self, env, body_names):
+    def __init__(self, env, body_names, yaw_only: bool=False):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
+        self.yaw_only = yaw_only
         self.body_indices, self.body_names = self.asset.find_bodies(body_names)
         print(f"Track body pos for {self.body_names}")
         self.body_pos_b = torch.zeros(self.env.num_envs, len(self.body_indices), 3, device=self.env.device)
 
     def update(self):
-        body_pos_w = self.asset.data.body_pos_w[:, self.body_indices]
-        self.body_pos_b[:] = quat_rotate_inverse(
-            self.asset.data.root_quat_w.unsqueeze(1),
-            body_pos_w - self.asset.data.root_pos_w.unsqueeze(1)
-        )
+        if self.yaw_only:
+            quat = yaw_quat(self.asset.data.root_quat_w).unsqueeze(1)
+        else:
+            quat = self.asset.data.root_quat_w.unsqueeze(1)
+        body_pos = self.asset.data.body_pos_w[:, self.body_indices]
+        body_pos = body_pos - self.asset.data.root_pos_w.unsqueeze(1)
+        self.body_pos_b[:] = quat_rotate_inverse(quat, body_pos)
         
     def __call__(self):
         return self.body_pos_b.reshape(self.env.num_envs, -1)
 
 
 class body_vel(Observation):
-    def __init__(self, env, body_names):
+    def __init__(self, env, body_names, yaw_only: bool=False):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
+        self.yaw_only = yaw_only
         self.body_indices, self.body_names = self.asset.find_bodies(body_names)
         print(f"Track body vel for {self.body_names}")
         self.body_vel_b = torch.zeros(self.env.num_envs, len(self.body_indices), 3, device=self.env.device)
 
     def update(self):
+        if self.yaw_only:
+            quat = yaw_quat(self.asset.data.root_quat_w).unsqueeze(1)
+        else:
+            quat = self.asset.data.root_quat_w.unsqueeze(1)
         body_vel_w = self.asset.data.body_lin_vel_w[:, self.body_indices]
-        self.body_vel_b[:] = quat_rotate_inverse(
-            self.asset.data.root_quat_w.unsqueeze(1),
-            body_vel_w
-        )
+        self.body_vel_b[:] = quat_rotate_inverse(quat, body_vel_w)
         
     def __call__(self):
         return self.body_vel_b.reshape(self.env.num_envs, -1)
@@ -710,7 +715,21 @@ class clock(Observation):
         t = t.reshape(self.num_envs, 1) * self.frequencies
         return torch.cat([t.sin(), t.cos()], dim=1)
 
+class phase(Observation):
+    def __init__(self, env, cycle: float=1.2):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.freq = torch.pi * 2 / cycle
+        self.asset.data.phase = torch.zeros(self.num_envs, device=self.device)
+        self.phase: torch.Tensor = self.asset.data.phase
 
+    def update(self):
+        self.phase[:] = self.env.episode_length_buf * self.freq * self.env.step_dt
+
+    def __call__(self) -> torch.Tensor:
+        return torch.stack([self.phase.sin(), self.phase.cos()], 1)
+        
+    
 def symlog(x: torch.Tensor, a: float=1.):
     return x.sign() * torch.log(x.abs() * a + 1.) / a
 

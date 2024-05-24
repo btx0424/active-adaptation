@@ -174,7 +174,9 @@ class Env(EnvBase):
         for group, funcs in self.observation_funcs.items():
             tensors = []
             for obs_name, func in funcs.items():
-                tensors.append(func())
+                tensor = func()
+                tensors.append(tensor)
+                print(f"{obs_name}: shape {tensor.shape}")
             split = [tensor.shape[-1] for tensor in tensors]
             tensor = torch.cat(tensors, -1)
             observation_spec[group] = UnboundedContinuousTensorSpec(tensor.shape, device=self.device)

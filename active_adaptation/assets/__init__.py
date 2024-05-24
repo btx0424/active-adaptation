@@ -58,6 +58,7 @@ ROBOTS = {
     "cassie": CASSIE_CFG,
     "h1": H1_CFG,
     "cy1": CY1_CFG,
+    "cy1_v2": CY1V2_CFG,
     "cyberdog": CYBERDOG_CFG
 }
 

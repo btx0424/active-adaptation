@@ -1,7 +1,13 @@
 import torch
+import wandb
+import logging
+import os
+
 from typing import Sequence
 from tensordict import TensorDictBase
 from termcolor import colored
+from collections import OrderedDict
+
 from active_adaptation.learning import ALGOS
 
 
@@ -64,7 +70,7 @@ def make_env_policy(cfg):
 
     assert cfg.vecnorm in ("train", "eval", None)
     print(colored(f"[Info]: create VecNorm for keys: {obs_keys}", "green"))
-    vecnorm = VecNorm(obs_keys)
+    vecnorm = VecNorm(obs_keys, decay=0.9999)
 
     if "vecnorm" in state_dict.keys():
         print(colored("[Info]: Load VecNorm from checkpoint.", "green"))

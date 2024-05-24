@@ -181,15 +181,17 @@ class LocomotionEnv(Env):
         return cost
 
     class feet_pos_b(mdp.body_pos):
-        def __init__(self, env: "LocomotionEnv", feet_names=None):
+        def __init__(self, env: "LocomotionEnv", feet_names=None, yaw_only: bool=False):
             if feet_names is None:
                 feet_names = env.feet_name_expr
-            super().__init__(env, feet_names)
+            super().__init__(env, feet_names, yaw_only)
             self.asset.data.feet_pos_b = self.body_pos_b
     
     class feet_vel_b(mdp.body_vel):
-        def __init__(self, env: "LocomotionEnv"):
-            super().__init__(env, env.feet_name_expr)
+        def __init__(self, env: "LocomotionEnv", feet_names=None, yaw_only: bool=False):
+            if feet_names is None:
+                feet_names = env.feet_name_expr
+            super().__init__(env, feet_names, yaw_only)
             self.asset.data.feet_vel_b = self.body_vel_b
     
     class base_height_l2(mdp.Reward):
