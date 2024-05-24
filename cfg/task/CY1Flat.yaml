@@ -12,7 +12,7 @@ payload: false
 
 command:
   _target_: active_adaptation.envs.mdp.Command2
-  linvel_x_range: [-1.0, 1.25]
+  linvel_x_range: [0., 1.25]
   linvel_y_range: [-0.0, 0.0]
   angvel_range: [0.0, 0.0]
   yaw_stiffness_range: [0.0, 0.0]
@@ -32,9 +32,9 @@ observation:
   priv:
     applied_action:   {}
     root_linvel_b:    {}
-    feet_pos_b:       {feet_names: .*leg_link6}
+    feet_pos_b:       {feet_names: .*leg_link6, yaw_only: true}
     # body_pos_b:       {body_names: .*leg_link4}
-    feet_vel_b:       {feet_names: .*leg_link6}
+    feet_vel_b:       {feet_names: .*leg_link6, yaw_only: true}
     feet_height_map:  {feet_names: .*leg_link6 }
     applied_torques:  {actuator_name: base_legs}
   #   motor_params:     {actuator_name: "base_legs"}
@@ -44,7 +44,7 @@ observation:
   #   last_rewards:     {}
 
 reward:
-  linvel_exp:         {weight: 1.5, enabled: true, dim: 3}
+  linvel_exp:         {weight: 1.5, enabled: true, dim: 2}
   linacc_z_l2:        {weight: 0.005, enabled: false}
   linvel_projection:  {weight: 1.0, enabled: true}
   angvel_z_exp:       {weight: 1.0, enabled: true}
@@ -60,7 +60,7 @@ reward:
   feet_air_time:      {weight: 1.0, enabled: true, body_names: .*leg_link6, thres: 0.5}
   feet_slip:          {weight: 0.5, enabled: true, body_names: .*leg_link6}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*leg_link6}
-  feet_swing:         {weight: 1.0, enabled: true, feet_names: .*leg_link6}
+  feet_swing:         {weight: 2.0, enabled: true, feet_names: .*leg_link6}
 
 randomization:
   # push:     {body_names: ["pelvis", ".*shoulder_pitch_link"]}
@@ -76,7 +76,7 @@ randomization:
     damping_range:    [0.7, 1.3]
   reset_joint_states_uniform:
     pos_ranges:
-      .*: [-0.05, 0.05]
+      .*: [-0.2, 0.2]
     rel: true
   # stumble:  {body_names: ".*leg_link6", stumble_height: 0.045, friction_range: [0.4, 1.8]}
 
