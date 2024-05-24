@@ -41,6 +41,7 @@ observation:
     joint_pos:    {noise_std: 0.05}
     joint_vel:    {noise_std: 0.2}
     prev_actions: {steps: 1}
+    clock:        {frequencies: [1, 2, 4]}
     # motor_params: {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     # body_materials: {body_names: .*foot, homogeneous: "${task.homogeneous}"}
     # root_linvel_b:

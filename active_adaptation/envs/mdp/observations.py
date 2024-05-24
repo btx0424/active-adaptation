@@ -700,6 +700,17 @@ class camera(Observation):
         return image / 255.0
 
 
+class clock(Observation):
+    def __init__(self, env, frequencies: list[int]=[1, 2, 4]):
+        super().__init__(env)
+        self.frequencies = torch.as_tensor(frequencies, device=self.device).unsqueeze(0)
+    
+    def __call__(self) -> torch.Tensor:
+        t = (self.env.episode_length_buf * self.env.step_dt)
+        t = t.reshape(self.num_envs, 1) * self.frequencies
+        return torch.cat([t.sin(), t.cos()], dim=1)
+
+
 def symlog(x: torch.Tensor, a: float=1.):
     return x.sign() * torch.log(x.abs() * a + 1.) / a
 
