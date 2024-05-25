@@ -57,6 +57,8 @@ class PPOConfig:
     clip_param: float = 0.1
     entropy_coef: float = 0.01
     vecnorm: Union[str, None] = None
+    gae_gamma: float = 0.99
+    opt: str = "adam"
 
     actor_predict_std: bool = True
     orthogonal_init: bool = True
@@ -207,7 +209,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         # self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
         self.critic_loss_fn = nn.MSELoss(reduction="none")
         self.action_dim = action_spec.shape[-1]
-        self.gae = GAE(0.99, 0.95)
+        self.gae = GAE(self.cfg.gae_gamma, 0.95)
         if not cfg.layer_norm:
             global make_mlp
             make_mlp = functools.partial(make_mlp, norm=None)
@@ -356,7 +358,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self._critic_priv(fake_input)
         self._critic_adapt(fake_input)
 
-        self.opt_expert = torch.optim.Adam(
+        opt_class = {"adam": torch.optim.Adam, "adamw": torch.optim.AdamW}[self.cfg.opt]
+        self.opt_expert: torch.optim.Optimizer = opt_class(
             [
                 {"params": self.encoder_priv.parameters()},
                 {"params": self._actor_expert.parameters()},
@@ -366,7 +369,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             lr=cfg.lr
         )
 
-        self.opt_target = torch.optim.Adam(
+        self.opt_target: torch.optim.Optimizer = torch.optim.Adam(
             [
                 {"params": self._actor_adapt.parameters()},
                 {"params": self._critic_adapt.parameters()},
@@ -374,7 +377,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             lr=cfg.lr
         )
 
-        self.opt_adapt = torch.optim.Adam(
+        self.opt_adapt: torch.optim.Optimizer = torch.optim.Adam(
             [
                 {"params": self.adapt_module_a.parameters(), "name": "adapt_module_a", "max_grad_norm": 10.},
                 {"params": self.adapt_module_b.parameters(), "name": "adapt_module_b", "max_grad_norm": 20.},

@@ -11,6 +11,9 @@ from .locomotion import Reward, normalize
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
 
+def dot(a: torch.Tensor, b: torch.Tensor):
+    return (a * b).sum(-1, True)
+
 class feet_distance(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, clip_range=...):
         super().__init__(env, weight, enabled, clip_range)
@@ -28,6 +31,7 @@ class feet_swing(Reward):
         self.feet_id = self.asset.find_bodies(feet_names)[0]
         self.phase: torch.Tensor = self.asset.data.phase
         self.command_manager = self.env.command_manager
+        self.a = 2.
 
         self.feet_vel_buf = torch.zeros(self.num_envs, 2, 3, 4, device=self.device)
     
@@ -43,11 +47,12 @@ class feet_swing(Reward):
         swing_vel = torch.zeros_like(feet_linvel)
         swing_vel[:] = self.command_manager._command_linvel.unsqueeze(1)
         phase_sin = self.phase.sin()
-        swing_vel[:, 0] *= (phase_sin > +0.1).float().unsqueeze(1)
-        swing_vel[:, 1] *= (phase_sin < -0.1).float().unsqueeze(1)
+        swing_vel[:, 0] *= (phase_sin > +0.15).float().unsqueeze(1)
+        swing_vel[:, 1] *= (phase_sin < -0.15).float().unsqueeze(1)
         swing_vel = quat_rotate(yaw_quat(self.asset.data.root_quat_w).unsqueeze(1), swing_vel)
         # reward = torch.exp(- 2 * (feet_linvel - swing_vel).abs().sum(-1)).sum(1, True)
-        reward = (normalize(swing_vel) * feet_linvel).sum(-1).sum(1, True)
+        reward = self.a * (normalize(swing_vel) * feet_linvel).sum(-1)
+        reward = torch.where(reward>0, reward.log1p().clamp(max=self.a), reward).sum(1, True)
         return reward.reshape(self.num_envs, 1)
     
     def debug_draw(self):
@@ -55,9 +60,23 @@ class feet_swing(Reward):
         feet_linvel = self.feet_vel_buf.mean(-1)
         swing_vel = torch.zeros_like(feet_pos)
         swing_vel[:] = self.command_manager._command_linvel.unsqueeze(1)
-        swing_vel[:, 0] *= (self.phase.sin() > +0.1).float().unsqueeze(1)
-        swing_vel[:, 1] *= (self.phase.sin() < -0.1).float().unsqueeze(1)
+        swing_vel[:, 0] *= (self.phase.sin() > +0.15).float().unsqueeze(1)
+        swing_vel[:, 1] *= (self.phase.sin() < -0.15).float().unsqueeze(1)
         swing_vel = quat_rotate(yaw_quat(self.asset.data.root_quat_w).unsqueeze(1), swing_vel)
         self.env.debug_draw.vector(feet_pos.reshape(-1, 3), swing_vel.reshape(-1, 3))
         self.env.debug_draw.vector(feet_pos.reshape(-1, 3), feet_linvel.reshape(-1, 3), color=(1., 0., 0.2, 1.))
 
+
+class feet_orientation(Reward):
+    def __init__(self, env, feet_names: str, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.feet_id = self.asset.find_bodies(feet_names)[0]
+    
+    def compute(self) -> torch.Tensor:
+        quat_feet = yaw_quat(self.asset.data.body_quat_w[:, self.feet_id])
+        quat_root = yaw_quat(self.asset.data.root_quat_w).unsqueeze(1)
+        heading_vec = torch.tensor([[[1., 0., 0.]]], device=self.device)
+        reward = dot(quat_rotate(quat_feet, heading_vec), quat_rotate(quat_root, heading_vec))
+        return reward.mean(1)
+        
