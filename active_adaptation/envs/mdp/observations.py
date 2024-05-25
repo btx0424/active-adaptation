@@ -247,25 +247,32 @@ class joint_vel(Observation):
         return random_noise(self.asset.data.joint_vel, self.noise_std)
 
 class joint_acc(Observation):
+    
+    smoothing_length = 5
+    
     def __init__(self, env):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
-        if hasattr(self.env, "_joint_vel_buffer"):
-            self.buffer = self.env._joint_vel_buffer
-        else:
-            self.buffer = Buffer(self.asset.data.joint_pos.shape, 4, self.env.device)
+        self.joint_acc_buf = (
+            torch.zeros_like(self.asset.data.joint_acc)
+            .unsqueeze(-1)
+            .expand(-1, -1, self.smoothing_length)
+            .clone()
+        )
+        self.smoothing_weights = torch.arange(self.smoothing_length, device=self.device).flipud()
+        self.smoothing_weights = self.smoothing_weights / self.smoothing_weights.sum()
 
     def reset(self, env_ids: torch.Tensor):
-        self.buffer.reset(env_ids)
+        self.joint_acc_buf[env_ids] = 0.
 
     def update(self):
-        self.buffer.update(self.asset.data.joint_vel, self.env.time_stamp)
+        self.joint_acc_buf[..., 1:] = self.joint_acc_buf[..., :-1]
+        self.joint_acc_buf[..., 0] = self.asset.data.joint_acc
 
     def __call__(self) -> torch.Tensor:
-        vel_diff = self.buffer.data[:, :, 1:] - self.buffer.data[:, :, :-1]
-        acc = (vel_diff / self.env.step_dt).mean(dim=-1)
-        acc = acc * self.env.step_dt
-        return symlog(acc)
+        joint_acc = (self.joint_acc_buf * self.smoothing_length).mean(-1)
+        joint_acc *= self.env.step_dt
+        return joint_acc
 
 
 class applied_torques(Observation):
@@ -722,9 +729,15 @@ class phase(Observation):
         self.freq = torch.pi * 2 / cycle
         self.asset.data.phase = torch.zeros(self.num_envs, device=self.device)
         self.phase: torch.Tensor = self.asset.data.phase
+        self.offset: torch.Tensor = torch.zeros(self.num_envs, device=self.device)
+
+    def reset(self, env_ids: torch.Tensor):
+        offset = torch.full(env_ids.shape, torch.pi/3, device=self.device)
+        offset[torch.rand_like(offset) > 0.5] += torch.pi
+        self.offset[env_ids] = offset
 
     def update(self):
-        self.phase[:] = self.env.episode_length_buf * self.freq * self.env.step_dt
+        self.phase[:] = self.offset + self.env.episode_length_buf * self.freq * self.env.step_dt
 
     def __call__(self) -> torch.Tensor:
         return torch.stack([self.phase.sin(), self.phase.cos()], 1)

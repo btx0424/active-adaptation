@@ -68,15 +68,45 @@ class feet_swing(Reward):
 
 
 class feet_orientation(Reward):
+
     def __init__(self, env, feet_names: str, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.feet_id = self.asset.find_bodies(feet_names)[0]
+        self.heading_feet = torch.tensor([[[0., 1., 0.]]], device=self.device)
+        self.heading_root = torch.tensor([[[1., 0., 0.]]], device=self.device)
     
     def compute(self) -> torch.Tensor:
         quat_feet = yaw_quat(self.asset.data.body_quat_w[:, self.feet_id])
         quat_root = yaw_quat(self.asset.data.root_quat_w).unsqueeze(1)
-        heading_vec = torch.tensor([[[1., 0., 0.]]], device=self.device)
-        reward = dot(quat_rotate(quat_feet, heading_vec), quat_rotate(quat_root, heading_vec))
+        reward = dot(
+            quat_rotate(quat_feet, self.heading_feet), 
+            quat_rotate(quat_root, self.heading_root)
+        )
         return reward.mean(1)
-        
+
+    def debug_draw(self):
+        feet_pos = self.asset.data.body_pos_w[:, self.feet_id]
+        quat_feet = yaw_quat(self.asset.data.body_quat_w[:, self.feet_id])
+        self.env.debug_draw.vector(
+            feet_pos.reshape(-1, 3),
+            quat_rotate(quat_feet, self.heading_feet).reshape(-1, 3),
+            color=(1., 1., 0., 1.)
+        )
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w, 
+            quat_rotate(self.asset.data.root_quat_w, self.head),
+            color=(1., 1., 0., 1.)
+        )
+
+
+class joint_pos_default(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.default_joint_pos = self.asset.data.default_joint_pos.clone()
+    
+    def compute(self) -> torch.Tensor:
+        dev = self.asset.data.joint_pos - self.default_joint_pos
+        return - dev.square().mean(1, True)
+
