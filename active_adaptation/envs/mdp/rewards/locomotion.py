@@ -4,6 +4,7 @@ import abc
 
 from omni.isaac.orbit.sensors import ContactSensor
 from omni.isaac.orbit.assets import Articulation
+from omni.isaac.orbit.utils.math import yaw_quat
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 
 
@@ -203,12 +204,14 @@ class linvel_exp(Reward):
         enabled: bool = True,
         body_names: str = None,
         sigma: float=0.25, 
-        dim: int=3
+        dim: int=3,
+        yaw_only: bool=False,
     ):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.sigma = sigma
         self.dim = dim
+        self.yaw_only = yaw_only
         if body_names is not None:
             self.body_ids, self.body_names = self.asset.find_bodies(body_names)
             self.body_masses = self.asset.root_physx_view.get_masses()[0, self.body_ids]
@@ -248,15 +251,37 @@ class linvel_exp(Reward):
             color=(0.8, 0.1, 0.8, 1.)
         )
 
+
+class linvel_yaw_exp(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf)):
+        super().__init__(env, weight, enabled, clip_range)
+        self.asset: Articulation = self.env.scene["robot"]
+    
+    def compute(self) -> torch.Tensor:
+        command_linvel_b = self.env.command_manager._command_linvel[:, :2]
+        linvel_yaw_b = quat_rotate_inverse(
+            yaw_quat(self.asset.data.root_quat_w),
+            self.asset.data.root_lin_vel_w
+        )
+        linvel_error = (command_linvel_b - linvel_yaw_b[:, :2]).square().sum(-1, True)
+        self.asset.data.linvel_exp = torch.exp(-linvel_error / 0.25)
+        return self.asset.data.linvel_exp
+
+
 class angvel_z_exp(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True):
+    def __init__(self, env, weight: float, enabled: bool = True, world_frame: bool=False):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
+        self.world_frame = world_frame
         self.target_angvel: torch.Tensor = self.env.command_manager.command_angvel
     
     def compute(self) -> torch.Tensor:
+        if self.world_frame:
+            angvel_z = self.asset.data.root_ang_vel_w[:, 2]
+        else:
+            angvel_z = self.asset.data.root_ang_vel_b[:, 2]
         angvel_error = (
-            (self.target_angvel - self.asset.data.root_ang_vel_b[:, 2])
+            (self.target_angvel - angvel_z)
             .square()
             .unsqueeze(1)
         )
