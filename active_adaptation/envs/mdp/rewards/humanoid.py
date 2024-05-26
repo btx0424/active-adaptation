@@ -95,7 +95,7 @@ class feet_orientation(Reward):
         )
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w, 
-            quat_rotate(self.asset.data.root_quat_w, self.head),
+            quat_rotate(self.asset.data.root_quat_w, self.heading_root),
             color=(1., 1., 0., 1.)
         )
 
