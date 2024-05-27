@@ -53,7 +53,7 @@ class feet_swing(Reward):
         # reward = torch.exp(- 2 * (feet_linvel - swing_vel).abs().sum(-1)).sum(1, True)
         reward = self.a * (normalize(swing_vel) * feet_linvel).sum(-1)
         reward = torch.where(reward>0, reward.log1p().clamp(max=self.a), reward).sum(1, True)
-        return reward.reshape(self.num_envs, 1) * (~self.command_manager.is_standing)
+        return reward.reshape(self.num_envs, 1) * (~self.command_manager.is_standing_env)
     
     def debug_draw(self):
         feet_pos = self.asset.data.body_pos_w[:, self.feet_id]
@@ -118,6 +118,7 @@ class feet_step(Reward):
         self.feet_id, feet_names = self.asset.find_bodies(feet_names)
         self.phase: torch.Tensor = self.asset.data.phase
         self.heading_root = torch.tensor([[1., 0., 0.]], device=self.device)
+        self.command_manager = self.env.command_manager
         print(f"Feet names: {feet_names}, be aware of the order!")
     
     def compute(self) -> torch.Tensor:
@@ -129,7 +130,7 @@ class feet_step(Reward):
         feet_displacement = dot(quat_rotate(quat_root, self.heading_root), feet_displacement)
         phase_cos = self.phase.cos()
         reward = phase_cos.sign().unsqueeze(1) * feet_displacement
-        return reward.reshape(self.num_envs, 1) * (~self.command_manager.is_standing)
+        return reward.reshape(self.num_envs, 1) * (~self.command_manager.is_standing_env)
 
     def debug_draw(self):
         quat_root = yaw_quat(self.asset.data.root_quat_w)
