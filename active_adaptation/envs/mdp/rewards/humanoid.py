@@ -53,7 +53,7 @@ class feet_swing(Reward):
         # reward = torch.exp(- 2 * (feet_linvel - swing_vel).abs().sum(-1)).sum(1, True)
         reward = self.a * (normalize(swing_vel) * feet_linvel).sum(-1)
         reward = torch.where(reward>0, reward.log1p().clamp(max=self.a), reward).sum(1, True)
-        return reward.reshape(self.num_envs, 1)
+        return reward.reshape(self.num_envs, 1) * (~self.command_manager.is_standing)
     
     def debug_draw(self):
         feet_pos = self.asset.data.body_pos_w[:, self.feet_id]
@@ -85,19 +85,19 @@ class feet_orientation(Reward):
         )
         return reward.mean(1)
 
-    def debug_draw(self):
-        feet_pos = self.asset.data.body_pos_w[:, self.feet_id]
-        quat_feet = yaw_quat(self.asset.data.body_quat_w[:, self.feet_id])
-        self.env.debug_draw.vector(
-            feet_pos.reshape(-1, 3),
-            quat_rotate(quat_feet, self.heading_feet).reshape(-1, 3),
-            color=(1., 1., 0., 1.)
-        )
-        self.env.debug_draw.vector(
-            self.asset.data.root_pos_w, 
-            quat_rotate(self.asset.data.root_quat_w, self.heading_root),
-            color=(1., 1., 0., 1.)
-        )
+    # def debug_draw(self):
+    #     feet_pos = self.asset.data.body_pos_w[:, self.feet_id]
+    #     quat_feet = yaw_quat(self.asset.data.body_quat_w[:, self.feet_id])
+    #     self.env.debug_draw.vector(
+    #         feet_pos.reshape(-1, 3),
+    #         quat_rotate(quat_feet, self.heading_feet).reshape(-1, 3),
+    #         color=(1., 1., 0., 1.)
+    #     )
+    #     self.env.debug_draw.vector(
+    #         self.asset.data.root_pos_w, 
+    #         quat_rotate(self.asset.data.root_quat_w, self.heading_root),
+    #         color=(1., 1., 0., 1.)
+    #     )
 
 
 class joint_pos_default(Reward):
@@ -110,3 +110,44 @@ class joint_pos_default(Reward):
         dev = self.asset.data.joint_pos - self.default_joint_pos
         return - dev.square().mean(1, True)
 
+
+class feet_step(Reward):
+    def __init__(self, env, feet_names, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.feet_id, feet_names = self.asset.find_bodies(feet_names)
+        self.phase: torch.Tensor = self.asset.data.phase
+        self.heading_root = torch.tensor([[1., 0., 0.]], device=self.device)
+        print(f"Feet names: {feet_names}, be aware of the order!")
+    
+    def compute(self) -> torch.Tensor:
+        quat_root = yaw_quat(self.asset.data.root_quat_w)
+        feet_displacement = (
+            - self.asset.data.body_pos_w[:, self.feet_id[0]]
+            + self.asset.data.body_pos_w[:, self.feet_id[1]]
+        )
+        feet_displacement = dot(quat_rotate(quat_root, self.heading_root), feet_displacement)
+        phase_cos = self.phase.cos()
+        reward = phase_cos.sign().unsqueeze(1) * feet_displacement
+        return reward.reshape(self.num_envs, 1) * (~self.command_manager.is_standing)
+
+    def debug_draw(self):
+        quat_root = yaw_quat(self.asset.data.root_quat_w)
+        feet_displacement = (
+            - self.asset.data.body_pos_w[:, self.feet_id[0]]
+            + self.asset.data.body_pos_w[:, self.feet_id[1]]
+        )
+        feet_displacement_projected = dot(quat_rotate(quat_root, self.heading_root), feet_displacement)
+        phase_cos = self.phase.cos()
+        reward = phase_cos.sign() * feet_displacement_projected.squeeze(1)
+        positive = reward > 0
+        self.env.debug_draw.vector(
+            self.asset.data.body_pos_w[positive][:, self.feet_id[0]],
+            feet_displacement[positive],
+            color=(0., 1., 0., 1.)
+        )
+        self.env.debug_draw.vector(
+            self.asset.data.body_pos_w[~positive][:, self.feet_id[0]],
+            feet_displacement[~positive],
+            color=(1., 0., 0., 1.)
+        )
