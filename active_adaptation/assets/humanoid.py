@@ -76,7 +76,7 @@ H1_CFG = ArticulationCfg(
 
 CY1_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ASSET_PATH}/cy1_v3.usd",
+        usd_path=f"{ASSET_PATH}/cy1_description.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -99,7 +99,13 @@ CY1_CFG = ArticulationCfg(
     ),
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 0.96),
-        joint_pos={".*": 0.0},
+        joint_pos={
+            "waist_yaw_joint": 0.0,
+            ".*arm_joint[1-5]": 0.0,
+            ".*leg_joint[1,2,3,5,6]": 0.0,
+            "lleg_joint4": -0.2,
+            "rleg_joint4": 0.2,
+        },
         joint_vel={".*": 0.0},
     ),
     soft_joint_pos_limit_factor=0.9,
@@ -131,16 +137,16 @@ CY1_CFG = ArticulationCfg(
                 "[l,r]leg_joint6": 50.,
             },
             damping={
-                "waist_yaw_joint": 6.,
-                "[l,r]arm_joint1": 6.,
+                "waist_yaw_joint": 3.,
+                "[l,r]arm_joint1": 3.,
                 "[l,r]arm_joint2": 3.,
                 "[l,r]arm_joint3": 0.5,
                 "[l,r]arm_joint4": 1.,
                 "[l,r]arm_joint5": 1.,
-                "[l,r]leg_joint1": 6.,
+                "[l,r]leg_joint1": 3., # 6.
                 "[l,r]leg_joint2": 3.,
                 "[l,r]leg_joint3": 3.,
-                "[l,r]leg_joint4": 6.,
+                "[l,r]leg_joint4": 3., # 6.
                 "[l,r]leg_joint5": 3.,
                 "[l,r]leg_joint6": 3.,
             },
