@@ -190,9 +190,10 @@ class projected_gravity_b(Observation):
 
 
 class root_linvel_b(Observation):
-    def __init__(self, env, body_names: str=None):
+    def __init__(self, env, body_names: str=None, yaw_only: bool=False):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
+        self.yaw_only = yaw_only
         if body_names is not None:
             self.body_ids, self.body_names = self.asset.find_bodies(body_names)
             self.body_masses = self.asset.root_physx_view.get_masses()[0, self.body_ids]
@@ -204,10 +205,21 @@ class root_linvel_b(Observation):
     
     def update(self):
         if self.body_ids is None:
-            linvel = self.asset.data.root_lin_vel_b
+            if self.yaw_only:
+                root_quat = yaw_quat(self.asset.data.root_quat_w)
+                linvel = quat_rotate_inverse(
+                    root_quat,
+                    self.asset.data.root_lin_vel_w
+                )
+            else:
+                linvel = self.asset.data.root_lin_vel_b
         else:
+            if self.yaw_only:
+                root_quat = yaw_quat(self.asset.data.root_quat_w)
+            else:
+                root_quat = self.asset.data.root_quat_w
             linvel = quat_rotate_inverse(
-                self.asset.data.root_quat_w,
+                root_quat,
                 (self.asset.data.body_lin_vel_w[:, self.body_ids] * self.body_masses).sum(1)
             )
         self.linvel[:] = linvel
@@ -723,21 +735,28 @@ class clock(Observation):
         return torch.cat([t.sin(), t.cos()], dim=1)
 
 class phase(Observation):
-    def __init__(self, env, cycle: float=1.2):
+    def __init__(self, env, cycle_range = (1.0, 1.2)):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
-        self.freq = torch.pi * 2 / cycle
+        self.cycle_range = cycle_range
+        self.offset_range= [torch.pi/3, 2 * torch.pi/3]
         self.asset.data.phase = torch.zeros(self.num_envs, device=self.device)
         self.phase: torch.Tensor = self.asset.data.phase
-        self.offset: torch.Tensor = torch.zeros(self.num_envs, device=self.device)
+        self.omega = torch.zeros(self.num_envs, device=self.device)
+        self.offset= torch.zeros(self.num_envs, device=self.device)
 
     def reset(self, env_ids: torch.Tensor):
-        offset = torch.full(env_ids.shape, torch.pi/3, device=self.device)
+        offset = torch.zeros(env_ids.shape, device=self.device)
+        offset.uniform_(*self.offset_range)
         offset[torch.rand_like(offset) > 0.5] += torch.pi
+        cycle = torch.zeros(env_ids.shape, device=self.device)
+        cycle.uniform_(*self.cycle_range)
+
         self.offset[env_ids] = offset
+        self.omega[env_ids] = torch.pi * 2 / cycle
 
     def update(self):
-        self.phase[:] = self.offset + self.env.episode_length_buf * self.freq * self.env.step_dt
+        self.phase[:] = self.offset + self.env.episode_length_buf * self.omega * self.env.step_dt
 
     def __call__(self) -> torch.Tensor:
         return torch.stack([self.phase.sin(), self.phase.cos()], 1)

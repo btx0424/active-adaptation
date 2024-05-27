@@ -129,7 +129,7 @@ class feet_step(Reward):
         )
         feet_displacement = dot(quat_rotate(quat_root, self.heading_root), feet_displacement)
         phase_cos = self.phase.cos()
-        reward = phase_cos.sign().unsqueeze(1) * feet_displacement
+        reward = (phase_cos.sign().unsqueeze(1) * feet_displacement).clamp(max=0.4)
         return reward.reshape(self.num_envs, 1) * (~self.command_manager.is_standing_env)
 
     def debug_draw(self):
