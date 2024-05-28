@@ -152,3 +152,43 @@ class feet_step(Reward):
             feet_displacement[~positive],
             color=(1., 0., 0., 1.)
         )
+
+
+class body_orientation(Reward):
+    def __init__(self, env, body_name, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_id, body_name = self.asset.find_bodies(body_name)
+        self.body_id = self.body_id[0]
+        self.x_vec = torch.tensor([1., 0., 0.], device=self.device)
+        self.y_vec = torch.tensor([0., -1., 0.], device=self.device)
+        self.body_heading_vec = torch.zeros(self.num_envs, 3, device=self.device)
+        self.root_heading_vec = torch.zeros(self.num_envs, 3, device=self.device)
+    
+    def update(self):
+        body_yaw_quat = yaw_quat(self.asset.data.body_quat_w[:, self.body_id])
+        root_yaw_quat = yaw_quat(self.asset.data.root_quat_w)
+        self.body_heading_vec[:] = quat_rotate(body_yaw_quat, self.y_vec)
+        self.root_heading_vec[:] = quat_rotate(root_yaw_quat, self.x_vec)
+    
+    def compute(self) -> torch.Tensor:
+        reward = dot(self.body_heading_vec, self.root_heading_vec)
+        return (reward.square() * reward.sign()).reshape(self.num_envs, 1)
+
+    # def debug_draw(self):
+    #     self.env.debug_draw.vector(
+    #         self.asset.data.body_pos_w[:, self.body_id],
+    #         self.body_heading_vec
+    #     )
+
+
+class arm_velocity(Reward):
+    def __init__(self, env, arm_names: str, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_ids, body_names = self.asset.find_bodies(arm_names)
+    
+    def compute(self) -> torch.Tensor:
+        arm_linvel = self.asset.data.body_lin_vel_w[:, self.body_ids]
+        return - arm_linvel.square().sum(-1).sum(1, True)
+

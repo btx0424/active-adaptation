@@ -49,7 +49,7 @@ reward:
   linvel_exp:         {weight: 1.5, enabled: true, dim: 3}
   linacc_z_l2:        {weight: 0.005, enabled: false}
   linvel_projection:  {weight: 1.0, enabled: true}
-  angvel_z_exp:       {weight: 1.0, enabled: true, world_frame: true}
+  angvel_z_exp:       {weight: 1.5, enabled: true, world_frame: true}
   angvel_z_exp_shaped: {weight: 1.0, enabled: false}
   linvel_z_l2:        {weight: 0.5, enabled: true}
   # angvel_xy_l2:       {weight: 0.05, enabled: true}
@@ -67,6 +67,8 @@ reward:
   feet_orientation:   {weight: 0.5, enabled: true, feet_names: .*leg_link6}
   feet_step:          {weight: 2.0, enabled: true, feet_names: .*leg_link6}
   joint_pos_default:  {weight: 0.25, enabled: true}
+  body_orientation:   {weight: 0.5, enabled: true, body_name: waist_yaw_link}
+  arm_velocity:       {weight: 0.25, enabled: true, arm_names: .*arm_link5}
 
 randomization:
   # push:     {body_names: ["pelvis", ".*shoulder_pitch_link"]}
