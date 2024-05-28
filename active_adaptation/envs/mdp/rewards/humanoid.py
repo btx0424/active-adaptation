@@ -83,7 +83,7 @@ class feet_orientation(Reward):
             quat_rotate(quat_feet, self.heading_feet), 
             quat_rotate(quat_root, self.heading_root)
         )
-        return reward.mean(1)
+        return (reward.square() * reward.sign()).mean(1)
 
     # def debug_draw(self):
     #     feet_pos = self.asset.data.body_pos_w[:, self.feet_id]
@@ -190,5 +190,7 @@ class arm_velocity(Reward):
     
     def compute(self) -> torch.Tensor:
         arm_linvel = self.asset.data.body_lin_vel_w[:, self.body_ids]
-        return - arm_linvel.square().sum(-1).sum(1, True)
+        root_linvel = self.asset.data.root_lin_vel_w
+        d = (arm_linvel - root_linvel.unsqueeze(1)).square().sum(-1)
+        return - d.sum(1, True)
 
