@@ -192,5 +192,5 @@ class arm_velocity(Reward):
         arm_linvel = self.asset.data.body_lin_vel_w[:, self.body_ids]
         root_linvel = self.asset.data.root_lin_vel_w
         d = (arm_linvel - root_linvel.unsqueeze(1)).square().sum(-1)
-        return - d.sum(1, True)
+        return - d.mean(1, True)
 

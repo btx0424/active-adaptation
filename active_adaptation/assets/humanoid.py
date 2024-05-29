@@ -93,8 +93,8 @@ CY1_CFG = ArticulationCfg(
             solver_velocity_iteration_count=2
         ),
         collision_props=sim_utils.CollisionPropertiesCfg(
-            contact_offset=0.002,
-            rest_offset=0.002,
+            contact_offset=0.02,
+            rest_offset=0.0,
         )
     ),
     init_state=ArticulationCfg.InitialStateCfg(
