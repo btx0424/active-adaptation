@@ -66,10 +66,11 @@ class PPOConfig:
     value_norm: bool = False
 
     aux_reward: float = 0.
-    aux_epochs: int = -1
+    aux_epochs: int = -1 # auxiliary epochs as described in Phasic Policy Gradients
 
     train_adapt: bool = True
     context_dim: int = 128
+    reg_alpha: float = 0. # regularziation as decribed in Deep Whole Body Control 
     adapt_module: str = "mse"
     ensemble: bool = False
     adapt_reward: bool = False
@@ -174,21 +175,6 @@ class GRUModuleEvidential(nn.Module):
         return mu, var.sqrt(), evi, hx.contiguous()
 
 
-class Marginalizer(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.f = nn.Sequential(make_mlp([64, 64], norm=None), nn.LayerNorm(64))
-        # self.f.requires_grad_(False)
-        self.f_marg = nn.Sequential(make_mlp([64, 64]), nn.LazyLinear(128))
-    
-    def forward(self, obs, state):
-        full_obs = torch.cat([obs, state], -1)
-        f = self.f(full_obs).detach()
-        loc, scale = self.f_marg(obs).chunk(2, -1)
-        nll = - D.Normal(loc, scale.exp()).log_prob(f).sum(-1, True)
-        return nll
-
-
 class PPOAdaptPolicy(TensorDictModuleBase):
     
     def __init__(
@@ -210,6 +196,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self.critic_loss_fn = nn.MSELoss(reduction="none")
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(self.cfg.gae_gamma, 0.95)
+        self.reg_alpha = 0.
+
         if not cfg.layer_norm:
             global make_mlp
             make_mlp = functools.partial(make_mlp, norm=None)
@@ -285,13 +273,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         
         self.adapt_module_a = make_adapt_module("stoch")
         self.adapt_module_a(fake_input)
-        if self.cfg.ensemble:
-            self.adapt_module_a = TensorDictSequential(
-                EnsembleModule(self.adapt_module_a, 4),
-                TensorDictModule(nn.Identity(), ["context_adapt"], ["_context_adapt"]),
-                TensorDictModule(lambda x: torch.mean(x, -2), ["_context_adapt"], ["context_adapt"]),
-                TensorDictModule(lambda x: torch.std(x, -2).mean(-1), ["_context_adapt"], ["context_adapt_std"]),
-            )
+
         self.adapt_module_b = make_adapt_module()
         self.adapt_module_b(fake_input)
         self.adapt_modules = {
@@ -410,6 +392,12 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self.adapt_module_ema.requires_grad_(False)
 
         self.log_alpha.data.zero_()
+
+    def step_schedule(self, progress: float):
+        # if isinstance(self.cfg.gae_gamma, (tuple, list)):
+        #     gamma = self.cfg.gae_gamma + progress * (self.cfg.gae_gamma)
+        #     self.gae.gamma.copy_(gamma)
+        self.reg_alpha = progress * self.cfg.reg_alpha
     
     def make_tensordict_primer(self):
         num_envs = self.observation_spec.shape[0]
@@ -444,15 +432,15 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             exclude_keys.append("critic_priv_input")
             exclude_keys.append("critic_adapt_input")
             
-            class _ActionKL(TensorDictModuleBase):
+            class _Eval(TensorDictModuleBase):
                 in_keys = ["context_expert", "context_adapt"]
                 out_keys = ["action_kl"]
                 def forward(_, tensordict: TensorDictBase):
-                    kl = self._action_kl(tensordict, self.adapt_module_ema, reduce=False)
-                    tensordict["action_kl"] = kl
+                    tensordict["action_kl"] = self._action_kl(tensordict, self.adapt_module_ema, False)
+                    tensordict["mse"] = self._feature_mse(tensordict, self.adapt_module_ema, False)
                     return tensordict
             
-            modules.append(_ActionKL())
+            modules.append(_Eval())
         
         policy = TensorDictSequential(*modules, ExcludeTransform(*exclude_keys))
         return policy
@@ -523,6 +511,9 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                     minibatch, self._critic_obs, "value_obs", "ret_obs").mean()
                 losses["value_loss/priv"] = self._value_loss(
                     minibatch, self._critic_priv, "value_priv", "ret_priv").mean()
+                if self.reg_alpha > 0.:
+                    reg_loss = F.mse_loss(minibatch["context_expert"], minibatch["context_adapt"])
+                    losses["adapt/reg_loss"] = self.cfg.reg_alpha * reg_loss
 
                 loss = sum(v for k, v in losses.items())
                 self.opt_expert.zero_grad(set_to_none=True)
@@ -753,12 +744,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         return value_loss
 
     def state_dict(self):
-        # state_dict = super().state_dict()
-        # if "vecnorm._extra_state" in state_dict:
-        #     state_dict["vecnorm._extra_state"]["lock"] = None # TODO: check with torchrl
-        # state_dict["num_frames"] = self.num_frames
-        # state_dict["phase"] = self.phase
-        # return state_dict
         state_dict = OrderedDict()
         for name, module in self.named_children():
             state_dict[name] = module.state_dict()
@@ -767,13 +752,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         return state_dict
     
     def load_state_dict(self, state_dict, strict=True):
-        # self.num_frames = state_dict.get("num_frames", 0)
-        # self.last_phase = state_dict.get("phase", None)
-        # if "vecnorm._extra_state" in state_dict:
-        #     vecnorm_td = state_dict["vecnorm._extra_state"]["td"]
-        #     state_dict["lock"] = None
-        #     state_dict["vecnorm._extra_state"]["td"] = vecnorm_td.to(self.device)
-        # return super().load_state_dict(state_dict, strict=strict)
         succeed_keys = []
         failed_keys = []
         for name, module in self.named_children():
