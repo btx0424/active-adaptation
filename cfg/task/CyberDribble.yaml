@@ -1,12 +1,13 @@
-name: Go2Flat
-task: Quadruped
+name: CyberFlat
+# task: Quadruped
+task: Dribble
 
 defaults:
   # see https://hydra.cc/docs/advanced/overriding_packages/
   - /task/Velocity@_here_
   - _self_
 
-robot: go2
+robot: cyberdog
 terrain: plane
 payload: false
 homogeneous: false
@@ -20,9 +21,9 @@ homogeneous: false
 
 command:
   _target_: active_adaptation.envs.mdp.Command2
-  linvel_x_range: [-1.0, 1.4]
+  linvel_x_range: [-0.8, 1.0]
   linvel_y_range: [-0.5, 0.5]
-  angvel_range: [-1.0, 1.0]
+  angvel_range: [-1.2, 1.2]
   yaw_stiffness_range: [0.5, 0.6]
   base_height_range: [0.25, 0.35]
   stand_prob: 0.05
@@ -34,13 +35,17 @@ command:
 
 observation:
   policy:
-    command:
+    ball_command: {}
+    # command:
     # root_quat_w:
-    root_angvel_b: {noise_std: 0.05}
+    root_angvel_b: {noise_std: 0.05, yaw_only: false}
     projected_gravity_b: {noise_std: 0.05}
     joint_pos:    {noise_std: 0.05}
     joint_vel:    {noise_std: 0.2}
-    prev_actions: {steps: 2}
+    prev_actions: {steps: 1}
+    ball_state_b: {}
+    # clock:        {frequencies: [1, 2, 4]}
+    # dummy: {load_path: /home/btx0424/isaac_ws/active-adaptation/scripts/checkpoints/obs.pt}
     # motor_params: {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     # body_materials: {body_names: .*foot, homogeneous: "${task.homogeneous}"}
     # root_linvel_b:
@@ -60,84 +65,64 @@ observation:
     applied_torques:  {actuator_name: base_legs}
     # motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     # body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-    # motor_failure:    {actuator_name: base_legs}
-    body_scale:       {}
+    # body_scale:       {}
     # body_mass:        {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # body_momentum:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # rewards:          {}
     contact_indicator: {body_names: [".*_foot"], timing: false}
-  # height_scan:
-  #   height_scan:      {prim_path: base}
-  # priv:
-  #   action_delay:     {}
-  #   root_linvel_b:
-  #   feet_pos_b:
-  #   feet_vel_b:
-  #   motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
-  #   body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-  #   body_scale:       {}
-  #   body_mass:      {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
-  # _:
-  #   feet_pos_b:       {}
 
 reward:
-  linvel_exp:         {weight: 1.0, enabled: true, dim: 3}
-  linvel_rational:    {weight: 0.5, enabled: true, dim: 3}
-  angvel_z_exp:       {weight: 0.5, enabled: false}
-  angvel_z_exp_shaped: {weight: 0.75, enabled: true}
+  ball_vel_exp:       {weight: 1.5, enabled: true}
+  ball_pos_exp:       {weight: 1.0, enabled: true}
+  # linvel_exp:         {weight: 1.0, enabled: true, dim: 3}
+  # linvel_rational:    {weight: 0.5, enabled: true, dim: 3}
+  # angvel_z_exp:       {weight: 0.5, enabled: false}
+  # angvel_z_exp_shaped: {weight: 0.75, enabled: true}
   linvel_projection:  {weight: 0.5, enabled: false}
-  # heading_yaw:        {weight: 0.5, enabled: true}
-  # linvel_and_height:  {weight: 2.0}
-  linacc_z_l2:        {weight: 0.005, enabled: false}
-  angvel_xy_l2:       {weight: 0.05, enabled: true, clip_range: [-1., 0.]}
+  linacc_z_l2:        {weight: 0.002, enabled: false}
+  # angvel_xy_l2:       {weight: 0.05, enabled: true, clip_range: [-1., 0.]}
   linvel_z_l2:        {weight: 2.0, enabled: true}
-  base_height_l1:     {weight: 1.0, enabled: true, target_height: 0.3}
+  base_height_l1:     {weight: 1.0, enabled: true, target_height: 0.27}
   energy_l1:          {weight: 0.0002, enabled: true}
-  joint_acc_l2:       {weight: 2.5e-7, enabled: true, clip_range: [-1., 0.]}
+  joint_acc_l2:       {weight: 1.0e-7, enabled: true, clip_range: [-1., 0.]}
   joint_torques_l2:   {weight: 2.0e-4, enabled: true, clip_range: [-1., 0.]}
-  quadruped_stand:    {weight: 0.5}
-  orientation:        {weight: 1.0, enabled: false}
+  # quadruped_stand:    {weight: 0.5}
+  orientation:        {weight: 1.0, enabled: true}
   survival:           {weight: 1.0, enabled: true}
   action_rate_l2:     {weight: 0.01, enabled: true}
-  action_rate2_l2:    {weight: 0.005, enabled: true}
+  action_rate2_l2:    {weight: 0.001, enabled: true}
   # impact_force_l2:    {weight: 1.0, enabled: false, body_names: .*_foot}
-  feet_air_time:      {weight: 0.5, enabled: true, body_names: .*_foot, thres: 0.5}
+  feet_air_time:      {weight: 1.0, enabled: true, body_names: .*_foot, thres: 0.4}
   feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
-  undesired_contact:  {body_names: [.*_calf], weight: 0.25, enabled: true}
-  step_up:            {weight: 4.0, enabled: true}
+  undesired_contact:  {body_names: [.*_calf], weight: 0.25, enabled: false}
 
 termination:
-  crash: {body_names_expr: [Head.*, "base", ".*_hip"]}
-  # joint_acc_exceeds: {thres: 5000}
-  # cum_error: {thres: 0.85}
+  crash: {body_names_expr: ["base", ".*_hip"]}
+  ball_too_far: {thres: 2.}
 
 randomization:
-  random_scale: [1.0, 1.2]
+  random_scale: [1.0, 1.1]
   perturb_body_mass:
-    (?!(payload|base|Head.*)).*: [0.8, 1.2]
-    base: [0.8, 1.2]
-    Head.*: [25.0, 250.0]
+    (?!(payload|base|Head.*)).*: [0.9, 1.1]
+    base: [0.9, 1.1]
   perturb_body_materials:
     body_names: ".*_foot"
-    static_friction_range:  [0.6, 2.0]
-    dynamic_friction_range: [0.6, 2.0]
+    static_friction_range:  [0.8, 2.0]
+    dynamic_friction_range: [0.8, 2.0]
     restitution_range:      [0.0, 0.2]
     homogeneous: true # ${task.homogeneous}
   motor_params:
     actuator_name: base_legs
-    stiffness_range:  [0.8, 1.2]
-    damping_range:    [0.8, 1.2]
+    stiffness_range:  [0.9, 1.1]
+    damping_range:    [0.9, 1.1]
     homogeneous: ${task.homogeneous}
-  # random_motor_failure:
-  #   actuator_name: base_legs
-  #   joint_names: .*_calf_joint
-  #   failure_prob: 0.0
-  reset_joint_states_scale:
-    pos_scales:
-      .*: [0.8, 1.2]
+  reset_joint_states_uniform:
+    pos_ranges:
+      .*: [-0.1, 0.1]
+    rel: true
   # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
-  # stumble: {body_names: .*_foot}
+  # stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.2, 0.3]}
 
 # reward: # orbit
 #   linvel_projection: 0.5

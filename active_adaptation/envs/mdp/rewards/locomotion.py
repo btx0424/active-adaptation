@@ -76,7 +76,7 @@ def energy_l2(self):
 def joint_acc_l2(self):
     asset: Articulation = self.scene["robot"]
     r = - asset.data.joint_acc.square().sum(dim=-1, keepdim=True)
-    return 0.5 * r + 0.5 * asset.data.linvel_exp
+    return r * (0.5 + 0.5 * asset.data.linvel_exp)
 
 
 @reward_func
@@ -98,7 +98,8 @@ def linvel_z_l2(self):
 def angvel_xy_l2(self):
     asset: Articulation = self.scene["robot"]
     r = - asset.data.root_ang_vel_b[:, :2].square().sum(-1, True)
-    return 0.5 * r + 0.5 * asset.data.linvel_exp
+    return r * (0.5 + 0.5 * asset.data.linvel_exp)
+
 
 @reward_func
 def heading_yaw(self):

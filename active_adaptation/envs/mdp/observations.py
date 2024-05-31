@@ -762,6 +762,15 @@ class phase(Observation):
         return torch.stack([self.phase.sin(), self.phase.cos()], 1)
         
     
+class dummy(Observation):
+    def __init__(self, env, load_path: str):
+        super().__init__(env)
+        self.obs: torch.Tensor = torch.load(load_path).to(self.device)
+    
+    def __call__(self) -> torch.Tensor:
+        return self.obs.expand(self.num_envs, -1)
+
+
 def symlog(x: torch.Tensor, a: float=1.):
     return x.sign() * torch.log(x.abs() * a + 1.) / a
 
