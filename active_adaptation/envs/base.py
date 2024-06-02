@@ -125,11 +125,10 @@ class Env(EnvBase):
             self._debug_draw_callbacks.append(rand.debug_draw)
             self._step_callbacks.append(rand.step)
 
-        self.mask_groups = []
+        self.mask_probs = {}
         for group, funcs in self.cfg.observation.items():
-            mask = funcs.pop("_mask_", False)
-            if mask:
-                self.mask_groups.append(group)
+            mask_prob = funcs.pop("_mask_", 0)
+            self.mask_probs[group] = mask_prob
             self.observation_funcs[group] = OrderedDict()
             for key, params in funcs.items():
                 obs = OBS_FUNCS[key](self, **(params if params is not None else {}))
@@ -180,7 +179,7 @@ class Env(EnvBase):
             split = [tensor.shape[-1] for tensor in tensors]
             tensor = torch.cat(tensors, -1)
             observation_spec[group] = UnboundedContinuousTensorSpec(tensor.shape, device=self.device)
-            if group in self.mask_groups:
+            if self.mask_probs[group] > 0:
                 observation_spec[group + "_mask"] = BinaryDiscreteTensorSpec(tensor.shape[-1], tensor.shape, device=self.device, dtype=bool)
                 self.observation_masks[group] = torch.zeros_like(tensor, dtype=bool)
                 self.observation_split[group] = split
@@ -220,10 +219,10 @@ class Env(EnvBase):
         self._reward_buf[env_ids] = 0.
         for callback in self._reset_callbacks:
             callback(env_ids)
-        for group in self.mask_groups:
-            # with p=0.5 mask ONE of the observations in `group`
+        for group, mask_prob in self.mask_probs.items():
+            if not mask_prob > 0: continue
             self.observation_masks[group][env_ids] = torch.where(
-                (torch.rand(env_ids.shape, device=self.device) < 0.5).unsqueeze(1),
+                (torch.rand(env_ids.shape, device=self.device) < mask_prob).unsqueeze(1),
                 torch.zeros_like(self.observation_masks[group][env_ids]),
                 generate_mask(len(env_ids), self.observation_split[group], self.device)
             )
@@ -249,8 +248,8 @@ class Env(EnvBase):
         observation = TensorDict({}, [self.num_envs])
         for group, funcs in self.observation_funcs.items():
             observation[group] = torch.cat([func() for func in funcs.values()], dim=-1)
-        for group in self.mask_groups:
-            observation[group + "_mask"] = self.observation_masks[group]
+        for group, mask in self.observation_masks.items():
+            observation[group + "_mask"] = mask
         return observation
     
     def _compute_reward(self) -> TensorDictBase:
