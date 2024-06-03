@@ -42,14 +42,14 @@ def main(cfg):
 
     env, policy, vecnorm = make_env_policy(cfg)
 
-    try:
-        time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
-        path = os.path.join(os.path.dirname(__file__), f"policy-{time_str}.pt")
-        _policy = policy.get_rollout_policy("eval").cpu()
-        torch.save(_policy, path)
-        logging.info(F"Export policy to {path}")
-    except Exception as e:
-        print(e)
+    # try:
+    #     time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
+    #     path = os.path.join(os.path.dirname(__file__), f"policy-{time_str}.pt")
+    #     _policy = policy.get_rollout_policy("eval").cpu()
+    #     torch.save(_policy, path)
+    #     logging.info(F"Export policy to {path}")
+    # except Exception as e:
+    #     print(e)
     
     if hasattr(policy, "make_tensordict_primer"):
         env = TransformedEnv(env, policy.make_tensordict_primer())

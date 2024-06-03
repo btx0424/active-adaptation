@@ -420,6 +420,12 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         adapt_module = self.adapt_module_ema
         modules.append(adapt_module)
 
+        ## robustness evaluation
+        # def _noise_(x: torch.Tensor):
+        #     return x + torch.randn_like(x)
+        # modules.append(TensorDictModule(_noise_, ["context_expert"], ["context_expert"]))
+        # modules.append(TensorDictModule(_noise_, ["context_adapt"], ["context_adapt"]))
+
         if self.phase == "train":
             modules.append(self._actor_expert)
         elif self.phase == "adapt" or self.phase == "finetune":
