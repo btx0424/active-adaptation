@@ -182,6 +182,39 @@ class body_orientation(Reward):
     #     )
 
 
+class arm_swing(Reward):
+    def __init__(self, env, arm_names: str, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_ids, body_names = self.asset.find_bodies(arm_names)
+        self.phase: torch.Tensor = self.asset.data.phase
+        self.command_manager = self.env.command_manager
+
+        self.arm_vel_buf = torch.zeros(self.num_envs, 2, 3, 4, device=self.device)
+    
+    def update(self):
+        self.arm_vel_buf[..., 1:] = self.arm_vel_buf[..., :-1]
+        self.arm_vel_buf[..., 0] = self.asset.data.body_lin_vel_w[:, self.body_ids]
+
+    def reset(self, env_ids):
+        self.arm_vel_buf[env_ids] = 0.
+    
+    def compute(self) -> torch.Tensor:
+        arm_linvel = self.arm_vel_buf.mean(-1)
+        phase_sin = self.phase.sin()
+        swing_vel = torch.zeros_like(arm_linvel)
+        swing_vel[:] = self.command_manager._command_linvel.unsqueeze(1)
+        phase_sin = self.phase.sin()
+        swing_vel[:, 0] *= (phase_sin < +0.15).float().unsqueeze(1)
+        swing_vel[:, 1] *= (phase_sin > -0.15).float().unsqueeze(1)
+        swing_vel = quat_rotate(yaw_quat(self.asset.data.root_quat_w).unsqueeze(1), swing_vel)
+        
+        reward = (normalize(swing_vel) * arm_linvel).sum(-1)
+        reward = reward.clamp(max=self.command_manager._command_speed).sum(1, True)
+        # reward = torch.where(reward>0, reward.log1p().clamp(max=1.0), reward).sum(1, True)
+        return reward.reshape(self.num_envs, 1) * (~self.command_manager.is_standing_env)
+
+
 class arm_velocity(Reward):
     def __init__(self, env, arm_names: str, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
