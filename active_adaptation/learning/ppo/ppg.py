@@ -217,7 +217,9 @@ class PPGPolicy(TensorDictModuleBase):
         infos = {}
 
         self._compute_advantage(tensordict)
-
+        with torch.no_grad():
+            tensordict["sample_log_prob"] = self._compute_logprobs(tensordict)
+        
         infos_policy = []
         for epoch in range(self.cfg.ppo_epochs):
             for minibatch in make_batch(tensordict, self.cfg.num_minibatches):
@@ -238,6 +240,14 @@ class PPGPolicy(TensorDictModuleBase):
         infos["value_mean"] = self.value_norm.denormalize(tensordict["ret"]).mean().item()
         self.train_iter += 1
         return infos
+
+    def _compute_logprobs(self, tensordict: TensorDictBase, k: int=4):
+        actor_input = tensordict.select(OBS_KEY, OBS_PRIV_KEY).unsqueeze(0).expand(k, *tensordict.shape)
+        dist = self.actor.get_dist(self.encoder(actor_input))
+        action = tensordict[ACTION_KEY]
+        log_prob = dist.log_prob(action.expand(k, *action.shape))
+        log_prob = torch.logsumexp(log_prob, 0) - torch.log(torch.tensor(k, device=self.device))
+        return log_prob
 
     @torch.no_grad()
     def _compute_advantage(self, tensordict: TensorDict, subtract_mean: bool=True):
@@ -265,10 +275,8 @@ class PPGPolicy(TensorDictModuleBase):
     
     # @functools.partial(torch.compile, mode="reduce-overhead")
     def _update(self, tensordict: TensorDictBase):
-        self.encoder(tensordict)
-        dist = self.actor.get_dist(tensordict)
-        log_probs = dist.log_prob(tensordict[ACTION_KEY])
-        entropy = dist.entropy().mean()
+        log_probs = self._compute_logprobs(tensordict)
+        entropy = - log_probs.mean()
 
         adv = tensordict["adv"]
         ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
