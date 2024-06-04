@@ -65,7 +65,10 @@ def make_env_policy(cfg):
     env_cfg = LocomotionEnvCfg(cfg.task)
 
     base_env = TASKS[cfg.task.task](env_cfg)
-    obs_keys = [key for key, spec in base_env.observation_spec.items(True, True) if not spec.dtype == bool]
+    obs_keys = [
+        key for key, spec in base_env.observation_spec.items(True, True) 
+        if not (spec.dtype == bool or key.endswith("_"))
+    ]
     transform = Compose(InitTracker())
 
     assert cfg.vecnorm in ("train", "eval", None)

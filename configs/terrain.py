@@ -86,7 +86,7 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
     use_cache=False,
     sub_terrains={
         "flat": MeshPlaneTerrainCfg(
-            proportion=0.15,
+            proportion=0.10,
         ),
         "random_rough_easy": HfRandomUniformTerrainCfg(
             proportion=0.2,
@@ -100,21 +100,21 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
         #     grid_height_range=(0.02, 0.05), 
         #     platform_width=2.0
         # ),
-        "boxes": HfRandomGridTerrainCfg(
-            proportion=0.20, 
-            grid_width=0.45, 
-            grid_height_range=(0.0, 0.05), 
-            slope_threshold=0.1,
-            border_width=0.5
-        ),
-        # "box": MeshRepeatedBoxesTerrainCfg(
-        #     proportion=0.20,
-        #     object_params_start=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
-        #         num_objects=36, height=0.1, size=(0.5, 0.5), max_yx_angle=15),
-        #     object_params_end=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
-        #         num_objects=36, height=0.1, size=(0.5, 0.5), max_yx_angle=15),
-        #     platform_width=2.0
+        # "boxes": HfRandomGridTerrainCfg(
+        #     proportion=0.20, 
+        #     grid_width=0.45, 
+        #     grid_height_range=(0.0, 0.05), 
+        #     slope_threshold=0.1,
+        #     border_width=0.5
         # ),
+        "box": MeshRepeatedBoxesTerrainCfg(
+            proportion=0.20,
+            object_params_start=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
+                num_objects=36, height=0.15, size=(0.6, 0.6), max_yx_angle=15),
+            object_params_end=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
+                num_objects=36, height=0.15, size=(0.6, 0.6), max_yx_angle=15),
+            platform_width=2.0
+        ),
         "pyramid_stairs": MeshPyramidStairsTerrainCfg(
             proportion=0.10,
             step_height_range=(0.05, 0.15),
@@ -124,7 +124,7 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
             holes=False,
         ),
         "pyramid_stairs_inv": MeshInvertedPyramidStairsTerrainCfg(
-            proportion=0.10,
+            proportion=0.15,
             step_height_range=(0.05, 0.15),
             step_width=0.35,
             platform_width=3.5,
