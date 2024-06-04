@@ -51,8 +51,10 @@ class feet_swing(Reward):
         swing_vel[:, 1] *= (phase_sin < -0.15).float().unsqueeze(1)
         swing_vel = quat_rotate(yaw_quat(self.asset.data.root_quat_w).unsqueeze(1), swing_vel)
         # reward = torch.exp(- 2 * (feet_linvel - swing_vel).abs().sum(-1)).sum(1, True)
-        reward = self.a * (normalize(swing_vel) * feet_linvel).sum(-1)
-        reward = torch.where(reward>0, reward.log1p().clamp(max=self.a), reward).sum(1, True)
+
+        max_speed = self.command_manager._command_speed.unsqueeze(1)
+        reward = dot(normalize(swing_vel), feet_linvel).clamp_max(max_speed)
+        reward = torch.where(reward>0, reward.sqrt(), reward).sum(1, True)
         return reward.reshape(self.num_envs, 1) * (~self.command_manager.is_standing_env)
     
     def debug_draw(self):
