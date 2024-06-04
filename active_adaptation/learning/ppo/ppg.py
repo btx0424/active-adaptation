@@ -140,7 +140,7 @@ class PPGPolicy(TensorDictModuleBase):
         def make_actor(context_key):
             actor = TensorDictSequential(
                 CatTensors([OBS_KEY, context_key], "_actor_in", del_keys=False),
-                TensorDictModule(make_mlp([256, 256]), ["_actor_in"], ["_feature_actor"]),
+                TensorDictModule(make_mlp([256, 256, 256]), ["_actor_in"], ["_feature_actor"]),
                 TensorDictModule(Actor(self.action_dim), ["_feature_actor"], ["loc", "scale"]),
                 TensorDictModule(nn.LazyLinear(self.aux_target_dim), ["_feature_actor"], ["actor_aux"]),
             )
@@ -158,10 +158,11 @@ class PPGPolicy(TensorDictModuleBase):
             CatTensors([OBS_KEY, OBS_PRIV_KEY], "_critic_in", del_keys=False),
             TensorDictModule(
                 nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1)), 
-                ["_critic_in"], ["context_expert"]
+                ["_critic_in"], ["state_value"]
             ),
         ).to(self.device)
 
+        self.encoder(fake_input)
         self.actor(fake_input)
         self.critic(fake_input)
 
@@ -182,6 +183,7 @@ class PPGPolicy(TensorDictModuleBase):
             lr=self.cfg.lr
         )
 
+        self.encoder.apply(init_)
         self.actor.apply(init_)
         self.critic.apply(init_)
         
@@ -189,7 +191,8 @@ class PPGPolicy(TensorDictModuleBase):
 
     def get_rollout_policy(self, mode: str):
         policy = TensorDictSequential(
-            self.actor
+            self.encoder,
+            self.actor,
         )
         return policy
     
@@ -208,8 +211,7 @@ class PPGPolicy(TensorDictModuleBase):
         if self.cfg.aux_epochs > 0 and self.train_iter % 8 == 0:
             infos_aux = []
             with torch.no_grad():
-                self.actor.get_dist_params(tensordict)
-                self.actor(tensordict["next"])
+                self.actor.get_dist_params(self.encoder(tensordict))
             for epoch in range(self.cfg.aux_epochs):
                 for minibatch in make_batch(tensordict, self.cfg.num_minibatches):
                     infos_aux.append(self._update_aux(minibatch))
@@ -246,6 +248,7 @@ class PPGPolicy(TensorDictModuleBase):
     
     # @functools.partial(torch.compile, mode="reduce-overhead")
     def _update(self, tensordict: TensorDictBase):
+        self.encoder(tensordict)
         dist = self.actor.get_dist(tensordict)
         log_probs = dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy().mean()
@@ -280,7 +283,7 @@ class PPGPolicy(TensorDictModuleBase):
     def _update_aux(self, tensordict: TensorDictBase):
         losses = {}
         dist_old = self.actor.build_dist_from_params(tensordict)
-        dist_new = self.actor.get_dist(tensordict)
+        dist_new = self.actor.get_dist(self.encoder(tensordict))
         
         actor_aux = tensordict["actor_aux"]
         actor_aux_target = tensordict["aux_target_"]
