@@ -33,6 +33,7 @@ class PPGConfig:
     value_norm: bool = False
     
     short_history: int = 5
+    kl_prior: bool = True
 
     num_minibatches: int = 16
     lr: float = 5e-4
@@ -98,6 +99,16 @@ class GRUModule(nn.Module):
         x = self.out(torch.cat([obs_feature, rnn_feature], -1))
         return x, hx.contiguous()
 
+class NormalParams(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.linear = nn.LazyLinear(dim * 2)
+    
+    def forward(self, x):
+        loc, scale = self.linear(x).chunk(2, -1)
+        scale = scale.exp()
+        sample = loc + torch.randn_like(loc) * scale
+        return sample, loc, scale
 
 class PPGPolicy(TensorDictModuleBase):
 
@@ -131,10 +142,16 @@ class PPGPolicy(TensorDictModuleBase):
         fake_input = observation_spec.zero()
         print(fake_input)
 
+        # self.encoder = TensorDictModule(
+        #     nn.Sequential(make_mlp([128]), nn.LazyLinear(128)),
+        #     [OBS_PRIV_KEY],
+        #     ["context_expert"]
+        # ).to(self.device)
+
         self.encoder = TensorDictModule(
-            nn.Sequential(make_mlp([128]), nn.LazyLinear(128)),
+            nn.Sequential(make_mlp([128]), NormalParams(128)),
             [OBS_PRIV_KEY],
-            ["context_expert"]
+            ["context_expert", "_context_loc", "_context_scale"]
         ).to(self.device)
         
         def make_actor(context_key):
@@ -157,7 +174,7 @@ class PPGPolicy(TensorDictModuleBase):
         self.critic = TensorDictSequential(
             CatTensors([OBS_KEY, OBS_PRIV_KEY], "_critic_in", del_keys=False),
             TensorDictModule(
-                nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1)), 
+                nn.Sequential(make_mlp([256, 256, 256]), nn.LazyLinear(1)), 
                 ["_critic_in"], ["state_value"]
             ),
         ).to(self.device)
@@ -290,6 +307,13 @@ class PPGPolicy(TensorDictModuleBase):
 
         losses["aux/actor_loss"] = F.mse_loss(actor_aux, actor_aux_target)
         losses["aux/kl"] = self.cfg.beta_clone * D.kl_divergence(dist_old, dist_new).mean()
+        
+        context_loc, context_scale = tensordict["_context_loc"], tensordict["_context_scale"]
+        kl_prior = 0.2 * D.kl_divergence(
+            D.Normal(context_loc, context_scale),
+            D.Normal(torch.zeros_like(context_loc), torch.ones_like(context_loc))
+        ).sum(-1).mean()
+        losses["aux/prior"] = kl_prior if self.cfg.kl_prior else kl_prior.detach()
 
         loss =  sum(losses.values())
         self.opt_aux.zero_grad()
