@@ -10,22 +10,23 @@ from omni_drones.utils.torchrl import SyncDataCollector
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from torchrl.envs.transforms import (
-    TransformedEnv, Compose, InitTracker
+    TransformedEnv, Compose, InitTracker, VecNorm
 )
 from active_adaptation.learning import ALGOS
 
 import wandb
 import logging
 from tqdm import tqdm
-from helpers import EpisodeStats, Every
+from scripts.helpers import EpisodeStats, Every, make_env_policy
 
 import os
-import time
 import datetime
+import termcolor
 
 @hydra.main(config_path="../cfg", config_name="eval", version_base=None)
 def main(cfg):
     OmegaConf.resolve(cfg)
+    OmegaConf.set_struct(cfg, False)
 
     # load cheaper kit config in headless
     if cfg.headless:
@@ -35,50 +36,26 @@ def main(cfg):
     
     app_launcher = AppLauncher(
         {"headless": cfg.headless, "offscreen_render": True},
-        # experience=app_experience
+        experience=app_experience
     )
     simulation_app = app_launcher.app
 
-    from active_adaptation.envs import TASKS
-    from configs.rough import LocomotionEnvCfg
+    env, policy, vecnorm = make_env_policy(cfg)
 
-    # setup environment
-    env_cfg = LocomotionEnvCfg(cfg.task)
-    env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21
-    env_cfg.sim.physx.gpu_max_rigid_patch_count = 2**21
-    env_cfg.sim.physx.gpu_found_lost_pairs_capacity = 2**20
-    env_cfg.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**22
-    env_cfg.sim.physx.gpu_total_aggregate_pairs_capacity = 2**19
-    env_cfg.sim.physx.gpu_collision_stack_size = 2**24
-    env_cfg.sim.physx.gpu_heap_capacity = 2**24
-
-    env_cfg.history_length = cfg.task.history_length
-
-    base_env = TASKS[cfg.task.task](env_cfg)
-    transform = Compose(
-        InitTracker(),
-    )
-    env = TransformedEnv(base_env, transform)
-    env.set_seed(0)
-
-    # setup policy
-    policy = ALGOS[cfg.algo.name](
-        cfg.algo,
-        env.observation_spec, 
-        env.action_spec, 
-        env.reward_spec, 
-        device=base_env.device
-    )
-
-    # path = os.path.join(os.path.dirname(__file__), "policy.pt")
-    # torch.save(policy.cpu(), path)
-    # logging.info(F"Export policy to {path}")
-
+    # try:
+    #     time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
+    #     path = os.path.join(os.path.dirname(__file__), f"policy-{time_str}.pt")
+    #     _policy = policy.get_rollout_policy("eval").cpu()
+    #     torch.save(_policy, path)
+    #     logging.info(F"Export policy to {path}")
+    # except Exception as e:
+    #     print(e)
+    
     if hasattr(policy, "make_tensordict_primer"):
-        transform.append(policy.make_tensordict_primer())
+        env = TransformedEnv(env, policy.make_tensordict_primer())
 
     stats_keys = [
-        k for k in env.observation_spec.keys(True, True) 
+        k for k in env.reward_spec.keys(True, True) 
         if isinstance(k, tuple) and k[0]=="stats"
     ]
     episode_stats = EpisodeStats(stats_keys)
@@ -88,31 +65,25 @@ def main(cfg):
         seed: int=0, 
         exploration_type: ExplorationType=ExplorationType.MODE,
         render=False,
-        mode=None,
     ):
         frames = []
 
-        base_env.eval()
         env.eval()
         env.set_seed(seed)
-        policy.eval()
-
-        if mode is not None and hasattr(policy, "mode"):
-            policy.mode = mode
 
         from tqdm import tqdm
-        t = tqdm(total=base_env.max_episode_length)
+        t = tqdm(total=env.max_episode_length, miniters=50)
         def record_frame(*args, **kwargs):
             if render:
-                frame = base_env.render(mode="rgb_array")
+                frame = env.render(mode="rgb_array")
                 frames.append(frame)
-            t.update(2)
+            t.update(1)
         
         with set_exploration_type(exploration_type):
             trajs = env.rollout(
-                max_steps=base_env.max_episode_length,
-                policy=policy,
-                callback=Every(record_frame, 2),
+                max_steps=env.max_episode_length,
+                policy=policy.get_rollout_policy(mode="eval").to(env.device),
+                callback=record_frame,
                 auto_reset=True,
                 break_when_any_done=False,
                 return_contiguous=False,
@@ -130,71 +101,57 @@ def main(cfg):
             k: take_first_episode(v)
             for k, v in trajs[("next", "stats")].cpu().items()
         }
-        if "adaptation_loss" in trajs.keys():
-            adaptation_loss = einops.rearrange(trajs["adaptation_loss"], "n t 1-> n 1 t")
-            kernel = torch.linspace(0, 1, 15).reshape(1, 1, -1)
-            kernel = kernel / kernel.sum()
-            adaptation_loss = torch.conv1d(adaptation_loss, kernel, padding=kernel.shape[-1]//2)
-            adaptation_loss = take_first_episode(adaptation_loss.squeeze())
-        else:
-            adaptation_loss = torch.zeros_like(traj_stats["episode_len"])
         
-        info = {
-            "eval/stats." + k: torch.mean(v.float()).item() 
-            for k, v in traj_stats.items()
-        }
+        info = {}
+        compute_std_for = ["return", "survival"]
+        for k, v in traj_stats.items():
+            info["eval/stats." + k] = torch.mean(v.float()).item()
+            if k in compute_std_for:
+                info["eval/stats." + k + "_std"] = torch.std(v.float()).item()
 
         # log video
         if len(frames):
-            video_array = einops.rearrange(np.stack(frames), "t h w c -> t c h w")
+            from torchvision.io import write_video
+            time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
+            video_array = np.stack(frames)
             frames.clear()
-            info["recording"] = wandb.Video(
-                video_array, 
-                fps=0.5 / (cfg.sim.dt * cfg.sim.substeps), 
-                format="mp4"
+            write_video(
+                os.path.join(os.path.dirname(__file__), f"recording-{time_str}.mp4"),
+                video_array,
+                fps=1 / env.step_dt
             )
-        
-        import matplotlib.pyplot as plt
-
-        fig, axes = plt.subplots(1, 2, figsize=(8, 8))
-        axes[0].hist(traj_stats["return"])
-        axes[1].hist(traj_stats["episode_len"])
-        fig.tight_layout()
-        path = os.path.join(os.path.dirname(__file__), "hist.png")
-        fig.savefig(path)
-
-        fig, axes = plt.subplots(
-            2, 2, figsize=(8, 8), sharex=True,
-            gridspec_kw={"height_ratios": [1, 4], "width_ratios": [4, 1]}
-        )
-        axes[0, 0].hist(traj_stats["return"])
-        axes[1, 0].scatter(traj_stats["return"], adaptation_loss)
-        axes[1, 0].set_xlabel("return")
-        axes[1, 0].set_ylabel("adaptation_loss")
-        axes[1, 1].hist(adaptation_loss, orientation="horizontal")
-        fig.tight_layout()
-        path = os.path.join(os.path.dirname(__file__), "scatter.png")
-        fig.savefig(path)
 
         time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
-        torch.save(
-            trajs.exclude("context_expert", "context_adapt", "context_adapt_hx", "height_scan"),
-            os.path.join(os.path.dirname(__file__), f"trajs-{time_str}.pt")
+        path = os.path.join(os.path.dirname(__file__), f"trajs-{time_str}.pt")
+        trajs = trajs.select(
+            ("next", "done"), 
+            ("next", "stats", "return"), 
+            "value_obs",
+            "value_priv",
+            "value_adapt",
+            "context_expert",
+            "context_adapt",
+            "context_adapt_std",
+            "action_kl",
+            strict=False
         )
-
-        info["eval/success"] = (traj_stats["episode_len"] > base_env.max_episode_length * 0.9).float().mean().item()
+        print(termcolor.colored(trajs, "light_yellow"))
+        torch.save(trajs, path)
         return info
     
-    info = evaluate(render=False, seed=cfg.seed)
+    info = evaluate(render=cfg.eval_render, seed=cfg.seed)
     info = {k: v for k, v in info.items() if isinstance(v, float)}
+    info["task"] = cfg.task.name
+    info["algo"] = cfg.algo.name
+    info["checkpoint_path"] = cfg.checkpoint_path
     print(OmegaConf.to_yaml(info))
     
     time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
-    path = os.path.join(os.path.dirname(__file__), f"eval/{time_str}.yaml")
+    path = os.path.join(os.path.dirname(__file__), f"eval/{cfg.task.name}-{time_str}.yaml")
     with open(path, "w") as f:
         OmegaConf.save(info, f)
-    
-    base_env.close()
+    exit(0)
+    env.close()
     simulation_app.close()
 
 

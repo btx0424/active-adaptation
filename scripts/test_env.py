@@ -1,36 +1,35 @@
 import torch
+import warp
 import hydra
 import numpy as np
 import einops
-from omegaconf import OmegaConf
-
-from omni.isaac.orbit.app import AppLauncher
-from omni_drones.utils.wandb import init_wandb
-from omni_drones.utils.torchrl import SyncDataCollector
-
-from torchrl.envs.utils import set_exploration_type, ExplorationType
-from torchrl.envs.transforms import (
-    TransformedEnv, 
-    Compose, 
-    InitTracker,
-    RewardSum,
-    CatFrames,
-    VecNorm
-)
-from active_adaptation.learning import ALGOS, PPODualPolicy
-from helpers import EpisodeStats, Every
-
 import wandb
 import logging
-from tqdm import tqdm
-
 import os
 import time
 
+from omegaconf import OmegaConf
+from collections import OrderedDict
+from tqdm import tqdm
+
+from torchrl.envs.utils import set_exploration_type, ExplorationType
+
+from omni.isaac.orbit.app import AppLauncher
+from omni_drones.utils.wandb import init_wandb
+from active_adaptation.utils.torchrl import SyncDataCollector
+
+# local import
+from scripts.helpers import make_env_policy, EpisodeStats, Every
+
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+torch.backends.cudnn.deterministic = False
+torch.backends.cudnn.benchmark = False
 
 @hydra.main(config_path="../cfg", config_name="train")
 def main(cfg):
     OmegaConf.resolve(cfg)
+    OmegaConf.set_struct(cfg, False)
     
     # load cheaper kit config in headless
     if cfg.headless:
@@ -45,35 +44,16 @@ def main(cfg):
     )
     simulation_app = app_launcher.app
 
-    from active_adaptation.envs import TASKS
-    from configs.rough import LocomotionEnvCfg
-
     run = init_wandb(cfg)
 
-    # setup environment
-    env_cfg = LocomotionEnvCfg(cfg.task)
-    
-    base_env = TASKS[cfg.task.task](env_cfg)
-    transform = Compose(
-        InitTracker(),
-        # VecNorm(in_keys=["policy"], out_keys=["policy"]),
-        # CatFrames(4, -1, ["policy"], ["priv"]),
-        # History(["policy"], steps=16)
-    )
-    env = TransformedEnv(base_env, transform)
-    env.set_seed(0)
+    env, policy, vecnorm = make_env_policy(cfg)
 
-    # setup policy
-    policy = ALGOS[cfg.algo.name](
-        cfg.algo,
-        env.observation_spec, 
-        env.action_spec, 
-        env.reward_spec, 
-        device=base_env.device
-    )
-
-    if hasattr(policy, "make_tensordict_primer"):
-        transform.append(policy.make_tensordict_primer())
+    import inspect
+    import shutil
+    source_path = inspect.getfile(policy.__class__)
+    target_path = os.path.join(run.dir, source_path.split("/")[-1])
+    shutil.copy(source_path, target_path)
+    wandb.save(target_path, policy="now")
 
     frames_per_batch = env.num_envs * cfg.algo.train_every
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
@@ -81,14 +61,17 @@ def main(cfg):
     eval_interval = cfg.get("eval_interval", -1)
     save_interval = cfg.get("save_interval", -1)
 
+    log_interval = (env.max_episode_length // cfg.algo.train_every) + 1
+    logging.info(f"Log interval: {log_interval} steps")
+
     stats_keys = [
-        k for k in env.observation_spec.keys(True, True) 
-        if isinstance(k, tuple) and k[0]=="stats"
+        k for k in env.reward_spec.keys(True, True) 
+        if isinstance(k, tuple) and k[0] == "stats"
     ]
     episode_stats = EpisodeStats(stats_keys)
     collector = SyncDataCollector(
         env,
-        policy=policy,
+        policy=policy.get_rollout_policy("train"),
         frames_per_batch=frames_per_batch,
         total_frames=total_frames,
         device=cfg.sim.device,
@@ -104,7 +87,6 @@ def main(cfg):
     ):
         frames = []
 
-        base_env.eval()
         env.eval()
         env.set_seed(seed)
         policy.eval()
@@ -113,17 +95,16 @@ def main(cfg):
             policy.mode = mode
 
         from tqdm import tqdm
-        t = tqdm(total=base_env.max_episode_length)
         def record_frame(*args, **kwargs):
-            frame = base_env.render(mode="rgb_array")
-            frames.append(frame)
-            t.update(2)
+            if render:
+                frame = env.render(mode="rgb_array")
+                frames.append(frame)
         
         with set_exploration_type(exploration_type):
             trajs = env.rollout(
-                max_steps=base_env.max_episode_length,
-                policy=policy,
-                callback=Every(record_frame, 2) if render else None,
+                max_steps=env.max_episode_length,
+                policy=policy.get_rollout_policy("eval").to(env.device),
+                callback=Every(record_frame, 2),
                 auto_reset=True,
                 break_when_any_done=False,
                 return_contiguous=False,
@@ -153,7 +134,7 @@ def main(cfg):
             frames.clear()
             info["recording"] = wandb.Video(
                 video_array, 
-                fps=0.5 / (cfg.sim.dt * cfg.sim.substeps), 
+                fps=0.5 / env.step_dt,
                 format="mp4"
             )
         
@@ -166,21 +147,24 @@ def main(cfg):
         return info
     
     def save(policy, checkpoint_name: str, artifact: bool=False):
-        try:
-            ckpt_path = os.path.join(run.dir, f"{checkpoint_name}.pt")
-            torch.save(policy.state_dict(), ckpt_path)
-            if artifact:
-                artifact = wandb.Artifact(
-                    f"{type(base_env).__name__}-{type(policy).__name__}", 
-                    type="model"
-                )
-                artifact.add_file(ckpt_path)
-                run.log_artifact(artifact)
-            logging.info(f"Saved checkpoint to {str(ckpt_path)}")
-        except Exception as e:
-            logging.error(f"Failed to save checkpoint: {e}")
+        ckpt_path = os.path.join(run.dir, f"{checkpoint_name}.pt")
+        state_dict = OrderedDict()
+        state_dict["policy"] = policy.state_dict()
+        if "vecnorm" in locals():
+            state_dict["vecnorm"] = vecnorm.state_dict()
+        torch.save(state_dict, ckpt_path)
+        if artifact:
+            artifact = wandb.Artifact(
+                f"{type(env).__name__}-{type(policy).__name__}", 
+                type="model"
+            )
+            artifact.add_file(ckpt_path)
+            run.log_artifact(artifact)
+        wandb.save(ckpt_path, policy="now")
+        logging.info(f"Saved checkpoint to {str(ckpt_path)}")
 
     pbar = tqdm(collector, total=total_iters)
+    
     
     for i, data in enumerate(pbar):
         start = time.perf_counter()
@@ -189,12 +173,10 @@ def main(cfg):
 
         episode_stats.add(data)
 
-        if len(episode_stats) >= base_env.num_envs:
-            stats = {
-                "train/" + (".".join(k) if isinstance(k, tuple) else k): torch.mean(v.float()).item() 
-                for k, v in episode_stats.pop().items(True, True)
-            }
-            info.update(stats)
+        if i % log_interval == 0 and len(episode_stats):
+            for k, v in sorted(episode_stats.pop().items(True, True)):
+                key = "train/" + (".".join(k) if isinstance(k, tuple) else k)
+                info[key] = torch.mean(v.float()).item()
         
         info.update(policy.train_op(data))
         if hasattr(policy, "step_schedule"):
@@ -216,7 +198,7 @@ def main(cfg):
         run.log(info)
 
         print()
-        print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, float)}))
+        print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, (float, int))}))
     
     save(policy, "checkpoint_final")
 
@@ -224,7 +206,16 @@ def main(cfg):
     info["env_frames"] = collector._frames
     run.log(info)
 
+    try:
+        path = os.path.join(run.dir, f"policy.pt")
+        _policy = policy.get_rollout_policy("eval").cpu()
+        torch.save(_policy, path)
+        logging.info(F"Export policy to {path}")
+    except Exception as e:
+        print(f"Cannot save policy due to {e}")
+
     wandb.finish()
+    exit(0)
     
     base_env.close()
     simulation_app.close()

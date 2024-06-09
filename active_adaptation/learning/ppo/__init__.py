@@ -22,29 +22,14 @@
 
 
 from .ppo import PPOPolicy
-from .ppo_adapt import PPORMAPolicy
+from .ppo_adapt import PPOAdaptPolicy
+from .ppo_stoch import PPOStochPolicy
+from .ppo_asy import PPOAsyPolicy
+from .ppo_ji import PPOPolicy as PPOJi
+# from .ppo_rma import PPORMAPolicy
 from .ppo_rnn import PPORNNPolicy
-from .ppo_tconv import PPOTConvPolicy
-from .ppo_contrastive import PPOTConvPolicy as PPOContraPolicy
 from .ppo_dual import PPODualPolicy
 from .ppo_roa import PPOROAPolicy
-from .ppo_model import PPOModelPolicy
 from .ppo_guided import PPOGuidedPolicy
-from .ppo_static import PPOStaticPolicy
-from .final import Policy as PPOFinalPolicy
+from .ppo_mask import PPOMaskPolicy
 from .ppg import PPGPolicy
-
-ALGOS = {
-    "ppo": PPOPolicy,
-    "ppo_dual": PPODualPolicy,
-    "ppo_rnn": PPORNNPolicy,
-    "ppo_tconv": PPOTConvPolicy,
-    "ppo_contra": PPOContraPolicy,
-    "ppo_rma": PPORMAPolicy,
-    "ppo_roa": PPOROAPolicy,
-    "ppo_model": PPOModelPolicy,
-    "ppo_guided": PPOGuidedPolicy,
-    "ppo_static": PPOStaticPolicy,
-    "final": PPOFinalPolicy,
-    "ppg": PPGPolicy
-}

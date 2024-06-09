@@ -1,0 +1,10 @@
+name: H1Rough
+task: Humanoid
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/H1Flat@_here_
+  - _self_
+
+terrain: easy
+

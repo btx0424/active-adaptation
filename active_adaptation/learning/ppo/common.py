@@ -56,6 +56,30 @@ def make_mlp(num_units, activation=nn.Mish, norm="before", dropout=0.):
     return nn.Sequential(*layers)
 
 
+def make_conv(num_channels, activation=nn.LeakyReLU, kernel_sizes=3, flatten: bool=True):
+    layers = []
+    if isinstance(kernel_sizes, int):
+        kernel_sizes = [kernel_sizes] * len(num_channels)
+    for n, k in zip(num_channels, kernel_sizes):
+        layers.append(nn.LazyConv2d(n, kernel_size=k, stride=2, padding=k//2))
+        layers.append(activation())
+    if flatten:
+        layers.append(nn.Flatten())
+    return _FlattenBatch(nn.Sequential(*layers), data_dim=3)
+
+
+class _FlattenBatch(nn.Module):
+    def __init__(self, module, data_dim: int=1):
+        super().__init__()
+        self.module = module
+        self.data_dim = data_dim
+
+    def forward(self, input: torch.Tensor):
+        batch_shape = input.shape[:-self.data_dim]
+        output = self.module(input.flatten(0, len(batch_shape)-1))
+        return output.unflatten(0, batch_shape)
+
+
 def make_batch(tensordict: TensorDict, num_minibatches: int, seq_len: int = -1):
     if seq_len > 1:
         N, T = tensordict.shape
@@ -157,6 +181,7 @@ def compute_policy_loss(
     actor: ProbabilisticActor,
     clip_param: float,
     entropy_coef: float,
+    discard_init: bool=True,
 ):
     dist = actor.get_dist(tensordict)
     log_probs = dist.log_prob(tensordict[ACTION_KEY])
@@ -166,7 +191,10 @@ def compute_policy_loss(
     ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
     surr1 = adv * ratio
     surr2 = adv * ratio.clamp(1. - clip_param, 1. + clip_param)
-    policy_loss = - torch.mean(torch.min(surr1, surr2)) * dist.event_shape[-1]
+    policy_loss = torch.min(surr1, surr2)
+    if discard_init:
+        policy_loss = policy_loss * (~tensordict["is_init"])
+    policy_loss = - torch.mean(policy_loss) * dist.event_shape[-1]
     entropy_loss = - entropy_coef * torch.mean(entropy)
     return policy_loss, entropy_loss, entropy.mean()
 
@@ -176,6 +204,7 @@ def compute_value_loss(
     critic: TensorDictModuleBase,
     clip_param: float,
     critic_loss_fn: nn.Module,
+    discard_init: bool=True,
 ):
     # b_values = tensordict["state_value"]
     b_returns = tensordict["ret"]
@@ -184,6 +213,11 @@ def compute_value_loss(
     # value_loss_clipped = critic_loss_fn(b_returns, values_clipped)
     value_loss_original = critic_loss_fn(b_returns, values)
     # value_loss = torch.max(value_loss_original, value_loss_clipped).mean()
+
+    # mask out first transitions which are generally invalid
+    # due to the limiatations of Isaac Sim
+    if discard_init:
+        value_loss_original = value_loss_original * (~tensordict["is_init"])
     value_loss = value_loss_original.mean()
     explained_var = 1 - value_loss_original.detach() / b_returns.var()
 
@@ -204,7 +238,78 @@ class L2Norm(nn.Module):
     def forward(self, x):
         return x / torch.norm(x, dim=-1, keepdim=True).clamp(1e-7)
 
+class SimNorm(nn.Module):
+    """
+    Simplicial normalization.
+    Adapted from https://arxiv.org/abs/2204.00616.
+    """
 
-def collect_info(infos):
-    return {k: v.mean().item() for k, v in torch.stack(infos).items()}
+    def __init__(self, dim: int, method="l2"):
+        super().__init__()
+        self.dim = dim
+        if method == "softmax":
+            self.f = F.softmax
+        elif method == "l2":
+            self.f = lambda x: x / x.norm(dim=-1, keepdim=True).clamp(1e-6)
+        else:
+            raise NotImplementedError
+
+    def forward(self, x: torch.Tensor):
+        shp = x.shape
+        x = x.view(*shp[:-1], -1, self.dim)
+        x = self.f(x)
+        return x.view(*shp)
+
+
+class ConsistentDropout(nn.Module):
+    def __init__(self, p: float, return_mask: bool=True):
+        super().__init__()
+        self.p = p
+        self.scale_factor = 1 / (1- p)
+        self.return_mask = return_mask
+    
+    def forward(self, input: torch.Tensor, mask=None):
+        if mask is None:
+            mask = input.data.bernoulli(self.p)
+        if self.return_mask:
+            return input * mask * self.scale_factor, mask
+        else:
+            return input * mask * self.scale_factor
+
+
+class MaskWithEmbedding(nn.Module):
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self.embedding = nn.Parameter(torch.zeros(dim))
+        nn.init.normal_(self.embedding)
+    
+    def forward(self, input, mask):
+        output = torch.where(mask, self.embedding.expand_as(input), input.detach())
+        return output
+
+
+class NormalExtractor(nn.Module):
+    def __init__(self, include_loc: bool=True, num_samples: int = 1):
+        super().__init__()
+        self.include_loc = include_loc
+        self.num_sample = num_samples
+
+    def forward(self, x: torch.Tensor):
+        x_loc, x_scale = x.chunk(2, -1)
+        x_sample = x_loc.unsqueeze(-2).expand(*x_loc.shape[:-1], self.num_sample, -1)
+        x_sample = x_sample + torch.randn_like(x_sample) * x_scale.exp().unsqueeze(-2)
+        if self.include_loc:
+            x_sample = torch.cat([x_sample, x_loc.unsqueeze(-2)], dim=-2)
+        return x_sample.flatten(-2), x_loc, x_scale
+
+
+def collect_info(infos, prefix=""):
+    return {prefix+k: v.mean().item() for k, v in torch.stack(infos).items()}
+
+
+def normalize(x: torch.Tensor, subtract_mean: bool=False):
+    if subtract_mean:
+        return (x - x.mean()) / x.std().clamp(1e-7)
+    else:
+        return x  / x.std().clamp(1e-7)
 

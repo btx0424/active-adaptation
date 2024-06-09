@@ -1,6 +1,15 @@
 import torch
+import wandb
+import logging
+import os
+
 from typing import Sequence
 from tensordict import TensorDictBase
+from termcolor import colored
+from collections import OrderedDict
+
+from active_adaptation.learning import ALGOS
+
 
 class Every:
     def __init__(self, func, steps):
@@ -38,3 +47,68 @@ class EpisodeStats:
 
     def __len__(self):
         return len(self._stats)
+
+
+def make_env_policy(cfg):
+
+    from active_adaptation.envs import TASKS
+    from active_adaptation.utils.torchrl import StackFrames
+    from configs.rough import LocomotionEnvCfg
+    from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker, CatFrames, VecNorm
+
+    checkpoint_path = cfg.checkpoint_path
+    if checkpoint_path is not None:
+        state_dict = torch.load(checkpoint_path)
+    else:
+        state_dict = {}
+
+    env_cfg = LocomotionEnvCfg(cfg.task)
+
+    base_env = TASKS[cfg.task.task](env_cfg)
+    obs_keys = [
+        key for key, spec in base_env.observation_spec.items(True, True) 
+        if not (spec.dtype == bool or key.endswith("_"))
+    ]
+    transform = Compose(InitTracker())
+
+    assert cfg.vecnorm in ("train", "eval", None)
+    print(colored(f"[Info]: create VecNorm for keys: {obs_keys}", "green"))
+    vecnorm = VecNorm(obs_keys, decay=0.9999)
+
+    if "vecnorm" in state_dict.keys():
+        print(colored("[Info]: Load VecNorm from checkpoint.", "green"))
+        vecnorm.load_state_dict(state_dict["vecnorm"])
+    if cfg.vecnorm == "train":
+        print(colored("[Info]: Updating obervation normalizer.", "green"))
+        transform.append(vecnorm)
+    elif cfg.vecnorm == "eval" and vecnorm._td is not None:
+        print(colored("[Info]: Not updating obervation normalizer.", "green"))
+        transform.append(vecnorm.to_observation_norm())
+
+    long_history = cfg.algo.get("long_history", 0)
+    if long_history > 0:
+        transform.append(StackFrames(long_history, ["policy"], ["policy_h"]))
+    short_history = cfg.algo.get("short_history", 0)
+    if short_history > 0:
+        transform.append(CatFrames(short_history, -1, ["policy"], ["policy"]))
+
+    env = TransformedEnv(base_env, transform)
+    env.set_seed(cfg.seed)
+    
+    # setup policy
+    policy = ALGOS[cfg.algo.name](
+        cfg.algo,
+        env.observation_spec, 
+        env.action_spec, 
+        env.reward_spec,
+        device=base_env.device
+    )
+    
+    if "policy" in state_dict.keys():
+        print(colored("[Info]: Load policy from checkpoint."))
+        policy.load_state_dict(state_dict["policy"])
+    
+    if hasattr(policy, "make_tensordict_primer"):
+        transform.append(policy.make_tensordict_primer())
+
+    return env, policy, vecnorm

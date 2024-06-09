@@ -1,0 +1,25 @@
+name: CassieRoughZ
+task: Biped
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/CassieFlat@_here_
+  - _self_
+
+terrain: easy
+homogeneous: false
+
+observation:
+  priv:
+    action_delay:     {}
+    root_linvel_b:    {}
+    feet_pos_b:       {}
+    # feet_height:      {feet_names: .*_toe}
+    feet_height_map:  {feet_names: .*toe}
+    # applied_torques:  {actuator_name: legs}
+    # motor_params:     {actuator_name: legs, homogeneous: "${task.homogeneous}"}
+    body_materials:   {body_names: .*toe, homogeneous: "${task.homogeneous}"}
+    body_mass:        {body_names: "pelvis"}
+    # body_momentum:    {body_names: "pelvis"}
+    cum_error:          {}
+    rewards:          {}

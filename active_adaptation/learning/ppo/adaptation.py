@@ -106,6 +106,22 @@ class MSE(AdaptationModule):
         return out
 
 
+class DotProduct(AdaptationModule):
+    def __init__(self, adaptation_module: TensorDictModule):
+        super().__init__()
+        self.adaptation_module = adaptation_module
+    
+    def forward(self, tensordict: TensorDictBase, out: TensorDictBase, mean: bool=False):
+        self.adaptation_module(tensordict)
+        pred = tensordict["context_adapt"]
+        target = tensordict["context_expert"]
+        loss = - (pred * target).sum(-1)
+        if mean:
+            loss = loss.mean()
+        out["adaptation_loss"] = loss.unsqueeze(-1)
+        return out
+
+
 class Action(AdaptationModule):
     def __init__(
         self,
@@ -134,7 +150,7 @@ class Action(AdaptationModule):
             # loss = -target_dist.log_prob(pred_action)
         if mean:
             loss = loss.mean()
-        out.set("adaptation_loss", loss.unsqueeze(-1))
+        out["adaptation_loss"] = loss.unsqueeze(-1)
         return out
 
 

@@ -1,3 +1,4 @@
+from typing import Mapping
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,31 +9,46 @@ from tensordict.nn import TensorDictModule, TensorDictModuleBase, TensorDictSequ
 from torchrl.envs.transforms.transforms import TensorDictPrimer
 from torchrl.data import UnboundedContinuousTensorSpec
 
+from hydra.core.config_store import ConfigStore
+from dataclasses import dataclass
+
 from .ppo.common import make_batch, make_mlp
 from .ppo.ppo_adapt import GRUModule
 
+@dataclass
+class BCConfig:
+    name: str = "bc"
 
-class BCPolicy(nn.Module):
+cs = ConfigStore.instance()
+cs.store("bc", node=BCConfig, group="algo")
+
+class BCPolicy(TensorDictModuleBase):
     def __init__(
-        self, 
+        self,
+        cfg,
         observation_spec,
         action_spec,
-        teacher,
+        reward_spec,
         device,
+        teacher=None,
     ):
         super().__init__()
+        self.cfg = cfg
         self.observation_spec = observation_spec
         self.action_dim = action_spec.shape[-1]
         self.device = device
         self.teacher = teacher
 
         fake_input = observation_spec.zero()
+        fake_input["hx"] = torch.zeros((fake_input.shape[0], 128), device=self.device)
         self.actor = TensorDictSequential(
-            TensorDictModule(GRUModule(256), ["policy"], ["_feature", ("next", "hx")]),
-            TensorDictModule(nn.LazyLinear(self.action_dim), ["_feature"], ["action"])
+            TensorDictModule(GRUModule(256), ["policy", "is_init", "hx"], ["_feature", ("next", "hx")]),
+            TensorDictModule(
+                nn.Sequential(make_mlp([256]), nn.LazyLinear(self.action_dim)),
+                ["_feature"], ["action"]
+            )
         ).to(self.device)
 
-        self.teacher(fake_input)
         self.actor(fake_input)
 
         self.optimizer = torch.optim.Adam(self.actor.parameters(), lr=1e-4)
@@ -46,9 +62,14 @@ class BCPolicy(nn.Module):
     def forward(self, tensordict: TensorDictBase):
         return self.actor(tensordict)
     
+    def get_rollout_policy(self, mode: str="train"):
+        policy = self.actor
+        return policy
+    
     def train_op(self, tensordict: TensorDictBase):
-        action_expert = self.teacher(tensordict.exclude("action"))["action"]
-        tensordict.set("action_expert", action_expert)
+        with torch.no_grad():
+            action_expert = self.teacher(tensordict.reshape(-1).to_tensordict())["action"]
+        tensordict.set("action_expert", action_expert.reshape_as(tensordict["action"]))
         
         losses = []
         for epoch in range(4):
@@ -62,6 +83,8 @@ class BCPolicy(nn.Module):
     
     def loss(self, tensordict: TensorDictBase):
         action = self(tensordict)["action"]
-        action_expert = self.teacher(tensordict)["action_expert"]
+        action_expert = tensordict["action_expert"]
         return F.mse_loss(action, action_expert)
 
+    def load_state_dict(self, state_dict):
+        return super().load_state_dict(state_dict, strict=False)
