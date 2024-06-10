@@ -1,9 +1,9 @@
 import torch
 import numpy as np
-from omni.isaac.orbit.assets import Articulation
-from omni.isaac.orbit.actuators import DCMotor, ImplicitActuator
-from omni.isaac.orbit.sensors import RayCaster
-import omni.isaac.orbit.utils.string as string_utils
+from omni.isaac.lab.assets import Articulation
+from omni.isaac.lab.actuators import DCMotor, ImplicitActuator
+from omni.isaac.lab.sensors import RayCaster
+import omni.isaac.lab.utils.string as string_utils
 from typing import Union
 import logging
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
@@ -249,7 +249,7 @@ class reset_joint_states_uniform(Randomization):
             init_pos += self.default_joint_pos[env_ids]
         init_vel = self.default_joint_vel[env_ids]
         self.asset.write_joint_state_to_sim(
-            init_pos, init_vel, self.joint_ids, env_ids.unsqueeze(1)
+            init_pos, init_vel, self.joint_ids, env_ids #.unsqueeze(1)
         )
 
 
@@ -277,7 +277,7 @@ class reset_joint_states_scale(Randomization):
         )[0]
         init_vel = self.default_joint_vel[env_ids]
         self.asset.write_joint_state_to_sim(
-            init_pos, init_vel, self.joint_ids, env_ids.unsqueeze(1)
+            init_pos, init_vel, self.joint_ids, env_ids #.unsqueeze(1)
         )
 
 

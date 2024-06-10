@@ -4,7 +4,7 @@ import numpy as np
 import einops
 from omegaconf import OmegaConf
 
-from omni.isaac.orbit.app import AppLauncher
+from omni.isaac.lab.app import AppLauncher
 from omni_drones.utils.wandb import init_wandb
 from omni_drones.utils.torchrl import SyncDataCollector
 

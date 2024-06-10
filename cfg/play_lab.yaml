@@ -1,0 +1,21 @@
+hydra:
+  run:
+    dir: ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}-${env.task}-${algo.name}
+
+headless: false
+
+app:
+  headless: ${..headless}
+  enable_cameras: false
+
+env:
+  num_envs: 64
+  device: cuda
+  # task: "Isaac-Velocity-Flat-Unitree-Go2-v0"
+  task: "Isaac-Velocity-Rough-Unitree-Go2-v0"
+
+checkpoint: null
+
+defaults:
+  - algo: ppo
+  - _self_

@@ -4,13 +4,13 @@ from active_adaptation.assets import (
     spawn_with_payload
 )
 from active_adaptation.utils.orbit import RayCaster
-from omni.isaac.orbit.scene import InteractiveSceneCfg
-from omni.isaac.orbit.utils import configclass
-from omni.isaac.orbit.terrains import TerrainImporterCfg
-from omni.isaac.orbit.envs import ViewerCfg
-from omni.isaac.orbit.assets import AssetBaseCfg
-from omni.isaac.orbit.sensors import ContactSensorCfg, RayCasterCfg, patterns
-import omni.isaac.orbit.sim as sim_utils
+from omni.isaac.lab.scene import InteractiveSceneCfg
+from omni.isaac.lab.utils import configclass
+from omni.isaac.lab.terrains import TerrainImporterCfg
+from omni.isaac.lab.envs import ViewerCfg
+from omni.isaac.lab.assets import AssetBaseCfg
+from omni.isaac.lab.sensors import ContactSensorCfg, RayCasterCfg, patterns, TiledCameraCfg
+import omni.isaac.lab.sim as sim_utils
 
 from dataclasses import MISSING
 from typing import Dict, List

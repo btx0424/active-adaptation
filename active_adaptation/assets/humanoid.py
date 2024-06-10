@@ -1,8 +1,8 @@
 import os
 
-import omni.isaac.orbit.sim as sim_utils
-from omni.isaac.orbit_assets import ArticulationCfg
-from omni.isaac.orbit.actuators import DCMotorCfg
+import omni.isaac.lab.sim as sim_utils
+from omni.isaac.lab_assets import ArticulationCfg
+from omni.isaac.lab.actuators import DCMotorCfg
 
 ASSET_PATH = os.path.dirname(__file__)
 

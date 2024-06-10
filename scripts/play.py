@@ -4,7 +4,7 @@ import numpy as np
 import einops
 from omegaconf import OmegaConf
 
-from omni.isaac.orbit.app import AppLauncher
+from omni.isaac.lab.app import AppLauncher
 from omni_drones.utils.wandb import init_wandb
 from omni_drones.utils.torchrl import SyncDataCollector
 
@@ -24,17 +24,8 @@ import datetime
 def main(cfg):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
-
-    # load cheaper kit config in headless
-    if cfg.headless:
-        app_experience = f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.gym.headless.kit"
-    else:
-        app_experience = f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.kit"
     
-    app_launcher = AppLauncher(
-        {"headless": cfg.headless, "offscreen_render": True},
-        experience=app_experience
-    )
+    app_launcher = AppLauncher(cfg.app)
     simulation_app = app_launcher.app
 
     from scripts.helpers import EpisodeStats, make_env_policy
@@ -72,6 +63,13 @@ def main(cfg):
         if isinstance(k, tuple) and k[0]=="stats"
     ]
     episode_stats = EpisodeStats(stats_keys)
+    policy = policy.get_rollout_policy("eval")
+
+    td_ = env.reset()
+    while True:
+        policy(td_)
+        td, td_ = env.step_and_maybe_reset(td_)
+
     collector = SyncDataCollector(
         env,
         policy=policy.get_rollout_policy("eval"),

@@ -3,15 +3,15 @@ import numpy as np
 import abc
 import einops
 
-from omni.isaac.orbit.assets import Articulation
-from omni.isaac.orbit.sensors import ContactSensor, RayCaster, patterns, RayCasterData
-from omni.isaac.orbit.sensors import Camera
-import omni.isaac.orbit.sim as sim_utils
+from omni.isaac.lab.assets import Articulation
+from omni.isaac.lab.sensors import ContactSensor, RayCaster, patterns, RayCasterData
+from omni.isaac.lab.sensors import Camera
+import omni.isaac.lab.sim as sim_utils
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
-from omni.isaac.orbit.terrains.trimesh.utils import make_plane
-from omni.isaac.orbit.utils.math import convert_quat, quat_apply, quat_apply_yaw, yaw_quat
-from omni.isaac.orbit.utils.warp import convert_to_warp_mesh, raycast_mesh
+from omni.isaac.lab.terrains.trimesh.utils import make_plane
+from omni.isaac.lab.utils.math import convert_quat, quat_apply, quat_apply_yaw, yaw_quat
+from omni.isaac.lab.utils.warp import convert_to_warp_mesh, raycast_mesh
 from pxr import UsdGeom, UsdPhysics
 
 quat_rotate = batchify(quat_rotate)

@@ -9,7 +9,7 @@ from omni.physx import get_physx_replicator_interface, get_physx_simulation_inte
 from pxr import Gf, PhysxSchema, Sdf, Usd, UsdGeom, UsdUtils, Vt, Semantics
 
 from omni.isaac.cloner import Cloner
-from omni.isaac.orbit.sim import schemas, SpawnerCfg, find_matching_prim_paths
+from omni.isaac.lab.sim import schemas, SpawnerCfg, find_matching_prim_paths
 
 class MyCloner(Cloner):
 

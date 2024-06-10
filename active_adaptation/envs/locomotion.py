@@ -1,7 +1,7 @@
 import torch
 
-from omni.isaac.orbit.sensors import ContactSensor, RayCaster
-from omni.isaac.orbit.actuators import DCMotor
+from omni.isaac.lab.sensors import ContactSensor, RayCaster
+from omni.isaac.lab.actuators import DCMotor
 from active_adaptation.envs.base import Env
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse

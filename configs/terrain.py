@@ -1,4 +1,4 @@
-from omni.isaac.orbit.terrains import (
+from omni.isaac.lab.terrains import (
     TerrainImporterCfg,
     HfTerrainBaseCfg,
     HfRandomUniformTerrainCfg,
@@ -15,12 +15,12 @@ from omni.isaac.orbit.terrains import (
     MeshRepeatedBoxesTerrainCfg,
     height_field
 )
-from omni.isaac.orbit.terrains.config.rough import ROUGH_TERRAINS_CFG as ROUGH_HARD
-from omni.isaac.orbit.utils import configclass
+from omni.isaac.lab.terrains.config.rough import ROUGH_TERRAINS_CFG as ROUGH_HARD
+from omni.isaac.lab.utils import configclass
 from dataclasses import MISSING
 import numpy as np
 
-import omni.isaac.orbit.sim as sim_utils
+import omni.isaac.lab.sim as sim_utils
 
 
 @height_field.utils.height_field_to_mesh
@@ -187,6 +187,11 @@ ROUGH_EASY = TerrainGeneratorCfg(
     },
 )
 
+# scale down the terrains because the robot is small
+ROUGH_HARD.sub_terrains["boxes"].grid_height_range = (0.025, 0.025)
+ROUGH_HARD.sub_terrains["random_rough"].noise_range = (0.01, 0.06)
+ROUGH_HARD.sub_terrains["random_rough"].noise_step = 0.01
+
 ROUGH_TERRAIN_CFG = TerrainImporterCfg(
     prim_path="/World/ground",
     terrain_type="generator",
@@ -221,5 +226,6 @@ FLAT_TERRAIN_CFG = TerrainImporterCfg(
 TERRAINS = {
     "medium": ROUGH_MEDIUM,
     "easy": ROUGH_EASY,
+    "hard": ROUGH_HARD,
     "flat": FLAT
 }

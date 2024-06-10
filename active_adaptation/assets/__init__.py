@@ -2,19 +2,18 @@ import os
 import copy
 import torch
 
-from omni.isaac.orbit_assets import (
+from omni.isaac.lab_assets import (
     ArticulationCfg,
     UNITREE_A1_CFG,
     UNITREE_GO1_CFG,
     UNITREE_GO2_CFG,
     ANYMAL_C_CFG,
     cassie,
-    ISAAC_ORBIT_NUCLEUS_DIR
 )
 
-import omni.isaac.orbit.sim as sim_utils
-from omni.isaac.orbit.sim.spawners.from_files.from_files import _spawn_from_usd_file, spawn_from_usd
-from omni.isaac.orbit.actuators import ImplicitActuatorCfg, DCMotorCfg
+import omni.isaac.lab.sim as sim_utils
+from omni.isaac.lab.sim.spawners.from_files.from_files import _spawn_from_usd_file, spawn_from_usd
+from omni.isaac.lab.actuators import ImplicitActuatorCfg, DCMotorCfg
 
 from .spawn import clone
 from .quadruped import *

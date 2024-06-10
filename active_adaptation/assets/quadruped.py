@@ -1,9 +1,9 @@
 import os
 import copy
 
-import omni.isaac.orbit.sim as sim_utils
-from omni.isaac.orbit_assets import UNITREE_GO2_CFG, UNITREE_A1_CFG
-from omni.isaac.orbit.actuators import DCMotorCfg
+import omni.isaac.lab.sim as sim_utils
+from omni.isaac.lab_assets import UNITREE_GO2_CFG, UNITREE_A1_CFG
+from omni.isaac.lab.actuators import DCMotorCfg
 
 ASSET_PATH = os.path.dirname(__file__)
 
@@ -15,10 +15,6 @@ UNITREE_GO2_CFG.actuators["base_legs"].effort_limit = {
     ".*_calf_joint": 35.5,
 }
 UNITREE_GO2_CFG.actuators["base_legs"].saturation_effort = 35.5
-UNITREE_GO2_CFG.spawn.collision_props=sim_utils.CollisionPropertiesCfg(
-    contact_offset=0.05,
-    rest_offset=0.0,
-)
 
 CYBERDOG_CFG = copy.deepcopy(UNITREE_A1_CFG)
 CYBERDOG_CFG.spawn.usd_path = f"{ASSET_PATH}/cyberdog2_v3.usd"

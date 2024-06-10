@@ -1,10 +1,10 @@
 import torch
 import math
 
-from omni.isaac.orbit.assets import Articulation
-import omni.isaac.orbit.utils.math as math_utils
+from omni.isaac.lab.assets import Articulation
+import omni.isaac.lab.utils.math as math_utils
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
-from omni.isaac.orbit.utils.math import quat_apply_yaw
+from omni.isaac.lab.utils.math import quat_apply_yaw
 
 
 class Command:

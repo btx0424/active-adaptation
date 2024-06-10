@@ -1,5 +1,5 @@
 import torch
-import warp
+# import warp
 import hydra
 import numpy as np
 import einops
@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 
-from omni.isaac.orbit.app import AppLauncher
+from omni.isaac.lab.app import AppLauncher
 from omni_drones.utils.wandb import init_wandb
 from active_adaptation.utils.torchrl import SyncDataCollector
 
@@ -31,17 +31,7 @@ def main(cfg):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
     
-    # load cheaper kit config in headless
-    if cfg.headless:
-        app_experience = f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.gym.headless.kit"
-    else:
-        app_experience = f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.kit"
-    
-    app_launcher = AppLauncher(
-        {"headless": cfg.headless, "offscreen_render": cfg.offscreen_render},
-        experience=app_experience,
-        # experience=f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.kit"
-    )
+    app_launcher = AppLauncher(OmegaConf.to_container(cfg.app))
     simulation_app = app_launcher.app
 
     run = init_wandb(cfg)

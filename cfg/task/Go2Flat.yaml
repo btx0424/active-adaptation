@@ -43,10 +43,11 @@ observation:
     prev_actions: {steps: 2}
     # motor_params: {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     # body_materials: {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-    # root_linvel_b:
+    root_linvel_b:
     # # feet_pos_b:
     # feet_height_map: {feet_names: .*foot }
     # applied_torques: {actuator_name: base_legs}
+    # height_scan: {prim_path: base, flatten: true}
   priv:
     # _mask_: true # randomly mask one of the items
     # projected_gravity_b:
@@ -65,11 +66,11 @@ observation:
     # body_mass:        {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # body_momentum:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # rewards:          {}
-    contact_indicator: {body_names: [".*_foot"], timing: false}
-  aux_target_:
-    root_linvel_b:
-    root_angvel_b:
-    rewards:
+    # contact_indicator: {body_names: [".*_foot"], timing: false}
+  # aux_target_:
+  #   root_linvel_b:
+  #   root_angvel_b:
+  #   rewards:
   # height_scan:
   #   height_scan:      {prim_path: base}
   # priv:

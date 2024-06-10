@@ -1,6 +1,6 @@
 import torch
 
-from omni.isaac.orbit.assets import Articulation
+from omni.isaac.lab.assets import Articulation
 from active_adaptation.utils.math import quat_rotate
 from .locomotion import Reward
 from ..commands import CommandEEPose

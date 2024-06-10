@@ -5,6 +5,10 @@ hydra:
 headless: true
 offscreen_render: ${eval_render}
 
+app:
+  headless: ${..headless}
+  enable_cameras: false
+
 sim: ${task.sim}
 # env: ${task.env}
 

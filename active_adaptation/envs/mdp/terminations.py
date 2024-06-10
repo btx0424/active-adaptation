@@ -1,8 +1,8 @@
 import torch
 import abc
 
-from omni.isaac.orbit.assets import Articulation
-from omni.isaac.orbit.sensors import ContactSensor
+from omni.isaac.lab.assets import Articulation
+from omni.isaac.lab.sensors import ContactSensor
 
 class Termination:
     def __init__(self, env):
