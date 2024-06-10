@@ -56,7 +56,7 @@ class LinearSchedule:
         """
         progress: float, in [0, 1]
         """
-        progress = (progress - self.start_step) / (self.end_step - self.start_step)
+        progress = max(0., progress - self.start_step) / (self.end_step - self.start_step)
         return progress * (self.end_value - self.start_value) + self.start_value
 
 

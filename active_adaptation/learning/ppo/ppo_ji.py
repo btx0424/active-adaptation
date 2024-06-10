@@ -278,8 +278,8 @@ class PPOPolicy(TensorDictModuleBase):
         state_dict["num_frames"] = self.num_frames
         return state_dict
     
-    def load_state_dict(self, state_dict, strict=True):
-        self.num_frames = state_dict.get("num_frames", 0)
+    def load_state_dict(self, state_dict, strict=False):
+        self.num_frames = state_dict.pop("num_frames", 0)
         if "vecnorm._extra_state" in state_dict:
             vecnorm_td = state_dict["vecnorm._extra_state"]["td"]
             state_dict["lock"] = None
