@@ -65,10 +65,15 @@ def main(cfg):
     episode_stats = EpisodeStats(stats_keys)
     policy = policy.get_rollout_policy("eval")
 
-    td_ = env.reset()
-    while True:
-        policy(td_)
-        td, td_ = env.step_and_maybe_reset(td_)
+    with (
+        torch.inference_mode(), 
+        set_exploration_type(ExplorationType.MODE)
+    ):
+        td_ = env.reset()
+        
+        while True:
+            policy(td_)
+            td, td_ = env.step_and_maybe_reset(td_)
 
     collector = SyncDataCollector(
         env,

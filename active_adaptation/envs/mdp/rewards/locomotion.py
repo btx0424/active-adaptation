@@ -508,6 +508,17 @@ class stand_up(Reward):
             -self.asset.data.projected_gravity_b[:, 0]
         ).unsqueeze(-1)
 
+
+class joint_vel_l2(Reward):
+    def __init__(self, env, joint_names: str, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids, _ = self.asset.find_joints(joint_names)
+    
+    def compute(self) -> torch.Tensor:
+        return - self.asset.data.joint_vel[:, self.joint_ids].square().sum(1, True)
+
+
 def normalize(x: torch.Tensor):
     return x / x.norm(dim=-1, keepdim=True).clamp_min(1e-6)
 

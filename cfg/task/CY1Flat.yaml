@@ -69,8 +69,9 @@ reward:
   feet_step:          {weight: 2.0, enabled: true, feet_names: .*leg_link6}
   joint_pos_default:  {weight: 0.25, enabled: true}
   body_orientation:   {weight: 0.25, enabled: true, body_name: waist_yaw_link}
-  arm_velocity:       {weight: 0.05, enabled: true, arm_names: .*arm_link5}
+  arm_velocity:       {weight: 0.05, enabled: false, arm_names: .*arm_link5}
   arm_swing:          {weight: 0.2, enabled: false, arm_names: .*arm_link5}
+  joint_vel_l2:       {weight: 0.002, enabled: true, joint_names: .*arm_joint.*}
 
 randomization:
   # push:     {body_names: ["pelvis", ".*shoulder_pitch_link"]}
