@@ -27,18 +27,23 @@ def termination_func(func):
 
 
 class crash(Termination):
-    def __init__(self, env, body_names_expr, z_thres: float=-0.3):
+    def __init__(self, env, body_names_expr, t_thres: float = 0., z_thres: float=-0.3):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
         self.body_indices, self.body_names = self.contact_sensor.find_bodies(body_names_expr)
         self.z_thres = z_thres
+        self.t_thres = t_thres
         print(f"Terminate upon contact on {self.body_names}")
     
     def __call__(self):
         fall_over = self.asset.data.projected_gravity_b[:, 2] >= self.z_thres
-        contact_forces = self.contact_sensor.data.net_forces_w[:, self.body_indices]
-        undesired_contact = (contact_forces.norm(dim=-1) > 1.).any(dim=1)
+        contact_force = self.contact_sensor.data.net_forces_w[:, self.body_indices]
+        contact_times = self.contact_sensor.data.current_contact_time[:, self.body_indices]
+        undesired_contact = (
+            (contact_force.norm(dim=-1) > 1.)
+            | (contact_times > self.t_thres)
+        ).any(dim=1)
         terminated = (fall_over | undesired_contact).unsqueeze(1)
         return terminated
 

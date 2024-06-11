@@ -43,7 +43,7 @@ observation:
     prev_actions: {steps: 2}
     # motor_params: {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     # body_materials: {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-    root_linvel_b:
+    # root_linvel_b:
     # # feet_pos_b:
     # feet_height_map: {feet_names: .*foot }
     # applied_torques: {actuator_name: base_legs}
@@ -66,7 +66,7 @@ observation:
     # body_mass:        {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # body_momentum:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # rewards:          {}
-    # contact_indicator: {body_names: [".*_foot"], timing: false}
+    contact_indicator: {body_names: [".*_foot"], timing: true}
   # aux_target_:
   #   root_linvel_b:
   #   root_angvel_b:
@@ -96,7 +96,7 @@ reward:
   linacc_z_l2:        {weight: 0.005, enabled: false}
   angvel_xy_l2:       {weight: 0.05, enabled: true, clip_range: [-1., 0.]}
   linvel_z_l2:        {weight: 2.0, enabled: true}
-  base_height_l1:     {weight: 1.0, enabled: true, target_height: 0.3}
+  base_height_l1:     {weight: 0.5, enabled: true, target_height: 0.3}
   energy_l1:          {weight: 0.0002, enabled: true}
   joint_acc_l2:       {weight: 2.5e-7, enabled: true, clip_range: [-1., 0.]}
   joint_torques_l2:   {weight: 2.0e-4, enabled: true, clip_range: [-1., 0.]}
@@ -113,7 +113,7 @@ reward:
   step_up:            {weight: 4.0, enabled: true}
 
 termination:
-  crash: {body_names_expr: [Head.*, "base"], z_thres: 0.}
+  crash: {body_names_expr: [Head.*, "base"], t_thres: 0.4, z_thres: 0.}
   # joint_acc_exceeds: {thres: 5000}
   # cum_error: {thres: 0.85}
 

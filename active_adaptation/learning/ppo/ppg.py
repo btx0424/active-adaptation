@@ -33,6 +33,7 @@ class PPGConfig:
     ppo_epochs: int = 4
     aux_epochs: int = -1 # 6
     beta_clone: float = 1.
+    entropy_coef: float = 0.01
     value_norm: bool = False
     
     # short_history: int = 5
@@ -151,7 +152,7 @@ class PPGPolicy(TensorDictModuleBase):
         self.action_dim = action_spec.shape[-1]
         self.observation_spec = observation_spec
 
-        self.entropy_coef = 0.01
+        self.entropy_coef = self.cfg.entropy_coef
         self.clip_param = self.cfg.clip_param
         # self.critic_loss_fn = nn.HuberLoss(delta=10)
         self.critic_loss_fn = nn.MSELoss(reduction="none")
@@ -317,6 +318,7 @@ class PPGPolicy(TensorDictModuleBase):
     
     def step_schedule(self, progress: float):
         self.beta = self.beta_schedule.compute(progress)
+        self.gae.gamma.copy_(min(0.99 + progress * 0.005, 0.995))
 
     def train_op(self, tensordict: TensorDictBase):
         infos = {}

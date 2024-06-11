@@ -79,7 +79,7 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
     size=(8.0, 8.0),
     border_width=40.0,
     num_rows=10,
-    num_cols=10,
+    num_cols=20,
     horizontal_scale=0.1,
     vertical_scale=0.005,
     slope_threshold=0.75,
@@ -125,7 +125,7 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
         ),
         "pyramid_stairs_inv": MeshInvertedPyramidStairsTerrainCfg(
             proportion=0.15,
-            step_height_range=(0.05, 0.15),
+            step_height_range=(0.05, 0.20),
             step_width=0.35,
             platform_width=3.5,
             border_width=1.0,
