@@ -98,12 +98,12 @@ def main(cfg: DictConfig):
             info["rollout_fps"] = collector._fps
             info["overall_fps"] = collector._frames / (time.time() - start_time)
 
-            if i % log_interval == 0 and len(episode_stats):
+            if i % log_interval == 0 and len(episode_stats) > env.num_envs:
                 for k, v in sorted(episode_stats.pop().items(True, True)):
                     key = "train/" + (".".join(k) if isinstance(k, tuple) else k)
                     info[key] = torch.mean(v.float()).item()
             
-            for k, v in sorted(env.extras["log"].items()):
+            for k, v in sorted(env.extras.items()):
                 if not isinstance(v, torch.Tensor):
                     info[f"train/{k}"] = v
             

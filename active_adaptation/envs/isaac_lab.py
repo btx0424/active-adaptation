@@ -57,7 +57,9 @@ class RewardManager(_RewardManager):
         if env_ids is None:
             env_ids = slice(None)
         # store information
-        extras = self._episode_sums.clone()
+        extras = {}
+        for key, value in self._episode_sums.items():
+            extras[f"Episode Reward/{key}"] = value.clone()
         self._episode_sums[env_ids] = 0.
         self.clip_count[env_ids] = 0.
         # reset all the reward terms
@@ -166,7 +168,7 @@ class IsaacLabEnv(_EnvWrapper):
         for term in env.reward_manager.active_terms:
             reward_spec[f"Episode Reward/{term}"] = UnboundedContinuousTensorSpec([1])
         reward_spec["Episode Length"] = UnboundedContinuousTensorSpec([1])
-        reward_spec["Episode Reward/clip_ratio"] = UnboundedContinuousTensorSpec([1])
+        # reward_spec["Episode Reward/clip_ratio"] = UnboundedContinuousTensorSpec([1])
         reward_spec["Episode Reward/total"] = UnboundedContinuousTensorSpec([1])
         observation_spec.shape = self.batch_size
 
@@ -184,9 +186,10 @@ class IsaacLabEnv(_EnvWrapper):
         if tensordict is None:
             obs, info = self._env.reset(**kwargs)
             tensordict_out = TensorDict(obs, self.batch_size, self.device)
-            return tensordict_out
         else:
-            return tensordict.clone()
+            tensordict_out = tensordict.clone()
+        
+        return tensordict_out
         if tensordict is not None:
             env_mask = tensordict.get("_reset").reshape(self.num_envs)
             env_ids = env_mask.nonzero().squeeze(-1)
@@ -214,16 +217,19 @@ class IsaacLabEnv(_EnvWrapper):
         tensordict_out["terminated"] = terminated
         tensordict_out["done"] = terminated | truncated
         tensordict_out["reward"] = reward.clone()
-        for key, value in self._env.reward_manager._episode_sums.items():
-            tensordict_out[f"Episode Reward/{key}"] = value
-        tensordict_out["Episode Length"] = self._env.episode_length_buf.clone()
-        if hasattr(self._env.reward_manager, "clip_count"):
-            tensordict_out["Episode Reward/clip_ratio"] = (
-                self._env.reward_manager.clip_count
-                / self._env.episode_length_buf
-            )
-        self.extras.update(info)
+        tensordict_out.update(self._read_extras())
+
         return tensordict_out.clone()
+    
+    def _read_extras(self):
+        extras = {}
+        for key, value in self._env.extras["log"].items():
+            if isinstance(value, torch.Tensor) and value.shape[0] == self.batch_size[0]:
+                extras[key] = value
+            elif isinstance(value, float):
+                self.extras[key] = value
+        extras["Episode Length"] = self._env.episode_length_buf.clone()
+        return extras
     
     @property
     def num_envs(self):

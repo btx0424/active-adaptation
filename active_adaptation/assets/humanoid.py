@@ -126,7 +126,7 @@ CY1_CFG = ArticulationCfg(
             velocity_limit=30.0,
             stiffness={
                 "waist_yaw_joint": 75.,
-                "[l,r]arm_joint1": 75.,
+                "[l,r]arm_joint1": 50.,
                 "[l,r]arm_joint2": 50.,
                 "[l,r]arm_joint3": 30.,
                 "[l,r]arm_joint4": 30.,
@@ -140,9 +140,9 @@ CY1_CFG = ArticulationCfg(
             },
             damping={
                 "waist_yaw_joint": 6.,
-                "[l,r]arm_joint1": 3.,
-                "[l,r]arm_joint2": 3.,
-                "[l,r]arm_joint3": 0.5,
+                "[l,r]arm_joint1": 2.,
+                "[l,r]arm_joint2": 2.,
+                "[l,r]arm_joint3": 1.,
                 "[l,r]arm_joint4": 1.,
                 "[l,r]arm_joint5": 1.,
                 "[l,r]leg_joint1": 3., # 6.
