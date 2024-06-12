@@ -573,29 +573,24 @@ class feet_height_map(Observation):
 
 
 class height_scan(Observation):
-    def __init__(self, env, prim_path, flatten: bool=False):
+    def __init__(self, env, prim_path, flatten: bool=False, noise_scale = 0.05):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.height_scanner: RayCaster = self.env.scene["height_scanner"]
-        self.height_scan = torch.zeros(self.num_envs, 3, 11, 17, device=self.device)
-        self.update()
+        self.height_scan = torch.zeros(self.num_envs, 11, 17, device=self.device)
         self.flatten = flatten
-
-    def reset(self, env_ids):
-        self.height_scan[env_ids] = 0.
-
-    def update(self):
-        self.height_scan[:, :-1] = self.height_scan[:, 1:]
-        self.height_scan[:, -1] = (
-            self.asset.data.root_pos_w[:, 2].unsqueeze(1)
-            - self.height_scanner.data.ray_hits_w[:, :, 2]
-        ).reshape(self.num_envs, 11, 17).clamp(-1., 1.)
+        self.noise_scale = noise_scale
 
     def __call__(self):
+        height_scan = (
+            self.asset.data.root_pos_w[:, 2].unsqueeze(1)
+            - self.height_scanner.data.ray_hits_w[..., 2]
+        )
+        height_scan = (height_scan + torch.randn_like(height_scan) * self.noise_scale).clamp(-1., 1.)
         if self.flatten:
-            return self.height_scan.reshape(self.num_envs, -1)
+            return height_scan.reshape(self.num_envs, -1)
         else:
-            return self.height_scan
+            return height_scan.reshape(self.num_envs, 11, 17)
 
     # def debug_draw(self):
     #     to = self.height_scan.data.ray_hits_w.reshape(-1, 11, 17, 3)[:, :, 0].reshape(-1, 11, 3)
