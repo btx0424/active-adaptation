@@ -141,6 +141,7 @@ def LocomotionEnvCfg(task_cfg):
         if "height_scan" in group.keys():
             prim_path = "{ENV_REGEX_NS}/Robot/" + group["height_scan"]["prim_path"]
             env_cfg.scene.height_scanner.prim_path = prim_path
+            env_cfg.scene.height_scanner.update_period = env_cfg.decimation * env_cfg.sim.dt
             use_height_scan = True
     if not use_height_scan:
         env_cfg.scene.height_scanner = None

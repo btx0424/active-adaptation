@@ -69,10 +69,8 @@ observation:
     # rewards:          {}
     contact_indicator: {body_names: [".*_foot"], timing: true}
     height_scan:      {prim_path: base, flatten: true}
-  # aux_target_:
-  #   root_linvel_b:
-  #   root_angvel_b:
-  #   rewards:
+  aux_target_:
+    root_linvel_b:
   # height_scan:
   #   height_scan:      {prim_path: base}
   # priv:

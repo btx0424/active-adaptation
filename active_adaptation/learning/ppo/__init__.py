@@ -33,3 +33,4 @@ from .ppo_roa import PPOROAPolicy
 from .ppo_guided import PPOGuidedPolicy
 from .ppo_mask import PPOMaskPolicy
 from .ppg import PPGPolicy
+from .ppo_him import PPOHIMPolicy

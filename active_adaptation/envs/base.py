@@ -51,8 +51,9 @@ class Env(EnvBase):
             # create rgb annotator -- used to read data from the render product
             self._rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cpu")
             self._rgb_annotator.attach([self._render_product])
-        except ModuleNotFoundError:
-            pass
+        except ModuleNotFoundError as e:
+            print(e)
+            print("Set enable_cameras=true to use cameras.")
 
         # print useful information
         print("[INFO]: Base environment:")
