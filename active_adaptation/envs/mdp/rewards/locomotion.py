@@ -423,7 +423,7 @@ class feet_air_time(Reward):
     def compute(self):
         first_contact = self.contact_sensor.compute_first_contact(self.env.step_dt)[:, self.body_ids]
         last_air_time = self.contact_sensor.data.last_air_time[:, self.body_ids]
-        self.reward = torch.sum((last_air_time - self.thres) * first_contact, dim=1, keepdim=True)
+        self.reward = torch.sum((last_air_time - self.thres).clamp_max(0.) * first_contact, dim=1, keepdim=True)
         self.reward *= (~self.env.command_manager.is_standing_env)
         if self.condition_on_linvel:
             self.reward *= self.asset.data.linvel_exp

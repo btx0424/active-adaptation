@@ -573,7 +573,7 @@ class feet_height_map(Observation):
 
 
 class height_scan(Observation):
-    def __init__(self, env, prim_path, flatten: bool=False, noise_scale = 0.05):
+    def __init__(self, env, prim_path, flatten: bool=False, noise_scale = 0.005):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.height_scanner: RayCaster = self.env.scene["height_scanner"]
@@ -586,7 +586,8 @@ class height_scan(Observation):
             self.asset.data.root_pos_w[:, 2].unsqueeze(1)
             - self.height_scanner.data.ray_hits_w[..., 2]
         )
-        height_scan = (height_scan + torch.randn_like(height_scan) * self.noise_scale).clamp(-1., 1.)
+        if self.noise_scale > 0:
+            height_scan = (height_scan + torch.randn_like(height_scan) * self.noise_scale).clamp(-1., 1.)
         if self.flatten:
             return height_scan.reshape(self.num_envs, -1)
         else:
