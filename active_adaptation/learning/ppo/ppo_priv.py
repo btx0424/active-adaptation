@@ -1,9 +1,7 @@
-from typing import Mapping
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as D
-import functools
 
 from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuousTensorSpec
 from torchrl.modules import ProbabilisticActor
@@ -17,6 +15,7 @@ from tensordict.nn import (
 
 from hydra.core.config_store import ConfigStore
 from dataclasses import dataclass
+from termcolor import colored
 import einops
 
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
@@ -32,11 +31,14 @@ class PPGConfig:
     name: str = "ppo_priv"
     train_every: int = 32
     ppo_epochs: int = 4
-    aux_epochs: int = -1 # 6
+    # aux_epochs: int = -1 # 6
     beta_clone: float = 1.
     entropy_coef: float = 0.01
     value_norm: bool = False
     
+    stoch_encoder: bool = True
+    
+    # regularization for stochastic encoder
     free_bits: float = 128
     rep_loss: float = 0.05
 
@@ -47,6 +49,8 @@ class PPGConfig:
 
 cs = ConfigStore.instance()
 cs.store(name="ppo_priv", node=PPGConfig, group="algo")
+cs.store(name="ppo_priv_stoch", node=PPGConfig, group="algo")
+cs.store(name="ppo_priv_deter", node=PPGConfig(stoch_encoder=False), group="algo")
 
 class GRU(nn.Module):
     def __init__(
@@ -135,6 +139,84 @@ def sample_normal(loc, scale, k: int=1):
         scale = scale.expand(k, *scale.shape)
     return loc + torch.randn_like(loc) * scale
 
+def make_adapt_module(context_dim: int, mode: str="deter"):
+    if mode == "deter":
+        module = TensorDictModule(
+            GRUModule(context_dim), 
+            [OBS_KEY, "is_init", "context_adapt_hx"], 
+            ["context_adapt", ("next", "context_adapt_hx")]
+        )
+    elif mode == "stoch":
+        module = TensorDictModule(
+            GRUModuleStoch(context_dim),
+            [OBS_KEY, "is_init", "context_adapt_hx"], 
+            ["context_adapt_loc", "context_adapt_scale", ("next", "context_adapt_hx")]
+        )
+    return module
+
+
+class StochEncoder(nn.Module):
+    def __init__(self, context_dim):
+        super().__init__()
+        _encoder = nn.Sequential(make_mlp([256, context_dim]), NormalParams(context_dim))
+        self.encoder = TensorDictSequential(
+            CatTensors([OBS_KEY, OBS_PRIV_KEY], "_full_obs", del_keys=False),
+            TensorDictModule(_encoder, ["_full_obs"], ["context_priv_loc", "context_priv_scale"])
+        )
+        self.adapt_module = make_adapt_module(context_dim, "stoch")
+
+        self.sample_context = TensorDictModule(
+            sample_normal, ["context_priv_loc", "context_priv_scale"], ["context_priv"])
+        self.sample_context_adapt = TensorDictModule(
+            sample_normal, ["context_adapt_loc", "context_adapt_scale"], ["context_adapt"])
+    
+    def get_encoder(self, mode: str):
+        modules = []
+        if mode in ("train", "eval"):
+            modules.append(self.encoder)
+            modules.append(self.sample_context)
+        modules.append(self.adapt_module)
+        modules.append(self.sample_context_adapt)
+        return TensorDictSequential(*modules)
+        
+    def compute_loss(self, tensordict: TensorDictBase, reverse: bool=False):
+        losses = {}
+        self.adapt_module(tensordict)
+        context_dist_priv = D.Normal(tensordict["context_priv_loc"], tensordict["context_priv_scale"])
+        context_dist_pred = D.Normal(tensordict["context_adapt_loc"], tensordict["context_adapt_scale"])
+        if not reverse:
+            kl = kl_divergence(context_dist_priv, context_dist_pred)
+        else:
+            kl = kl_divergence(context_dist_pred, context_dist_priv)
+        losses["adapt/adapt_module_loss"] = kl.sum(-1).mean()
+        losses["adapt/context_adapt_std"] = tensordict["context_adapt_scale"].mean()
+        return losses
+
+
+class DeterEncoder(nn.Module):
+    def __init__(self, context_dim: int):
+        super().__init__()
+        _encoder = make_mlp([256, context_dim])
+        self.encoder = TensorDictSequential(
+            CatTensors([OBS_KEY, OBS_PRIV_KEY], "_full_obs", del_keys=False),
+            TensorDictModule(_encoder, ["_full_obs"], ["context_priv"])
+        )
+        self.adapt_module = make_adapt_module(context_dim, "deter")
+    
+    def get_encoder(self, mode: str):
+        modules = []
+        if mode in ("train", "eval"):
+            modules.append(self.encoder)
+        modules.append(self.adapt_module)
+        return TensorDictSequential(*modules)
+
+    def compute_loss(self, tensordict: TensorDictBase):
+        losses = {}
+        self.adapt_module(tensordict)
+        mse = (tensordict["context_adapt"] - tensordict["context_priv"]).square()
+        losses["adapt/adapt_module_loss"] = mse.mean()
+        return losses
+
 class PPOPrivPolicy(TensorDictModuleBase):
 
     def __init__(
@@ -153,10 +235,9 @@ class PPOPrivPolicy(TensorDictModuleBase):
 
         self.entropy_coef = self.cfg.entropy_coef
         self.clip_param = self.cfg.clip_param
-        # self.critic_loss_fn = nn.HuberLoss(delta=10)
         self.critic_loss_fn = nn.MSELoss(reduction="none")
         self.action_dim = action_spec.shape[-1]
-        self.context_dim = 128
+        self.context_dim = 256
         self.phase = self.cfg.phase
         # self.aux_target_dim = observation_spec["aux_target_"].shape[-1]
 
@@ -177,32 +258,17 @@ class PPOPrivPolicy(TensorDictModuleBase):
             fake_input["context_adapt_hx"] = torch.zeros(fake_input.shape[0], 128)
         print(fake_input)
 
-        _encoder = nn.Sequential(make_mlp([256, self.context_dim]), NormalParams(self.context_dim))
-        self.encoder = TensorDictSequential(
-            CatTensors([OBS_KEY, OBS_PRIV_KEY], "_full_obs", del_keys=False),
-            TensorDictModule(_encoder, ["_full_obs"], ["context_priv_loc", "context_priv_scale"])
-        ).to(self.device)
-
-        self.sample_context = TensorDictModule(
-            sample_normal, ["context_priv_loc", "context_priv_scale"], ["context_priv"])
-        self.sample_context_adapt = TensorDictModule(
-            sample_normal, ["context_adapt_loc", "context_adapt_scale"], ["context_adapt"])
-
-        def make_adapt_module(mode: str="deter"):
-            if mode == "deter":
-                module = TensorDictModule(
-                    GRUModule(self.context_dim), 
-                    [OBS_KEY, "is_init", "context_adapt_hx"], 
-                    ["context_adapt", ("next", "context_adapt_hx")]
-                ).to(self.device)
-            elif mode == "stoch":
-                module = TensorDictModule(
-                    GRUModuleStoch(self.context_dim),
-                    [OBS_KEY, "is_init", "context_adapt_hx"], 
-                    ["context_adapt_loc", "context_adapt_scale", ("next", "context_adapt_hx")]
-                ).to(self.device)
-            return module
-        self.adapt_module = make_adapt_module("stoch")
+        if self.cfg.stoch_encoder:
+            text = (
+                "[Info]: Using stochastic encoder. Be aware of the difference."
+                "See https://github.com/zdhNarsil/Stochastic-Marginal-Actor-Critic for more details."
+            )
+            print(colored(text, "green"))
+            self.encoder = StochEncoder(self.context_dim).to(self.device)
+        else:
+            text = "[Info]: Using deterministic encoder. Be aware of the difference."
+            print(colored(text, "green"))
+            self.encoder = DeterEncoder(self.context_dim).to(self.device)
         
         def make_actor(context_key):
             _actor = nn.Sequential(make_mlp([256]), Actor(self.action_dim, True))
@@ -214,7 +280,7 @@ class PPOPrivPolicy(TensorDictModuleBase):
             in_keys=["loc", "scale"],
             out_keys=[ACTION_KEY],
             distribution_class=IndependentNormal,
-            return_log_prob=False
+            return_log_prob=True
         ).to(self.device)
 
         self.actor_adapt: ProbabilisticActor = ProbabilisticActor(
@@ -222,7 +288,7 @@ class PPOPrivPolicy(TensorDictModuleBase):
             in_keys=["loc", "scale"],
             out_keys=[ACTION_KEY],
             distribution_class=IndependentNormal,
-            return_log_prob=False
+            return_log_prob=True
         ).to(self.device)
 
         _critic = nn.Sequential(make_mlp([512, 256, 128]), nn.LazyLinear(1))
@@ -231,10 +297,7 @@ class PPOPrivPolicy(TensorDictModuleBase):
             TensorDictModule(_critic, ["_full_obs"], ["state_value"]),
         ).to(self.device)
 
-        self.encoder(fake_input)
-        self.sample_context(fake_input)
-        self.adapt_module(fake_input)
-        self.sample_context_adapt(fake_input)
+        self.encoder.get_encoder("train")(fake_input)
         self.actor(fake_input)
         self.actor_adapt(fake_input)
         self.critic(fake_input)
@@ -247,17 +310,10 @@ class PPOPrivPolicy(TensorDictModuleBase):
             ],
             lr=self.cfg.lr
         )
-        self.opt_aux = torch.optim.Adam(
-            [
-                {"params": self.encoder.parameters()},
-                {"params": self.actor.parameters()},
-                {"params": self.critic.parameters()},
-            ],
-            lr=self.cfg.lr
-        )
+        
         self.opt_adapt = torch.optim.Adam(
             [
-                {"params": self.adapt_module.parameters()}
+                {"params": self.encoder.parameters()}
             ],
             lr=self.cfg.lr
         )
@@ -270,7 +326,6 @@ class PPOPrivPolicy(TensorDictModuleBase):
         self.encoder.apply(init_)
         self.actor.apply(init_)
         self.critic.apply(init_)
-        self.adapt_module.apply(init_)
         
         self.train_iter = 0
 
@@ -285,12 +340,9 @@ class PPOPrivPolicy(TensorDictModuleBase):
     def get_rollout_policy(self, mode: str):
         modules = []
         exclude_keys = ["loc", "scale"]
-        if mode in ("train", "eval"):
-            modules.append(self.encoder)
-            modules.append(self.sample_context)
         
-        modules.append(self.adapt_module)
-
+        modules.append(self.encoder.get_encoder(mode))
+        
         # def _noise_(x: torch.Tensor):
         #     return x + torch.randn_like(x) * 1.6
         # modules.append(TensorDictModule(_noise_, ["context_priv"], ["context_priv"]))
@@ -299,7 +351,8 @@ class PPOPrivPolicy(TensorDictModuleBase):
         if self.phase == "train":
             modules.append(self.actor)
         else:
-            modules.append(self.sample_context_adapt)
+            modules.append(self.encoder.adapt_module)
+            modules.append(self.encoder.sample_context_adapt)
             modules.append(self.actor_adapt)
 
         policy = TensorDictSequential(*modules, ExcludeTransform(*exclude_keys))
@@ -313,7 +366,11 @@ class PPOPrivPolicy(TensorDictModuleBase):
         infos = {}
         if self.phase == "train":
             infos.update(self.train_policy(tensordict.copy()))
-        # infos.update(self.train_adaptation(tensordict.copy()))
+            infos.update(self.train_adaptation(tensordict.copy()))
+        elif self.phase == "adapt":
+            infos.update(self.train_adaptation(tensordict.copy()))
+        elif self.phase == "finetune":
+            pass
         
         self.train_iter += 1
         return dict(sorted(infos.items()))
@@ -322,12 +379,12 @@ class PPOPrivPolicy(TensorDictModuleBase):
         infos = []
 
         self._compute_advantage(tensordict)
-        with torch.no_grad():
-            # self.encoder(tensordict)
-            tensordict["sample_log_prob"] = self._compute_logprobs(tensordict)
+        if isinstance(self.encoder, StochEncoder):
+            with torch.no_grad():
+                tensordict["sample_log_prob"] = self._compute_logprobs(tensordict)
         
         for epoch in range(self.cfg.ppo_epochs):
-            for minibatch in make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every):
+            for minibatch in make_batch(tensordict, self.cfg.num_minibatches):
                 minibatch["adv"] = normalize(minibatch["adv"], True)
                 infos.append(TensorDict(self._update(minibatch), []))
         
@@ -340,27 +397,17 @@ class PPOPrivPolicy(TensorDictModuleBase):
         infos = []
         
         with torch.no_grad(): # update the contexts
-            self.encoder(tensordict)
+            self.encoder.encoder(tensordict)
 
         for epoch in range(2):
             batch = make_batch(tensordict, 8, self.cfg.train_every)
             for minibatch in batch:
-                losses = {}
-                self.adapt_module(minibatch)
-                context_dist_priv = D.Normal(minibatch["context_priv_loc"], minibatch["context_priv_scale"])
-                context_dist_pred = D.Normal(minibatch["context_adapt_loc"], minibatch["context_adapt_scale"])
-                if not reverse:
-                    kl = D.kl_divergence(context_dist_priv, context_dist_pred)
-                else:
-                    kl = D.kl_divergence(context_dist_pred, context_dist_priv)
-                losses["adapt/adapt_module_loss"] = kl.sum(-1).mean()
-
-                loss = sum(losses.values())
+                losses = self.encoder.compute_loss(minibatch)
+                loss = sum(v for k, v in losses.items() if k.endswith("loss"))
                 self.opt_adapt.zero_grad()
                 loss.backward()
-                losses["adapt/adapt_module_grad_norm"] = nn.utils.clip_grad_norm_(self.adapt_module.parameters(), 10.)
+                losses["adapt/adapt_module_grad_norm"] = nn.utils.clip_grad_norm_(self.encoder.parameters(), 10.)
                 self.opt_adapt.step()
-                losses["adapt/context_adapt_std"] = minibatch["context_adapt_scale"].mean()
                 infos.append(TensorDict(losses, []))
     
         infos = collect_info(infos)
@@ -393,43 +440,45 @@ class PPOPrivPolicy(TensorDictModuleBase):
         return tensordict
     
     def _update(self, tensordict: TensorDictBase):
-        self.encoder(tensordict)
-        log_probs = self._compute_logprobs(tensordict)
-        entropy = - log_probs.mean()
+        losses = {}
+        self.encoder.encoder(tensordict)
+        if isinstance(self.encoder, StochEncoder):
+            log_probs = self._compute_logprobs(tensordict)
+            entropy = - log_probs.mean()
+        else:
+            dist = self.actor.get_dist(tensordict)
+            log_probs = dist.log_prob(tensordict[ACTION_KEY])
+            entropy = dist.entropy().mean()
 
         adv = tensordict["adv"]
         ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
-        policy_loss = - torch.mean(torch.min(surr1, surr2)) * self.action_dim
+        policy_loss = - torch.mean(torch.min(surr1, surr2))
         entropy_loss = - self.entropy_coef * entropy
+        losses["policy_loss"] = policy_loss
+        losses["entropy_loss"] = entropy_loss
 
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["state_value"]
         value_loss = self.critic_loss_fn(b_returns, values) * (~tensordict["is_init"])
-        value_loss = value_loss.mean()
+        losses["value_loss/value_loss"] = value_loss.mean()
+        losses["value_loss/explained_var"] = 1 - F.mse_loss(values.detach(), b_returns) / b_returns.var()
 
-        context_dist_priv = D.Normal(tensordict["context_priv_loc"], tensordict["context_priv_scale"])
-        context_dist_pred = D.Normal(tensordict["context_adapt_loc"], tensordict["context_adapt_scale"])
-        context_kl = kl_divergence(context_dist_priv, context_dist_pred).sum(-1)
+        if isinstance(self.encoder, StochEncoder):
+            context_dist_priv = D.Normal(tensordict["context_priv_loc"], tensordict["context_priv_scale"])
+            context_dist_pred = D.Normal(tensordict["context_adapt_loc"], tensordict["context_adapt_scale"])
+            reg_loss = kl_divergence(context_dist_priv, context_dist_pred).sum(-1).clamp_min(self.cfg.free_bits).mean()
+            losses["rep_loss"] = self.beta * reg_loss
+            losses["context_std"] = torch.mean(context_dist_priv.scale)
 
-        loss = policy_loss + entropy_loss + value_loss + self.beta * context_kl.clamp_min(self.cfg.free_bits).mean()
+        loss = sum(v for k, v in losses.items() if k.endswith("loss"))
         self.opt.zero_grad()
         loss.backward()
-        actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), 10)
-        critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), 10)
+        losses["actor_grad_norm"] = nn.utils.clip_grad_norm_(self.actor.parameters(), 2)
+        losses["critic_grad_norm"] = nn.utils.clip_grad_norm_(self.critic.parameters(), 2)
         self.opt.step()
-        explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-        return {
-            "policy_loss": policy_loss,
-            "entropy": entropy,
-            "actor_grad_norm": actor_grad_norm,
-            "critic_grad_norm": critic_grad_norm,
-            "value_loss/value_loss": value_loss,
-            "value_loss/explained_var": explained_var,
-            "rep_loss": context_kl.mean(),
-            "context_std": torch.mean(context_dist_priv.scale)
-        }
+        return losses
     
     def _update_aux(self, tensordict: TensorDictBase):
         losses = {}
