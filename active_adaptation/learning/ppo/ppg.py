@@ -134,13 +134,16 @@ class NormalParams(nn.Module):
         scale = F.softplus(scale)
         return loc, scale
 
-def sample_normal(loc, scale, k: int=1):
+def sample_normal(loc, scale, k: int=1, n: int=1):
     if exploration_type() == ExplorationType.MODE:
         return loc
-    if k > 1:
-        loc = loc.expand(k, *loc.shape)
-        scale = scale.expand(k, *scale.shape)
-    return loc + torch.randn_like(loc) * scale
+    loc = loc.expand(k, n, *loc.shape)
+    samples = loc + torch.randn_like(loc) * scale
+    if n > 1:
+        samples = torch.cat(list(samples.unzip(1)), dim=-1)
+    else:
+        samples = samples.squeeze(1)
+    return samples.squeeze(0)
 
 class PPGPolicy(TensorDictModuleBase):
 
@@ -349,13 +352,14 @@ class PPGPolicy(TensorDictModuleBase):
         for epoch in range(self.cfg.ppo_epochs):
             for minibatch in make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every):
                 minibatch["adv"] = normalize(minibatch["adv"], True)
-                infos.append(self._update(minibatch))
+                infos.append(TensorDict(self._update(minibatch), []))
         
         infos = collect_info(infos)
         infos["value_priv"] = self.value_norm.denormalize(tensordict["ret"]).mean().item()
         infos["beta"] = self.beta
         return infos
 
+    @torch.compile
     def train_adaptation(self, tensordict: TensorDictBase, reverse: bool=False):
         infos = []
         
@@ -397,8 +401,8 @@ class PPGPolicy(TensorDictModuleBase):
 
     @torch.no_grad()
     def _compute_advantage(self, tensordict: TensorDict):
-        values = self.critic(tensordict)["state_value"]
-        next_values = self.critic(tensordict["next"])["state_value"]
+        values = self.critic(tensordict)["value_priv"]
+        next_values = self.critic(tensordict["next"])["value_priv"]
 
         rewards = tensordict[REWARD_KEY]
         dones = tensordict[DONE_KEY]
@@ -411,7 +415,6 @@ class PPGPolicy(TensorDictModuleBase):
         tensordict.set("ret", ret)
         return tensordict
     
-    # @functools.partial(torch.compile, mode="reduce-overhead")
     def _update(self, tensordict: TensorDictBase):
         self.encoder(tensordict)
         log_probs = self._compute_logprobs(tensordict)
@@ -425,7 +428,7 @@ class PPGPolicy(TensorDictModuleBase):
         entropy_loss = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
-        values = self.critic(tensordict)["state_value"]
+        values = self.critic(tensordict)["value_priv"]
         value_loss = self.critic_loss_fn(b_returns, values) * (~tensordict["is_init"])
         value_loss = value_loss.mean()
 
@@ -440,7 +443,7 @@ class PPGPolicy(TensorDictModuleBase):
         critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), 10)
         self.opt.step()
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-        return TensorDict({
+        return {
             "policy_loss": policy_loss,
             "entropy": entropy,
             "actor_grad_norm": actor_grad_norm,
@@ -449,7 +452,7 @@ class PPGPolicy(TensorDictModuleBase):
             "value_loss/explained_var": explained_var,
             "rep_loss": context_kl.mean(),
             "context_std": torch.mean(context_dist.scale)
-        }, [])
+        }
     
     def _update_aux(self, tensordict: TensorDictBase):
         losses = {}

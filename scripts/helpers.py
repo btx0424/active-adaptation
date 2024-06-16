@@ -114,5 +114,6 @@ def make_env_policy(cfg):
     
     if hasattr(policy, "make_tensordict_primer"):
         transform.append(policy.make_tensordict_primer())
+        env = TransformedEnv(env.base_env, transform)
 
     return env, policy, vecnorm
