@@ -7,6 +7,7 @@ import wandb
 import logging
 import os
 import time
+import datetime
 
 from omegaconf import OmegaConf
 from collections import OrderedDict
@@ -67,40 +68,46 @@ def main(cfg):
         device=cfg.sim.device,
         return_same_td=True,
     )
-
-    @torch.no_grad()
+    
+    @torch.inference_mode()
     def evaluate(
         seed: int=0, 
         exploration_type: ExplorationType=ExplorationType.MODE,
         render=False,
-        mode=None,
     ):
         frames = []
 
         env.eval()
         env.set_seed(seed)
-        policy.eval()
 
-        if mode is not None and hasattr(policy, "mode"):
-            policy.mode = mode
+        keys = [
+            ("next", "done"), 
+            ("next", "stats", "return"),
+            "value_obs",
+            "value_priv",
+            "value_adapt",
+            "context_expert",
+            "context_scale",
+            "context_adapt",
+            "context_adapt_scale",
+            "action_kl",
+        ]
 
-        from tqdm import tqdm
-        def record_frame(*args, **kwargs):
-            if render:
-                frame = env.render(mode="rgb_array")
-                frames.append(frame)
-        
+        td_ = env.reset()
+        trajs = []
+        frames = []
+        _policy = policy.get_rollout_policy("eval")
+
+        t = tqdm(range(env.max_episode_length), miniters=50)
         with set_exploration_type(exploration_type):
-            trajs = env.rollout(
-                max_steps=env.max_episode_length,
-                policy=policy.get_rollout_policy("eval").to(env.device),
-                callback=Every(record_frame, 2),
-                auto_reset=True,
-                break_when_any_done=False,
-                return_contiguous=False,
-            )
-        env.reset()
+            for i in enumerate(t):
+                _policy(td_)
+                td, td_ = env.step_and_maybe_reset(td_)
+                trajs.append(td.select(*keys, strict=False).cpu())
+                if render:
+                    frames.append(env.render("rgb_array").cpu())
 
+        trajs = torch.stack(trajs)
         done = trajs.get(("next", "done"))
         first_done = torch.argmax(done.long(), dim=1).cpu()
 
@@ -112,28 +119,27 @@ def main(cfg):
             k: take_first_episode(v)
             for k, v in trajs[("next", "stats")].cpu().items()
         }
-
-        info = {
-            "eval/stats." + k: torch.mean(v.float()).item() 
-            for k, v in traj_stats.items()
-        }
+        
+        info = {}
+        compute_std_for = ["return", "survival"]
+        for k, v in sorted(traj_stats.items()):
+            info["eval/stats." + k] = torch.mean(v.float()).item()
+            if k in compute_std_for:
+                info["eval/stats." + k + "_std"] = torch.std(v.float()).item()
 
         # log video
         if len(frames):
-            video_array = einops.rearrange(np.stack(frames), "t h w c -> t c h w")
+            from torchvision.io import write_video
+            time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
+            video_array = np.stack(frames)
             frames.clear()
-            info["recording"] = wandb.Video(
-                video_array, 
-                fps=0.5 / env.step_dt,
-                format="mp4"
-            )
-        
-        # log distributions
-        # df = pd.DataFrame(traj_stats)
-        # table = wandb.Table(dataframe=df)
-        # info["eval/return"] = wandb.plot.histogram(table, "return")
-        # info["eval/episode_len"] = wandb.plot.histogram(table, "episode_len")
+            video_path = os.path.join(os.path.dirname(__file__), f"recording-{time_str}.mp4")
+            write_video(video_path, video_array, fps=1 / env.step_dt)
 
+        # time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
+        # path = os.path.join(os.path.dirname(__file__), f"trajs-{time_str}.pt")
+        # print(termcolor.colored(trajs, "light_yellow"))
+        # torch.save(trajs, path)
         return info
     
     def save(policy, checkpoint_name: str, artifact: bool=False):
@@ -192,7 +198,7 @@ def main(cfg):
     
     save(policy, "checkpoint_final")
 
-    info = evaluate(render=cfg.eval_render, mode="expert")
+    info = evaluate(render=cfg.eval_render)
     info["env_frames"] = collector._frames
     run.log(info)
 

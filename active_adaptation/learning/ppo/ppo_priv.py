@@ -158,7 +158,7 @@ def make_adapt_module(context_dim: int, mode: str="deter"):
 class StochEncoder(nn.Module):
     def __init__(self, context_dim):
         super().__init__()
-        _encoder = nn.Sequential(make_mlp([256, context_dim]), NormalParams(context_dim))
+        _encoder = nn.Sequential(make_mlp([512, 256]), NormalParams(context_dim))
         self.encoder = TensorDictSequential(
             CatTensors([OBS_KEY, OBS_PRIV_KEY], "_full_obs", del_keys=False),
             TensorDictModule(_encoder, ["_full_obs"], ["context_priv_loc", "context_priv_scale"])
@@ -196,7 +196,7 @@ class StochEncoder(nn.Module):
 class DeterEncoder(nn.Module):
     def __init__(self, context_dim: int):
         super().__init__()
-        _encoder = make_mlp([256, context_dim])
+        _encoder = nn.Sequential(make_mlp([512, 256]), nn.LazyLinear(context_dim))
         self.encoder = TensorDictSequential(
             CatTensors([OBS_KEY, OBS_PRIV_KEY], "_full_obs", del_keys=False),
             TensorDictModule(_encoder, ["_full_obs"], ["context_priv"])
@@ -313,7 +313,7 @@ class PPOPrivPolicy(TensorDictModuleBase):
         
         self.opt_adapt = torch.optim.Adam(
             [
-                {"params": self.encoder.parameters()}
+                {"params": self.encoder.adapt_module.parameters()}
             ],
             lr=self.cfg.lr
         )
@@ -351,8 +351,6 @@ class PPOPrivPolicy(TensorDictModuleBase):
         if self.phase == "train":
             modules.append(self.actor)
         else:
-            modules.append(self.encoder.adapt_module)
-            modules.append(self.encoder.sample_context_adapt)
             modules.append(self.actor_adapt)
 
         policy = TensorDictSequential(*modules, ExcludeTransform(*exclude_keys))

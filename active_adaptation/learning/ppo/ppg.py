@@ -1,13 +1,13 @@
-from typing import Mapping
+from typing import Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as D
-import functools
 
 from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuousTensorSpec
 from torchrl.modules import ProbabilisticActor
 from torchrl.envs.transforms import CatTensors, TensorDictPrimer, ExcludeTransform
+from torchrl.envs.utils import exploration_type, ExplorationType
 from tensordict.nn import (
     TensorDictModule, 
     TensorDictSequential, 
@@ -17,6 +17,7 @@ from tensordict.nn import (
 
 from hydra.core.config_store import ConfigStore
 from dataclasses import dataclass
+from termcolor import colored
 import einops
 
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
@@ -25,6 +26,7 @@ from .common import *
 from .ppo_rnn import GRU
 from .ppo_roa import LinearSchedule
 
+kl_divergence = D.kl._KL_REGISTRY[(D.Normal, D.Normal)]
 
 @dataclass
 class PPGConfig:
@@ -35,6 +37,7 @@ class PPGConfig:
     beta_clone: float = 1.
     entropy_coef: float = 0.01
     value_norm: bool = False
+    vecnorm: Union[str, None] = None
     
     # short_history: int = 5
     kl_prior: bool = False
@@ -47,7 +50,8 @@ class PPGConfig:
     phase: str = "train"
 
 cs = ConfigStore.instance()
-cs.store(name="ppg", node=PPGConfig, group="algo")
+cs.store(name="ppg_train", node=PPGConfig(vecnorm="train"), group="algo")
+cs.store(name="ppg_adapt", node=PPGConfig(vecnorm="eval", phase="adapt"), group="algo")
 
 class GRU(nn.Module):
     def __init__(
@@ -131,6 +135,8 @@ class NormalParams(nn.Module):
         return loc, scale
 
 def sample_normal(loc, scale, k: int=1):
+    if exploration_type() == ExplorationType.MODE:
+        return loc
     if k > 1:
         loc = loc.expand(k, *loc.shape)
         scale = scale.expand(k, *scale.shape)
@@ -240,7 +246,7 @@ class PPGPolicy(TensorDictModuleBase):
             CatTensors([OBS_KEY, OBS_PRIV_KEY], "_critic_in", del_keys=False),
             TensorDictModule(
                 nn.Sequential(make_mlp([256, 256, 256]), nn.LazyLinear(1)), 
-                ["_critic_in"], ["state_value"]
+                ["_critic_in"], ["value_priv"]
             ),
         ).to(self.device)
 
@@ -286,6 +292,7 @@ class PPGPolicy(TensorDictModuleBase):
         self.adapt_module.apply(init_)
         
         self.train_iter = 0
+        self.actor_adapt.requires_grad_(False)
 
     def make_tensordict_primer(self):
         num_envs = self.observation_spec.shape[0]
@@ -298,17 +305,19 @@ class PPGPolicy(TensorDictModuleBase):
         if mode in ("train", "eval"):
             modules.append(self.encoder)
             modules.append(self.sample_context)
+            modules.append(self.critic)
         
-        modules.append(self.adapt_module)
-
         # def _noise_(x: torch.Tensor):
         #     return x + torch.randn_like(x) * 1.6
         # modules.append(TensorDictModule(_noise_, ["context_expert"], ["context_expert"]))
         # modules.append(TensorDictModule(_noise_, ["context_adapt"], ["context_adapt"]))
         
         if self.phase == "train":
+            modules.append(self.adapt_module) # to compute prior
             modules.append(self.actor)
         else:
+            print(colored("[Info]: Use adapt policy.", "green"))
+            modules.append(self.adapt_module)
             modules.append(self.sample_context_adapt)
             modules.append(self.actor_adapt)
 
@@ -318,7 +327,7 @@ class PPGPolicy(TensorDictModuleBase):
     
     def step_schedule(self, progress: float):
         self.beta = self.beta_schedule.compute(progress)
-        self.gae.gamma.copy_(min(0.99 + progress * 0.005, 0.995))
+        # self.gae.gamma.copy_(min(0.99 + progress * 0.005, 0.995))
 
     def train_op(self, tensordict: TensorDictBase):
         infos = {}
@@ -361,9 +370,9 @@ class PPGPolicy(TensorDictModuleBase):
                 context_dist_priv = D.Normal(minibatch["context_loc"], minibatch["context_scale"])
                 context_dist_pred = D.Normal(minibatch["context_adapt_loc"], minibatch["context_adapt_scale"])
                 if not reverse:
-                    kl = D.kl_divergence(context_dist_priv, context_dist_pred)
+                    kl = kl_divergence(context_dist_priv, context_dist_pred)
                 else:
-                    kl = D.kl_divergence(context_dist_pred, context_dist_priv)
+                    kl = kl_divergence(context_dist_pred, context_dist_priv)
                 losses["adapt/adapt_module_loss"] = kl.sum(-1).mean()
 
                 loss = sum(losses.values())
@@ -422,7 +431,7 @@ class PPGPolicy(TensorDictModuleBase):
 
         context_dist = D.Normal(tensordict["context_loc"], tensordict["context_scale"])
         context_dist_pred = D.Normal(tensordict["context_adapt_loc"], tensordict["context_adapt_scale"])
-        context_kl = D.kl_divergence(context_dist, context_dist_pred).sum(-1)
+        context_kl = kl_divergence(context_dist, context_dist_pred).sum(-1)
 
         loss = policy_loss + entropy_loss + value_loss + self.beta * context_kl.clamp_min(128.).mean()
         self.opt.zero_grad()
