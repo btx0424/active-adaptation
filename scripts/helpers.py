@@ -109,11 +109,13 @@ def make_env_policy(cfg):
     )
     
     if "policy" in state_dict.keys():
-        print(colored("[Info]: Load policy from checkpoint."))
+        print(colored("[Info]: Load policy from checkpoint.", "green"))
         policy.load_state_dict(state_dict["policy"])
     
     if hasattr(policy, "make_tensordict_primer"):
-        transform.append(policy.make_tensordict_primer())
+        primer = policy.make_tensordict_primer()
+        print(colored(f"[Info]: Add TensorDictPrimer {primer}.", "green"))
+        transform.append(primer)
         env = TransformedEnv(env.base_env, transform)
 
     return env, policy, vecnorm

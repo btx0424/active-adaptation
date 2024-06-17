@@ -211,6 +211,53 @@ ROUGH_TERRAIN_CFG = TerrainImporterCfg(
     debug_vis=False,
 )
 
+STAIRS = TerrainGeneratorCfg(
+    seed=0,
+    size=(8.0, 8.0),
+    border_width=40.0,
+    num_rows=10,
+    num_cols=20,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    use_cache=False,
+    sub_terrains={
+        "flat": MeshPlaneTerrainCfg(
+            proportion=0.10,
+        ),
+        "random_rough_easy": HfRandomUniformTerrainCfg(
+            proportion=0.20,
+            noise_range=(0.0, 0.05),
+            noise_step=0.02,
+            border_width=0.5
+        ),
+        "box": MeshRepeatedBoxesTerrainCfg(
+            proportion=0.20,
+            object_params_start=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
+                num_objects=36, height=0.15, size=(0.6, 0.6), max_yx_angle=15),
+            object_params_end=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
+                num_objects=36, height=0.15, size=(0.6, 0.6), max_yx_angle=15),
+            platform_width=2.0
+        ),
+        "pyramid_stairs_inv_a": MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.20,
+            step_height_range=(0.05, 0.20),
+            step_width=0.35,
+            platform_width=3.5,
+            border_width=1.0,
+            holes=False,
+        ),
+        "pyramid_stairs_inv_b": MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.20,
+            step_height_range=(0.05, 0.20),
+            step_width=0.50,
+            platform_width=3.5,
+            border_width=1.0,
+            holes=False,
+        ),
+    },
+)
+
 FLAT_TERRAIN_CFG = TerrainImporterCfg(
     prim_path="/World/ground",
     terrain_type="plane",
@@ -227,5 +274,6 @@ TERRAINS = {
     "medium": ROUGH_MEDIUM,
     "easy": ROUGH_EASY,
     "hard": ROUGH_HARD,
-    "flat": FLAT
+    "flat": FLAT,
+    "stairs": STAIRS
 }

@@ -134,13 +134,14 @@ class NormalParams(nn.Module):
         scale = F.softplus(scale)
         return loc, scale
 
-def sample_normal(loc, scale, k: int=1, n: int=1):
-    if exploration_type() == ExplorationType.MODE:
-        return loc
+def sample_normal(loc, scale, k: int=1, n: int=2):
     loc = loc.expand(k, n, *loc.shape)
-    samples = loc + torch.randn_like(loc) * scale
+    if exploration_type() == ExplorationType.MODE:
+        samples = loc + 0.
+    else:
+        samples = loc + torch.randn_like(loc).clamp(-3., 3.) * scale
     if n > 1:
-        samples = torch.cat(list(samples.unzip(1)), dim=-1)
+        samples = torch.cat(list(samples.unbind(1)), dim=-1)
     else:
         samples = samples.squeeze(1)
     return samples.squeeze(0)
@@ -293,6 +294,9 @@ class PPGPolicy(TensorDictModuleBase):
         self.actor.apply(init_)
         self.critic.apply(init_)
         self.adapt_module.apply(init_)
+        print(self.encoder)
+        print(self.actor)
+        print(self.critic)
         
         self.train_iter = 0
         self.actor_adapt.requires_grad_(False)

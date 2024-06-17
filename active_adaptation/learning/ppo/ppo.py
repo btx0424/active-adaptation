@@ -92,12 +92,26 @@ class PPOPolicy(TensorDictModuleBase):
 
         fake_input = observation_spec.zero()
         
-        actor_module=TensorDictModule(
-            nn.Sequential(
-                make_mlp([512, 256, 128], norm=self.cfg.layer_norm), 
-                Actor(self.action_dim)
-            ),
-            [OBS_KEY], ["loc", "scale"]
+        def make_cnn():
+            cnn = nn.Sequential(
+                nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1),
+                nn.LeakyReLU(),
+                nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1),
+                nn.LeakyReLU(),
+                nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1),
+                nn.LeakyReLU(),
+                nn.Flatten(),
+                nn.LazyLinear(64),
+                nn.LayerNorm(64),
+            )
+            return cnn
+        
+        _actor = nn.Sequential(make_mlp([128]), Actor(self.action_dim))
+        actor_module = TensorDictSequential(
+            TensorDictModule(make_cnn(), ["height_scan"], ["_cnn"]),
+            TensorDictModule(make_mlp([256, 256]), [OBS_KEY], ["_mlp"]),
+            CatTensors(["_cnn", "_mlp"], "_actor_feature"),
+            TensorDictModule(_actor, ["_actor_feature"], ["loc", "scale"])
         )
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=actor_module,
@@ -107,11 +121,12 @@ class PPOPolicy(TensorDictModuleBase):
             return_log_prob=True
         ).to(self.device)
         
-        def make_critic():
-            return nn.Sequential(make_mlp([512, 256, 128], norm=self.cfg.layer_norm), nn.LazyLinear(1))
-        
-        self.critic = TensorDictModule(
-            make_critic(), [OBS_KEY], ["state_value"]
+        _critic = nn.Sequential(make_mlp([128]), nn.Linear(128, 1))
+        self.critic = TensorDictSequential(
+            TensorDictModule(make_cnn(), ["height_scan"], ["_cnn"]),
+            TensorDictModule(make_mlp([256, 256]), [OBS_KEY], ["_mlp"]),
+            CatTensors(["_cnn", "_mlp"], "_critic_feature"),
+            TensorDictModule(_critic, ["_critic_feature"], ["state_value"])
         ).to(self.device)
 
         self.actor(fake_input)
@@ -164,12 +179,17 @@ class PPOPolicy(TensorDictModuleBase):
         ret_key: str="ret",
         update_value_norm: bool=True,
     ):
-        values = critic(tensordict)["state_value"]
-        next_values = critic(tensordict["next"])["state_value"]
+        with tensordict.view(-1) as tensordict_flat:
+            critic(tensordict_flat)
+            critic(tensordict_flat["next"])
+
+        values = tensordict["state_value"]
+        next_values = tensordict["next", "state_value"]
 
         rewards = tensordict[REWARD_KEY]
-        dones = tensordict["next", "done"]
-        rewards = torch.where(dones, rewards + values * self.gae.gamma, rewards)
+        # dones = tensordict["next", "done"]
+        # rewards = torch.where(dones, rewards + values * self.gae.gamma, rewards)
+        dones = tensordict[DONE_KEY]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
 
@@ -182,7 +202,7 @@ class PPOPolicy(TensorDictModuleBase):
         tensordict.set(ret_key, ret)
         return tensordict
 
-    @torch.compile
+    # @torch.compile
     def _update(self, tensordict: TensorDict):
         dist = self.actor.get_dist(tensordict)
         log_probs = dist.log_prob(tensordict[ACTION_KEY])

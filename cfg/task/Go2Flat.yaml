@@ -68,11 +68,11 @@ observation:
     # body_momentum:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # rewards:          {}
     contact_indicator: {body_names: [".*_foot"], timing: true}
-    height_scan:      {prim_path: base, flatten: true}
+    # height_scan:      {prim_path: base, flatten: true}
   aux_target_:
     root_linvel_b:
-  # height_scan:
-  #   height_scan:      {prim_path: base}
+  height_scan:
+    height_scan:      {prim_path: base}
   # priv:
   #   action_delay:     {}
   #   root_linvel_b:
@@ -86,15 +86,13 @@ observation:
   #   feet_pos_b:       {}
 
 reward:
-  linvel_exp:         {weight: 1.0, enabled: true, dim: 3}
-  linvel_rational:    {weight: 0.5, enabled: true, dim: 3}
+  linvel_exp:         {weight: 1.5, enabled: true, dim: 3}
+  # linvel_rational:    {weight: 0.5, enabled: true, dim: 3}
   angvel_z_exp:       {weight: 0.5, enabled: false}
   angvel_z_exp_shaped: {weight: 0.75, enabled: true}
-  linvel_projection:  {weight: 0.5, enabled: false}
-  # heading_yaw:        {weight: 0.5, enabled: true}
-  # linvel_and_height:  {weight: 2.0}
+  linvel_projection:  {weight: 0.5, enabled: true}
   linacc_z_l2:        {weight: 0.005, enabled: false}
-  angvel_xy_l2:       {weight: 0.05, enabled: true, clip_range: [-1., 0.]}
+  angvel_xy_l2:       {weight: 0.02, enabled: true, clip_range: [-1., 0.]}
   linvel_z_l2:        {weight: 2.0, enabled: true}
   base_height_l1:     {weight: 0.5, enabled: true, target_height: 0.3}
   energy_l1:          {weight: 0.0002, enabled: true}
@@ -106,14 +104,15 @@ reward:
   action_rate_l2:     {weight: 0.01, enabled: true}
   action_rate2_l2:    {weight: 0.005, enabled: true}
   # impact_force_l2:    {weight: 1.0, enabled: false, body_names: .*_foot}
-  feet_air_time:      {weight: 0.5, enabled: true, body_names: .*_foot, thres: 0.5}
+  feet_air_time:      {weight: 0.5, enabled: true, body_names: .*_foot, thres: 0.4}
   feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
   undesired_contact:  {body_names: [.*_calf, .*thigh], weight: 0.25, enabled: true}
-  step_up:            {weight: 4.0, enabled: true}
+  step_up:            {weight: 2.0, enabled: true}
+  step_up_needed:     {weight: 1.0, enabled: false}
 
 termination:
-  crash: {body_names_expr: [Head.*, "base"], t_thres: 0.4, z_thres: 0.}
+  crash: {body_names_expr: [Head.*, "base"], t_thres: 1.0, z_thres: 0.}
   # joint_acc_exceeds: {thres: 5000}
   # cum_error: {thres: 0.85}
 
