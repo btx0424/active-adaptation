@@ -1,0 +1,93 @@
+import torch
+from omni.isaac.lab.assets import Articulation
+import omni.isaac.lab.utils.math as math_utils
+from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
+from .locomotion import Command, sample_quat_yaw, sample_uniform, clamp_norm
+
+class CommandEEPose(Command):
+    def __init__(
+        self, 
+        env,
+        ee_name: str,
+        angvel_range=(-1., 1.),
+    ) -> None:
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.ee_id, self.ee_name = self.asset.find_bodies(ee_name)
+        assert len(self.ee_id) == 1
+        self.ee_id = self.ee_id[0]
+
+        self.angvel_range = angvel_range
+
+        with torch.device(self.device):
+            self.command = torch.zeros(self.num_envs, 2 + 1 + 3 + 3)
+            self.target_yaw = torch.zeros(self.num_envs)
+            self._command_linvel = torch.zeros(self.num_envs, 3)
+            self._command_speed = torch.zeros(self.num_envs, 1)
+            self.command_angvel = torch.zeros(self.num_envs)
+
+            self.command_ee_pos_w = torch.zeros(self.num_envs, 3)
+            self.command_ee_quat_w = torch.zeros(self.num_envs, 4)
+            self.command_ee_forward_w = torch.zeros(self.num_envs, 3)
+            self.command_ee_upward_w = torch.zeros(self.num_envs, 3)
+
+            self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
+
+    def reset(self, env_ids: torch.Tensor):
+        self.command[env_ids] = 0.
+        self.sample_ee(env_ids)
+        self.sample_yaw(env_ids)
+    
+    def update(self):
+        forward = torch.tensor([1., 0., 0.], device=self.device).expand(self.num_envs, -1)
+        upward = torch.tensor([0., 0., 1.], device=self.device).expand(self.num_envs, -1)
+        self.command_ee_forward_w[:] = quat_rotate(self.command_ee_quat_w, forward)
+        self.command_ee_upward_w[:] = quat_rotate(self.command_ee_quat_w, upward)
+
+        ee_forward_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_ee_forward_w)
+        
+        self.is_standing_env[:] = True
+
+        yaw_diff = self.target_yaw - self.asset.data.heading_w
+        self.command_angvel[:] = torch.clamp(
+            0.6 * math_utils.wrap_to_pi(yaw_diff), 
+            min=self.angvel_range[0],
+            max=self.angvel_range[1]
+        )
+        ee_pos_b = quat_rotate_inverse(
+            self.asset.data.root_quat_w,
+            self.command_ee_pos_w - self.asset.data.root_pos_w
+        )
+
+        self.command[:, 2] = self.command_angvel
+        self.command[:, 3:6] = ee_pos_b
+        self.command[:, 6:9] = ee_forward_b
+
+    def sample_ee(self, env_ids: torch.Tensor):
+        root_pos_w = self.asset.data.root_pos_w[env_ids]
+        offset = torch.zeros_like(root_pos_w)
+        offset[:, 0].uniform_(-1.0, 1.0)
+        offset[:, 1].uniform_(-1.0, 1.0)
+        offset[:, 2].uniform_(-0.1, 0.3)
+        self.command_ee_pos_w[env_ids] = root_pos_w + offset
+        self.command_ee_quat_w[env_ids] = sample_quat_yaw(env_ids.shape, self.device)
+
+    def sample_yaw(self, env_ids: torch.Tensor):
+        self.target_yaw[env_ids] = torch.rand(env_ids.shape, device=self.device) * 2 * torch.pi
+
+    def debug_draw(self):
+        ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id]
+        self.env.debug_draw.vector(
+            ee_pos_w,
+            self.command_ee_forward_w * 0.2,
+        )
+        self.env.debug_draw.vector(
+            ee_pos_w,
+            self.command_ee_upward_w * 0.2,
+        )
+        self.env.debug_draw.vector(
+            ee_pos_w,
+            self.command_ee_pos_w - ee_pos_w,
+            color=(0., 0.8, 0., 1.)
+        )
+

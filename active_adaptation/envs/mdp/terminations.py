@@ -66,7 +66,7 @@ class cum_error(Termination):
         self.command_manager: Command2 = self.env.command_manager
     
     def __call__(self) -> torch.Tensor:
-        return self.command_manager._cum_error > self.thres
+        return (self.command_manager._cum_error > self.thres).any(-1, True)
 
 
 class joint_acc_exceeds(Termination):
