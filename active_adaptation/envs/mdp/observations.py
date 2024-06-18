@@ -5,7 +5,7 @@ import einops
 
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.sensors import ContactSensor, RayCaster, patterns, RayCasterData
-from omni.isaac.lab.sensors import Camera
+from omni.isaac.lab.sensors import Camera, TiledCamera
 import omni.isaac.lab.sim as sim_utils
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
@@ -591,7 +591,7 @@ class height_scan(Observation):
         if self.flatten:
             return height_scan.reshape(self.num_envs, -1)
         else:
-            return height_scan.reshape(self.num_envs, 11, 17)
+            return height_scan.reshape(self.num_envs, 1, 11, 17)
 
     # def debug_draw(self):
     #     to = self.height_scan.data.ray_hits_w.reshape(-1, 11, 17, 3)[:, :, 0].reshape(-1, 11, 3)
@@ -765,6 +765,17 @@ class dummy(Observation):
     
     def __call__(self) -> torch.Tensor:
         return self.obs.expand(self.num_envs, -1)
+
+
+class camera_image(Observation):
+    def __init__(self, env, name: str, key: str="depth"):
+        super().__init__(env)
+        self.camera: TiledCamera = self.env.scene[name]
+        self.key = key
+    
+    def __call__(self):
+        data = self.camera.data.output[self.key]
+        return data
 
 
 def symlog(x: torch.Tensor, a: float=1.):

@@ -8,30 +8,9 @@ from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 import active_adaptation.envs.mdp as mdp
 
 from tensordict.tensordict import TensorDictBase
-from torchrl.data import (
-    CompositeSpec, 
-    UnboundedContinuousTensorSpec
-)
 
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
-
-from .mdp import Command1
-from collections import OrderedDict
-
-class Filter:
-    def __init__(self, shape, device):
-        self.data_history = torch.zeros(shape, 4, device=device)
-        self.data = torch.zeros(shape, device=device)
-
-    def reset(self, env_ids: torch.Tensor, value=0.):
-        self.data[env_ids] = value
-    
-    def update(self, value: torch.Tensor):
-        self.data_history[..., :-1] = self.data_history[..., 1:]
-        self.data_history[..., -1] = value
-        self.data[:] = self.data_history.mean(dim=-1)
-
 
 class LocomotionEnv(Env):
 

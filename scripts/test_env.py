@@ -13,14 +13,12 @@ from omegaconf import OmegaConf
 from collections import OrderedDict
 from tqdm import tqdm
 
-from torchrl.envs.utils import set_exploration_type, ExplorationType
-
 from omni.isaac.lab.app import AppLauncher
 from omni_drones.utils.wandb import init_wandb
 from active_adaptation.utils.torchrl import SyncDataCollector
 
 # local import
-from scripts.helpers import make_env_policy, EpisodeStats, Every
+from scripts.helpers import make_env_policy, EpisodeStats, evaluate
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -69,79 +67,6 @@ def main(cfg):
         return_same_td=True,
     )
     
-    @torch.inference_mode()
-    def evaluate(
-        seed: int=0, 
-        exploration_type: ExplorationType=ExplorationType.MODE,
-        render=False,
-    ):
-        frames = []
-
-        env.eval()
-        env.set_seed(seed)
-
-        keys = [
-            ("next", "done"), 
-            ("next", "stats", "return"),
-            "value_obs",
-            "value_priv",
-            "value_adapt",
-            "context_expert",
-            "context_scale",
-            "context_adapt",
-            "context_adapt_scale",
-            "action_kl",
-        ]
-
-        td_ = env.reset()
-        trajs = []
-        frames = []
-        _policy = policy.get_rollout_policy("eval")
-
-        t = tqdm(range(env.max_episode_length), miniters=50)
-        with set_exploration_type(exploration_type):
-            for i in enumerate(t):
-                _policy(td_)
-                td, td_ = env.step_and_maybe_reset(td_)
-                trajs.append(td.select(*keys, strict=False).cpu())
-                if render:
-                    frames.append(env.render("rgb_array").cpu())
-
-        trajs = torch.stack(trajs)
-        done = trajs.get(("next", "done"))
-        first_done = torch.argmax(done.long(), dim=1).cpu()
-
-        def take_first_episode(tensor: torch.Tensor):
-            indices = first_done.reshape(first_done.shape+(1,)*(tensor.ndim-2))
-            return torch.take_along_dim(tensor, indices, dim=1).reshape(-1)
-
-        traj_stats = {
-            k: take_first_episode(v)
-            for k, v in trajs[("next", "stats")].cpu().items()
-        }
-        
-        info = {}
-        compute_std_for = ["return", "survival"]
-        for k, v in sorted(traj_stats.items()):
-            info["eval/stats." + k] = torch.mean(v.float()).item()
-            if k in compute_std_for:
-                info["eval/stats." + k + "_std"] = torch.std(v.float()).item()
-
-        # log video
-        if len(frames):
-            from torchvision.io import write_video
-            time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
-            video_array = np.stack(frames)
-            frames.clear()
-            video_path = os.path.join(os.path.dirname(__file__), f"recording-{time_str}.mp4")
-            write_video(video_path, video_array, fps=1 / env.step_dt)
-
-        # time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
-        # path = os.path.join(os.path.dirname(__file__), f"trajs-{time_str}.pt")
-        # print(termcolor.colored(trajs, "light_yellow"))
-        # torch.save(trajs, path)
-        return info
-    
     def save(policy, checkpoint_name: str, artifact: bool=False):
         ckpt_path = os.path.join(run.dir, f"{checkpoint_name}.pt")
         state_dict = OrderedDict()
@@ -160,7 +85,6 @@ def main(cfg):
         logging.info(f"Saved checkpoint to {str(ckpt_path)}")
 
     pbar = tqdm(collector, total=total_iters)
-    
     
     for i, data in enumerate(pbar):
         start = time.perf_counter()
@@ -182,12 +106,6 @@ def main(cfg):
         info["rollout_fps"] = collector._fps
         info["training_time"] = time.perf_counter() - start
         
-        if eval_interval > 0 and (i + 1) % eval_interval == 0:
-            logging.info(f"Eval at {collector._frames} steps.")
-            info.update(evaluate(render=cfg.eval_render))
-            env.train()
-            policy.train()
-        
         if save_interval > 0  and i % save_interval == 0:
             save(policy, f"checkpoint_{i}")
 
@@ -198,17 +116,10 @@ def main(cfg):
     
     save(policy, "checkpoint_final")
 
-    info = evaluate(render=cfg.eval_render)
+    policy_eval = policy.get_rollout_policy("eval")
+    info, trajs = evaluate(env, policy_eval, render=cfg.eval_render, seed=cfg.seed)
     info["env_frames"] = collector._frames
     run.log(info)
-
-    try:
-        path = os.path.join(run.dir, f"policy.pt")
-        _policy = policy.get_rollout_policy("eval").cpu()
-        torch.save(_policy, path)
-        logging.info(F"Export policy to {path}")
-    except Exception as e:
-        print(f"Cannot save policy due to {e}")
 
     wandb.finish()
     exit(0)

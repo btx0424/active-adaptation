@@ -106,10 +106,10 @@ class PPOPolicy(TensorDictModuleBase):
             )
             return cnn
         
-        _actor = nn.Sequential(make_mlp([128]), Actor(self.action_dim))
+        _actor = nn.Sequential(make_mlp([256, 128]), Actor(self.action_dim))
         actor_module = TensorDictSequential(
             TensorDictModule(make_cnn(), ["height_scan"], ["_cnn"]),
-            TensorDictModule(make_mlp([256, 256]), [OBS_KEY], ["_mlp"]),
+            TensorDictModule(make_mlp([256]), [OBS_KEY], ["_mlp"]),
             CatTensors(["_cnn", "_mlp"], "_actor_feature"),
             TensorDictModule(_actor, ["_actor_feature"], ["loc", "scale"])
         )
@@ -121,10 +121,10 @@ class PPOPolicy(TensorDictModuleBase):
             return_log_prob=True
         ).to(self.device)
         
-        _critic = nn.Sequential(make_mlp([128]), nn.Linear(128, 1))
+        _critic = nn.Sequential(make_mlp([256, 128]), nn.Linear(128, 1))
         self.critic = TensorDictSequential(
             TensorDictModule(make_cnn(), ["height_scan"], ["_cnn"]),
-            TensorDictModule(make_mlp([256, 256]), [OBS_KEY], ["_mlp"]),
+            TensorDictModule(make_mlp([256]), [OBS_KEY], ["_mlp"]),
             CatTensors(["_cnn", "_mlp"], "_critic_feature"),
             TensorDictModule(_critic, ["_critic_feature"], ["state_value"])
         ).to(self.device)

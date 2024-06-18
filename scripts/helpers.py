@@ -1,12 +1,16 @@
 import torch
+import numpy as np
+import time
 import wandb
 import logging
 import os
+import datetime
 
 from typing import Sequence
 from tensordict import TensorDictBase
 from termcolor import colored
 from collections import OrderedDict
+from torchvision.io import write_video
 
 from active_adaptation.learning import ALGOS
 
@@ -119,3 +123,69 @@ def make_env_policy(cfg):
         env = TransformedEnv(env.base_env, transform)
 
     return env, policy, vecnorm
+
+
+from torchrl.envs import TransformedEnv, ExplorationType, set_exploration_type
+from tqdm import tqdm
+
+@torch.inference_mode()
+def evaluate(
+    env: TransformedEnv,
+    policy: torch.nn.Module,
+    seed: int=0, 
+    exploration_type: ExplorationType=ExplorationType.MODE,
+    render=False,
+    keys=[("next", "stats")],
+):
+    """
+    Evaluate the policy on the environment, selecting `keys` from the trajectory.
+    If `render` is True, record and save the video.
+    """
+    env.eval()
+    env.set_seed(seed)
+
+    tensordict_ = env.reset()
+    trajs = []
+    frames = []
+
+    inference_time = []
+    with set_exploration_type(exploration_type):
+        for i in tqdm(range(env.max_episode_length), miniters=10):
+            s = time.perf_counter()
+            tensordict_ = policy(tensordict_)
+            e = time.perf_counter()
+            inference_time.append(e - s)
+            tensordict, tensordict_ = env.step_and_maybe_reset(tensordict_)
+            trajs.append(tensordict.select(*keys, strict=False).cpu())
+            if render:
+                frames.append(env.render("rgb_array"))
+    inference_time = np.mean(inference_time[5:])
+    print(f"Average inference time: {inference_time:.4f} s")
+
+    trajs: TensorDictBase = torch.stack(trajs, dim=1)
+    done = trajs.get(("next", "done"))
+    episode_cnt = len(done.nonzero())
+    first_done = torch.argmax(done.long(), dim=1).cpu()
+
+    def take_first_episode(tensor: torch.Tensor):
+        indices = first_done.reshape(first_done.shape+(1,)*(tensor.ndim-2))
+        return torch.take_along_dim(tensor, indices, dim=1).reshape(-1)
+    
+    info = {}
+    compute_std_for = ["return", "survival"]
+    for k, v in sorted(trajs["next", "stats"].items()):
+        v = take_first_episode(v)
+        info["eval/stats." + k] = torch.mean(v.float()).item()
+        if k in compute_std_for:
+            info["eval/stats." + k + "_std"] = torch.std(v.float()).item()
+
+    # log video
+    if len(frames):
+        time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
+        video_array = np.stack(frames)
+        frames.clear()
+        video_path = os.path.join(os.path.dirname(__file__), f"recording-{time_str}.mp4")
+        write_video(video_path, video_array, fps=1 / env.step_dt)
+
+    info["episode_cnt"] = episode_cnt
+    return info, trajs

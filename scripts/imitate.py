@@ -36,17 +36,7 @@ def main(cfg):
 
     cfg.vecnorm = "eval"
     
-    # load cheaper kit config in headless
-    if cfg.headless:
-        app_experience = f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.gym.headless.kit"
-    else:
-        app_experience = f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.kit"
-    
-    app_launcher = AppLauncher(
-        {"headless": cfg.headless, "offscreen_render": cfg.offscreen_render},
-        experience=app_experience,
-        # experience=f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.kit"
-    )
+    app_launcher = AppLauncher(cfg.app)
     simulation_app = app_launcher.app
 
     run = init_wandb(cfg)
