@@ -106,11 +106,22 @@ class PPOPolicy(TensorDictModuleBase):
             )
             return cnn
         
+        def make_encoder(out_key: str):
+            if "height_scan" in observation_spec.keys(True, True):
+                modules = [
+                    TensorDictModule(make_cnn(), ["height_scan"], ["_cnn"]),
+                    TensorDictModule(make_mlp([256]), [OBS_KEY], ["_mlp"]),
+                    CatTensors(["_cnn", "_mlp"], out_key),
+                ]
+            else:
+                modules = [
+                    TensorDictModule(make_mlp([256]), [OBS_KEY], [out_key])
+                ]
+            return modules
+
         _actor = nn.Sequential(make_mlp([256, 128]), Actor(self.action_dim))
         actor_module = TensorDictSequential(
-            TensorDictModule(make_cnn(), ["height_scan"], ["_cnn"]),
-            TensorDictModule(make_mlp([256]), [OBS_KEY], ["_mlp"]),
-            CatTensors(["_cnn", "_mlp"], "_actor_feature"),
+            *make_encoder("_actor_feature"),
             TensorDictModule(_actor, ["_actor_feature"], ["loc", "scale"])
         )
         self.actor: ProbabilisticActor = ProbabilisticActor(
@@ -123,9 +134,7 @@ class PPOPolicy(TensorDictModuleBase):
         
         _critic = nn.Sequential(make_mlp([256, 128]), nn.Linear(128, 1))
         self.critic = TensorDictSequential(
-            TensorDictModule(make_cnn(), ["height_scan"], ["_cnn"]),
-            TensorDictModule(make_mlp([256]), [OBS_KEY], ["_mlp"]),
-            CatTensors(["_cnn", "_mlp"], "_critic_feature"),
+            *make_encoder("_critic_feature"),
             TensorDictModule(_critic, ["_critic_feature"], ["state_value"])
         ).to(self.device)
 
