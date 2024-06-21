@@ -2,6 +2,10 @@
 
 headless: true
 
+app:
+  headless: ${..headless}
+  enable_cameras: ! ${..eval_render}
+
 sim: ${task.sim}
 # env: ${task.env}
 

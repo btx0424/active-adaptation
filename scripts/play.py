@@ -2,6 +2,7 @@ import torch
 import hydra
 import numpy as np
 import einops
+import itertools
 from omegaconf import OmegaConf
 
 from omni.isaac.lab.app import AppLauncher
@@ -71,36 +72,16 @@ def main(cfg):
     ):
         td_ = env.reset()
         
-        while True:
-            policy(td_)
+        for i in itertools.count():
+            td_ = policy(td_)
             td, td_ = env.step_and_maybe_reset(td_)
+            # td_.update(td["next"])
+            episode_stats.add(td)
 
-    collector = SyncDataCollector(
-        env,
-        policy=policy.get_rollout_policy("eval"),
-        frames_per_batch=frames_per_batch,
-        total_frames=total_frames,
-        device=cfg.sim.device,
-        return_same_td=True,
-        exploration_type=ExplorationType.MODE
-    )
-    
-    pbar = tqdm(collector, total=total_frames//frames_per_batch)
-
-    env.eval()
-    
-    for i, data in enumerate(pbar):
-        info = {}
-        episode_stats.add(data)
-
-        if len(episode_stats) >= env.num_envs:
-            info = {}
-            for k, v in sorted(episode_stats.pop().items(True, True)):
-                if isinstance(v, torch.Tensor):
-                    info["train/" + (".".join(k) if isinstance(k, tuple) else k)] = torch.mean(v.float()).item()
-
-            print()
-            print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, float)}))
+            if len(episode_stats) > env.num_envs:
+                print("Step", i)
+                for k, v in sorted(episode_stats.pop().items(True, True)):
+                    print(k, torch.mean(v).item())
     
     env.close()
     simulation_app.close()

@@ -177,3 +177,4 @@ scripts/*.png
 scripts/*.pt
 scripts/*.txt
 scripts/eval
+checkpoint*.pt

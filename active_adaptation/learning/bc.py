@@ -18,6 +18,7 @@ from .ppo.ppo_adapt import GRUModule
 @dataclass
 class BCConfig:
     name: str = "bc"
+    vecnorm: str = "eval"
 
 cs = ConfigStore.instance()
 cs.store("bc", node=BCConfig, group="algo")

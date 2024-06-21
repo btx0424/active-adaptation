@@ -26,7 +26,7 @@ wandb:
   name: ${oc.select:..env.task,test}-${oc.select:..algo.name,none}
   job_type: train
   entity: btx0424
-  project: isaac_lab
+  project: adaptation
   mode: online # set to 'disabled' when debugging locally
 
 defaults:

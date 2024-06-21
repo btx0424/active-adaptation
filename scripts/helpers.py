@@ -141,6 +141,9 @@ def evaluate(
     Evaluate the policy on the environment, selecting `keys` from the trajectory.
     If `render` is True, record and save the video.
     """
+    keys = set(keys)
+    keys.add(("next", "done"))
+
     env.eval()
     env.set_seed(seed)
 
