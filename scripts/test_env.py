@@ -14,7 +14,7 @@ from collections import OrderedDict
 from tqdm import tqdm
 
 from omni.isaac.lab.app import AppLauncher
-from omni_drones.utils.wandb import init_wandb
+# from omni_drones.utils.wandb import init_wandb
 from active_adaptation.utils.torchrl import SyncDataCollector
 
 # local import
@@ -33,7 +33,8 @@ def main(cfg):
     app_launcher = AppLauncher(OmegaConf.to_container(cfg.app))
     simulation_app = app_launcher.app
 
-    run = init_wandb(cfg)
+    run = wandb.init(**cfg.wandb)
+    run.config.update(OmegaConf.to_container(cfg))
 
     env, policy, vecnorm = make_env_policy(cfg)
 
