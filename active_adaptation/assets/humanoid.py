@@ -7,6 +7,7 @@ from omni.isaac.lab.actuators import DCMotorCfg
 ASSET_PATH = os.path.dirname(__file__)
 
 H1_CFG = copy.deepcopy(H1_CFG)
+H1_CFG.spawn.usd_path = f"{ASSET_PATH}/H1/h1_minimal.usd"
 H1_CFG.actuators = {
     "base_legs": DCMotorCfg(
         joint_names_expr=[".*"],

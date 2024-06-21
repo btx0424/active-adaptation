@@ -529,7 +529,7 @@ class quadruped_stand(Reward):
         return cost * self.env.command_manager.is_standing_env.reshape(self.num_envs, 1)
 
 
-class stand_up(Reward):
+class stand_up_height(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf)):
         super().__init__(env, weight, enabled, clip_range)
         self.asset: Articulation = self.env.scene["robot"]
@@ -537,7 +537,16 @@ class stand_up(Reward):
     def compute(self) -> torch.Tensor:
         return (
             self.asset.data.root_pos_w[:, 2].clamp(max=0.7).square()
-            -self.asset.data.projected_gravity_b[:, 0]
+        ).unsqueeze(-1)
+
+class stand_up_orientation(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf)):
+        super().__init__(env, weight, enabled, clip_range)
+        self.asset: Articulation = self.env.scene["robot"]
+    
+    def compute(self) -> torch.Tensor:
+        return (
+            -self.asset.data.projected_gravity_b[:, 0].clamp_min_(-0.8)
         ).unsqueeze(-1)
 
 

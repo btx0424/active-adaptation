@@ -24,7 +24,7 @@ command:
   linvel_y_range: [-0.3, 0.3]
   angvel_range: [-1.0, 1.0]
   yaw_stiffness_range: [0.5, 0.6]
-  base_height_range: [0.25, 0.35]
+  # base_height_range: [0.25, 0.35]
   stand_prob: 0.05
 
 # command:
@@ -47,7 +47,7 @@ observation:
     # # feet_pos_b:
     # feet_height_map: {feet_names: .*foot }
     # applied_torques: {actuator_name: base_legs}
-  priv:
+  # priv:
     # _mask_: true # randomly mask one of the items
     # root_angvel_b:
     # projected_gravity_b:
@@ -68,8 +68,8 @@ observation:
 reward:
   linvel_exp:         {weight: 1.0, enabled: false, dim: 3}
   # linvel_rational:    {weight: 0.5, enabled: true, dim: 3}
-  angvel_z_exp:       {weight: 0.5, enabled: false}
-  angvel_z_exp_shaped: {weight: 0.75, enabled: false}
+  angvel_z_exp:       {weight: 0.5, enabled: false, world_frame: true }
+  angvel_z_exp_shaped: {weight: 0.75, enabled: false, world_frame: true }
   linvel_projection:  {weight: 0.5, enabled: false}
   # linacc_z_l2:        {weight: 0.005, enabled: false}
   # angvel_xy_l2:       {weight: 0.05, enabled: true, clip_range: [-1., 0.]}
@@ -80,7 +80,8 @@ reward:
   joint_torques_l2:   {weight: 1.0e-4, enabled: true, clip_range: [-1., 0.]}
   # quadruped_stand:    {weight: 0.5}
   # orientation:        {weight: 1.0, enabled: false}
-  stand_up:           {weight: 1.0}
+  stand_up_orientation: {weight: 1.0}
+  stand_up_height: {weight: 1.0}
   survival:           {weight: 1.0, enabled: true}
   action_rate_l2:     {weight: 0.01, enabled: true}
   # action_rate2_l2:    {weight: 0.01}
