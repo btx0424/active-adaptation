@@ -480,6 +480,7 @@ class PPGPolicy(TensorDictModuleBase):
         return policy_loss, entropy_loss, entropy
     
     def _update(self, tensordict: TensorDictBase):
+        self.encoder(tensordict)
         policy_loss, entropy_loss, entropy = self._compute_policy_loss(tensordict, self.actor)
 
         b_returns = tensordict["ret_priv"]
@@ -494,6 +495,7 @@ class PPGPolicy(TensorDictModuleBase):
         loss = policy_loss + entropy_loss + value_loss + self.beta * context_kl.clamp_min(128.).mean()
         self.opt.zero_grad()
         loss.backward()
+        encoder_grad_norm = nn.utils.clip_grad_norm_(self.encoder.parameters(), 5.)
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), 2.)
         critic_grad_norm = nn.utils.clip_grad_norm_(self.critic_priv.parameters(), 2.)
         self.opt.step()
@@ -501,6 +503,7 @@ class PPGPolicy(TensorDictModuleBase):
         return {
             "policy_loss": policy_loss,
             "entropy": entropy,
+            "encoder_grad_norm": encoder_grad_norm,
             "actor_grad_norm": actor_grad_norm,
             "critic_grad_norm": critic_grad_norm,
             "value_loss/value_loss": value_loss,
