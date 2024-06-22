@@ -3,7 +3,7 @@ hydra:
     dir: ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}-${task.name}-${algo.name}
 
 headless: true
-exp_name: ${oc.select:..task.name,test}-${oc.select:..algo.name,none}
+exp_name: ${oc.select:task.name,test}-${oc.select:algo.name,none}
 
 app:
   headless: ${..headless}
