@@ -103,7 +103,7 @@ class PPOHIMPolicy(TensorDictModuleBase):
         print(fake_input)
         
         actor_module=TensorDictSequential(
-            CatTensors([OBS_HIST_KEY, "aux_pred", "latent"], "_actor_input", del_keys=False),
+            CatTensors([OBS_KEY, "aux_pred", "latent"], "_actor_input", del_keys=False),
             TensorDictModule(
                 nn.Sequential(
                     make_mlp([512, 256, 128], norm=self.cfg.layer_norm), 
@@ -137,7 +137,7 @@ class PPOHIMPolicy(TensorDictModuleBase):
                 _make_mlp([128, 64, 16 + self.aux_target_dim]),
                 Split([16, self.aux_target_dim])
             ),
-            [OBS_KEY], ["latent", "aux_pred"]
+            [OBS_HIST_KEY], ["latent", "aux_pred"]
         ).to(self.device)
         self._target = _make_mlp([128, 64, 16]).to(self.device)
         self._proto = nn.Embedding(self.cfg.num_prototypes, 16).to(self.device)
@@ -169,6 +169,10 @@ class PPOHIMPolicy(TensorDictModuleBase):
         
         self.actor.apply(init_)
         self.critic.apply(init_)
+
+        # compile_mode = "reduce-overhead"
+        # self._update = torch.compile(self._update, mode=compile_mode)
+        # self._update_estimation = torch.compile(self._update_estimation, mode=compile_mode)
     
     def get_rollout_policy(self, mode: str="train"):
         policy = TensorDictSequential(
@@ -209,8 +213,7 @@ class PPOHIMPolicy(TensorDictModuleBase):
         next_values = critic(tensordict["next"])["state_value"]
 
         rewards = tensordict[REWARD_KEY]
-        dones = tensordict["next", "done"]
-        rewards = torch.where(dones, rewards + values * self.gae.gamma, rewards)
+        dones = tensordict[DONE_KEY]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
 
@@ -270,8 +273,8 @@ class PPOHIMPolicy(TensorDictModuleBase):
             w = F.normalize(w, dim=-1, p=2)
             self._proto.weight.copy_(w)
 
-        score_s = F.normalize(z_s) @ self._proto.weight.T
-        score_t = F.normalize(z_t) @ self._proto.weight.T
+        score_s = F.normalize(z_s, dim=-1, p=2) @ self._proto.weight.T
+        score_t = F.normalize(z_t, dim=-1, p=2) @ self._proto.weight.T
 
         with torch.no_grad():
             q_s = sinkhorn(score_s)

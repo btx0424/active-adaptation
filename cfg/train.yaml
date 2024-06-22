@@ -3,6 +3,7 @@ hydra:
     dir: ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}-${task.name}-${algo.name}
 
 headless: true
+exp_name: ${oc.select:..task.name,test}-${oc.select:..algo.name,none}
 
 app:
   headless: ${..headless}
@@ -23,7 +24,7 @@ vecnorm: ${oc.select:algo.vecnorm,train}
 camera_follow: true
 
 wandb:
-  name: ${oc.select:..env.task,test}-${oc.select:..algo.name,none}
+  name: ${..exp_name}/${now:%m-%d}_${now:%H-%M}
   job_type: train
   entity: btx0424
   project: adaptation
