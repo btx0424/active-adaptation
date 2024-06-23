@@ -40,7 +40,7 @@ from torchrl.modules import ProbabilisticActor
 
 from ..modules.distributions import IndependentNormal
 from .common import *
-from ..utils.valuenorm import ValueNorm1
+from ..utils.valuenorm import ValueNorm1, ValueNormFake
 
 
 class LSTM(nn.Module):
@@ -165,6 +165,7 @@ class PPOConfig:
     num_minibatches: int = 16
     seq_len: int = train_every
     lr: float = 5e-4
+    value_norm: bool = False
 
     # whether to take in priviledged infomation
     priv: bool = False
@@ -201,6 +202,11 @@ class PPORNNPolicy(TensorDictModuleBase):
         self.gae = GAE(0.99, 0.95)
         self.action_dim = action_spec.shape[-1]
 
+        if self.cfg.value_norm:
+            self.value_norm = ValueNorm1(input_shape=1).to(self.device)
+        else:
+            self.value_norm = ValueNormFake().to(self.device)
+
         fake_input = observation_spec.zero()
 
         self.actor: ProbabilisticActor = ProbabilisticActor(
@@ -224,23 +230,18 @@ class PPORNNPolicy(TensorDictModuleBase):
         self.actor(fake_input)
         self.critic(fake_input)
 
-        if self.cfg.checkpoint_path is not None:
-            state_dict = torch.load(self.cfg.checkpoint_path)
-            self.load_state_dict(state_dict, strict=False)
-        else:
-            def init_(module):
-                if isinstance(module, nn.Linear):
-                    nn.init.orthogonal_(module.weight, 0.01)
-                    nn.init.constant_(module.bias, 0.0)
-                elif isinstance(module, (nn.GRUCell, nn.LSTMCell)):
-                    nn.init.orthogonal_(module.weight_hh)
+        def init_(module):
+            if isinstance(module, nn.Linear):
+                nn.init.orthogonal_(module.weight, 0.01)
+                nn.init.constant_(module.bias, 0.0)
+            elif isinstance(module, (nn.GRUCell, nn.LSTMCell)):
+                nn.init.orthogonal_(module.weight_hh)
 
-            self.actor.apply(init_)
-            self.critic.apply(init_)
+        self.actor.apply(init_)
+        self.critic.apply(init_)
 
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=cfg.lr)
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=cfg.lr)
-        self.value_norm = ValueNorm1(input_shape=1).to(self.device)
 
     def _maybe_init_state(self, tensordict: TensorDict):
         shape = tensordict.get(OBS_KEY).shape[:-1]

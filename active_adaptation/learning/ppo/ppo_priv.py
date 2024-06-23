@@ -33,7 +33,7 @@ class PPGConfig:
     ppo_epochs: int = 4
     # aux_epochs: int = -1 # 6
     beta_clone: float = 1.
-    entropy_coef: float = 0.01
+    entropy_coef: float = 0.002
     value_norm: bool = False
     
     stoch_encoder: bool = True

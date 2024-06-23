@@ -55,7 +55,7 @@ class PPOConfig:
     num_minibatches: int = 16
     lr: float = 5e-4
     clip_param: float = 0.1
-    entropy_coef: float = 0.01
+    entropy_coef: float = 0.002
     vecnorm: Union[str, None] = None
 
     actor_predict_std: bool = True

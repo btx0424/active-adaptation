@@ -53,7 +53,7 @@ class PPOConfig:
     num_minibatches: int = 8
     lr: float = 5e-4
     clip_param: float = 0.2
-    entropy_coef: float = 0.01
+    entropy_coef: float = 0.002
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
