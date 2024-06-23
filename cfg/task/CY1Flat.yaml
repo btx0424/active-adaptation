@@ -7,7 +7,7 @@ defaults:
   - _self_
 
 robot: cy1
-terrain: plane
+terrain: easy
 payload: false
 
 command:
@@ -61,12 +61,12 @@ reward:
   orientation:        {weight: 1.0, enabled: true}
   survival:           {weight: 1.0, enabled: true}
   action_rate_l2:     {weight: 0.01, enabled: true}
-  feet_air_time:      {weight: 1.0, enabled: true, body_names: .*leg_link6, thres: 0.5}
+  feet_air_time:      {weight: 1.0, enabled: true, body_names: .*leg_link6, thres: 0.4}
   feet_slip:          {weight: 0.5, enabled: true, body_names: .*leg_link6}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*leg_link6}
-  feet_swing:         {weight: 1.0, enabled: true, feet_names: .*leg_link6}
-  feet_orientation:   {weight: 0.25, enabled: true, feet_names: .*leg_link6}
-  feet_step:          {weight: 2.0, enabled: true, feet_names: .*leg_link6}
+  feet_swing:         {weight: 1.1s, enabled: true, feet_names: .*leg_link6}
+  feet_orientation:   {weight: 0.2, enabled: true, feet_names: .*leg_link6}
+  feet_step:          {weight: 1.0, enabled: true, feet_names: .*leg_link6}
   joint_pos_default:  {weight: 0.25, enabled: true}
   body_orientation:   {weight: 0.25, enabled: true, body_name: waist_yaw_link}
   arm_velocity:       {weight: 0.05, enabled: false, arm_names: .*arm_link5}
@@ -74,7 +74,7 @@ reward:
   joint_vel_l2:       {weight: 0.002, enabled: true, joint_names: .*arm_joint.*}
 
 randomization:
-  # push:     {body_names: ["pelvis", ".*shoulder_pitch_link"]}
+  push:     {body_names: ["base_link", "waist_yaw_link"], force_range: [0.0, 0.2]}
   perturb_body_mass:
     .*: [0.9, 1.1]
   perturb_body_materials:

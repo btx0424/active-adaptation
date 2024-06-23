@@ -31,7 +31,6 @@ class feet_swing(Reward):
         self.feet_id = self.asset.find_bodies(feet_names)[0]
         self.phase: torch.Tensor = self.asset.data.phase
         self.command_manager = self.env.command_manager
-        self.a = 2.
 
         self.feet_vel_buf = torch.zeros(self.num_envs, 2, 3, 4, device=self.device)
     
@@ -52,7 +51,7 @@ class feet_swing(Reward):
         swing_vel = quat_rotate(yaw_quat(self.asset.data.root_quat_w).unsqueeze(1), swing_vel)
         # reward = torch.exp(- 2 * (feet_linvel - swing_vel).abs().sum(-1)).sum(1, True)
 
-        max_speed = self.command_manager._command_speed.unsqueeze(1)
+        max_speed = self.command_manager._command_speed.unsqueeze(1).clamp_max(0.6)
         reward = dot(normalize(swing_vel), feet_linvel).clamp_max(max_speed)
         reward = torch.where(reward>0, reward.sqrt(), reward).sum(1, True)
         return reward.reshape(self.num_envs, 1) * (~self.command_manager.is_standing_env)
