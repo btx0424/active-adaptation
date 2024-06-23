@@ -224,7 +224,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         with torch.device(self.device):
             fake_input["is_init"] = torch.ones(fake_input.shape[0], 1, dtype=torch.bool)
             fake_input["context_adapt_hx"] = torch.zeros(fake_input.shape[0], 128)
-        print(fake_input.shapes)
+        print(fake_input)
 
         self.log_alpha = nn.Parameter(torch.tensor(0.))
         self.opt_alpha = torch.optim.Adam([self.log_alpha], lr=1e-2)

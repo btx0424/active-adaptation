@@ -67,7 +67,7 @@ class PPOConfig:
     ppo_epochs: int = 4
     num_minibatches: int = 16
     lr: float = 5e-4
-    clip_param: float = 0.1
+    clip_param: float = 0.2
     entropy_coef: float = 0.01
 
     orthogonal_init: bool = True
@@ -334,7 +334,7 @@ class PPOROAPolicy(TensorDictModuleBase):
         ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
-        losses["policy_loss"] = - torch.mean(torch.min(surr1, surr2)) * self.action_dim
+        losses["policy_loss"] = - torch.mean(torch.min(surr1, surr2))
         losses["entropy_loss"] = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
