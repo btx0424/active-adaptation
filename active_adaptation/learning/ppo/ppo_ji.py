@@ -142,7 +142,7 @@ class PPOPolicy(TensorDictModuleBase):
             return_log_prob=True
         ).to(self.device)
         
-        critic_module = nn.Sequential(make_mlp([256, 256, 256]), nn.LazyLinear(1))
+        critic_module = nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1))
         self.critic = TensorDictSequential(
             CatTensors([OBS_KEY, OBS_PRIV_KEY], "policy_priv", del_keys=False),
             TensorDictModule(critic_module, ["policy_priv"], ["state_value"])
@@ -202,10 +202,10 @@ class PPOPolicy(TensorDictModuleBase):
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every)
             for minibatch in batch:
-                infos.append(self._update(minibatch))
+                infos.append(TensorDict(self._update(minibatch), []))
         
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
-        infos["value"] = self.value_norm.denormalize(tensordict["ret"]).mean().item()
+        infos["value_priv"] = self.value_norm.denormalize(tensordict["ret"]).mean().item()
         self.num_frames += tensordict.numel()
         self.num_updates += 1
         return infos
@@ -253,37 +253,34 @@ class PPOPolicy(TensorDictModuleBase):
         ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
-        losses["policy_loss"] = - torch.mean(torch.min(surr1, surr2)) * self.action_dim
+        losses["policy_loss"] = - torch.mean(torch.min(surr1, surr2))
         losses["entropy_loss"] = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["state_value"]
         value_loss = self.critic_loss_fn(b_returns, values)
-        losses["value_loss"] = (value_loss * (~tensordict["is_init"])).mean()
+        losses["value_loss/value_loss_priv"] = (value_loss * (~tensordict["is_init"])).mean()
         
         loss = sum(losses.values())
         self.opt.zero_grad()
         loss.backward()
-        losses["state_est_grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.state_estimator.parameters(), 10)
-        losses["actor_grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.actor.parameters(), 10)
-        losses["critic_grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 10)
+        losses["state_est_grad_norm"] = nn.utils.clip_grad_norm_(self.state_estimator.parameters(), 5.)
+        losses["actor_grad_norm"] = nn.utils.clip_grad_norm_(self.actor.parameters(), 2.)
+        losses["critic_grad_norm"] = nn.utils.clip_grad_norm_(self.critic.parameters(), 2.)
         self.opt.step()
-        losses["explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-        return TensorDict(losses, [])
+        
+        losses["value_loss/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
+        losses["noise_std"] = tensordict["scale"].mean()
+        losses["entropy"] = entropy
+        return losses
 
     def state_dict(self):
         state_dict = super().state_dict()
-        if "vecnorm._extra_state" in state_dict:
-            state_dict["vecnorm._extra_state"]["lock"] = None # TODO: check with torchrl
         state_dict["num_frames"] = self.num_frames
         return state_dict
     
     def load_state_dict(self, state_dict, strict=False):
         self.num_frames = state_dict.pop("num_frames", 0)
-        if "vecnorm._extra_state" in state_dict:
-            vecnorm_td = state_dict["vecnorm._extra_state"]["td"]
-            state_dict["lock"] = None
-            state_dict["vecnorm._extra_state"]["td"] = vecnorm_td.to(self.device)
         return super().load_state_dict(state_dict, strict=strict)
 
 def normalize(x: torch.Tensor, subtract_mean: bool=False):
