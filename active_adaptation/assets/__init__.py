@@ -48,6 +48,7 @@ def spawn_with_payload(
     return prim
 
 CASSIE_CFG = copy.deepcopy(cassie.CASSIE_CFG)
+CASSIE_CFG.spawn.usd_path = f"{ASSET_PATH}/Cassie/cassie.usd"
 
 ROBOTS = {
     "a1": UNITREE_A1_CFG,

@@ -28,7 +28,7 @@ observation:
     projected_gravity_b: {noise_std: 0.05}
     joint_pos:    {noise_std: 0.05}
     joint_vel:    {noise_std: 0.2}
-    prev_actions: {steps: 4}
+    prev_actions: {steps: 2}
     # - "motor_params"
   # priv:
   #   applied_action:   {}
@@ -44,6 +44,8 @@ observation:
   #   # body_momentum:    {body_names: "pelvis"}
   #   cum_error:          {}
   #   last_rewards:       {}
+  aux_target_:
+    root_linvel_b:
 
 reward:
   linvel_exp:         {weight: 1.25, enabled: true}
