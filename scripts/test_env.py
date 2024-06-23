@@ -12,6 +12,7 @@ import datetime
 from omegaconf import OmegaConf
 from collections import OrderedDict
 from tqdm import tqdm
+from setproctitle import setproctitle
 
 from omni.isaac.lab.app import AppLauncher
 # from omni_drones.utils.wandb import init_wandb
@@ -35,6 +36,7 @@ def main(cfg):
 
     run = wandb.init(**cfg.wandb)
     run.config.update(OmegaConf.to_container(cfg))
+    setproctitle(run.name)
 
     env, policy, vecnorm = make_env_policy(cfg)
 
