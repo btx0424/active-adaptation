@@ -18,6 +18,7 @@ from tensordict.nn import (
 from hydra.core.config_store import ConfigStore
 from dataclasses import dataclass
 from termcolor import colored
+from collections import OrderedDict
 import einops
 
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
@@ -43,6 +44,7 @@ class PPGConfig:
     actor_predict_std: bool = False
     orthogonal_init: bool = True
 
+    aux_target: bool = True
     kl_prior: bool = False
     free_bits: float = 100
     rep_loss: float = 0.05
@@ -173,7 +175,10 @@ class PPGPolicy(TensorDictModuleBase):
         self.action_dim = action_spec.shape[-1]
         self.context_dim = 128
         self.phase = self.cfg.phase
-        # self.aux_target_dim = observation_spec["aux_target_"].shape[-1]
+        if "aux_target_" in observation_spec.keys(True, True):
+            self.aux_target_dim = observation_spec["aux_target_"].shape[-1]
+        else:
+            self.aux_target_dim = None
 
         self.gae = GAE(0.99, 0.95).to(self.device)
         
@@ -226,13 +231,14 @@ class PPGPolicy(TensorDictModuleBase):
         self.adapt_module = make_adapt_module("stoch")
         
         def make_actor(context_key):
-            actor = TensorDictSequential(
+            actor_modules = [
                 CatTensors([OBS_KEY, context_key], "_actor_in", del_keys=False),
                 TensorDictModule(make_mlp([256, 256, 256]), ["_actor_in"], ["_feature_actor"]),
                 TensorDictModule(Actor(self.action_dim, self.cfg.actor_predict_std), ["_feature_actor"], ["loc", "scale"]),
-                # TensorDictModule(nn.LazyLinear(self.aux_target_dim), ["_feature_actor"], ["actor_aux"]),
-            )
-            return actor
+            ]
+            if self.aux_target_dim is not None:
+                actor_modules.append(TensorDictModule(nn.LazyLinear(self.aux_target_dim), ["_feature_actor"], ["actor_aux"]))
+            return TensorDictSequential(*actor_modules)
         
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=make_actor("context_priv"),
@@ -482,36 +488,40 @@ class PPGPolicy(TensorDictModuleBase):
     
     def _update(self, tensordict: TensorDictBase):
         self.encoder(tensordict)
+        losses = {}
         policy_loss, entropy_loss, entropy = self._compute_policy_loss(tensordict, self.actor)
+        losses["policy_loss"] = policy_loss
+        losses["entropy_loss"] = entropy_loss
 
         b_returns = tensordict["ret_priv"]
         values = self.critic_priv(tensordict)["value_priv"]
         value_loss = self.critic_loss_fn(b_returns, values) * (~tensordict["is_init"])
-        value_loss = value_loss.mean()
+        losses["value_loss"] = value_loss.mean()
 
         context_dist_priv = D.Normal(tensordict["context_priv_loc"], tensordict["context_priv_scale"])
         context_dist_pred = D.Normal(tensordict["context_adapt_loc"], tensordict["context_adapt_scale"])
         context_kl = kl_divergence(context_dist_priv, context_dist_pred).sum(-1)
+        losses["rep_loss"] = self.beta * context_kl.clamp_min(128.).mean()
 
-        loss = policy_loss + entropy_loss + value_loss + self.beta * context_kl.clamp_min(128.).mean()
+        if self.cfg.aux_target:
+            actor_aux = tensordict["actor_aux"]
+            actor_aux_target = tensordict["aux_target_"]
+            losses["aux/pred_loss"] = F.mse_loss(actor_aux, actor_aux_target)
+
+        loss = sum(losses.values())
         self.opt.zero_grad()
         loss.backward()
         encoder_grad_norm = nn.utils.clip_grad_norm_(self.encoder.parameters(), 5.)
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), 2.)
         critic_grad_norm = nn.utils.clip_grad_norm_(self.critic_priv.parameters(), 2.)
         self.opt.step()
-        explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-        return {
-            "policy_loss": policy_loss,
-            "entropy": entropy,
-            "encoder_grad_norm": encoder_grad_norm,
-            "actor_grad_norm": actor_grad_norm,
-            "critic_grad_norm": critic_grad_norm,
-            "value_loss/value_loss": value_loss,
-            "value_loss/explained_var": explained_var,
-            "rep_loss": context_kl.mean(),
-            "context_std": torch.mean(context_dist_priv.scale)
-        }
+        losses["encoder_grad_norm"] = encoder_grad_norm
+        losses["actor_grad_norm"] = actor_grad_norm
+        losses["critic_grad_norm"] = critic_grad_norm
+        losses["value_loss/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
+        losses["rep_loss"] = context_kl.mean()
+        losses["entropy"] = entropy
+        return losses
 
     def _update_adapt(self, tensordict: TensorDictBase):
         policy_loss, entropy_loss, entropy = self._compute_policy_loss(tensordict, self.actor_adapt)
@@ -545,36 +555,40 @@ class PPGPolicy(TensorDictModuleBase):
             "value_loss/explained_var_adapt": explained_var_adapt
         }
     
-    # def _update_aux(self, tensordict: TensorDictBase):
-    #     losses = {}
-    #     dist_old = self.actor.build_dist_from_params(tensordict)
-    #     dist_new = self.actor.get_dist(self.encoder(tensordict))
+    def _update_aux(self, tensordict: TensorDictBase):
+        losses = {}
+        dist_old = self.actor.build_dist_from_params(tensordict)
+        dist_new = self.actor.get_dist(self.encoder(tensordict))
         
-    #     actor_aux = tensordict["actor_aux"]
-    #     actor_aux_target = tensordict["aux_target_"]
+        actor_aux = tensordict["actor_aux"]
+        actor_aux_target = tensordict["aux_target_"]
 
-    #     losses["aux/pred_loss"] = F.mse_loss(actor_aux[..., :-1], actor_aux_target)
-    #     losses["aux/value_loss"] = F.mse_loss(actor_aux[..., -1:], tensordict["ret"])
-    #     losses["aux/kl"] = self.cfg.beta_clone * D.kl_divergence(dist_old, dist_new).mean()
-        
-    #     context_loc, context_scale = tensordict["context_priv_loc"], tensordict["context_priv_scale"]
-    #     context_dist = D.Normal(context_loc, context_scale)
-    #     kl_prior = D.kl_divergence(
-    #         context_dist,
-    #         D.Normal(torch.zeros_like(context_loc), torch.ones_like(context_loc))
-    #     ).sum(-1)
-    #     if self.cfg.kl_prior:
-    #         losses["aux/prior_loss"] = 0.1 * kl_prior.clamp_min(self.cfg.free_bits).mean()
+        losses["aux/pred_loss"] = F.mse_loss(actor_aux, actor_aux_target)
+        losses["aux/kl"] = self.cfg.beta_clone * D.kl_divergence(dist_old, dist_new).mean()
 
-    #     loss =  sum(losses.values())
-    #     self.opt_aux.zero_grad()
-    #     loss.backward()
-    #     grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.actor.parameters(), 10)
-    #     self.opt_aux.step()
-    #     losses["aux/grad_norm"] = grad_norm
-    #     losses["aux/kl_prior"] = kl_prior.mean()
-    #     losses["aux/context_entropy"] = context_dist.entropy().sum(-1).mean()
-    #     return TensorDict(losses, [])
+        loss =  sum(losses.values())
+        self.opt_aux.zero_grad()
+        loss.backward()
+        grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.actor.parameters(), 10)
+        self.opt_aux.step()
+        losses["aux/grad_norm"] = grad_norm
+        return TensorDict(losses, [])
 
+    def state_dict(self):
+        state_dict = OrderedDict()
+        for name, module in self.named_children():
+            state_dict[name] = module.state_dict()
+        return state_dict
+    
     def load_state_dict(self, state_dict, strict: bool = False):
-        super().load_state_dict(state_dict, strict)
+        success_keys = []
+        failed_keys = []
+        for name, module in self.named_children():
+            try:
+                module.load_state_dict(state_dict[name], strict=strict)
+                success_keys.append(name)
+            except Exception:
+                print(colored(f"[Warning]: Failed to load state dict for {name}.", "red"))
+                failed_keys.append(name)
+        print(colored(f"[Info]: Successfully loaded {success_keys}.", "green"))
+        return success_keys
