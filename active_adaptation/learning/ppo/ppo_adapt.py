@@ -60,7 +60,7 @@ class PPOConfig:
     gae_gamma: float = 0.99
     opt: str = "adam"
 
-    actor_predict_std: bool = True
+    actor_predict_std: bool = False
     orthogonal_init: bool = True
     layer_norm: bool = True
     value_norm: bool = False

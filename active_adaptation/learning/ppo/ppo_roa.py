@@ -70,6 +70,7 @@ class PPOConfig:
     clip_param: float = 0.1
     entropy_coef: float = 0.002
 
+    actor_predict_std: bool = False
     orthogonal_init: bool = True
     value_norm: bool = False
 
@@ -155,7 +156,7 @@ class PPOROAPolicy(TensorDictModuleBase):
             ).to(self.device)
 
         def make_actor(context_key: str) -> ProbabilisticActor:
-            actor_module = nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim, True))
+            actor_module = nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim, self.cfg.actor_predict_std))
             actor = ProbabilisticActor(
                 module=TensorDictSequential(
                     CatTensors([OBS_KEY, context_key], "actor_feature", del_keys=False),

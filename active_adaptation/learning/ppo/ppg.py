@@ -40,6 +40,9 @@ class PPGConfig:
     vecnorm: Union[str, None] = None
     
     # short_history: int = 5
+    actor_predict_std: bool = False
+    orthogonal_init: bool = True
+
     kl_prior: bool = False
     free_bits: float = 100
     rep_loss: float = 0.05
@@ -226,7 +229,7 @@ class PPGPolicy(TensorDictModuleBase):
             actor = TensorDictSequential(
                 CatTensors([OBS_KEY, context_key], "_actor_in", del_keys=False),
                 TensorDictModule(make_mlp([256, 256, 256]), ["_actor_in"], ["_feature_actor"]),
-                TensorDictModule(Actor(self.action_dim, True), ["_feature_actor"], ["loc", "scale"]),
+                TensorDictModule(Actor(self.action_dim, self.cfg.predict_actor_std), ["_feature_actor"], ["loc", "scale"]),
                 # TensorDictModule(nn.LazyLinear(self.aux_target_dim), ["_feature_actor"], ["actor_aux"]),
             )
             return actor
@@ -305,17 +308,15 @@ class PPGPolicy(TensorDictModuleBase):
 
         def init_(module):
             if isinstance(module, nn.Linear):
-                nn.init.orthogonal_(module.weight, 0.1)
+                nn.init.orthogonal_(module.weight, 0.01)
                 nn.init.constant_(module.bias, 0.)
 
-        self.encoder.apply(init_)
-        self.actor.apply(init_)
-        self.critic_priv.apply(init_)
-        self.critic_adapt.apply(init_)
-        self.adapt_module.apply(init_)
-        print(self.encoder)
-        print(self.actor)
-        print(self.critic_priv)
+        if self.cfg.orthogonal_init:
+            self.encoder.apply(init_)
+            self.actor.apply(init_)
+            self.critic_priv.apply(init_)
+            self.critic_adapt.apply(init_)
+            self.adapt_module.apply(init_)
         
         self.train_iter = 0
 
