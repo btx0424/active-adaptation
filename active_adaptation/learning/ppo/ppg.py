@@ -229,7 +229,7 @@ class PPGPolicy(TensorDictModuleBase):
             actor = TensorDictSequential(
                 CatTensors([OBS_KEY, context_key], "_actor_in", del_keys=False),
                 TensorDictModule(make_mlp([256, 256, 256]), ["_actor_in"], ["_feature_actor"]),
-                TensorDictModule(Actor(self.action_dim, self.cfg.predict_actor_std), ["_feature_actor"], ["loc", "scale"]),
+                TensorDictModule(Actor(self.action_dim, self.cfg.actor_predict_std), ["_feature_actor"], ["loc", "scale"]),
                 # TensorDictModule(nn.LazyLinear(self.aux_target_dim), ["_feature_actor"], ["actor_aux"]),
             )
             return actor

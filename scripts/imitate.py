@@ -1,33 +1,24 @@
 import torch
 import hydra
 import numpy as np
+import wandb
+import logging
 import einops
+import os
+import time
+
 from omegaconf import OmegaConf
+from setproctitle import setproctitle
+from tqdm import tqdm
+from collections import OrderedDict
 
 from omni.isaac.lab.app import AppLauncher
-from omni_drones.utils.wandb import init_wandb
-from omni_drones.utils.torchrl import SyncDataCollector
-
-from torchrl.envs.utils import set_exploration_type, ExplorationType
-from torchrl.envs.transforms import (
-    TransformedEnv, 
-    Compose, 
-    InitTracker,
-    RewardSum,
-    CatFrames
-)
+from active_adaptation.utils.torchrl import SyncDataCollector
 from active_adaptation.learning import BCPolicy, ALGOS
 
 # local import
 from scripts.helpers import make_env_policy, EpisodeStats, Every
 
-import wandb
-import logging
-from tqdm import tqdm
-from collections import OrderedDict
-
-import os
-import time
 
 @hydra.main(config_path="../cfg", config_name="train")
 def main(cfg):
@@ -39,7 +30,9 @@ def main(cfg):
     app_launcher = AppLauncher(cfg.app)
     simulation_app = app_launcher.app
 
-    run = init_wandb(cfg)
+    run = wandb.init(**cfg.wandb)
+    run.config.update(OmegaConf.to_container(cfg))
+    setproctitle(run.name)
 
     # setup environment
     env, teacher, vecnorm = make_env_policy(cfg)
