@@ -1,6 +1,6 @@
 import torch
 from omni.isaac.lab.assets import Articulation
-from omni.isaac.lab.utils.math import yaw_quat, wrap_to_pi
+from omni.isaac.lab.utils.math import yaw_quat, wrap_to_pi, quat_from_euler_xyz, quat_mul
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from .locomotion import Command, sample_quat_yaw, sample_uniform, clamp_norm
 
@@ -9,6 +9,7 @@ class CommandEEPose(Command):
         self, 
         env,
         ee_name: str,
+        pitch_range: tuple = (-torch.pi / 3, 0.),
         angvel_range=(-1., 1.),
     ) -> None:
         super().__init__(env)
@@ -17,7 +18,10 @@ class CommandEEPose(Command):
         assert len(self.ee_id) == 1
         self.ee_id = self.ee_id[0]
 
+        self.pitch_range = pitch_range
         self.angvel_range = angvel_range
+        self.resample_interval = 300
+        self.resample_prob = 0.5
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 2 + 1 + 3 + 3)
@@ -27,9 +31,13 @@ class CommandEEPose(Command):
             self.command_angvel = torch.zeros(self.num_envs)
 
             self.command_ee_pos_b = torch.zeros(self.num_envs, 3)
+            self.command_ee_quat_b = torch.zeros(self.num_envs, 4)
             self.command_ee_quat_w = torch.zeros(self.num_envs, 4)
             self.command_ee_forward_w = torch.zeros(self.num_envs, 3)
             self.command_ee_upward_w = torch.zeros(self.num_envs, 3)
+
+            self.fwd_vec = torch.tensor([1., 0., 0.]).expand(self.num_envs, -1)
+            self.up_vec = torch.tensor([0., 0., 1.]).expand(self.num_envs, -1)
 
             self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
 
@@ -39,10 +47,14 @@ class CommandEEPose(Command):
         self.sample_yaw(env_ids)
     
     def update(self):
-        forward = torch.tensor([1., 0., 0.], device=self.device).expand(self.num_envs, -1)
-        upward = torch.tensor([0., 0., 1.], device=self.device).expand(self.num_envs, -1)
-        self.command_ee_forward_w[:] = quat_rotate(self.command_ee_quat_w, forward)
-        self.command_ee_upward_w[:] = quat_rotate(self.command_ee_quat_w, upward)
+        interval_reached = (self.env.episode_length_buf + 1) % self.resample_interval == 0
+        resample_ee = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
+        self.sample_ee(resample_ee.nonzero().squeeze(-1))
+
+        root_quat_w = self.asset.data.root_quat_w
+        self.command_ee_quat_w[:] = quat_mul(root_quat_w, self.command_ee_quat_b)
+        self.command_ee_forward_w[:] = quat_rotate(self.command_ee_quat_w, self.fwd_vec)
+        self.command_ee_upward_w[:] = quat_rotate(self.command_ee_quat_w, self.up_vec)
 
         ee_forward_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_ee_forward_w)
         
@@ -60,7 +72,7 @@ class CommandEEPose(Command):
         self.command[:, 6:9] = ee_forward_b
 
     def sample_ee(self, env_ids: torch.Tensor):        
-        yaw = torch.zeros(env_ids.shape, device=self.device).uniform_(-torch.pi/2, torch.pi/2)
+        yaw = torch.zeros(env_ids.shape, device=self.device).uniform_(-torch.pi, torch.pi)
         pitch = torch.zeros(env_ids.shape, device=self.device).uniform_(-torch.pi / 3, 0.)
         radius = torch.zeros(env_ids.shape, device=self.device).uniform_(0.4, 0.8)
         self.command_ee_pos_b[env_ids] = torch.stack([
@@ -69,7 +81,10 @@ class CommandEEPose(Command):
             radius * -torch.sin(pitch),
         ], dim=-1)
 
-        self.command_ee_quat_w[env_ids] = sample_quat_yaw(env_ids.shape, self.device)
+        ee_roll = torch.zeros_like(yaw)
+        ee_yaw = yaw + torch.empty_like(yaw).uniform_(-torch.pi/4, torch.pi/4)
+        ee_pitch = pitch + torch.empty_like(pitch).uniform_(-torch.pi/4, torch.pi/4)
+        self.command_ee_quat_b[env_ids] = quat_from_euler_xyz(ee_roll, ee_pitch, ee_yaw)
 
     def sample_yaw(self, env_ids: torch.Tensor):
         self.target_yaw[env_ids] = torch.rand(env_ids.shape, device=self.device) * 2 * torch.pi

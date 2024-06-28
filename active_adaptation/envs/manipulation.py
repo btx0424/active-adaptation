@@ -78,7 +78,8 @@ class QuadrupedManip(LocomotionEnv):
             ee_pos = self.asset.data.ee_pos_b
             ee_pos_target = self.env.command_manager.command_ee_pos_b
             pos_error = ((ee_pos - ee_pos_target) / self.l).square().sum(1, True)
-            return torch.exp(- pos_error)
+            r = torch.exp(- pos_error)
+            return r
 
 
     class ee_pos_error_l1(Reward):
@@ -94,7 +95,36 @@ class QuadrupedManip(LocomotionEnv):
             pos_error = ((ee_pos - ee_pos_target)).abs().sum(1, True)
             return pos_error
     
-    
+
+    class ee_ori_tracking(Reward):
+        def __init__(self, env, ee_name: str, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+            self.asset: Articulation = self.env.scene["robot"]
+            self.ee_id, self.ee_name = self.asset.find_bodies(ee_name)
+            self.ee_id = self.ee_id[0]
+
+            with torch.device(self.device):
+                self.fwd_vec = torch.tensor([1., 0., 0.]).expand(self.num_envs, -1)
+                self.up_vec = torch.tensor([0., 0., 1.]).expand(self.num_envs, -1)
+                self.ee_forward_w = torch.zeros(self.num_envs, 3)
+
+        def compute(self) -> torch.Tensor:
+            self.ee_forward_w[:] = quat_rotate(
+                self.asset.data.body_quat_w[:, self.ee_id],
+                self.fwd_vec,
+            )
+            r = (self.ee_forward_w * self.env.command_manager.command_ee_forward_w).sum(-1, True)
+            r = r.sign() * r.square()
+            return r
+        
+        def debug_draw(self):
+            self.env.debug_draw.vector(
+                self.asset.data.body_pos_w[:, self.ee_id],
+                self.ee_forward_w * 0.2,
+                color=(1., 0.1, 0.1, 1.)
+            )
+
+
 def random_scale(x: torch.Tensor, low: float, high: float):
     return x * (torch.rand_like(x) * (high - low) + low)
 
