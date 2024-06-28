@@ -55,6 +55,7 @@ ROBOTS = {
     "go1": UNITREE_GO1_CFG,
     "go1m": UNITREE_GO1M_CFG,
     "go2": UNITREE_GO2_CFG,
+    "go2m": UNITREE_GO2M_CFG,
     "cassie": CASSIE_CFG,
     "h1": H1_CFG,
     "cy1": CY1_CFG,

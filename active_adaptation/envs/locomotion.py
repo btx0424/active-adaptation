@@ -28,6 +28,8 @@ class LocomotionEnv(Env):
             if isinstance(ids, slice):
                 ids = torch.arange(self.robot.num_joints)[ids].tolist()
             self.controlled_joint_ids.extend(ids)
+        if len(self.controlled_joint_ids) == self.robot.num_joints:
+            self.controlled_joint_ids = slice(None)
 
         self.contact_sensor: ContactSensor = self.scene.sensors.get("contact_forces", None)
         self.height_scanner: RayCaster = self.scene.sensors.get("height_scanner", None)

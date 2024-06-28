@@ -102,13 +102,14 @@ class feet_orientation(Reward):
 
 
 class joint_pos_default(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True):
+    def __init__(self, env, weight: float, enabled: bool = True, joint_names: str=".*"):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.default_joint_pos = self.asset.data.default_joint_pos.clone()
+        self.joint_ids = self.asset.find_joints(joint_names)[0]
+        self.default_joint_pos = self.asset.data.default_joint_pos[self.joint_ids].clone()
     
     def compute(self) -> torch.Tensor:
-        dev = self.asset.data.joint_pos - self.default_joint_pos
+        dev = self.asset.data.joint_pos[self.joint_ids] - self.default_joint_pos
         return - dev.square().mean(1, True)
 
 

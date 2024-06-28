@@ -230,26 +230,24 @@ class reset_joint_states_uniform(Randomization):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.rel = rel
-        
-        self.joint_ids = []
-        self.pos_ranges = []
-        for joint_name, (low, high) in pos_ranges.items():
-            joint_ids, joint_names = self.asset.find_joints(joint_name)
-            self.joint_ids.extend(joint_ids)
-            self.pos_ranges.append(torch.tensor([low, high], device=self.env.device).expand(len(joint_ids), 2))
-            print(f"Reset {joint_names} to U({low}, {high})")
-        self.pos_ranges = torch.cat(self.pos_ranges, 0).unbind(1)
+
+        self.joint_ids, self.joint_names, self.pos_ranges = string_utils.resolve_matching_names_values(
+            dict(pos_ranges), self.asset.joint_names
+        )
+        self.pos_ranges = torch.as_tensor(self.pos_ranges, device=self.device).unbind(-1)
         self.default_joint_pos = self.asset.data.default_joint_pos[:, self.joint_ids]
         self.default_joint_vel = self.asset.data.default_joint_vel[:, self.joint_ids]
-    
+        self.joint_limits = self.asset.data.joint_limits[0, self.joint_ids].unbind(-1)
+
     def reset(self, env_ids: torch.Tensor):
         shape = (len(env_ids), len(self.joint_ids))
-        init_pos = sample_uniform(shape, *self.pos_ranges, self.env.device)
+        init_pos = sample_uniform(shape, *self.pos_ranges, self.device)
         if self.rel:
             init_pos += self.default_joint_pos[env_ids]
         init_vel = self.default_joint_vel[env_ids]
         self.asset.write_joint_state_to_sim(
-            init_pos, init_vel, self.joint_ids, env_ids #.unsqueeze(1)
+            init_pos.clamp(*self.joint_limits), 
+            init_vel, self.joint_ids, env_ids #.unsqueeze(1)
         )
 
 

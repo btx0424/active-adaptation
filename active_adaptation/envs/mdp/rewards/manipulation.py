@@ -2,6 +2,7 @@ import torch
 
 from omni.isaac.lab.assets import Articulation
 from active_adaptation.utils.math import quat_rotate
+from omni.isaac.lab.utils.math import yaw_quat
 from .locomotion import Reward
 from ..commands import CommandEEPose
 
@@ -26,7 +27,8 @@ class ee_pose_tracking(Reward):
     def compute(self) -> torch.Tensor:
         ee_pos = self.asset.data.body_pos_w[:, self.ee_id]
         # r_linvel = torch.exp(-self.asset.data.body_lin_vel_w.square().sum(1, True) / 0.25)
-        r_pos = torch.exp(-(ee_pos - self.command_manager.command_ee_pos_w).square().sum(1, True) / 0.25)
+        pos_error = (ee_pos - self.command_manager.command_ee_pos_w).square().sum(1, True)
+        r_pos = torch.exp(- pos_error / 0.25)
         r_forward = (self.ee_forward_w * self.command_manager.command_ee_forward_w).sum(1, True)
         r_upward = (self.ee_upward_w * self.command_manager.command_ee_upward_w).sum(1, True)
         return r_pos + 0.5 * (r_forward + r_upward)

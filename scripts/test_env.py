@@ -61,9 +61,32 @@ def main(cfg):
         if isinstance(k, tuple) and k[0] == "stats"
     ]
     episode_stats = EpisodeStats(stats_keys)
+
+    rollout_policy = policy.get_rollout_policy("eval")
+    compile_policy = cfg.get("compile", False)
+    assert compile_policy in (True, False, "auto")
+    if compile_policy or compile_policy == "auto":
+        fake_td = env.fake_tensordict()
+        rollout_policy_compiled = torch.compile(rollout_policy)
+        for _ in range(16): 
+            rollout_policy_compiled(fake_td)
+    if compile_policy == "auto":
+        @torch.inference_mode()
+        def _timeit(policy):
+            start = time.perf_counter()
+            for _ in range(128): 
+                policy(fake_td)
+            return (time.perf_counter() - start) / 128
+        inference_time = _timeit(rollout_policy)
+        inference_time_compiled = _timeit(rollout_policy_compiled)
+        print(f"Inference time: {inference_time:.4f} -> {inference_time_compiled:.4f}")
+        if inference_time_compiled < inference_time:
+            rollout_policy = rollout_policy_compiled
+            print("Using compiled policy")
+
     collector = SyncDataCollector(
         env,
-        policy=policy.get_rollout_policy("train"),
+        policy=rollout_policy,
         frames_per_batch=frames_per_batch,
         total_frames=total_frames,
         device=cfg.sim.device,
@@ -73,6 +96,7 @@ def main(cfg):
     def save(policy, checkpoint_name: str, artifact: bool=False):
         ckpt_path = os.path.join(run.dir, f"{checkpoint_name}.pt")
         state_dict = OrderedDict()
+        state_dict["wandb"] = {"name": run.name, "id": run.id}
         state_dict["policy"] = policy.state_dict()
         if "vecnorm" in locals():
             state_dict["vecnorm"] = vecnorm.state_dict()

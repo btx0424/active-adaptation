@@ -59,7 +59,9 @@ def main(cfg):
     print(OmegaConf.to_yaml(info))
     
     time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
-    path = os.path.join(os.path.dirname(__file__), f"eval/{cfg.task.name}-{time_str}.yaml")
+    dir_path = os.path.join(os.path.dirname(__file__), f"eval", cfg.task.name)
+    os.makedirs(dir_path, exist_ok=True)
+    path = os.path.join(dir_path, f"{cfg.task.name}-{time_str}.yaml")
     with open(path, "w") as f:
         OmegaConf.save(info, f)
 
