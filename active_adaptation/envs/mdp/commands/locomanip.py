@@ -9,6 +9,7 @@ class CommandEEPose(Command):
         self, 
         env,
         ee_name: str,
+        yaw_range: tuple = (-torch.pi, torch.pi),
         pitch_range: tuple = (-torch.pi / 3, 0.),
         angvel_range=(-1., 1.),
     ) -> None:
@@ -18,6 +19,7 @@ class CommandEEPose(Command):
         assert len(self.ee_id) == 1
         self.ee_id = self.ee_id[0]
 
+        self.yaw_range = yaw_range
         self.pitch_range = pitch_range
         self.angvel_range = angvel_range
         self.resample_interval = 300
@@ -72,8 +74,8 @@ class CommandEEPose(Command):
         self.command[:, 6:9] = ee_forward_b
 
     def sample_ee(self, env_ids: torch.Tensor):        
-        yaw = torch.zeros(env_ids.shape, device=self.device).uniform_(-torch.pi, torch.pi)
-        pitch = torch.zeros(env_ids.shape, device=self.device).uniform_(-torch.pi / 3, 0.)
+        yaw = torch.zeros(env_ids.shape, device=self.device).uniform_(*self.yaw_range)
+        pitch = torch.zeros(env_ids.shape, device=self.device).uniform_(*self.pitch_range)
         radius = torch.zeros(env_ids.shape, device=self.device).uniform_(0.4, 0.8)
         self.command_ee_pos_b[env_ids] = torch.stack([
             radius * torch.cos(yaw) * torch.cos(pitch),

@@ -13,7 +13,8 @@ homogeneous: false
 
 command:
   _target_: active_adaptation.envs.mdp.CommandEEPose
-  pitch_range: [-2., 0.5]
+  yaw_range: [-3.14, 3.14]
+  pitch_range: [-1.5, 0.5]
   ee_name: arm_link06
 
 observation:
