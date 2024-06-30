@@ -37,7 +37,7 @@ H1_CFG.actuators = {
 CY1_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
         # usd_path=f"{ASSET_PATH}/cy1_description_new.usd",
-        usd_path=f"{ASSET_PATH}/orca_ndescription.usd",
+        usd_path=f"{ASSET_PATH}/ORCA/orca_ndescription_1.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -50,13 +50,13 @@ CY1_CFG = ArticulationCfg(
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
             enabled_self_collisions=True, 
-            solver_position_iteration_count=8, 
-            solver_velocity_iteration_count=2
+            solver_position_iteration_count=4, 
+            solver_velocity_iteration_count=1
         ),
-        collision_props=sim_utils.CollisionPropertiesCfg(
-            contact_offset=0.02,
-            rest_offset=0.0,
-        )
+        # collision_props=sim_utils.CollisionPropertiesCfg(
+        #     contact_offset=0.02,
+        #     rest_offset=0.0,
+        # )
     ),
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 0.92),

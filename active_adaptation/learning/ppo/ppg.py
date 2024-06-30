@@ -140,7 +140,7 @@ class NormalParams(nn.Module):
         scale = F.softplus(scale)
         return loc, scale
 
-def sample_normal(loc, scale, k: int=1, n: int=2):
+def sample_normal(loc, scale, k: int=1, n: int=1):
     loc = loc.expand(k, n, *loc.shape)
     if exploration_type() == ExplorationType.MODE:
         samples = loc + 0.
@@ -150,6 +150,7 @@ def sample_normal(loc, scale, k: int=1, n: int=2):
         samples = torch.cat(list(samples.unbind(1)), dim=-1)
     else:
         samples = samples.squeeze(1)
+    samples = F.mish(samples)
     return samples.squeeze(0)
 
 class PPGPolicy(TensorDictModuleBase):
