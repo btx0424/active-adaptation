@@ -64,7 +64,7 @@ reward:
   feet_air_time:      {weight: 1.0, enabled: true, body_names: .*leg_link6, thres: 0.4}
   feet_slip:          {weight: 0.5, enabled: true, body_names: .*leg_link6}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*leg_link6}
-  feet_swing:         {weight: 1.1s, enabled: true, feet_names: .*leg_link6}
+  feet_swing:         {weight: 1.1, enabled: true, feet_names: .*leg_link6}
   feet_orientation:   {weight: 0.2, enabled: true, feet_names: .*leg_link6}
   feet_step:          {weight: 1.0, enabled: true, feet_names: .*leg_link6}
   joint_pos_default:  {weight: 0.25, enabled: true}
@@ -88,7 +88,7 @@ randomization:
     damping_range:    [0.7, 1.0]
   reset_joint_states_uniform:
     pos_ranges:
-      .*: [-0.2, 0.2]
+      .*: [-0.25, 0.25]
     rel: true
   # stumble:  {body_names: ".*leg_link6", stumble_height: 0.045, friction_range: [0.4, 1.8]}
 

@@ -106,10 +106,11 @@ class joint_pos_default(Reward):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.joint_ids = self.asset.find_joints(joint_names)[0]
-        self.default_joint_pos = self.asset.data.default_joint_pos[self.joint_ids].clone()
+        self.default_joint_pos = self.asset.data.default_joint_pos[:, self.joint_ids].clone()
+        self.joint_ids = torch.tensor(self.joint_ids, device=self.device)
     
     def compute(self) -> torch.Tensor:
-        dev = self.asset.data.joint_pos[self.joint_ids] - self.default_joint_pos
+        dev = self.asset.data.joint_pos[:, self.joint_ids] - self.default_joint_pos
         return - dev.square().mean(1, True)
 
 
