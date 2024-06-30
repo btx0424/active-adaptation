@@ -74,7 +74,7 @@ class feet_orientation(Reward):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.feet_id = self.asset.find_bodies(feet_names)[0]
-        self.heading_feet = torch.tensor([[[0., 1., 0.]]], device=self.device)
+        self.heading_feet = torch.tensor([[[1., 0., 0.]]], device=self.device)
         self.heading_root = torch.tensor([[[1., 0., 0.]]], device=self.device)
     
     def compute(self) -> torch.Tensor:
