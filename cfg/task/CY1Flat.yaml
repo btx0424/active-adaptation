@@ -45,6 +45,9 @@ observation:
   #   body_mass:        {body_names: ["torso_link", "pelvis"]}
   #   cum_error:        {}
     rewards:     {}
+  aux_target_:
+    root_linvel_b:
+    root_angvel_b:    {yaw_only: true}
 
 reward:
   linvel_exp:         {weight: 1.5, enabled: true, dim: 3}
@@ -88,7 +91,7 @@ randomization:
     damping_range:    [0.7, 1.0]
   reset_joint_states_uniform:
     pos_ranges:
-      .*: [-0.25, 0.25]
+      .*: [-0.3, 0.3]
     rel: true
   # stumble:  {body_names: ".*leg_link6", stumble_height: 0.045, friction_range: [0.4, 1.8]}
 
