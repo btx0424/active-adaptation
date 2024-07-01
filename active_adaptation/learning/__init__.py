@@ -14,6 +14,8 @@ ALGOS = {
     "ppo_ji": PPOJi,
     "ppo_stoch": PPOStochPolicy,
     "ppo_mask": PPOMaskPolicy,
+    "ppo_him": PPOHIMPolicy,
+    "ppo_priv": PPOPrivPolicy,
     # "ppo_rma": PPORMAPolicy,
     "ppg": PPGPolicy,
     "sac": SAC,

@@ -2,9 +2,10 @@ import torch
 import hydra
 import numpy as np
 import einops
+import itertools
 from omegaconf import OmegaConf
 
-from omni.isaac.orbit.app import AppLauncher
+from omni.isaac.lab.app import AppLauncher
 from omni_drones.utils.wandb import init_wandb
 from omni_drones.utils.torchrl import SyncDataCollector
 
@@ -24,17 +25,8 @@ import datetime
 def main(cfg):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
-
-    # load cheaper kit config in headless
-    if cfg.headless:
-        app_experience = f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.gym.headless.kit"
-    else:
-        app_experience = f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.kit"
     
-    app_launcher = AppLauncher(
-        {"headless": cfg.headless, "offscreen_render": True},
-        experience=app_experience
-    )
+    app_launcher = AppLauncher(cfg.app)
     simulation_app = app_launcher.app
 
     from scripts.helpers import EpisodeStats, make_env_policy
@@ -72,32 +64,24 @@ def main(cfg):
         if isinstance(k, tuple) and k[0]=="stats"
     ]
     episode_stats = EpisodeStats(stats_keys)
-    collector = SyncDataCollector(
-        env,
-        policy=policy.get_rollout_policy("eval"),
-        frames_per_batch=frames_per_batch,
-        total_frames=total_frames,
-        device=cfg.sim.device,
-        return_same_td=True,
-        exploration_type=ExplorationType.MODE
-    )
-    
-    pbar = tqdm(collector, total=total_frames//frames_per_batch)
+    policy = policy.get_rollout_policy("eval")
 
-    env.eval()
-    
-    for i, data in enumerate(pbar):
-        info = {}
-        episode_stats.add(data)
+    with (
+        torch.inference_mode(), 
+        set_exploration_type(ExplorationType.MODE)
+    ):
+        td_ = env.reset()
+        
+        for i in itertools.count():
+            td_ = policy(td_)
+            td, td_ = env.step_and_maybe_reset(td_)
+            # td_.update(td["next"])
+            episode_stats.add(td)
 
-        if len(episode_stats) >= env.num_envs:
-            info = {}
-            for k, v in sorted(episode_stats.pop().items(True, True)):
-                if isinstance(v, torch.Tensor):
-                    info["train/" + (".".join(k) if isinstance(k, tuple) else k)] = torch.mean(v.float()).item()
-
-            print()
-            print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, float)}))
+            if len(episode_stats) > env.num_envs:
+                print("Step", i)
+                for k, v in sorted(episode_stats.pop().items(True, True)):
+                    print(k, torch.mean(v).item())
     
     env.close()
     simulation_app.close()

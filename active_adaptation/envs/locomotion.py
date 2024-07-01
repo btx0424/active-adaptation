@@ -1,37 +1,16 @@
 import torch
 
-from omni.isaac.orbit.sensors import ContactSensor, RayCaster
-from omni.isaac.orbit.actuators import DCMotor
+from omni.isaac.lab.sensors import ContactSensor, RayCaster
+from omni.isaac.lab.actuators import DCMotor
 from active_adaptation.envs.base import Env
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 import active_adaptation.envs.mdp as mdp
 
 from tensordict.tensordict import TensorDictBase
-from torchrl.data import (
-    CompositeSpec, 
-    UnboundedContinuousTensorSpec
-)
 
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
-
-from .mdp import Command1
-from collections import OrderedDict
-
-class Filter:
-    def __init__(self, shape, device):
-        self.data_history = torch.zeros(shape, 4, device=device)
-        self.data = torch.zeros(shape, device=device)
-
-    def reset(self, env_ids: torch.Tensor, value=0.):
-        self.data[env_ids] = value
-    
-    def update(self, value: torch.Tensor):
-        self.data_history[..., :-1] = self.data_history[..., 1:]
-        self.data_history[..., -1] = value
-        self.data[:] = self.data_history.mean(dim=-1)
-
 
 class LocomotionEnv(Env):
 
@@ -49,6 +28,8 @@ class LocomotionEnv(Env):
             if isinstance(ids, slice):
                 ids = torch.arange(self.robot.num_joints)[ids].tolist()
             self.controlled_joint_ids.extend(ids)
+        if len(self.controlled_joint_ids) == self.robot.num_joints:
+            self.controlled_joint_ids = slice(None)
 
         self.contact_sensor: ContactSensor = self.scene.sensors.get("contact_forces", None)
         self.height_scanner: RayCaster = self.scene.sensors.get("height_scanner", None)

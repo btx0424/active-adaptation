@@ -25,6 +25,7 @@ command:
   angvel_range: [-1.0, 1.0]
   yaw_stiffness_range: [0.5, 0.6]
   base_height_range: [0.25, 0.35]
+  resample_prob: 0.5
   stand_prob: 0.05
 
 # command:
@@ -47,6 +48,7 @@ observation:
     # # feet_pos_b:
     # feet_height_map: {feet_names: .*foot }
     # applied_torques: {actuator_name: base_legs}
+    # height_scan: {prim_path: base, flatten: true}
   priv:
     # _mask_: true # randomly mask one of the items
     # projected_gravity_b:
@@ -65,37 +67,23 @@ observation:
     # body_mass:        {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # body_momentum:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # rewards:          {}
-    contact_indicator: {body_names: [".*_foot"], timing: false}
+    contact_indicator: {body_names: [".*_foot"], timing: true}
+    # height_scan:      {prim_path: base, flatten: true}
+    cum_error:
   aux_target_:
     root_linvel_b:
     root_angvel_b:
-    rewards:
-  # height_scan:
-  #   height_scan:      {prim_path: base}
-  # priv:
-  #   action_delay:     {}
-  #   root_linvel_b:
-  #   feet_pos_b:
-  #   feet_vel_b:
-  #   motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
-  #   body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-  #   body_scale:       {}
-  #   body_mass:      {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
-  # _:
-  #   feet_pos_b:       {}
 
 reward:
-  linvel_exp:         {weight: 1.0, enabled: true, dim: 3}
-  linvel_rational:    {weight: 0.5, enabled: true, dim: 3}
+  linvel_exp:         {weight: 1.5, enabled: true, dim: 3}
+  # linvel_rational:    {weight: 0.5, enabled: true, dim: 3}
   angvel_z_exp:       {weight: 0.5, enabled: false}
   angvel_z_exp_shaped: {weight: 0.75, enabled: true}
-  linvel_projection:  {weight: 0.5, enabled: false}
-  # heading_yaw:        {weight: 0.5, enabled: true}
-  # linvel_and_height:  {weight: 2.0}
+  linvel_projection:  {weight: 0.5, enabled: true}
   linacc_z_l2:        {weight: 0.005, enabled: false}
-  angvel_xy_l2:       {weight: 0.05, enabled: true, clip_range: [-1., 0.]}
+  angvel_xy_l2:       {weight: 0.02, enabled: true, clip_range: [-1., 0.]}
   linvel_z_l2:        {weight: 2.0, enabled: true}
-  base_height_l1:     {weight: 1.0, enabled: true, target_height: 0.3}
+  base_height_l1:     {weight: 0.5, enabled: true, target_height: 0.3}
   energy_l1:          {weight: 0.0002, enabled: true}
   joint_acc_l2:       {weight: 2.5e-7, enabled: true, clip_range: [-1., 0.]}
   joint_torques_l2:   {weight: 2.0e-4, enabled: true, clip_range: [-1., 0.]}
@@ -105,16 +93,17 @@ reward:
   action_rate_l2:     {weight: 0.01, enabled: true}
   action_rate2_l2:    {weight: 0.005, enabled: true}
   # impact_force_l2:    {weight: 1.0, enabled: false, body_names: .*_foot}
-  feet_air_time:      {weight: 0.5, enabled: true, body_names: .*_foot, thres: 0.5}
+  feet_air_time:      {weight: 0.4, enabled: true, body_names: .*_foot, thres: 0.4}
   feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
   undesired_contact:  {body_names: [.*_calf, .*thigh], weight: 0.25, enabled: true}
-  step_up:            {weight: 4.0, enabled: true}
+  step_up:            {weight: 2.0, enabled: true}
+  step_up_needed:     {weight: 1.0, enabled: false}
 
 termination:
-  crash: {body_names_expr: [Head.*, "base"], z_thres: 0.}
+  crash: {body_names_expr: [Head.*, "base"], t_thres: 1.0, z_thres: 0.}
   # joint_acc_exceeds: {thres: 5000}
-  # cum_error: {thres: 0.85}
+  cum_error: {thres: 0.9}
 
 randomization:
   random_scale: [1.0, 1.2]

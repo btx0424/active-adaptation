@@ -1,8 +1,8 @@
 from math import inf
 import torch
 
-from omni.isaac.orbit.assets import Articulation
-from omni.isaac.orbit.utils.math import yaw_quat
+from omni.isaac.lab.assets import Articulation
+from omni.isaac.lab.utils.math import yaw_quat
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from active_adaptation.utils.helpers import batchify
 
@@ -14,9 +14,21 @@ quat_rotate_inverse = batchify(quat_rotate_inverse)
 def dot(a: torch.Tensor, b: torch.Tensor):
     return (a * b).sum(-1, True)
 
-class feet_distance(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True, clip_range=...):
-        super().__init__(env, weight, enabled, clip_range)
+class feet_clearance(Reward):
+    """
+    Avoid self-tripping by penalize a distance too small between the feet.
+    """
+    def __init__(self, env, feet_names: str, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.feet_id, feet_names = self.asset.find_bodies(feet_names)
+        self.feet_id = torch.tensor(self.feet_id, device=self.device)
+        self.thres = 0.16
+    
+    def compute(self) -> torch.Tensor:
+        feet_pos_w = self.asset.data.body_pos_w[:, self.feet_id]
+        distance_xy = (feet_pos_w[:, 0, :2] - feet_pos_w[:, 1, :2]).norm(dim=-1, keepdim=True)
+        return (- self.thres + distance_xy).clamp_max(0.) / self.thres
 
 
 class knee_distance(Reward):
@@ -31,7 +43,6 @@ class feet_swing(Reward):
         self.feet_id = self.asset.find_bodies(feet_names)[0]
         self.phase: torch.Tensor = self.asset.data.phase
         self.command_manager = self.env.command_manager
-        self.a = 2.
 
         self.feet_vel_buf = torch.zeros(self.num_envs, 2, 3, 4, device=self.device)
     
@@ -52,7 +63,7 @@ class feet_swing(Reward):
         swing_vel = quat_rotate(yaw_quat(self.asset.data.root_quat_w).unsqueeze(1), swing_vel)
         # reward = torch.exp(- 2 * (feet_linvel - swing_vel).abs().sum(-1)).sum(1, True)
 
-        max_speed = self.command_manager._command_speed.unsqueeze(1)
+        max_speed = self.command_manager._command_speed.unsqueeze(1).clamp_max(0.6)
         reward = dot(normalize(swing_vel), feet_linvel).clamp_max(max_speed)
         reward = torch.where(reward>0, reward.sqrt(), reward).sum(1, True)
         return reward.reshape(self.num_envs, 1) * (~self.command_manager.is_standing_env)
@@ -75,7 +86,7 @@ class feet_orientation(Reward):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.feet_id = self.asset.find_bodies(feet_names)[0]
-        self.heading_feet = torch.tensor([[[0., 1., 0.]]], device=self.device)
+        self.heading_feet = torch.tensor([[[1., 0., 0.]]], device=self.device)
         self.heading_root = torch.tensor([[[1., 0., 0.]]], device=self.device)
     
     def compute(self) -> torch.Tensor:
@@ -103,13 +114,15 @@ class feet_orientation(Reward):
 
 
 class joint_pos_default(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True):
+    def __init__(self, env, weight: float, enabled: bool = True, joint_names: str=".*"):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.default_joint_pos = self.asset.data.default_joint_pos.clone()
+        self.joint_ids = self.asset.find_joints(joint_names)[0]
+        self.default_joint_pos = self.asset.data.default_joint_pos[:, self.joint_ids].clone()
+        self.joint_ids = torch.tensor(self.joint_ids, device=self.device)
     
     def compute(self) -> torch.Tensor:
-        dev = self.asset.data.joint_pos - self.default_joint_pos
+        dev = self.asset.data.joint_pos[:, self.joint_ids] - self.default_joint_pos
         return - dev.square().mean(1, True)
 
 

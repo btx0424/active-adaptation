@@ -55,12 +55,12 @@ class PPOConfig:
     num_minibatches: int = 16
     lr: float = 5e-4
     clip_param: float = 0.1
-    entropy_coef: float = 0.01
+    entropy_coef: float = 0.002
     vecnorm: Union[str, None] = None
     gae_gamma: float = 0.99
     opt: str = "adam"
 
-    actor_predict_std: bool = True
+    actor_predict_std: bool = False
     orthogonal_init: bool = True
     layer_norm: bool = True
     value_norm: bool = False
@@ -224,7 +224,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         with torch.device(self.device):
             fake_input["is_init"] = torch.ones(fake_input.shape[0], 1, dtype=torch.bool)
             fake_input["context_adapt_hx"] = torch.zeros(fake_input.shape[0], 128)
-        print(fake_input.shapes)
+        print(fake_input)
 
         self.log_alpha = nn.Parameter(torch.tensor(0.))
         self.opt_alpha = torch.optim.Adam([self.log_alpha], lr=1e-2)

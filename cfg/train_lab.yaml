@@ -1,0 +1,33 @@
+hydra:
+  run:
+    dir: ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}-${env.task}-${algo.name}
+
+headless: true
+
+app:
+  headless: ${..headless}
+  enable_cameras: false
+
+training:
+  update_every: 24
+  total_frames: 150_000_000
+  save_interval: 150
+
+env:
+  num_envs: 4096
+  device: cuda
+  # task: "Isaac-Velocity-Flat-Unitree-Go2-v0"
+  task: "Isaac-Velocity-Rough-Unitree-Go2-v0"
+
+wandb:
+  name: ${oc.select:..env.task,test}-${oc.select:..algo.name,none}
+  job_type: train
+  entity: btx0424
+  project: isaac_lab
+  mode: online # set to 'disabled' when debugging locally
+
+checkpoint: null
+
+defaults:
+  - algo: ppo
+  - _self_

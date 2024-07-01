@@ -11,9 +11,9 @@ from torchrl.data import (
 )
 import builtins
 
-from omni.isaac.orbit.scene import InteractiveScene
-from omni.isaac.orbit.sim import SimulationContext
-from omni.isaac.orbit.utils.timer import Timer
+from omni.isaac.lab.scene import InteractiveScene
+from omni.isaac.lab.sim import SimulationContext
+from omni.isaac.lab.utils.timer import Timer
 from collections import OrderedDict
 
 from abc import abstractmethod
@@ -42,14 +42,18 @@ class Env(EnvBase):
             raise RuntimeError("Simulation context already exists. Cannot create a new one.")
         # set camera view for "/OmniverseKit_Persp" camera
         self.sim.set_camera_view(eye=self.cfg.viewer.eye, target=self.cfg.viewer.lookat)
-        import omni.replicator.core as rep
-        # create render product
-        self._render_product = rep.create.render_product(
-            "/OmniverseKit_Persp", tuple(self.cfg.viewer.resolution)
-        )
-        # create rgb annotator -- used to read data from the render product
-        self._rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cpu")
-        self._rgb_annotator.attach([self._render_product])
+        try:
+            import omni.replicator.core as rep
+            # create render product
+            self._render_product = rep.create.render_product(
+                "/OmniverseKit_Persp", tuple(self.cfg.viewer.resolution)
+            )
+            # create rgb annotator -- used to read data from the render product
+            self._rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cpu")
+            self._rgb_annotator.attach([self._render_product])
+        except ModuleNotFoundError as e:
+            print(e)
+            print("Set enable_cameras=true to use cameras.")
 
         # print useful information
         print("[INFO]: Base environment:")
@@ -141,7 +145,7 @@ class Env(EnvBase):
         for callback in self._startup_callbacks:
             callback()
         
-        self.sim.physics_sim_view.flush()
+        # self.sim.physics_sim_view.flush()
         
         reward_spec = CompositeSpec({
             "reward": UnboundedContinuousTensorSpec(1),
@@ -226,7 +230,7 @@ class Env(EnvBase):
                 torch.zeros_like(self.observation_masks[group][env_ids]),
                 generate_mask(len(env_ids), self.observation_split[group], self.device)
             )
-        self.sim._physics_sim_view.flush()
+        # self.sim._physics_sim_view.flush()
         self.episode_length_buf[env_ids] = 0
         self.scene.update(self.step_dt)
         tensordict = TensorDict(
@@ -311,8 +315,8 @@ class Env(EnvBase):
         return tensordict
     
     def _set_seed(self, seed: int = -1):
-        import omni.replicator.core as rep
-        rep.set_global_seed(seed)
+        # import omni.replicator.core as rep
+        # rep.set_global_seed(seed)
         torch.manual_seed(seed)
 
     def render(self, mode: str = "human"):

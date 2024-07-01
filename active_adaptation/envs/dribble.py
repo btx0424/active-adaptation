@@ -1,12 +1,12 @@
 from math import inf
 import torch
 
-from omni.isaac.orbit.sensors import ContactSensor, RayCaster
-from omni.isaac.orbit.actuators import DCMotor
-from omni.isaac.orbit.assets import Articulation, RigidObject
+from omni.isaac.lab.sensors import ContactSensor, RayCaster
+from omni.isaac.lab.actuators import DCMotor
+from omni.isaac.lab.assets import Articulation, RigidObject
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
-from omni.isaac.orbit.utils.math import yaw_quat
+from omni.isaac.lab.utils.math import yaw_quat
 
 
 quat_rotate = batchify(quat_rotate)

@@ -2,13 +2,13 @@ import re
 import torch
 from typing import Sequence
 
-from omni.isaac.orbit.sensors import (
+from omni.isaac.lab.sensors import (
     RayCaster as _RayCaster,
     RayCasterData,
     RayCasterCfg,
 )
 
-import omni.isaac.orbit.sim as sim_utils
+import omni.isaac.lab.sim as sim_utils
 import omni.physics.tensors.impl.api as physx
 from omni.isaac.core.prims import XFormPrimView
 from pxr import UsdGeom, UsdPhysics

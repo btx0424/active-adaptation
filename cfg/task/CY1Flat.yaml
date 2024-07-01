@@ -7,7 +7,7 @@ defaults:
   - _self_
 
 robot: cy1
-terrain: plane
+terrain: easy
 payload: false
 
 command:
@@ -39,12 +39,15 @@ observation:
     body_vel:         {body_names: .*arm_link5, yaw_only: true}
     feet_height_map:  {feet_names: .*leg_link6 }
     applied_torques:  {actuator_name: base_legs}
-    # contact_indicator: {body_names: [".*leg_link6"], timing: false}
+    contact_indicator: {body_names: [".*leg_link6"], timing: false}
   #   motor_params:     {actuator_name: "base_legs"}
   #   body_materials:   {body_names: ".*ankle_link"}
   #   body_mass:        {body_names: ["torso_link", "pelvis"]}
   #   cum_error:        {}
     rewards:     {}
+  aux_target_:
+    root_linvel_b:
+    root_angvel_b:    {yaw_only: true}
 
 reward:
   linvel_exp:         {weight: 1.5, enabled: true, dim: 3}
@@ -61,19 +64,21 @@ reward:
   orientation:        {weight: 1.0, enabled: true}
   survival:           {weight: 1.0, enabled: true}
   action_rate_l2:     {weight: 0.01, enabled: true}
-  feet_air_time:      {weight: 1.0, enabled: true, body_names: .*leg_link6, thres: 0.5}
+  feet_air_time:      {weight: 1.0, enabled: true, body_names: .*leg_link6, thres: 0.4}
   feet_slip:          {weight: 0.5, enabled: true, body_names: .*leg_link6}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*leg_link6}
-  feet_swing:         {weight: 1.0, enabled: true, feet_names: .*leg_link6}
-  feet_orientation:   {weight: 0.25, enabled: true, feet_names: .*leg_link6}
-  feet_step:          {weight: 2.0, enabled: true, feet_names: .*leg_link6}
+  feet_swing:         {weight: 1.1, enabled: true, feet_names: .*leg_link6}
+  feet_orientation:   {weight: 0.2, enabled: true, feet_names: .*leg_link6}
+  feet_step:          {weight: 1.0, enabled: true, feet_names: .*leg_link6}
   joint_pos_default:  {weight: 0.25, enabled: true}
   body_orientation:   {weight: 0.25, enabled: true, body_name: waist_yaw_link}
-  arm_velocity:       {weight: 0.05, enabled: true, arm_names: .*arm_link5}
+  arm_velocity:       {weight: 0.05, enabled: false, arm_names: .*arm_link5}
   arm_swing:          {weight: 0.2, enabled: false, arm_names: .*arm_link5}
+  joint_vel_l2:       {weight: 0.002, enabled: true, joint_names: .*arm_joint.*}
+  feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}
 
 randomization:
-  # push:     {body_names: ["pelvis", ".*shoulder_pitch_link"]}
+  push:     {body_names: ["base_link", "waist_yaw_link"], force_range: [0.0, 0.2]}
   perturb_body_mass:
     .*: [0.9, 1.1]
   perturb_body_materials:
@@ -87,7 +92,7 @@ randomization:
     damping_range:    [0.7, 1.0]
   reset_joint_states_uniform:
     pos_ranges:
-      .*: [-0.2, 0.2]
+      .*: [-0.3, 0.3]
     rel: true
   # stumble:  {body_names: ".*leg_link6", stumble_height: 0.045, friction_range: [0.4, 1.8]}
 

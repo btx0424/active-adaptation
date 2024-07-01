@@ -1,33 +1,24 @@
 import torch
 import hydra
 import numpy as np
+import wandb
+import logging
 import einops
+import os
+import time
+
 from omegaconf import OmegaConf
+from setproctitle import setproctitle
+from tqdm import tqdm
+from collections import OrderedDict
 
-from omni.isaac.orbit.app import AppLauncher
-from omni_drones.utils.wandb import init_wandb
-from omni_drones.utils.torchrl import SyncDataCollector
-
-from torchrl.envs.utils import set_exploration_type, ExplorationType
-from torchrl.envs.transforms import (
-    TransformedEnv, 
-    Compose, 
-    InitTracker,
-    RewardSum,
-    CatFrames
-)
+from omni.isaac.lab.app import AppLauncher
+from active_adaptation.utils.torchrl import SyncDataCollector
 from active_adaptation.learning import BCPolicy, ALGOS
 
 # local import
 from scripts.helpers import make_env_policy, EpisodeStats, Every
 
-import wandb
-import logging
-from tqdm import tqdm
-from collections import OrderedDict
-
-import os
-import time
 
 @hydra.main(config_path="../cfg", config_name="train")
 def main(cfg):
@@ -36,20 +27,12 @@ def main(cfg):
 
     cfg.vecnorm = "eval"
     
-    # load cheaper kit config in headless
-    if cfg.headless:
-        app_experience = f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.gym.headless.kit"
-    else:
-        app_experience = f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.kit"
-    
-    app_launcher = AppLauncher(
-        {"headless": cfg.headless, "offscreen_render": cfg.offscreen_render},
-        experience=app_experience,
-        # experience=f"{os.environ['EXP_PATH']}/omni.isaac.sim.python.kit"
-    )
+    app_launcher = AppLauncher(cfg.app)
     simulation_app = app_launcher.app
 
-    run = init_wandb(cfg)
+    run = wandb.init(**cfg.wandb)
+    run.config.update(OmegaConf.to_container(cfg))
+    setproctitle(run.name)
 
     # setup environment
     env, teacher, vecnorm = make_env_policy(cfg)

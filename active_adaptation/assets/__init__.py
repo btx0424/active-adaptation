@@ -2,19 +2,18 @@ import os
 import copy
 import torch
 
-from omni.isaac.orbit_assets import (
+from omni.isaac.lab_assets import (
     ArticulationCfg,
     UNITREE_A1_CFG,
     UNITREE_GO1_CFG,
     UNITREE_GO2_CFG,
     ANYMAL_C_CFG,
     cassie,
-    ISAAC_ORBIT_NUCLEUS_DIR
 )
 
-import omni.isaac.orbit.sim as sim_utils
-from omni.isaac.orbit.sim.spawners.from_files.from_files import _spawn_from_usd_file, spawn_from_usd
-from omni.isaac.orbit.actuators import ImplicitActuatorCfg, DCMotorCfg
+import omni.isaac.lab.sim as sim_utils
+from omni.isaac.lab.sim.spawners.from_files.from_files import _spawn_from_usd_file, spawn_from_usd
+from omni.isaac.lab.actuators import ImplicitActuatorCfg, DCMotorCfg
 
 from .spawn import clone
 from .quadruped import *
@@ -49,16 +48,17 @@ def spawn_with_payload(
     return prim
 
 CASSIE_CFG = copy.deepcopy(cassie.CASSIE_CFG)
+CASSIE_CFG.spawn.usd_path = f"{ASSET_PATH}/Cassie/cassie.usd"
 
 ROBOTS = {
     "a1": UNITREE_A1_CFG,
     "go1": UNITREE_GO1_CFG,
     "go1m": UNITREE_GO1M_CFG,
     "go2": UNITREE_GO2_CFG,
+    "go2m": UNITREE_GO2M_CFG,
     "cassie": CASSIE_CFG,
     "h1": H1_CFG,
     "cy1": CY1_CFG,
-    "cy1_v2": CY1V2_CFG,
     "cyberdog": CYBERDOG_CFG
 }
 

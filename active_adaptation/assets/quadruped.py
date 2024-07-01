@@ -1,9 +1,9 @@
 import os
 import copy
 
-import omni.isaac.orbit.sim as sim_utils
-from omni.isaac.orbit_assets import UNITREE_GO2_CFG, UNITREE_A1_CFG
-from omni.isaac.orbit.actuators import DCMotorCfg
+import omni.isaac.lab.sim as sim_utils
+from omni.isaac.lab_assets import UNITREE_GO2_CFG, UNITREE_A1_CFG, ArticulationCfg
+from omni.isaac.lab.actuators import DCMotorCfg
 
 ASSET_PATH = os.path.dirname(__file__)
 
@@ -15,9 +15,17 @@ UNITREE_GO2_CFG.actuators["base_legs"].effort_limit = {
     ".*_calf_joint": 35.5,
 }
 UNITREE_GO2_CFG.actuators["base_legs"].saturation_effort = 35.5
-UNITREE_GO2_CFG.spawn.collision_props=sim_utils.CollisionPropertiesCfg(
-    contact_offset=0.05,
-    rest_offset=0.0,
+
+UNITREE_GO2M_CFG = copy.deepcopy(UNITREE_GO2_CFG)
+UNITREE_GO2M_CFG.spawn.usd_path = f"{ASSET_PATH}/go2m.usd"
+UNITREE_GO2M_CFG.actuators["arm"] = DCMotorCfg(
+    joint_names_expr=["joint.*"],
+    effort_limit=200.,
+    saturation_effort=200.,
+    velocity_limit=5.0,
+    stiffness=30.0,
+    damping=1.0,
+    friction=0.0,
 )
 
 CYBERDOG_CFG = copy.deepcopy(UNITREE_A1_CFG)
@@ -38,12 +46,12 @@ CYBERDOG_CFG.spawn.collision_props=sim_utils.CollisionPropertiesCfg(
     rest_offset=0.0,
 )
 
-UNITREE_GO1M_CFG = copy.deepcopy(UNITREE_A1_CFG)
+UNITREE_GO1M_CFG: ArticulationCfg = UNITREE_A1_CFG.replace()
 UNITREE_GO1M_CFG.spawn.usd_path = f"{ASSET_PATH}/widowGo1.usd"
 UNITREE_GO1M_CFG.actuators["arm"] = DCMotorCfg(
     joint_names_expr=[".*widow_(waist|shoulder|elbow)"],
-    stiffness=80.0,
+    stiffness=30.0,
     velocity_limit=2.0,
-    damping=4.0,
+    damping=1.0,
     saturation_effort=200
 )

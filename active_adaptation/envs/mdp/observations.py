@@ -3,15 +3,15 @@ import numpy as np
 import abc
 import einops
 
-from omni.isaac.orbit.assets import Articulation
-from omni.isaac.orbit.sensors import ContactSensor, RayCaster, patterns, RayCasterData
-from omni.isaac.orbit.sensors import Camera
-import omni.isaac.orbit.sim as sim_utils
+from omni.isaac.lab.assets import Articulation
+from omni.isaac.lab.sensors import ContactSensor, RayCaster, patterns, RayCasterData
+from omni.isaac.lab.sensors import Camera, TiledCamera
+import omni.isaac.lab.sim as sim_utils
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
-from omni.isaac.orbit.terrains.trimesh.utils import make_plane
-from omni.isaac.orbit.utils.math import convert_quat, quat_apply, quat_apply_yaw, yaw_quat
-from omni.isaac.orbit.utils.warp import convert_to_warp_mesh, raycast_mesh
+from omni.isaac.lab.terrains.trimesh.utils import make_plane
+from omni.isaac.lab.utils.math import convert_quat, quat_apply, quat_apply_yaw, yaw_quat
+from omni.isaac.lab.utils.warp import convert_to_warp_mesh, raycast_mesh
 from pxr import UsdGeom, UsdPhysics
 
 quat_rotate = batchify(quat_rotate)
@@ -573,29 +573,25 @@ class feet_height_map(Observation):
 
 
 class height_scan(Observation):
-    def __init__(self, env, prim_path, flatten: bool=False):
+    def __init__(self, env, prim_path, flatten: bool=False, noise_scale = 0.005):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.height_scanner: RayCaster = self.env.scene["height_scanner"]
-        self.height_scan = torch.zeros(self.num_envs, 3, 11, 17, device=self.device)
-        self.update()
+        self.height_scan = torch.zeros(self.num_envs, 11, 17, device=self.device)
         self.flatten = flatten
-
-    def reset(self, env_ids):
-        self.height_scan[env_ids] = 0.
-
-    def update(self):
-        self.height_scan[:, :-1] = self.height_scan[:, 1:]
-        self.height_scan[:, -1] = (
-            self.asset.data.root_pos_w[:, 2].unsqueeze(1)
-            - self.height_scanner.data.ray_hits_w[:, :, 2]
-        ).reshape(self.num_envs, 11, 17).clamp(-1., 1.)
+        self.noise_scale = noise_scale
 
     def __call__(self):
+        height_scan = (
+            self.asset.data.root_pos_w[:, 2].unsqueeze(1)
+            - self.height_scanner.data.ray_hits_w[..., 2]
+        )
+        if self.noise_scale > 0:
+            height_scan = (height_scan + torch.randn_like(height_scan) * self.noise_scale).clamp(-1., 1.)
         if self.flatten:
-            return self.height_scan.reshape(self.num_envs, -1)
+            return height_scan.reshape(self.num_envs, -1)
         else:
-            return self.height_scan
+            return height_scan.reshape(self.num_envs, 1, 11, 17)
 
     # def debug_draw(self):
     #     to = self.height_scan.data.ray_hits_w.reshape(-1, 11, 17, 3)[:, :, 0].reshape(-1, 11, 3)
@@ -769,6 +765,17 @@ class dummy(Observation):
     
     def __call__(self) -> torch.Tensor:
         return self.obs.expand(self.num_envs, -1)
+
+
+class camera_image(Observation):
+    def __init__(self, env, name: str, key: str="depth"):
+        super().__init__(env)
+        self.camera: TiledCamera = self.env.scene[name]
+        self.key = key
+    
+    def __call__(self):
+        data = self.camera.data.output[self.key]
+        return data
 
 
 def symlog(x: torch.Tensor, a: float=1.):

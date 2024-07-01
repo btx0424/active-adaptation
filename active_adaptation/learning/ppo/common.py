@@ -117,6 +117,14 @@ class Duplicate(nn.Module):
     def forward(self, x):
         return tuple(x for _ in range(self.n))
 
+class Split(nn.Module):
+    def __init__(self, split_size):
+        super().__init__()
+        self.split_size = split_size
+    
+    def forward(self, x: torch.Tensor):
+        return x.split(self.split_size, dim=-1)
+
 
 class Actor(nn.Module):
     def __init__(self, action_dim: int, predict_std: bool=False) -> None:

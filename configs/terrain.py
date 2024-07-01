@@ -1,4 +1,4 @@
-from omni.isaac.orbit.terrains import (
+from omni.isaac.lab.terrains import (
     TerrainImporterCfg,
     HfTerrainBaseCfg,
     HfRandomUniformTerrainCfg,
@@ -15,12 +15,12 @@ from omni.isaac.orbit.terrains import (
     MeshRepeatedBoxesTerrainCfg,
     height_field
 )
-from omni.isaac.orbit.terrains.config.rough import ROUGH_TERRAINS_CFG as ROUGH_HARD
-from omni.isaac.orbit.utils import configclass
+from omni.isaac.lab.terrains.config.rough import ROUGH_TERRAINS_CFG as ROUGH_HARD
+from omni.isaac.lab.utils import configclass
 from dataclasses import MISSING
 import numpy as np
 
-import omni.isaac.orbit.sim as sim_utils
+import omni.isaac.lab.sim as sim_utils
 
 
 @height_field.utils.height_field_to_mesh
@@ -79,7 +79,7 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
     size=(8.0, 8.0),
     border_width=40.0,
     num_rows=10,
-    num_cols=10,
+    num_cols=20,
     horizontal_scale=0.1,
     vertical_scale=0.005,
     slope_threshold=0.75,
@@ -125,7 +125,7 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
         ),
         "pyramid_stairs_inv": MeshInvertedPyramidStairsTerrainCfg(
             proportion=0.15,
-            step_height_range=(0.05, 0.15),
+            step_height_range=(0.05, 0.20),
             step_width=0.35,
             platform_width=3.5,
             border_width=1.0,
@@ -187,6 +187,11 @@ ROUGH_EASY = TerrainGeneratorCfg(
     },
 )
 
+# scale down the terrains because the robot is small
+ROUGH_HARD.sub_terrains["boxes"].grid_height_range = (0.025, 0.025)
+ROUGH_HARD.sub_terrains["random_rough"].noise_range = (0.01, 0.06)
+ROUGH_HARD.sub_terrains["random_rough"].noise_step = 0.01
+
 ROUGH_TERRAIN_CFG = TerrainImporterCfg(
     prim_path="/World/ground",
     terrain_type="generator",
@@ -206,6 +211,53 @@ ROUGH_TERRAIN_CFG = TerrainImporterCfg(
     debug_vis=False,
 )
 
+STAIRS = TerrainGeneratorCfg(
+    seed=0,
+    size=(8.0, 8.0),
+    border_width=40.0,
+    num_rows=10,
+    num_cols=20,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    use_cache=False,
+    sub_terrains={
+        "flat": MeshPlaneTerrainCfg(
+            proportion=0.10,
+        ),
+        "random_rough_easy": HfRandomUniformTerrainCfg(
+            proportion=0.20,
+            noise_range=(0.0, 0.05),
+            noise_step=0.02,
+            border_width=0.5
+        ),
+        "box": MeshRepeatedBoxesTerrainCfg(
+            proportion=0.20,
+            object_params_start=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
+                num_objects=36, height=0.15, size=(0.6, 0.6), max_yx_angle=15),
+            object_params_end=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
+                num_objects=36, height=0.15, size=(0.6, 0.6), max_yx_angle=15),
+            platform_width=2.0
+        ),
+        "pyramid_stairs_inv_a": MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.20,
+            step_height_range=(0.05, 0.20),
+            step_width=0.35,
+            platform_width=3.5,
+            border_width=1.0,
+            holes=False,
+        ),
+        "pyramid_stairs_inv_b": MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.20,
+            step_height_range=(0.05, 0.20),
+            step_width=0.50,
+            platform_width=3.5,
+            border_width=1.0,
+            holes=False,
+        ),
+    },
+)
+
 FLAT_TERRAIN_CFG = TerrainImporterCfg(
     prim_path="/World/ground",
     terrain_type="plane",
@@ -221,5 +273,7 @@ FLAT_TERRAIN_CFG = TerrainImporterCfg(
 TERRAINS = {
     "medium": ROUGH_MEDIUM,
     "easy": ROUGH_EASY,
-    "flat": FLAT
+    "hard": ROUGH_HARD,
+    "flat": FLAT,
+    "stairs": STAIRS
 }

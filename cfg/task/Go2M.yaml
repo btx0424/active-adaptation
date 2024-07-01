@@ -1,0 +1,85 @@
+name: Go2M
+task: QuadrupedManip
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/Velocity@_here_
+  - _self_
+
+robot: go2m
+terrain: plane
+payload: false
+homogeneous: false
+
+command:
+  _target_: active_adaptation.envs.mdp.CommandEEPose
+  yaw_range: [-3.14, 3.14]
+  pitch_range: [-1.5, 0.5]
+  ee_name: arm_link06
+
+observation:
+  policy:
+    command:
+    # root_quat_w:
+    root_angvel_b: {noise_std: 0.05}
+    projected_gravity_b: {noise_std: 0.05}
+    joint_pos:    {noise_std: 0.05}
+    joint_vel:    {noise_std: 0.2}
+    prev_actions: {steps: 2}
+    ee_pos:       {ee_name: arm_link06}
+    # motor_params: {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
+    # body_materials: {body_names: .*foot, homogeneous: "${task.homogeneous}"}
+    # root_linvel_b:
+    # # feet_pos_b:
+    # feet_height_map: {feet_names: .*foot }
+    # applied_torques: {actuator_name: base_legs}
+    # height_scan: {prim_path: base, flatten: true}
+  priv:
+    feet_pos_b:   {feet_names: .*foot}
+    ee_vel:       {ee_name: arm_link06}
+  aux_target_:
+    ee_vel:       {ee_name: arm_link06}
+
+reward:
+  orientation:        {weight: 1.0, enabled: true}
+  survival:           {weight: 1.0, enabled: true}
+  ee_pos_tracking:    {weight: 1.0, enabled: true, ee_name: arm_link06}
+  ee_pos_error_l1:    {weight: 1.0, enabled: false, ee_name: arm_link06}
+  ee_ori_tracking:    {weight: 1.0, enabled: true, ee_name: arm_link06}
+  quadruped_stand:    {weight: 0.25, enabled: true}
+  energy_l1:          {weight: 0.0002, enabled: true}
+  action_rate_l2:     {weight: 0.01, enabled: true}
+  action_rate2_l2:    {weight: 0.005, enabled: true}
+
+termination:
+  crash: {body_names_expr: [Head.*, "base"], t_thres: 0.4, z_thres: 0.}
+  # joint_acc_exceeds: {thres: 5000}
+  # cum_error: {thres: 0.85}
+
+randomization:
+#   random_scale: [1.0, 1.2]
+#   perturb_body_mass:
+#     (?!(payload|base|Head.*)).*: [0.8, 1.2]
+#     base: [0.8, 1.2]
+#     Head.*: [25.0, 250.0]
+#   perturb_body_materials:
+#     body_names: ".*_foot"
+#     static_friction_range:  [0.6, 2.0]
+#     dynamic_friction_range: [0.6, 2.0]
+#     restitution_range:      [0.0, 0.2]
+#     homogeneous: true # ${task.homogeneous}
+#   motor_params:
+#     actuator_name: base_legs
+#     stiffness_range:  [0.8, 1.2]
+#     damping_range:    [0.8, 1.2]
+#     homogeneous: ${task.homogeneous}
+#   # random_motor_failure:
+#   #   actuator_name: base_legs
+#   #   joint_names: .*_calf_joint
+#   #   failure_prob: 0.0
+  reset_joint_states_uniform:
+    pos_ranges:
+      joint.*: [0., 0.4]
+    rel: true
+  # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
+  # stumble: {body_names: .*_foot}

@@ -56,7 +56,7 @@ class LinearSchedule:
         """
         progress: float, in [0, 1]
         """
-        progress = (progress - self.start_step) / (self.end_step - self.start_step)
+        progress = max(0., progress - self.start_step) / (self.end_step - self.start_step)
         return progress * (self.end_value - self.start_value) + self.start_value
 
 
@@ -68,15 +68,16 @@ class PPOConfig:
     num_minibatches: int = 16
     lr: float = 5e-4
     clip_param: float = 0.1
-    entropy_coef: float = 0.01
+    entropy_coef: float = 0.002
 
+    actor_predict_std: bool = False
     orthogonal_init: bool = True
     value_norm: bool = False
 
     checkpoint_path: Union[str, None] = None
 
     adapt_arch: str = "rnn"
-    encoder_dims: List[int] = field(default_factory=lambda: [128])
+    context_dim: int = 128
     regularize: bool = True
     adapt_update_interval: int = 1
     lambda_schedule: tuple = (0., 1., 0., 1.)
@@ -138,23 +139,24 @@ class PPOROAPolicy(TensorDictModuleBase):
             fake_input["context_adapt_hx"] = torch.zeros(fake_input.shape[0], 128)
         
         self.encoder_priv = TensorDictModule(
-            make_mlp(self.cfg.encoder_dims), [OBS_PRIV_KEY], ["context_expert"]
+            nn.Sequential(make_mlp([self.cfg.context_dim]), nn.LazyLinear(self.cfg.context_dim)), 
+            [OBS_PRIV_KEY], ["context_expert"]
         ).to(self.device)
         
         if self.cfg.adapt_arch == "rnn":
             self.adapt_module = TensorDictModule(
-                GRUModule(self.cfg.encoder_dims[-1]), 
+                GRUModule(self.cfg.context_dim), 
                 [OBS_KEY, "is_init", "context_adapt_hx"], 
                 ["context_adapt", ("next", "context_adapt_hx")]
             ).to(self.device)
         else:
             self.adapt_module = TensorDictModule(
-                TConv(observation_spec["priv"].shape[-1]),
+                TConv(self.cfg.context_dim),
                 [OBS_HIST_KEY], ["context_adapt"]
             ).to(self.device)
 
         def make_actor(context_key: str) -> ProbabilisticActor:
-            actor_module = nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim, True))
+            actor_module = nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim, self.cfg.actor_predict_std))
             actor = ProbabilisticActor(
                 module=TensorDictSequential(
                     CatTensors([OBS_KEY, context_key], "actor_feature", del_keys=False),
@@ -271,7 +273,7 @@ class PPOROAPolicy(TensorDictModuleBase):
         hard_copy_(self.actor_expert, self.actor_adapt)
 
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
-        infos["value"] = self.value_norm.denormalize(tensordict["ret"]).mean().item()
+        infos["value_priv"] = self.value_norm.denormalize(tensordict["ret"]).mean().item()
         return infos
     
     def train_adaptation(self, tensordict: TensorDictBase):
@@ -334,13 +336,13 @@ class PPOROAPolicy(TensorDictModuleBase):
         ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
-        losses["policy_loss"] = - torch.mean(torch.min(surr1, surr2)) * self.action_dim
+        losses["policy_loss"] = - torch.mean(torch.min(surr1, surr2))
         losses["entropy_loss"] = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["value_priv"]
         value_loss = self.critic_loss_fn(b_returns, values)
-        losses["value_loss/priv"] = (value_loss * (~tensordict["is_init"])).mean()
+        losses["value_loss/value_loss_priv"] = (value_loss * (~tensordict["is_init"])).mean()
         
         loss = sum(losses.values())
         self.opt.zero_grad()
@@ -348,7 +350,10 @@ class PPOROAPolicy(TensorDictModuleBase):
         losses["actor_grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.actor_expert.parameters(), 10)
         losses["critic_grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 10)
         self.opt.step()
-        losses["explained_var/priv"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
+
+        losses["value_loss/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
+        losses["noise_std"] = tensordict["scale"].mean()
+        losses["entropy"] = entropy
         return TensorDict(losses, [])
     
     def _update_adaptation(self, tensordict: TensorDictBase):
