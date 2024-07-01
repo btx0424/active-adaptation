@@ -14,9 +14,21 @@ quat_rotate_inverse = batchify(quat_rotate_inverse)
 def dot(a: torch.Tensor, b: torch.Tensor):
     return (a * b).sum(-1, True)
 
-class feet_distance(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True, clip_range=...):
-        super().__init__(env, weight, enabled, clip_range)
+class feet_clearance(Reward):
+    """
+    Avoid self-tripping by penalize a distance too small between the feet.
+    """
+    def __init__(self, env, feet_names: str, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.feet_id, feet_names = self.asset.find_bodies(feet_names)
+        self.feet_id = torch.tensor(self.feet_id, device=self.device)
+        self.thres = 0.16
+    
+    def compute(self) -> torch.Tensor:
+        feet_pos_w = self.asset.data.body_pos_w[:, self.feet_id]
+        distance_xy = (feet_pos_w[:, 0, :2] - feet_pos_w[:, 1, :2]).norm(dim=-1, keepdim=True)
+        return (- self.thres + distance_xy).clamp_max(0.) / self.thres
 
 
 class knee_distance(Reward):

@@ -39,7 +39,7 @@ observation:
     body_vel:         {body_names: .*arm_link5, yaw_only: true}
     feet_height_map:  {feet_names: .*leg_link6 }
     applied_torques:  {actuator_name: base_legs}
-    # contact_indicator: {body_names: [".*leg_link6"], timing: false}
+    contact_indicator: {body_names: [".*leg_link6"], timing: false}
   #   motor_params:     {actuator_name: "base_legs"}
   #   body_materials:   {body_names: ".*ankle_link"}
   #   body_mass:        {body_names: ["torso_link", "pelvis"]}
@@ -75,6 +75,7 @@ reward:
   arm_velocity:       {weight: 0.05, enabled: false, arm_names: .*arm_link5}
   arm_swing:          {weight: 0.2, enabled: false, arm_names: .*arm_link5}
   joint_vel_l2:       {weight: 0.002, enabled: true, joint_names: .*arm_joint.*}
+  feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}
 
 randomization:
   push:     {body_names: ["base_link", "waist_yaw_link"], force_range: [0.0, 0.2]}
