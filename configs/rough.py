@@ -161,6 +161,8 @@ def LocomotionEnvCfg(task_cfg):
     for group in task_cfg.observation.values():
         if "camera" in group.keys():
             use_camera = True
+            env_cfg.scene.camera.update_period = env_cfg.decimation * env_cfg.sim.dt
+            env_cfg.scene.camera.history_length = 0
     if not use_camera:
         env_cfg.scene.camera = None
     
