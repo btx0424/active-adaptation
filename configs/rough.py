@@ -73,6 +73,17 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
         history_length=1
     )
 
+    camera = TiledCameraCfg(
+        prim_path="{ENV_REGEX_NS}/camera_tpv",
+        offset=TiledCameraCfg.OffsetCfg(pos=(-3., 0., 2.), rot=[0.96592583, 0.        , 0.25881905, 0.        ], convention="world"),
+        data_types=["depth"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=20.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
+        ),
+        width=128,
+        height=96,
+    )
+
 
 @configclass
 class EnvCfg:
@@ -145,6 +156,13 @@ def LocomotionEnvCfg(task_cfg):
             use_height_scan = True
     if not use_height_scan:
         env_cfg.scene.height_scanner = None
+    
+    use_camera = False
+    for group in task_cfg.observation.values():
+        if "camera" in group.keys():
+            use_camera = True
+    if not use_camera:
+        env_cfg.scene.camera = None
     
     # slightly reduces GPU memory usage
     # env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21

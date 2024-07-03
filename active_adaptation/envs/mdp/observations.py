@@ -767,15 +767,24 @@ class dummy(Observation):
         return self.obs.expand(self.num_envs, -1)
 
 
-class camera_image(Observation):
+class camera(Observation):
     def __init__(self, env, name: str, key: str="depth"):
         super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
         self.camera: TiledCamera = self.env.scene[name]
         self.key = key
+        self.offset = torch.tensor([1.25, 0.0, 0.75], device=self.device)
     
+    def update(self):
+        self.camera.set_world_poses_from_view(
+            eyes=self.asset.data.root_pos_w + self.offset,
+            targets=self.asset.data.root_pos_w,
+        )
+
     def __call__(self):
-        data = self.camera.data.output[self.key]
-        return data
+        img = self.camera.data.output[self.key]
+        img = einops.rearrange(img, "n h w c -> n c h w")
+        return img
 
 
 def symlog(x: torch.Tensor, a: float=1.):

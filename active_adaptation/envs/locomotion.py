@@ -65,7 +65,10 @@ class LocomotionEnv(Env):
 
     def _reset_idx(self, env_ids: torch.Tensor):
         init_root_state = self.init_root_state[env_ids]
-        origins = self.scene.env_origins[torch.randint(0, self.scene.num_envs, (len(env_ids),), device=self.device)]
+        if self.scene.terrain.cfg.terrain_type == "plane":
+            origins = self.scene.env_origins[env_ids]
+        else:
+            origins = self.scene.env_origins[torch.randint(0, self.scene.num_envs, (len(env_ids),), device=self.device)]
         init_root_state[:, :3] += origins
         init_root_state[:, 3:7] = sample_quat(len(env_ids), device=self.device)
         

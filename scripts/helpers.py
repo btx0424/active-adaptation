@@ -1,4 +1,5 @@
 import torch
+import hydra
 import numpy as np
 import time
 import wandb
@@ -104,7 +105,8 @@ def make_env_policy(cfg):
     env.set_seed(cfg.seed)
     
     # setup policy
-    policy = ALGOS[cfg.algo.name](
+    policy_cls = hydra.utils.get_class(cfg.algo._target_)
+    policy = policy_cls(
         cfg.algo,
         env.observation_spec, 
         env.action_spec, 

@@ -35,3 +35,4 @@ from .ppo_mask import PPOMaskPolicy
 from .ppg import PPGPolicy
 from .ppo_him import PPOHIMPolicy
 from .ppo_priv import PPOPrivPolicy
+from .ppo_low import LowPolicy
