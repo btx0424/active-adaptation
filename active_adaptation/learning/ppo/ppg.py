@@ -31,6 +31,7 @@ kl_divergence = D.kl._KL_REGISTRY[(D.Normal, D.Normal)]
 
 @dataclass
 class PPGConfig:
+    _target_: str = "active_adaptation.learning.ppo.ppg.PPGPolicy"
     name: str = "ppg"
     train_every: int = 32
     ppo_epochs: int = 4
@@ -520,7 +521,7 @@ class PPGPolicy(TensorDictModuleBase):
         losses["actor_grad_norm"] = actor_grad_norm
         losses["critic_grad_norm"] = critic_grad_norm
         losses["value_loss/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-        losses["rep_loss"] = context_kl.mean()
+        losses["context_kl"] = context_kl.mean()
         losses["entropy"] = entropy
         return losses
 
