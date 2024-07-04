@@ -13,8 +13,8 @@ payload: false
 command:
   _target_: active_adaptation.envs.mdp.Command2
   linvel_x_range: [0., 1.25]
-  linvel_y_range: [-0.0, 0.0]
-  angvel_range: [-1.0, 1.0]
+  linvel_y_range: [-0.1, 0.1]
+  angvel_range: [-1.5, 1.5]
   yaw_stiffness_range: [0.5, 0.7]
   stand_prob: 0.05
 
@@ -56,7 +56,7 @@ reward:
   angvel_z_exp:       {weight: 1.5, enabled: true, world_frame: true}
   angvel_z_exp_shaped: {weight: 1.0, enabled: false}
   linvel_z_l2:        {weight: 0.5, enabled: true}
-  # angvel_xy_l2:       {weight: 0.05, enabled: true}
+  angvel_xy_l2:       {weight: 0.05, enabled: true}
   energy_l1:          {weight: 5.0e-4, enabled: true}
   joint_acc_l2:       {weight: 1.0e-8, enabled: true}
   joint_torques_l2:   {weight: 5.0e-7, enabled: false}
@@ -72,8 +72,6 @@ reward:
   feet_step:          {weight: 1.0, enabled: true, feet_names: .*leg_link6}
   joint_pos_default:  {weight: 0.25, enabled: true}
   body_orientation:   {weight: 0.25, enabled: true, body_name: waist_yaw_link}
-  arm_velocity:       {weight: 0.05, enabled: false, arm_names: .*arm_link5}
-  arm_swing:          {weight: 0.2, enabled: false, arm_names: .*arm_link5}
   joint_vel_l2:       {weight: 0.002, enabled: true, joint_names: .*arm_joint.*}
   feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}
 
@@ -98,4 +96,4 @@ randomization:
 
 termination:
   crash: 
-    body_names_expr: ["waist_yaw_link"]
+    body_names_expr: ["base_link"]
