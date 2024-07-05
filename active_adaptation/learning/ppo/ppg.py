@@ -204,11 +204,28 @@ class PPGPolicy(TensorDictModuleBase):
         #     [OBS_PRIV_KEY],
         #     ["context_priv"]
         # ).to(self.device)
-
-        self.encoder = TensorDictModule(
-            nn.Sequential(make_mlp([128]), NormalParams(128)),
-            [OBS_PRIV_KEY],
-            ["context_priv_loc", "context_priv_scale"]
+        
+        def make_encoder():
+            if "height_scan" in observation_spec.keys(True, True):
+                cnn = nn.Sequential(
+                    make_conv(num_channels=[8, 8, 8]),
+                    nn.LazyLinear(64),
+                    nn.LayerNorm(64),
+                )
+                modules = [
+                    TensorDictModule(cnn, ["height_scan"], ["_cnn"]),
+                    TensorDictModule(make_mlp([256]), [OBS_PRIV_KEY], ["_mlp"]),
+                    CatTensors(["_cnn", "_mlp"], "_feature"),
+                ]
+            else:
+                modules = [
+                    TensorDictModule(make_mlp([256]), [OBS_KEY], ["_feature"])
+                ]
+            return modules
+        
+        self.encoder = TensorDictSequential(
+            *make_encoder(),
+            TensorDictModule(NormalParams(128), ["_feature"], ["context_priv_loc", "context_priv_scale"])
         ).to(self.device)
 
         self.sample_context = TensorDictModule(
@@ -431,7 +448,7 @@ class PPGPolicy(TensorDictModuleBase):
                     kl = kl_divergence(context_dist_priv, context_dist_pred)
                 else:
                     kl = kl_divergence(context_dist_pred, context_dist_priv)
-                losses["adapt/adapt_module_loss"] = kl.sum(-1).mean()
+                losses["adapt/adapt_module_loss"] = kl.mean(-1).mean()
 
                 loss = sum(losses.values())
                 self.opt_adapt.zero_grad()
@@ -502,8 +519,8 @@ class PPGPolicy(TensorDictModuleBase):
 
         context_dist_priv = D.Normal(tensordict["context_priv_loc"], tensordict["context_priv_scale"])
         context_dist_pred = D.Normal(tensordict["context_adapt_loc"], tensordict["context_adapt_scale"])
-        context_kl = kl_divergence(context_dist_priv, context_dist_pred).sum(-1)
-        losses["rep_loss"] = self.beta * context_kl.clamp_min(128.).mean()
+        context_kl = kl_divergence(context_dist_priv, context_dist_pred).mean(-1)
+        losses["rep_loss"] = 0.1 * context_kl.clamp_min(1.0).mean()
 
         if self.cfg.aux_target:
             actor_aux = tensordict["actor_aux"]
@@ -522,6 +539,7 @@ class PPGPolicy(TensorDictModuleBase):
         losses["critic_grad_norm"] = critic_grad_norm
         losses["value_loss/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
         losses["context_kl"] = context_kl.mean()
+        losses["context_std"] = tensordict["context_priv_scale"].mean()
         losses["entropy"] = entropy
         return losses
 

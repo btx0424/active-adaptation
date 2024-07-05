@@ -51,7 +51,7 @@ class Command1(Command):
         self.stand_prob = stand_prob
 
         with torch.device(env.device):
-            self._target_yaw = torch.zeros(env.num_envs)
+            self.target_yaw = torch.zeros(env.num_envs)
             self._target_base_height = torch.zeros(env.num_envs, 1)
             self._target_heading = torch.zeros(env.num_envs, 3)
 
@@ -77,7 +77,7 @@ class Command1(Command):
         self.sample_vel_command(resample_vel.nonzero().squeeze(-1))
         self.sample_yaw_command(resample_yaw.nonzero().squeeze(-1))
         
-        yaw_diff = self._target_yaw - self.robot.data.heading_w
+        yaw_diff = self.target_yaw - self.robot.data.heading_w
         self.command_angvel_yaw[:] = math_utils.wrap_to_pi(yaw_diff).clamp(*self.angvel_range)
 
         command_speed = self._command_speed
@@ -111,7 +111,7 @@ class Command1(Command):
     
     def sample_yaw_command(self, env_ids: torch.Tensor):
         yaw = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
-        self._target_yaw[env_ids] = yaw
+        self.target_yaw[env_ids] = yaw
         self._target_heading[env_ids, 0] = yaw.cos()
         self._target_heading[env_ids, 1] = yaw.sin()
         
@@ -129,6 +129,7 @@ class Command2(Command):
         linvel_y_range=(-1.0, 1.0),
         angvel_range=(-1, 1),
         yaw_stiffness_range=(0.5, 0.6),
+        use_stiffness_ratio: float = 0.5,
         base_height_range=(0.2, 0.4), 
         resample_interval: int = 300, 
         resample_prob: float = 0.75, 
@@ -139,6 +140,7 @@ class Command2(Command):
         self.linvel_x_range = linvel_x_range
         self.linvel_y_range = linvel_y_range
         self.angvel_range = angvel_range
+        self.use_stiffness_ratio = use_stiffness_ratio
         self.yaw_stiffness_range = yaw_stiffness_range
         self.base_height_range = base_height_range
         self.resample_interval = resample_interval
@@ -147,7 +149,11 @@ class Command2(Command):
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 4)
+            self.target_yaw = torch.zeros(self.num_envs)
             self.yaw_stiffness = torch.zeros(self.num_envs)
+            self.use_stiffness = torch.zeros(self.num_envs, dtype=bool)
+            self.fixed_yaw_speed = torch.zeros(self.num_envs)
+
             self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
 
             self._command_speed = torch.zeros(self.num_envs, 1)
@@ -156,7 +162,6 @@ class Command2(Command):
             self._command_linvel = torch.zeros(self.num_envs, 3)
             self.command_angvel = torch.zeros(self.num_envs)
 
-            self._target_yaw = torch.zeros(self.num_envs)
             self._target_base_height = torch.zeros(self.num_envs, 1)
 
             self._cum_error = torch.zeros(self.num_envs, 2)
@@ -177,12 +182,14 @@ class Command2(Command):
         self.sample_vel_command(resample_vel.nonzero().squeeze(-1))
         self.sample_yaw_command(resample_yaw.nonzero().squeeze(-1))
 
-        yaw_diff = self._target_yaw - self.robot.data.heading_w
-        self.command_angvel[:] = torch.clamp(
+        self.target_yaw[~self.use_stiffness] = self.robot.data.heading_w[~self.use_stiffness]
+        yaw_diff = self.target_yaw - self.robot.data.heading_w
+        command_yaw_speed = torch.clamp(
             self.yaw_stiffness * math_utils.wrap_to_pi(yaw_diff), 
             min=self.angvel_range[0],
             max=self.angvel_range[1]
         )
+        self.command_angvel[:] = torch.where(self.use_stiffness, command_yaw_speed, self.fixed_yaw_speed)
 
         # this is used for terminating episodes where the robot is inactive due to whatever reason
         linvel_error = (self.robot.data.root_lin_vel_b[:, :2] - self.command[:, :2]).square().sum(-1, True)
@@ -217,12 +224,10 @@ class Command2(Command):
 
     def sample_yaw_command(self, env_ids: torch.Tensor):
         yaw = torch.rand(len(env_ids), device=self.device) * torch.pi * 2 - torch.pi
-        self._target_yaw[env_ids] = yaw
+        self.target_yaw[env_ids] = yaw
         self.yaw_stiffness[env_ids] = sample_uniform(env_ids.shape, *self.yaw_stiffness_range, self.device)
-        
-        target_base_height = sample_uniform(env_ids.shape, *self.base_height_range, self.device)
-        self._target_base_height[env_ids] = target_base_height.unsqueeze(1)
-        # self.command[env_ids, 3] = target_base_height
+        self.use_stiffness[env_ids] = torch.rand(len(env_ids), device=self.device) < self.use_stiffness_ratio
+        self.fixed_yaw_speed[env_ids] = sample_uniform(env_ids.shape, *self.angvel_range, self.device) 
 
     def debug_draw(self):
         self.env.debug_draw.vector(
@@ -232,7 +237,7 @@ class Command2(Command):
         )
         self.env.debug_draw.vector(
             self.robot.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
-            torch.stack([self._target_yaw.cos(), self._target_yaw.sin(), torch.zeros_like(self._target_yaw)], 1),
+            torch.stack([self.target_yaw.cos(), self.target_yaw.sin(), torch.zeros_like(self.target_yaw)], 1),
             color=(.2, .2, 1., 1.)
         )
         zeros = torch.zeros(self.num_envs, 1, device=self.device)
@@ -332,7 +337,7 @@ class CommandPos(Command):
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 4)
 
-            self._target_yaw = torch.zeros(self.num_envs)
+            self.target_yaw = torch.zeros(self.num_envs)
             self._target_speed = torch.zeros(self.num_envs, 1)
             self._target_pos_w = torch.zeros(self.num_envs, 3)
 
@@ -372,7 +377,7 @@ class CommandPos(Command):
         # current_speed = (self.robot.data.root_lin_vel_w * direction_w).sum(-1, True)
         # command_speed = current_speed + (command_speed - current_speed).clamp_max(1.)
 
-        yaw_diff = self._target_yaw - self.robot.data.heading_w
+        yaw_diff = self.target_yaw - self.robot.data.heading_w
         self.command_angvel[:] = torch.clamp(
             0.6 * math_utils.wrap_to_pi(yaw_diff), 
             min=self.angvel_range[0],
@@ -392,7 +397,7 @@ class CommandPos(Command):
 
     def sample_yaw_command(self, env_ids: torch.Tensor):
         yaw = torch.rand(len(env_ids), device=self.device) * torch.pi * 2 - torch.pi
-        self._target_yaw[env_ids] = yaw
+        self.target_yaw[env_ids] = yaw
 
     def debug_draw(self):
         start = self.robot.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device)
@@ -408,7 +413,7 @@ class CommandPos(Command):
         )
         self.env.debug_draw.vector(
             self.robot.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
-            torch.stack([self._target_yaw.cos(), self._target_yaw.sin(), torch.zeros_like(self._target_yaw)], 1),
+            torch.stack([self.target_yaw.cos(), self.target_yaw.sin(), torch.zeros_like(self.target_yaw)], 1),
             color=(.2, .2, 1., 1.)
         )
         self.env.debug_draw.point(self._target_pos_w, size=20)
