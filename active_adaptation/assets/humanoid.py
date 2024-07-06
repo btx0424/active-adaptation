@@ -88,14 +88,14 @@ CY1_CFG = ArticulationCfg(
                 "waist_yaw_joint": 50.,
                 "[l,r]arm_joint1": 50.,
                 "[l,r]arm_joint2": 50.,
-                "[l,r]arm_joint3": 30.,
-                "[l,r]arm_joint4": 30.,
-                "[l,r]arm_joint5": 15.,
+                "[l,r]arm_joint3": 20.,
+                "[l,r]arm_joint4": 20.,
+                "[l,r]arm_joint5": 20.,
                 "[l,r]leg_joint1": 50.,
                 "[l,r]leg_joint2": 50.,
                 "[l,r]leg_joint3": 50.,
-                "[l,r]leg_joint4": 50.,
-                "[l,r]leg_joint5": 50.,
+                "[l,r]leg_joint4": 30.,
+                "[l,r]leg_joint5": 30.,
                 "[l,r]leg_joint6": 30.,
             },
             damping={
@@ -108,8 +108,8 @@ CY1_CFG = ArticulationCfg(
                 "[l,r]leg_joint1": 3., # 6.
                 "[l,r]leg_joint2": 3.,
                 "[l,r]leg_joint3": 3.,
-                "[l,r]leg_joint4": 3., # 6.
-                "[l,r]leg_joint5": 3.,
+                "[l,r]leg_joint4": 1., # 6.
+                "[l,r]leg_joint5": 1.,
                 "[l,r]leg_joint6": 1.,
             },
             friction=0.0,

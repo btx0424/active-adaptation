@@ -16,7 +16,7 @@ command:
   _target_: active_adaptation.envs.mdp.Command2
   linvel_x_range: [0., 1.25]
   linvel_y_range: [-0.1, 0.1]
-  angvel_range: [0., 0.]
+  angvel_range: [-1.5, 1.5]
   yaw_stiffness_range: [0.5, 0.7]
   stand_prob: 0.05
 
@@ -29,14 +29,12 @@ observation:
     joint_pos: {noise_std: 0.05}
     joint_vel: {noise_std: 0.2}
     prev_actions:   {steps: 2}
-    # clock:  {frequencies: [1, 2]}
     phase: {cycle_range: [1.0, 1.2]}
   priv:
     joint_acc:
     applied_action:   {}
     root_linvel_b:    {yaw_only: true}
     feet_pos_b:       {feet_names: .*leg_link6, yaw_only: true}
-    # body_pos_b:       {body_names: .*leg_link4}
     feet_vel_b:       {feet_names: .*leg_link6, yaw_only: true}
     body_vel:         {body_names: .*arm_link5, yaw_only: true}
     feet_height_map:  {feet_names: .*leg_link6 }

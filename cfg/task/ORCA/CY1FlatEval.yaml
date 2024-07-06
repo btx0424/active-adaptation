@@ -5,7 +5,7 @@ task: Humanoid
 
 defaults:
   # see https://hydra.cc/docs/advanced/overriding_packages/
-  - /task/CY1Flat@_here_
+  - /task/ORCA/CY1Flat@_here_
   - _self_
 
 terrain: easy
