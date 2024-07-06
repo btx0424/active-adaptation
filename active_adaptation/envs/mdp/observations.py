@@ -2,6 +2,8 @@ import torch
 import numpy as np
 import abc
 import einops
+from torchvision.utils import make_grid
+from torchvision.io import write_jpeg
 
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.sensors import ContactSensor, RayCaster, patterns, RayCasterData
@@ -580,14 +582,20 @@ class height_scan(Observation):
         self.height_scan = torch.zeros(self.num_envs, 11, 17, device=self.device)
         self.flatten = flatten
         self.noise_scale = noise_scale
+        self.asset.data.height_scan = self.height_scan
 
-    def __call__(self):
+    def update(self):
         height_scan = (
             self.asset.data.root_pos_w[:, 2].unsqueeze(1)
             - self.height_scanner.data.ray_hits_w[..., 2]
         )
+        self.height_scan[:] = height_scan.reshape(self.num_envs, 11, 17)
+
+    def __call__(self):
+        height_scan = self.height_scan.clamp(-1., 1.)
         if self.noise_scale > 0:
-            height_scan = (height_scan + torch.randn_like(height_scan) * self.noise_scale).clamp(-1., 1.)
+            noise = torch.randn_like(height_scan) * self.noise_scale
+            height_scan = height_scan + noise
         if self.flatten:
             return height_scan.reshape(self.num_envs, -1)
         else:
@@ -705,20 +713,6 @@ class cum_error(Observation):
     def __call__(self) -> torch.Tensor:
         return self.command_manager._cum_error
 
-import imageio
-
-class camera(Observation):
-    def __init__(self, env):
-        super().__init__(env)
-        self.camera: Camera = self.env.scene["camera"]
-        self.frame_count = 0
-    
-    def __call__(self) -> torch.Tensor:
-        image = self.camera.data.output["rgb"]
-        imageio.imwrite(f"frame-{self.frame_count}.png", image[0, :, :, :3].cpu())
-        self.frame_count += 1
-        return image / 255.0
-
 
 class clock(Observation):
     def __init__(self, env, frequencies: list[int]=[1, 2, 4]):
@@ -774,6 +768,7 @@ class camera(Observation):
         self.camera: TiledCamera = self.env.scene[name]
         self.key = key
         self.offset = torch.tensor([1.25, 0.0, 0.75], device=self.device)
+        self.frame_count = 0
     
     def update(self):
         self.camera.set_world_poses_from_view(
