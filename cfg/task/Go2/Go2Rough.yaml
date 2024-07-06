@@ -4,7 +4,7 @@ task: Quadruped
 
 defaults:
   # see https://hydra.cc/docs/advanced/overriding_packages/
-  - /task/Go2Flat@_here_
+  - /task/Go2/Go2Flat@_here_
   - _self_
 
 terrain: medium # easy
