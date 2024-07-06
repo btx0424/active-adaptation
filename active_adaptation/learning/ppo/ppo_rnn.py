@@ -48,15 +48,15 @@ class GRUModule(nn.Module):
     def __init__(
         self, 
         dim: int, 
-        layer_norm: bool = False,
         learnable_init: bool = False,
-        skip_conn: bool = False
+        skip_conn: bool = False,
+        layer_norm: bool = True,
     ):
         super().__init__()
         self.skip_conn = skip_conn
         self.mlp = make_mlp([256])
         self.gru = GRU(input_size=256, hidden_size=128, learnable_init=learnable_init)
-        self.layer_norm = nn.LayerNorm(256) if layer_norm else nn.Identity()
+        self.layer_norm = nn.LayerNorm(128) if layer_norm else nn.Identity()
         self.out = make_mlp([256])
     
     def forward(self, obs: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor):
@@ -83,8 +83,9 @@ class PPOConfig:
 
     rnn: str = "gru"
     hidden_size: int = 128
-    learnable_init: bool = False
-    skip_conn: bool = False
+    learnable_init: bool = True
+    skip_conn: bool = True
+    aux_target: bool = False
 
     checkpoint_path: Union[str, None] = None
 
@@ -110,9 +111,17 @@ class PPORNNPolicy(TensorDictModuleBase):
 
         self.entropy_coef = cfg.entropy_coef
         self.clip_param = 0.1
-        self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
+        self.critic_loss_fn = nn.MSELoss(reduction="none")
+        # self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
         self.gae = GAE(0.99, 0.95)
         self.action_dim = action_spec.shape[-1]
+        if self.cfg.aux_target:
+            aux_target_spec = observation_spec.get("aux_target_", None)
+            if aux_target_spec is None:
+                raise ValueError("Specify `aux_target_` in observation spec for aux target.")
+            self.aux_dim = observation_spec["aux_target_"].shape[-1]
+        else:
+            self.aux_dim = 0
 
         if self.cfg.value_norm:
             self.value_norm = ValueNorm1(input_shape=1).to(self.device)
@@ -121,15 +130,19 @@ class PPORNNPolicy(TensorDictModuleBase):
 
         fake_input = observation_spec.zero()
         
-        self.actor: ProbabilisticActor = ProbabilisticActor(
-            module=TensorDictSequential(
-                TensorDictModule(
-                    GRUModule(128, self.cfg.learnable_init, self.cfg.skip_conn), 
-                    [OBS_KEY, "is_init", "actor_hx"], 
-                    ["_actor_in", ("next", "actor_hx")]
-                ),
-                TensorDictModule(Actor(self.action_dim), ["_actor_in"], ["loc", "scale"])
+        actor_modules = [
+            TensorDictModule(
+                GRUModule(128, self.cfg.learnable_init, self.cfg.skip_conn), 
+                [OBS_KEY, "is_init", "actor_hx"], 
+                ["_actor_in", ("next", "actor_hx")]
             ),
+            TensorDictModule(Actor(self.action_dim), ["_actor_in"], ["loc", "scale"]),
+        ]
+        if self.cfg.aux_target:
+            actor_modules.append(TensorDictModule(nn.LazyLinear(self.aux_dim), ["_actor_in"], ["aux_pred"]))
+        
+        self.actor: ProbabilisticActor = ProbabilisticActor(
+            module=TensorDictSequential(*actor_modules),
             in_keys=["loc", "scale"],
             out_keys=[ACTION_KEY],
             distribution_class=IndependentNormal,
@@ -206,6 +219,7 @@ class PPORNNPolicy(TensorDictModuleBase):
             next_values = self.value_norm.denormalize(next_values)
 
             adv, ret = self.gae(rewards, dones, values, next_values)
+            adv = normalize(adv, subtract_mean=True)
             self.value_norm.update(ret)
             ret = self.value_norm.normalize(ret)
 
@@ -217,7 +231,6 @@ class PPORNNPolicy(TensorDictModuleBase):
             for epoch in range(self.cfg.ppo_epochs):
                 batch = make_batch(tensordict, self.cfg.num_minibatches, self.cfg.seq_len)
                 for minibatch in batch:
-                    minibatch["adv"] = normalize(minibatch["adv"], subtract_mean=True)
                     infos.append(TensorDict(self._update(minibatch), []))
 
         infos: TensorDict = torch.stack(infos).to_tensordict()
@@ -244,6 +257,13 @@ class PPORNNPolicy(TensorDictModuleBase):
         value_loss = (value_loss * (~tensordict["is_init"])).mean()
 
         loss = policy_loss + entropy_loss + value_loss
+        
+        if self.cfg.aux_target:
+            aux_loss = F.mse_loss(tensordict["aux_target_"], tensordict["aux_pred"])
+            loss += aux_loss
+        else:
+            aux_loss = torch.tensor(0., device=self.device)
+
         self.actor_opt.zero_grad()
         self.critic_opt.zero_grad()
         loss.backward()
@@ -260,6 +280,7 @@ class PPORNNPolicy(TensorDictModuleBase):
             "critic/grad_norm": critic_grad_norm,
             "critic/value_loss": value_loss,
             "critic/explained_var": explained_var,
+            "aux/pred_loss": aux_loss,
         }
         
 
