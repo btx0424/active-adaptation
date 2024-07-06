@@ -1,4 +1,6 @@
-name: CY1FlatEval
+# @package task
+
+name: CY1Flat
 task: Humanoid
 
 defaults:
@@ -7,14 +9,14 @@ defaults:
   - _self_
 
 robot: cy1
-terrain: plane
+terrain: easy
 payload: false
 
 command:
   _target_: active_adaptation.envs.mdp.Command2
   linvel_x_range: [0., 1.25]
-  linvel_y_range: [-0.0, 0.0]
-  angvel_range: [-1.0, 1.0]
+  linvel_y_range: [-0.1, 0.1]
+  angvel_range: [0., 0.]
   yaw_stiffness_range: [0.5, 0.7]
   stand_prob: 0.05
 
@@ -39,12 +41,15 @@ observation:
     body_vel:         {body_names: .*arm_link5, yaw_only: true}
     feet_height_map:  {feet_names: .*leg_link6 }
     applied_torques:  {actuator_name: base_legs}
-    # contact_indicator: {body_names: [".*leg_link6"], timing: false}
+    contact_indicator: {body_names: [".*leg_link6"], timing: false}
   #   motor_params:     {actuator_name: "base_legs"}
   #   body_materials:   {body_names: ".*ankle_link"}
   #   body_mass:        {body_names: ["torso_link", "pelvis"]}
   #   cum_error:        {}
     rewards:     {}
+  aux_target_:
+    root_linvel_b:
+    root_angvel_b:    {yaw_only: true}
 
 reward:
   linvel_exp:         {weight: 1.5, enabled: true, dim: 3}
@@ -53,43 +58,45 @@ reward:
   angvel_z_exp:       {weight: 1.5, enabled: true, world_frame: true}
   angvel_z_exp_shaped: {weight: 1.0, enabled: false}
   linvel_z_l2:        {weight: 0.5, enabled: true}
-  # angvel_xy_l2:       {weight: 0.05, enabled: true}
-  energy_l1:          {weight: 2.0e-4, enabled: true}
+  angvel_xy_l2:       {weight: 0.05, enabled: true}
+  energy_l1:          {weight: 5.0e-4, enabled: true}
   joint_acc_l2:       {weight: 1.0e-8, enabled: true}
   joint_torques_l2:   {weight: 5.0e-7, enabled: false}
   # stand: 0.5
   orientation:        {weight: 1.0, enabled: true}
   survival:           {weight: 1.0, enabled: true}
   action_rate_l2:     {weight: 0.01, enabled: true}
-  feet_air_time:      {weight: 1.0, enabled: true, body_names: .*leg_link6, thres: 0.5}
+  feet_air_time:      {weight: 1.0, enabled: true, body_names: .*leg_link6, thres: 0.4}
   feet_slip:          {weight: 0.5, enabled: true, body_names: .*leg_link6}
   feet_contact_count: {weight: 1.0, enabled: false, body_names: .*leg_link6}
-  feet_swing:         {weight: 1.0, enabled: true, feet_names: .*leg_link6}
-  feet_orientation:   {weight: 0.5, enabled: true, feet_names: .*leg_link6}
-  feet_step:          {weight: 2.0, enabled: true, feet_names: .*leg_link6}
+  feet_swing:         {weight: 1.1, enabled: true, feet_names: .*leg_link6}
+  feet_orientation:   {weight: 0.2, enabled: true, feet_names: .*leg_link6}
+  feet_step:          {weight: 1.0, enabled: true, feet_names: .*leg_link6}
   joint_pos_default:  {weight: 0.25, enabled: true}
-  body_orientation:   {weight: 0.5, enabled: true, body_name: waist_yaw_link}
-  arm_velocity:       {weight: 0.1, enabled: true, arm_names: .*arm_link5}
+  body_orientation:   {weight: 0.25, enabled: true, body_name: waist_yaw_link}
+  joint_vel_l2:       {weight: 0.002, enabled: true, joint_names: .*arm_joint.*}
+  feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}
 
 randomization:
-  push:     {body_names: ["base_link", "waist_yaw_link"]}
+  push:     {body_names: ["base_link", "waist_yaw_link"], force_range: [0.0, 0.2]}
   perturb_body_mass:
-    .*: [0.8, 1.2]
+    .*: [0.9, 1.1]
   perturb_body_materials:
     body_names: ".*leg_link6"
-    static_friction_range: [0.4, 2.0]
-    dynamic_friction_range: [0.4, 2.0]
+    static_friction_range: [0.6, 2.0]
+    dynamic_friction_range: [0.6, 2.0]
     restitution_range: [0.0, 0.2]
   motor_params:
     actuator_name:    base_legs
-    stiffness_range:  [0.5, 1.2]
-    damping_range:    [0.5, 1.2]
+    stiffness_range:  [0.7, 1.0]
+    damping_range:    [0.7, 1.0]
   reset_joint_states_uniform:
     pos_ranges:
-      .*: [-0.2, 0.2]
+      .*: [-0.3, 0.3]
     rel: true
   # stumble:  {body_names: ".*leg_link6", stumble_height: 0.045, friction_range: [0.4, 1.8]}
 
 termination:
   crash: 
-    body_names_expr: ["waist_yaw_link"]
+    body_names_expr: ["base_link"]
+  feet_too_close: {feet_names: ".*leg_link6", thres: 0.11}

@@ -79,6 +79,7 @@ def make_env_policy(cfg):
     assert cfg.vecnorm in ("train", "eval", None)
     print(colored(f"[Info]: create VecNorm for keys: {obs_keys}", "green"))
     vecnorm = VecNorm(obs_keys, decay=0.9999)
+    vecnorm(base_env.fake_tensordict())
 
     if "vecnorm" in state_dict.keys():
         print(colored("[Info]: Load VecNorm from checkpoint.", "green"))

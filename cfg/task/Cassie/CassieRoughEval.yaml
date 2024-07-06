@@ -1,0 +1,48 @@
+name: CassieRoughEval
+task: Biped
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/CassieFlat@_here_
+  - _self_
+
+terrain: easy
+homogeneous: false
+
+observation:
+  priv:
+    projected_gravity_b:
+    root_angvel_b:
+    applied_action:   {}
+    root_linvel_b:    {}
+    feet_pos_b:       {}
+    # feet_height:      {feet_names: .*_toe}
+    feet_height_map:  {feet_names: .*toe}
+    applied_torques:  {actuator_name: legs}
+    # motor_params:     {actuator_name: legs, homogeneous: "${task.homogeneous}"}
+    body_materials:   {body_names: .*toe, homogeneous: "${task.homogeneous}"}
+    # body_mass:        {body_names: ["pelvis", ".*pelvis_rotation", ".*hip", ".*thigh"]}
+    body_momentum:    {body_names: ["pelvis", ".*pelvis_rotation", ".*hip", ".*thigh"]}
+    # cum_error:        {}
+    rewards:       {}
+
+randomization:
+  push: {body_names: pelvis, force_range: [0.2, 0.3]}
+  perturb_body_mass:
+    (?!pelvis).*: [0.7, 1.3]
+    pelvis: [0.7, 3.0]
+  perturb_body_materials:
+    body_names: ".*toe"
+    static_friction_range: [0.3, 2.0]
+    dynamic_friction_range: [0.3, 2.0]
+    homogeneous: ${task.homogeneous}
+  motor_params:
+    actuator_name:    legs
+    stiffness_range:  [0.5, 1.5]
+    damping_range:    [0.5, 1.5]
+    strength_range:   [0.7, 1.5]
+    homogeneous: ${task.homogeneous}
+  reset_joint_states_uniform:
+    pos_ranges:
+      .*: [-0.2, 0.2]
+    rel: true

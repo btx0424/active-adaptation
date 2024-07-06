@@ -47,6 +47,7 @@ torch.set_float32_matmul_precision('high')
 
 @dataclass
 class PPOConfig:
+    _target_: str = "active_adaptation.learning.ppo.ppo.PPOPolicy"
     name: str = "ppo"
     train_every: int = 32
     ppo_epochs: int = 5

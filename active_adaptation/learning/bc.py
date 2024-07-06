@@ -19,6 +19,7 @@ from .ppo.ppo_adapt import GRUModule
 class BCConfig:
     name: str = "bc"
     vecnorm: str = "eval"
+    obs_key: str = "policy"
 
 cs = ConfigStore.instance()
 cs.store("bc", node=BCConfig, group="algo")
@@ -39,11 +40,12 @@ class BCPolicy(TensorDictModuleBase):
         self.action_dim = action_spec.shape[-1]
         self.device = device
         self.teacher = teacher
+        self.obs_key = cfg.obs_key
 
         fake_input = observation_spec.zero()
         fake_input["hx"] = torch.zeros((fake_input.shape[0], 128), device=self.device)
         self.actor = TensorDictSequential(
-            TensorDictModule(GRUModule(256), ["policy", "is_init", "hx"], ["_feature", ("next", "hx")]),
+            TensorDictModule(GRUModule(256), [self.obs_key, "is_init", "hx"], ["_feature", ("next", "hx")]),
             TensorDictModule(
                 nn.Sequential(make_mlp([256]), nn.LazyLinear(self.action_dim)),
                 ["_feature"], ["action"]

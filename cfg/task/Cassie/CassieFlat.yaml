@@ -46,6 +46,7 @@ observation:
   #   last_rewards:       {}
   aux_target_:
     root_linvel_b:
+    root_angvel_b:
 
 reward:
   linvel_exp:         {weight: 1.25, enabled: true}

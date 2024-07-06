@@ -82,7 +82,6 @@ class LocomotionEnv(Env):
         self.delay[env_ids] = torch.randint(0, 4, (len(env_ids), 1), device=self.device)
 
         self.scene.reset(env_ids)
-        self.scene.update(dt=self.physics_dt)
         self.command_manager.reset(env_ids=env_ids)
     
     def _update(self):
@@ -239,8 +238,8 @@ def flip_lr(joints: torch.Tensor):
 def flip_fb(joints: torch.Tensor):
     return joints.reshape(-1, 3, 2, 2).flip(-2).reshape(-1, 12)
 
-def sample_quat(size, device: torch.device = "cpu"):
-    yaw = torch.rand(size, device=device) * 2 * torch.pi
+def sample_quat(size, yaw_range = (0, torch.pi * 2), device: torch.device = "cpu"):
+    yaw = torch.rand(size, device=device).uniform_(*yaw_range)
     # in (w x y z)
     quat = torch.cat([
         torch.cos(yaw / 2).unsqueeze(-1),

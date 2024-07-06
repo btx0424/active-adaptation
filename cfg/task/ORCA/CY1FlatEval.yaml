@@ -1,0 +1,43 @@
+# @package task
+
+name: CY1FlatEval
+task: Humanoid
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/CY1Flat@_here_
+  - _self_
+
+terrain: easy
+
+command:
+  _target_: active_adaptation.envs.mdp.Command2
+  linvel_x_range: [0., 1.25]
+  linvel_y_range: [-0.0, 0.0]
+  angvel_range: [-1.0, 1.0]
+  yaw_stiffness_range: [0.5, 0.7]
+  stand_prob: 0.05
+
+randomization:
+  push:     {body_names: ["base_link", "waist_yaw_link"], force_range: [0.1, 0.3]}
+  perturb_body_mass:
+    .*: [0.8, 1.2]
+  perturb_body_materials:
+    body_names: ".*leg_link6"
+    static_friction_range: [0.4, 2.0]
+    dynamic_friction_range: [0.4, 2.0]
+    restitution_range: [0.0, 0.2]
+  motor_params:
+    actuator_name:    base_legs
+    stiffness_range:  [0.5, 1.0]
+    damping_range:    [0.5, 1.0]
+    strength_range:   [0.8, 1.0]
+  reset_joint_states_uniform:
+    pos_ranges:
+      .*: [-0.2, 0.2]
+    rel: true
+  # stumble:  {body_names: ".*leg_link6", stumble_height: 0.045, friction_range: [0.4, 1.8]}
+
+termination:
+  crash: 
+    body_names_expr: ["waist_yaw_link"]
