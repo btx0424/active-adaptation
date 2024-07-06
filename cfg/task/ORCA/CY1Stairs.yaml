@@ -14,11 +14,15 @@ payload: false
 
 command:
   _target_: active_adaptation.envs.mdp.Command2
-  linvel_x_range: [0., 1.25]
+  linvel_x_range: [0., 1.]
   linvel_y_range: [-0.1, 0.1]
   angvel_range: [0., 0.]
   yaw_stiffness_range: [0., 0.]
   stand_prob: 0.05
+
+observation:
+  height_scan:
+    height_scan:      {prim_path: base_link}
 
 reward:
   linvel_exp:         {weight: 1.5, enabled: true, dim: 3}
