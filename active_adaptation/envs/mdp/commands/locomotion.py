@@ -133,7 +133,8 @@ class Command2(Command):
         base_height_range=(0.2, 0.4), 
         resample_interval: int = 300, 
         resample_prob: float = 0.75, 
-        stand_prob=0.2
+        stand_prob=0.2,
+        target_yaw_range=(-torch.pi, torch.pi),
     ):
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
@@ -146,6 +147,7 @@ class Command2(Command):
         self.resample_interval = resample_interval
         self.resample_prob = resample_prob
         self.stand_prob = stand_prob
+        self.target_yaw_range = target_yaw_range
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 4)
@@ -223,7 +225,7 @@ class Command2(Command):
         self.is_standing_env[env_ids] = stand
 
     def sample_yaw_command(self, env_ids: torch.Tensor):
-        yaw = torch.rand(len(env_ids), device=self.device) * torch.pi * 2 - torch.pi
+        yaw = torch.empty(len(env_ids), device=self.device).uniform_(*self.target_yaw_range)
         self.target_yaw[env_ids] = yaw
         self.yaw_stiffness[env_ids] = sample_uniform(env_ids.shape, *self.yaw_stiffness_range, self.device)
         self.use_stiffness[env_ids] = torch.rand(len(env_ids), device=self.device) < self.use_stiffness_ratio

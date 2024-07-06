@@ -43,7 +43,7 @@ observation:
   #   motor_params:     {actuator_name: "base_legs"}
   #   body_materials:   {body_names: ".*ankle_link"}
   #   body_mass:        {body_names: ["torso_link", "pelvis"]}
-  #   cum_error:        {}
+    cum_error:        {}
     rewards:     {}
   aux_target_:
     root_linvel_b:
@@ -71,7 +71,6 @@ reward:
   feet_orientation:   {weight: 0.2, enabled: true, feet_names: .*leg_link6}
   feet_step:          {weight: 1.0, enabled: true, feet_names: .*leg_link6}
   joint_pos_default:  {weight: 0.25, enabled: true}
-  body_orientation:   {weight: 0.25, enabled: true, body_name: waist_yaw_link}
   joint_vel_l2:       {weight: 0.002, enabled: true, joint_names: .*arm_joint.*}
   feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}
 
