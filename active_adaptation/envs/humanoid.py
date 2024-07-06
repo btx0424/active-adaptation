@@ -67,7 +67,8 @@ class Humanoid(LocomotionEnv):
             phase_sin = self.phase.sin().unsqueeze(1)
             feet_height_diff = (self.feet_height[:, 0] - self.feet_height[:, 1]).unsqueeze(1)
             feet_height_diff = torch.where(phase_sin > 0, feet_height_diff, -feet_height_diff)
-            r = (self.stairs_front & (phase_sin.abs() > 0.1)) * feet_height_diff.clamp_max(0.15) / 0.15
+            r = (feet_height_diff.clamp(0, 0.15) / 0.15).sqrt()
+            r = (self.stairs_front & (phase_sin.abs() > 0.1)) * r
             return r.reshape(self.num_envs, 1)
 
         def debug_draw(self):

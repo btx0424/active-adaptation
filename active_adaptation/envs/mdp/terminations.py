@@ -38,12 +38,8 @@ class crash(Termination):
     
     def __call__(self):
         fall_over = self.asset.data.projected_gravity_b[:, 2] >= self.z_thres
-        contact_force = self.contact_sensor.data.net_forces_w[:, self.body_indices]
         contact_times = self.contact_sensor.data.current_contact_time[:, self.body_indices]
-        undesired_contact = (
-            (contact_force.norm(dim=-1) > 1.)
-            | (contact_times > self.t_thres)
-        ).any(dim=1)
+        undesired_contact = (contact_times > self.t_thres).any(dim=-1)
         terminated = (fall_over | undesired_contact).unsqueeze(1)
         return terminated
 

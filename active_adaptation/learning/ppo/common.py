@@ -27,6 +27,7 @@ import torch.nn.functional as F
 from tensordict import TensorDict, TensorDictBase
 from tensordict.nn import TensorDictModuleBase
 from torchrl.modules import ProbabilisticActor
+from torchrl.data import CompositeSpec
 
 
 OBS_KEY = "policy" # ("agents", "observation")
@@ -320,4 +321,27 @@ def normalize(x: torch.Tensor, subtract_mean: bool=False):
         return (x - x.mean()) / x.std().clamp(1e-7)
     else:
         return x  / x.std().clamp(1e-7)
+
+
+def parse_keys(spec: CompositeSpec, keys: list[str]):
+    """
+    Parse the keys into `mlp_keys`, `cnn_keys`, and `aux_keys`.
+    Keys ending with "_" are considered auxiliary keys.
+
+    """
+    mlp_keys = []
+    cnn_keys = []
+    aux_keys = []
+    
+    for key in keys:
+        if key in spec.keys(True, True):
+            _spec = spec[key]
+        if key.endswith("_"):
+            aux_keys.append(key)
+            continue
+        if _spec.ndim == 2:
+            mlp_keys.append(key)
+        else:
+            cnn_keys.append(key)
+    return mlp_keys, cnn_keys, aux_keys
 

@@ -129,10 +129,7 @@ class Env(EnvBase):
             self._debug_draw_callbacks.append(rand.debug_draw)
             self._step_callbacks.append(rand.step)
 
-        self.mask_probs = {}
         for group, funcs in self.cfg.observation.items():
-            mask_prob = funcs.pop("_mask_", 0)
-            self.mask_probs[group] = mask_prob
             self.observation_funcs[group] = OrderedDict()
             for key, params in funcs.items():
                 obs = OBS_FUNCS[key](self, **(params if params is not None else {}))
@@ -172,21 +169,19 @@ class Env(EnvBase):
         self.stats = self.reward_spec["stats"].zero()
 
         observation_spec = {}
-        self.observation_masks = TensorDict({}, [self.num_envs])
-        self.observation_split = {}
         for group, funcs in self.observation_funcs.items():
             tensors = []
             for obs_name, func in funcs.items():
-                tensor = func()
+                tensor, mask = func()
                 tensors.append(tensor)
                 print(f"{obs_name}: shape {tensor.shape}")
-            split = [tensor.shape[-1] for tensor in tensors]
             tensor = torch.cat(tensors, -1)
             observation_spec[group] = UnboundedContinuousTensorSpec(tensor.shape, device=self.device)
-            if self.mask_probs[group] > 0:
-                observation_spec[group + "_mask"] = BinaryDiscreteTensorSpec(tensor.shape[-1], tensor.shape, device=self.device, dtype=bool)
-                self.observation_masks[group] = torch.zeros_like(tensor, dtype=bool)
-                self.observation_split[group] = split
+            observation_spec[group + "_mask_"] = BinaryDiscreteTensorSpec(
+                len(funcs), 
+                (self.num_envs, len(funcs)), 
+                device=self.device, dtype=bool
+            )
 
         self.observation_spec = CompositeSpec(
             observation_spec, 
@@ -223,13 +218,6 @@ class Env(EnvBase):
         self._reward_buf[env_ids] = 0.
         for callback in self._reset_callbacks:
             callback(env_ids)
-        for group, mask_prob in self.mask_probs.items():
-            if not mask_prob > 0: continue
-            self.observation_masks[group][env_ids] = torch.where(
-                (torch.rand(env_ids.shape, device=self.device) < mask_prob).unsqueeze(1),
-                torch.zeros_like(self.observation_masks[group][env_ids]),
-                generate_mask(len(env_ids), self.observation_split[group], self.device)
-            )
         # self.sim._physics_sim_view.flush()
         self.episode_length_buf[env_ids] = 0
         self.scene.update(self.step_dt)
@@ -250,10 +238,19 @@ class Env(EnvBase):
 
     def _compute_observation(self) -> TensorDictBase:
         observation = TensorDict({}, [self.num_envs])
-        for group, funcs in self.observation_funcs.items():
-            observation[group] = torch.cat([func() for func in funcs.values()], dim=-1)
-        for group, mask in self.observation_masks.items():
-            observation[group + "_mask"] = mask
+        try:
+            for group, funcs in self.observation_funcs.items():
+                tensors = []
+                masks = []
+                for obs_name, func in funcs.items():
+                    tensor, mask = func()
+                    tensors.append(tensor)
+                    masks.append(mask)
+                observation[group] = torch.cat(tensors, dim=-1)
+                observation[group + "_mask_"] = torch.stack(masks, dim=-1)
+        except Exception as e:
+            print(f"Error in computing observation for {group}.{obs_name}: {e}")
+            raise e
         return observation
     
     def _compute_reward(self) -> TensorDictBase:

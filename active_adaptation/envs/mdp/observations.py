@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import abc
 import einops
+from typing import Tuple
 from torchvision.utils import make_grid
 from torchvision.io import write_jpeg
 
@@ -35,8 +36,15 @@ class Buffer:
 
 
 class Observation:
-    def __init__(self, env):
+    def __init__(self, env, mask_ratio: float=0.):
+        """
+        For each episode, with probability mask_ratio, the observation will be masked.
+        Note that `True` means the observation is masked.
+
+        """
         self.env = env
+        self.mask_ratio = mask_ratio
+        self.mask = torch.zeros(self.num_envs, device=self.device, dtype=bool)
 
     @property
     def num_envs(self):
@@ -47,9 +55,15 @@ class Observation:
         return self.env.device
 
     @abc.abstractmethod
-    def __call__(self) ->  torch.Tensor:
+    def compute(self) -> torch.Tensor:
         raise NotImplementedError
-
+        
+    def __call__(self) ->  Tuple[torch.Tensor, torch.Tensor]:
+        tensor = self.compute()
+        if self.mask_ratio > 0.:
+            tensor[self.mask] = 0.
+        return tensor, self.mask
+    
     def startup(self):
         pass
     
@@ -57,10 +71,12 @@ class Observation:
         pass
 
     def reset(self, env_ids: torch.Tensor):
-        pass
+        if self.mask_ratio > 0.:
+            self.mask[env_ids] = torch.rand(env_ids.shape[0], device=self.device) < self.mask_ratio
 
     def debug_draw(self):
         pass
+
 
 class BufferedObs(Observation):
     def __init__(self, env, shape, size):
@@ -68,7 +84,7 @@ class BufferedObs(Observation):
         self.buffer = Buffer(shape, size, self.env.device)
         setattr(self.env, f"_{self.__class__.__name__}")
     
-    def __call__(self):
+    def compute(self):
         return self.buffer.data.reshape(self.env.num_envs, -1)
 
     def reset(self, env_ids: torch.Tensor):
@@ -120,7 +136,7 @@ class body_pos(Observation):
         body_pos = body_pos - self.asset.data.root_pos_w.unsqueeze(1)
         self.body_pos_b[:] = quat_rotate_inverse(quat, body_pos)
         
-    def __call__(self):
+    def compute(self):
         return self.body_pos_b.reshape(self.env.num_envs, -1)
 
 
@@ -141,7 +157,7 @@ class body_vel(Observation):
         body_vel_w = self.asset.data.body_lin_vel_w[:, self.body_indices]
         self.body_vel_b[:] = quat_rotate_inverse(quat, body_vel_w)
         
-    def __call__(self):
+    def compute(self):
         return self.body_vel_b.reshape(self.env.num_envs, -1)
 
 
@@ -152,7 +168,7 @@ def observation_func(func):
             super().__init__(env)
             self.params = params
 
-        def __call__(self):
+        def compute(self):
             return func(self.env, **self.params)
     
     return ObsFunc
@@ -164,13 +180,13 @@ def root_quat_w(self):
 
 
 class root_angvel_b(Observation):
-    def __init__(self, env, noise_std: float=0., yaw_only: bool=False):
-        super().__init__(env)
+    def __init__(self, env, noise_std: float=0., yaw_only: bool=False, mask_ratio: float=0.):
+        super().__init__(env, mask_ratio=mask_ratio)
         self.asset: Articulation = self.env.scene["robot"]
         self.noise_std = noise_std
         self.yaw_only = yaw_only
     
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         ang_vel_b = random_noise(self.asset.data.root_ang_vel_b, self.noise_std) 
         if self.yaw_only:
             return ang_vel_b[:, 2].reshape(self.num_envs, 1)
@@ -184,7 +200,7 @@ class projected_gravity_b(Observation):
         self.asset: Articulation = self.env.scene["robot"]
         self.noise_std = noise_std
     
-    def __call__(self):
+    def compute(self):
         projected_gravity_b = self.asset.data.projected_gravity_b
         noise = torch.randn_like(projected_gravity_b).clip(-3., 3.) * self.noise_std
         projected_gravity_b += noise
@@ -192,8 +208,8 @@ class projected_gravity_b(Observation):
 
 
 class root_linvel_b(Observation):
-    def __init__(self, env, body_names: str=None, yaw_only: bool=False):
-        super().__init__(env)
+    def __init__(self, env, body_names: str=None, yaw_only: bool=False, mask_ratio: float=0):
+        super().__init__(env, mask_ratio=mask_ratio)
         self.asset: Articulation = self.env.scene["robot"]
         self.yaw_only = yaw_only
         if body_names is not None:
@@ -226,7 +242,7 @@ class root_linvel_b(Observation):
             )
         self.linvel[:] = linvel
     
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         return self.linvel
 
     def debug_draw(self):
@@ -247,7 +263,7 @@ class joint_pos(Observation):
         self.asset: Articulation = self.env.scene["robot"]
         self.noise_std = noise_std
 
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         return random_noise(self.asset.data.joint_pos, self.noise_std)
 
 
@@ -257,7 +273,7 @@ class joint_vel(Observation):
         self.asset: Articulation = self.env.scene["robot"]
         self.noise_std = noise_std
     
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         return random_noise(self.asset.data.joint_vel, self.noise_std)
 
 class joint_acc(Observation):
@@ -283,22 +299,22 @@ class joint_acc(Observation):
         self.joint_acc_buf[..., 1:] = self.joint_acc_buf[..., :-1]
         self.joint_acc_buf[..., 0] = self.asset.data.joint_acc
 
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         joint_acc = (self.joint_acc_buf * self.smoothing_length).mean(-1)
         joint_acc *= self.env.step_dt
         return joint_acc
 
 
 class applied_torques(Observation):
-    def __init__(self, env, actuator_name: str):
-        super().__init__(env)
+    def __init__(self, env, actuator_name: str, noise_std: float=0.):
+        super().__init__(env, mask_ratio=0.)
         self.asset: Articulation = self.env.scene["robot"]
         self.actuator = self.asset.actuators[actuator_name]
         
         self.joint_indices = self.actuator.joint_indices
         self.effort_limit = self.actuator.effort_limit
     
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         applied_efforts = self.asset.data.applied_torque
         return applied_efforts[:, self.joint_indices] / self.effort_limit
 
@@ -320,7 +336,7 @@ class contact_indicator(Observation):
         self.forces[:] = self.contact_sensor.data.net_forces_w_history[:, :, self.body_ids].mean(1)
         # self.forces[:] = self.contact_sensor.data.net_forces_w[:, self.body_ids]
 
-    def __call__(self):
+    def compute(self):
         forces = quat_rotate_inverse(self.asset.data.root_quat_w.unsqueeze(1), self.forces) / self.default_mass_total
         if self.timing:
             current_air_time = self.contact_sensor.data.current_air_time[:, self.body_ids].clamp_max(1.)
@@ -358,7 +374,7 @@ class motor_params(Observation):
             self.stiffness = self.stiffness[..., 0].unsqueeze(-1)
             self.damping = self.damping[..., 0].unsqueeze(-1)
     
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         stiffness = (self.stiffness / self.defalut_stiffness) - 1.
         damping  = (self.damping / self.default_damping) - 1.
         return torch.cat([stiffness, damping], dim=-1)
@@ -371,7 +387,7 @@ class motor_failure(Observation):
         self.motors = self.asset.actuators[actuator_name]
         self.motor_failure = self.motors.motor_failure
     
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         return self.motor_failure
 
 
@@ -393,7 +409,7 @@ class com(Observation):
         com_diff = self.com_w_buffer.data[:, :, 1:] - self.com_w_buffer.data[:, :, :-1]
         self.com_vel_w = (com_diff / self.env.step_dt).mean(dim=-1)
 
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         return self.com_b
 
     def debug_draw(self):
@@ -411,7 +427,7 @@ class external_forces(Observation):
         self.body_indices, self.body_names = self.asset.find_bodies(body_names)
         self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum() * 9.81
 
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         forces_b = self.asset._external_force_b[:, self.body_indices]
         return (forces_b / self.default_mass_total).reshape(self.env.num_envs, -1)
 
@@ -436,7 +452,7 @@ class body_materials(Observation):
         if self.homogeneous:
             self.shape_ids = self.shape_ids[0]
         
-    def __call__(self):
+    def compute(self):
         return self.asset.data.body_materials[:, self.shape_ids].reshape(self.num_envs, -1)
 
 
@@ -457,7 +473,7 @@ class body_mass(Observation):
             / self.default_mass_total.sum()
         ).to(self.device)
     
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         return self.masses.reshape(self.num_envs, -1)
     
 
@@ -478,7 +494,7 @@ class body_momentum(Observation):
         ).to(self.device)
         self.body_ids = torch.tensor(self.body_ids, device=self.device)
     
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         velocity = self.asset.data.body_lin_vel_w[:, self.body_ids]
         momentum = self.masses * quat_rotate_inverse(self.asset.data.root_quat_w.unsqueeze(1), velocity)
         return momentum.reshape(self.num_envs, -1)
@@ -492,7 +508,7 @@ class feet_height(Observation):
         self.body_ids, self.body_names = self.asset.find_bodies(feet_names)
         self.num_feet = len(self.body_ids)
     
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         return self.asset.data.body_pos_w[:, self.body_ids, 2].reshape(self.num_envs, -1) / self.nominal_height
 
 
@@ -564,7 +580,7 @@ class feet_height_map(Observation):
 
         self.feet_height_map[:] = self.feet_pos_w.unsqueeze(-2)[..., 2] - self.ray_hits_w[..., 2]
 
-    def __call__(self):
+    def compute(self):
         return self.feet_height_map.reshape(self.num_envs, -1) / self.nominal_height
     
     def debug_draw(self):
@@ -591,7 +607,7 @@ class height_scan(Observation):
         )
         self.height_scan[:] = height_scan.reshape(self.num_envs, 11, 17)
 
-    def __call__(self):
+    def compute(self):
         height_scan = self.height_scan.clamp(-1., 1.)
         if self.noise_scale > 0:
             noise = torch.randn_like(height_scan) * self.noise_scale
@@ -620,7 +636,7 @@ class prev_actions(Observation):
     def update(self):
         self.prev_action[:] = self.env.action_buf[:, :, :self.steps]
     
-    def __call__(self):
+    def compute(self):
         return self.prev_action.reshape(self.num_envs, -1)
 
 
@@ -652,7 +668,7 @@ class last_contact(Observation):
             self.last_contact_pos_w
         )
     
-    def __call__(self):
+    def compute(self):
         distance_xy = (self.body_pos_w[:, :, :2] - self.last_contact_pos_w[:, :, :2]).norm(dim=-1)
         distance_z = self.body_pos_w[:, :, 2] - self.last_contact_pos_w[:, :, 2]
         distance = torch.stack([distance_xy, distance_z], dim=-1)
@@ -671,12 +687,12 @@ class body_scale(Observation):
         self.asset: Articulation = self.env.scene["robot"]
         self.scales = getattr(self.asset.cfg, "scale", torch.ones(self.num_envs, 1)).to(self.device)
 
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         return self.scales
 
 
 class action_delay(Observation):
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         if hasattr(self.env, "delay"):
             return self.env.delay.float()
         else:
@@ -684,7 +700,7 @@ class action_delay(Observation):
 
 
 class rewards(Observation):
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         return self.env._reward_buf
 
 
@@ -710,7 +726,7 @@ class cum_error(Observation):
         super().__init__(env)
         self.command_manager = self.env.command_manager
     
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         return self.command_manager._cum_error
 
 
@@ -719,7 +735,7 @@ class clock(Observation):
         super().__init__(env)
         self.frequencies = torch.as_tensor(frequencies, device=self.device).unsqueeze(0)
     
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         t = (self.env.episode_length_buf * self.env.step_dt)
         t = t.reshape(self.num_envs, 1) * self.frequencies
         return torch.cat([t.sin(), t.cos()], dim=1)
@@ -748,7 +764,7 @@ class phase(Observation):
     def update(self):
         self.phase[:] = self.offset + self.env.episode_length_buf * self.omega * self.env.step_dt
 
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         return torch.stack([self.phase.sin(), self.phase.cos()], 1)
         
     
@@ -757,7 +773,7 @@ class dummy(Observation):
         super().__init__(env)
         self.obs: torch.Tensor = torch.load(load_path).to(self.device)
     
-    def __call__(self) -> torch.Tensor:
+    def compute(self) -> torch.Tensor:
         return self.obs.expand(self.num_envs, -1)
 
 
@@ -776,7 +792,7 @@ class camera(Observation):
             targets=self.asset.data.root_pos_w,
         )
 
-    def __call__(self):
+    def compute(self):
         img = self.camera.data.output[self.key]
         img = einops.rearrange(img, "n h w c -> n c h w")
         return img

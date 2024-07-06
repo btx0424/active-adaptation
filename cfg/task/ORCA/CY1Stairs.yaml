@@ -16,7 +16,7 @@ command:
   _target_: active_adaptation.envs.mdp.Command2
   linvel_x_range: [0., 1.]
   linvel_y_range: [-0.1, 0.1]
-  angvel_range: [1.5, 1.5]
+  angvel_range: [-1.5, 1.5]
   yaw_stiffness_range: [0.5, 0.5]
   use_stiffness_ratio: 1.0
   stand_prob: 0.05
@@ -48,7 +48,7 @@ reward:
   joint_pos_default:  {weight: 0.25, enabled: true}
   joint_vel_l2:       {weight: 0.002, enabled: true, joint_names: .*arm_joint.*}
   feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}
-  step_up:            {weight: 1.0, enabled: true, feet_names: .*leg_link6}
+  step_up:            {weight: 2.0, enabled: true, feet_names: .*leg_link6}
 
 randomization:
   push:     {body_names: ["base_link", "waist_yaw_link"], force_range: [0.0, 0.05]}
