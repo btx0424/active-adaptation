@@ -48,6 +48,7 @@ class GRUModule(nn.Module):
     def __init__(
         self, 
         dim: int, 
+        layer_norm: bool = False,
         learnable_init: bool = False,
         skip_conn: bool = False
     ):
@@ -55,11 +56,13 @@ class GRUModule(nn.Module):
         self.skip_conn = skip_conn
         self.mlp = make_mlp([256])
         self.gru = GRU(input_size=256, hidden_size=128, learnable_init=learnable_init)
+        self.layer_norm = nn.LayerNorm(256) if layer_norm else nn.Identity()
         self.out = make_mlp([256])
     
     def forward(self, obs: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor):
         obs_feature = self.mlp(obs)
         rnn_feature, hx = self.gru(obs_feature, is_init, hx)
+        rnn_feature = self.layer_norm(rnn_feature)
         feature = self.out(rnn_feature)
         if self.skip_conn:
             feature = feature + obs_feature
@@ -220,7 +223,7 @@ class PPORNNPolicy(TensorDictModuleBase):
         infos: TensorDict = torch.stack(infos).to_tensordict()
         infos = infos.apply(torch.mean, batch_size=[])
         infos["critic/value_mean"] = tensordict["ret"].mean()
-        return {k: v.item() for k, v in infos.items()}
+        return {k: v.item() for k, v in sorted(infos.items())}
 
     def _update(self, tensordict: TensorDict):
         dist = self.actor.get_dist(tensordict)
@@ -250,10 +253,10 @@ class PPORNNPolicy(TensorDictModuleBase):
         self.critic_opt.step()
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
         return {
-            "policy_loss": policy_loss,
-            "entropy": entropy,
-            "noise_std": tensordict["scale"].mean(),
-            "actor_grad_norm": actor_grad_norm,
+            "actor/policy_loss": policy_loss,
+            "actor/entropy": entropy,
+            "actor/noise_std": tensordict["scale"].mean(),
+            "actor/grad_norm": actor_grad_norm,
             "critic/grad_norm": critic_grad_norm,
             "critic/value_loss": value_loss,
             "critic/explained_var": explained_var,
