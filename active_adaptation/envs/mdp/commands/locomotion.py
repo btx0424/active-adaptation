@@ -1,9 +1,11 @@
 import torch
+import torch.distributions as D
 import math
+from typing import Sequence
 
 from omni.isaac.lab.assets import Articulation
 import omni.isaac.lab.utils.math as math_utils
-from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
+from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse, MultiUniform
 from omni.isaac.lab.utils.math import quat_apply_yaw
 
 
@@ -147,9 +149,13 @@ class Command2(Command):
         self.resample_interval = resample_interval
         self.resample_prob = resample_prob
         self.stand_prob = stand_prob
-        self.target_yaw_range = target_yaw_range
 
         with torch.device(self.device):
+            if all(isinstance(r, Sequence) for r in target_yaw_range):
+                self.target_yaw_dist = MultiUniform(torch.tensor(target_yaw_range))
+            else:
+                self.target_yaw_dist = D.Uniform(*torch.tensor(target_yaw_range))
+
             self.command = torch.zeros(self.num_envs, 4)
             self.target_yaw = torch.zeros(self.num_envs)
             self.yaw_stiffness = torch.zeros(self.num_envs)
@@ -225,8 +231,7 @@ class Command2(Command):
         self.is_standing_env[env_ids] = stand
 
     def sample_yaw_command(self, env_ids: torch.Tensor):
-        yaw = torch.empty(len(env_ids), device=self.device).uniform_(*self.target_yaw_range)
-        self.target_yaw[env_ids] = yaw
+        self.target_yaw[env_ids] = self.target_yaw_dist.sample(env_ids.shape)
         self.yaw_stiffness[env_ids] = sample_uniform(env_ids.shape, *self.yaw_stiffness_range, self.device)
         self.use_stiffness[env_ids] = torch.rand(len(env_ids), device=self.device) < self.use_stiffness_ratio
         self.fixed_yaw_speed[env_ids] = sample_uniform(env_ids.shape, *self.angvel_range, self.device) 

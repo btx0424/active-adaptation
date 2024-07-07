@@ -12,3 +12,9 @@ terrain: medium # easy
 observation:
   height_scan:
     height_scan:      {prim_path: base}
+
+reward:
+  linvel_exp:         {weight: 1.5, enabled: true, dim: 2}
+  angvel_xy_l2:       {weight: 0.01, enabled: true}
+  linvel_z_l2:        {weight: 1.0, enabled: true}
+  feet_air_time:      {weight: 0.1, enabled: true, body_names: .*_foot, thres: 0.4}
