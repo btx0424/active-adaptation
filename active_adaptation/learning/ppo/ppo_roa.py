@@ -274,7 +274,7 @@ class PPOROAPolicy(TensorDictModuleBase):
         hard_copy_(self.actor_expert, self.actor_adapt)
 
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
-        infos["value_priv"] = self.value_norm.denormalize(tensordict["ret"]).mean().item()
+        infos["critic/value_priv"] = self.value_norm.denormalize(tensordict["ret"]).mean().item()
         return infos
     
     def train_adaptation(self, tensordict: TensorDictBase):
@@ -337,24 +337,24 @@ class PPOROAPolicy(TensorDictModuleBase):
         ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
-        losses["policy_loss"] = - torch.mean(torch.min(surr1, surr2))
-        losses["entropy_loss"] = - self.entropy_coef * entropy
+        losses["actor/policy_loss"] = - torch.mean(torch.min(surr1, surr2))
+        losses["actor/entropy_loss"] = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["value_priv"]
         value_loss = self.critic_loss_fn(b_returns, values)
-        losses["value_loss/value_loss_priv"] = (value_loss * (~tensordict["is_init"])).mean()
+        losses["critic/value_loss_priv"] = (value_loss * (~tensordict["is_init"])).mean()
         
         loss = sum(losses.values())
         self.opt.zero_grad()
         loss.backward()
-        losses["actor_grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.actor_expert.parameters(), 10)
-        losses["critic_grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 10)
+        losses["actor/grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.actor_expert.parameters(), 10)
+        losses["critic/grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 10)
         self.opt.step()
 
-        losses["value_loss/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-        losses["noise_std"] = tensordict["scale"].mean()
-        losses["entropy"] = entropy
+        losses["critic/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
+        losses["actor/noise_std"] = tensordict["scale"].mean()
+        losses["actor/entropy"] = entropy
         return TensorDict(losses, [])
     
     def _update_adaptation(self, tensordict: TensorDictBase):
