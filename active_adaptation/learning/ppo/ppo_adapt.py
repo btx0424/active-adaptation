@@ -512,11 +512,11 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 self.encoder_priv(minibatch)
                 losses = {}
                 minibatch["adv_priv"] = normalize(minibatch["adv_priv"], True)
-                losses["policy_loss"], losses["entropy_loss"] = self._policy_loss(
+                losses["actor/policy_loss"], losses["actor/entropy_loss"] = self._policy_loss(
                     minibatch, self._actor_expert, "adv_priv")
-                losses["value_loss/obs"] = self._value_loss(
+                losses["critic/value_loss_obs"] = self._value_loss(
                     minibatch, self._critic_obs, "value_obs", "ret_obs").mean()
-                losses["value_loss/priv"] = self._value_loss(
+                losses["critic/value_loss_priv"] = self._value_loss(
                     minibatch, self._critic_priv, "value_priv", "ret_priv").mean()
                 if self.reg_alpha > 0.:
                     reg_loss = F.mse_loss(minibatch["context_expert"], minibatch["context_adapt"])
@@ -528,8 +528,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 for param_group in self.opt_expert.param_groups:
                     nn.utils.clip_grad_norm_(param_group["params"], 2.)
                 self.opt_expert.step()
-                losses["value_loss/explained_var_obs"] = 1 - F.mse_loss(minibatch["value_obs"], minibatch["ret_obs"]) / minibatch["ret_obs"].var()
-                losses["value_loss/explained_var_priv"] = 1 - F.mse_loss(minibatch["value_priv"], minibatch["ret_priv"]) / minibatch["ret_priv"].var()
+                losses["critic/explained_var_obs"] = 1 - F.mse_loss(minibatch["value_obs"], minibatch["ret_obs"]) / minibatch["ret_obs"].var()
+                losses["critic/explained_var_priv"] = 1 - F.mse_loss(minibatch["value_priv"], minibatch["ret_priv"]) / minibatch["ret_priv"].var()
 
                 infos.append(TensorDict(losses, []))
         
@@ -538,10 +538,10 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         hard_copy_(self._actor_expert, self.__actor_expert)
         hard_copy_(self._actor_expert, self._actor_adapt)
         
-        infos["value_gap"] = tensordict["value_gap"].square().mean()
-        infos["adv_gap"] = tensordict["adv_gap"].square().mean()
-        infos["value_obs"] = tensordict["value_obs"].mean()
-        infos["value_priv"] = tensordict["value_priv"].mean()
+        infos["critic/value_gap"]   = tensordict["value_gap"].square().mean()
+        infos["critic/adv_gap"]     = tensordict["adv_gap"].square().mean()
+        infos["critiv/value_obs"]   = tensordict["value_obs"].mean()
+        infos["critiv/value_priv"]  = tensordict["value_priv"].mean()
 
         return {k: v.item() for k, v in sorted(infos.items())}
     
@@ -586,11 +586,11 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 losses = {}
                 if actor is not None:
                     minibatch[adv_key] = normalize(minibatch[adv_key])
-                    losses["policy_loss"], losses["entropy_loss"] = self._policy_loss(
+                    losses["actor/policy_loss"], losses["actor/entropy_loss"] = self._policy_loss(
                         minibatch, self._actor_adapt, adv_key)
-                losses["value_loss/priv"] = self._value_loss(
+                losses["critic/value_loss_priv"] = self._value_loss(
                     minibatch, self._critic_priv, "value_priv", "ret_priv").mean()
-                losses["value_loss/adapt"] = self._value_loss(
+                losses["critic/value_loss_adapt"] = self._value_loss(
                     minibatch, self._critic_adapt, "value_adapt", "ret_adapt").mean()
                 loss = sum(v for k, v in losses.items() if "loss" in k)
                 
@@ -602,17 +602,17 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 self.opt_expert.step()
                 self.opt_target.step()
 
-                losses["value_loss/explained_var_adapt"] = 1 - F.mse_loss(minibatch["value_adapt"], minibatch["ret_adapt"]) / minibatch["ret_adapt"].var()
-                losses["value_loss/explained_var_priv"] = 1 - F.mse_loss(minibatch["value_priv"], minibatch["ret_priv"]) / minibatch["ret_priv"].var()
+                losses["critic/explained_var_adapt"] = 1 - F.mse_loss(minibatch["value_adapt"], minibatch["ret_adapt"]) / minibatch["ret_adapt"].var()
+                losses["critic/explained_var_priv"] = 1 - F.mse_loss(minibatch["value_priv"], minibatch["ret_priv"]) / minibatch["ret_priv"].var()
 
                 infos.append(TensorDict(losses, []))
         
         infos = {k: v.mean() for k, v in torch.stack(infos).items(True, True)}
         value_adapt = self.value_norms["adapt"].denormalize(tensordict["value_adapt"])
         value_priv = self.value_norms["priv"].denormalize(tensordict["value_priv"])
-        infos["value_gap"] = (value_adapt - value_priv)[~tensordict["is_init"]].square().mean()
-        infos["value_adapt"] = value_adapt.mean()
-        infos["value_priv"] = value_priv.mean()
+        infos["critic/value_gap"] = (value_adapt - value_priv)[~tensordict["is_init"]].square().mean()
+        infos["critic/value_adapt"] = value_adapt.mean()
+        infos["critic/value_priv"] = value_priv.mean()
         infos["alpha"] = self.log_alpha.exp()
         return {k: v.item() for k, v in sorted(infos.items())}
     

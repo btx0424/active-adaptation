@@ -407,7 +407,7 @@ class PPGPolicy(TensorDictModuleBase):
         hard_copy_(self.actor, self.actor_adapt)
         
         infos = collect_info(infos)
-        infos["value_priv"] = self.value_norm.denormalize(tensordict["ret_priv"]).mean().item()
+        infos["critic/value_priv"] = self.value_norm.denormalize(tensordict["ret_priv"]).mean().item()
         infos["beta"] = self.beta
         return infos
     
@@ -427,7 +427,7 @@ class PPGPolicy(TensorDictModuleBase):
                 infos.append(TensorDict(self._update_adapt(minibatch), []))
         
         infos = collect_info(infos)
-        infos["value_priv"] = self.value_norm.denormalize(tensordict["ret_priv"]).mean().item()
+        infos["critic/value_priv"] = self.value_norm.denormalize(tensordict["ret_priv"]).mean().item()
         return infos
 
     # @torch.compile
@@ -509,18 +509,18 @@ class PPGPolicy(TensorDictModuleBase):
         self.encoder(tensordict)
         losses = {}
         policy_loss, entropy_loss, entropy = self._compute_policy_loss(tensordict, self.actor)
-        losses["policy_loss"] = policy_loss
-        losses["entropy_loss"] = entropy_loss
+        losses["actor/policy_loss"] = policy_loss
+        losses["actor/entropy_loss"] = entropy_loss
 
         b_returns = tensordict["ret_priv"]
         values = self.critic_priv(tensordict)["value_priv"]
         value_loss = self.critic_loss_fn(b_returns, values) * (~tensordict["is_init"])
-        losses["value_loss"] = value_loss.mean()
+        losses["critic/value_loss"] = value_loss.mean()
 
         context_dist_priv = D.Normal(tensordict["context_priv_loc"], tensordict["context_priv_scale"])
         context_dist_pred = D.Normal(tensordict["context_adapt_loc"], tensordict["context_adapt_scale"])
         context_kl = kl_divergence(context_dist_priv, context_dist_pred).mean(-1)
-        losses["rep_loss"] = 0.1 * context_kl.clamp_min(1.0).mean()
+        losses["actor/rep_loss"] = 0.1 * context_kl.clamp_min(1.0).mean()
 
         if self.cfg.aux_target:
             actor_aux = tensordict["actor_aux"]
@@ -534,13 +534,13 @@ class PPGPolicy(TensorDictModuleBase):
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), 2.)
         critic_grad_norm = nn.utils.clip_grad_norm_(self.critic_priv.parameters(), 2.)
         self.opt.step()
-        losses["encoder_grad_norm"] = encoder_grad_norm
-        losses["actor_grad_norm"] = actor_grad_norm
-        losses["critic_grad_norm"] = critic_grad_norm
-        losses["value_loss/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-        losses["context_kl"] = context_kl.mean()
-        losses["context_std"] = tensordict["context_priv_scale"].mean()
-        losses["entropy"] = entropy
+        losses["actor/encoder_grad_norm"] = encoder_grad_norm
+        losses["actor/grad_norm"] = actor_grad_norm
+        losses["critic/grad_norm"] = critic_grad_norm
+        losses["critic/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
+        losses["actor/context_kl"] = context_kl.mean()
+        losses["actor/context_std"] = tensordict["context_priv_scale"].mean()
+        losses["actor/entropy"] = entropy
         return losses
 
     def _update_adapt(self, tensordict: TensorDictBase):
@@ -565,14 +565,14 @@ class PPGPolicy(TensorDictModuleBase):
         critic_grad_norm = nn.utils.clip_grad_norm_(self.critic_adapt.parameters(), 10.)
         self.opt_target.step()
         return {
-            "policy_loss": policy_loss,
-            "entropy": entropy,
-            "actor_grad_norm": actor_grad_norm,
-            "critic_grad_norm": critic_grad_norm,
-            "value_loss/value_loss_priv": value_loss_priv,
-            "value_loss/value_loss_adapt": value_loss_adapt,
-            "value_loss/explained_var_priv": explained_var_priv,
-            "value_loss/explained_var_adapt": explained_var_adapt
+            "actor/policy_loss": policy_loss,
+            "actor/entropy": entropy,
+            "actor/grad_norm": actor_grad_norm,
+            "critic/grad_norm": critic_grad_norm,
+            "critic/value_loss_priv": value_loss_priv,
+            "critic/value_loss_adapt": value_loss_adapt,
+            "critic/explained_var_priv": explained_var_priv,
+            "critic/explained_var_adapt": explained_var_adapt
         }
     
     def _update_aux(self, tensordict: TensorDictBase):

@@ -254,25 +254,25 @@ class PPOPolicy(TensorDictModuleBase):
         ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
-        losses["policy_loss"] = - torch.mean(torch.min(surr1, surr2))
-        losses["entropy_loss"] = - self.entropy_coef * entropy
+        losses["actor/policy_loss"] = - torch.mean(torch.min(surr1, surr2))
+        losses["actor/entropy_loss"] = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["state_value"]
         value_loss = self.critic_loss_fn(b_returns, values)
-        losses["value_loss/value_loss_priv"] = (value_loss * (~tensordict["is_init"])).mean()
+        losses["critic/value_loss_priv"] = (value_loss * (~tensordict["is_init"])).mean()
         
         loss = sum(losses.values())
         self.opt.zero_grad()
         loss.backward()
         losses["state_est_grad_norm"] = nn.utils.clip_grad_norm_(self.state_estimator.parameters(), 5.)
-        losses["actor_grad_norm"] = nn.utils.clip_grad_norm_(self.actor.parameters(), 2.)
-        losses["critic_grad_norm"] = nn.utils.clip_grad_norm_(self.critic.parameters(), 2.)
+        losses["actor/grad_norm"] = nn.utils.clip_grad_norm_(self.actor.parameters(), 2.)
+        losses["critic/grad_norm"] = nn.utils.clip_grad_norm_(self.critic.parameters(), 2.)
         self.opt.step()
         
-        losses["value_loss/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-        losses["noise_std"] = tensordict["scale"].mean()
-        losses["entropy"] = entropy
+        losses["critic/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
+        losses["actor/noise_std"] = tensordict["scale"].mean()
+        losses["actor/entropy"] = entropy
         return losses
 
     def state_dict(self):
