@@ -92,12 +92,6 @@ class Env(EnvBase):
             .expand(self.num_envs)
             .to(self.device)
         )
-        self.action_spec = CompositeSpec(
-            {
-                "action": UnboundedContinuousTensorSpec((self.num_envs, self.action_dim))
-            },
-            shape=[self.num_envs]
-        ).to(self.device)
 
         import inspect
         members = dict(inspect.getmembers(self.__class__, inspect.isclass))
@@ -119,6 +113,15 @@ class Env(EnvBase):
         self._debug_draw_callbacks = []
         self._step_callbacks = []
         self.command_manager: mdp.Command = hydra.utils.instantiate(self.cfg.command, env=self)
+        self.action_manager: mdp.ActionManager = hydra.utils.instantiate(self.cfg.action, env=self)
+        
+        self.action_spec = CompositeSpec(
+            {
+                "action": UnboundedContinuousTensorSpec((self.num_envs, self.action_dim))
+            },
+            shape=[self.num_envs]
+        ).to(self.device)
+
         self._debug_draw_callbacks.append(self.command_manager.debug_draw)
 
         for key, params in self.cfg.randomization.items():
@@ -170,11 +173,12 @@ class Env(EnvBase):
 
         observation_spec = {}
         for group, funcs in self.observation_funcs.items():
+            print(f"Observation group: {group}")
             tensors = []
             for obs_name, func in funcs.items():
                 tensor, mask = func()
                 tensors.append(tensor)
-                print(f"{obs_name}: shape {tensor.shape}")
+                print(f"\t{obs_name}: \t{tensor.shape}, \tmask_ratio {func.mask_ratio:.2f}")
             tensor = torch.cat(tensors, -1)
             observation_spec[group] = UnboundedContinuousTensorSpec(tensor.shape, device=self.device)
             observation_spec[group + "_mask_"] = BinaryDiscreteTensorSpec(
@@ -199,6 +203,10 @@ class Env(EnvBase):
         
         self.time_stamp = 0
     
+    @property
+    def action_dim(self) -> int:
+        return self.action_manager.action_dim
+
     @property
     def num_envs(self) -> int:
         """The number of instances of the environment that are running."""
@@ -232,9 +240,8 @@ class Env(EnvBase):
     def _reset_idx(self, env_ids: torch.Tensor):
         raise NotImplementedError
     
-    @abstractmethod
     def apply_action(self, tensordict: TensorDictBase, substep: int):
-        raise NotImplementedError
+        self.action_manager(tensordict, substep)
 
     def _compute_observation(self) -> TensorDictBase:
         observation = TensorDict({}, [self.num_envs])

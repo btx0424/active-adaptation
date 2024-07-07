@@ -3,6 +3,7 @@ from .observations import *
 from .rewards import *
 from .terminations import *
 from .commands import *
+from .action import *
 
 def get_obj_by_class(mapping, obj_class):
     return {

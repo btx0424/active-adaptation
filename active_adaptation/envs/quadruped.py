@@ -17,10 +17,6 @@ class Quadruped(LocomotionEnv):
 
     feet_name_expr = ".*_foot"
     
-    @property
-    def action_dim(self):
-        return 12
-    
     @mdp.observation_func
     def linvel_error(self):
         if not hasattr(self, "robot"):

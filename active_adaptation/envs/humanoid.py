@@ -18,12 +18,6 @@ class Humanoid(LocomotionEnv):
     
     feet_name_expr = ".*ankle_link"
 
-    @property
-    def action_dim(self):
-        robot = self.scene["robot"]
-        return robot.num_joints
-    
-
     class feet_too_close(mdp.Termination):
         def __init__(self, env, feet_names: str, thres: float=0.1):
             super().__init__(env)

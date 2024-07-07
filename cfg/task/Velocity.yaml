@@ -10,5 +10,9 @@ max_episode_length: 1000
 robot: a1
 terrain: plane
 
-action_scaling: 0.5
-short_history: false
+action:
+  _target_: active_adaptation.envs.mdp.action.JointPosition
+  joint_names: .*
+  action_scaling: 0.5
+  max_delay: 4
+  alpha: 0.8

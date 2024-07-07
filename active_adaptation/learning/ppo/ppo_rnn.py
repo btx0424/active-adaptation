@@ -20,7 +20,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field
 from functools import partial
 from typing import Union
 
@@ -88,11 +88,33 @@ class PPOConfig:
     aux_target: bool = False
 
     checkpoint_path: Union[str, None] = None
-
+    actor_in_keys: list = field(default_factory=lambda: [OBS_KEY])
+    critic_in_keys: list = field(default_factory=lambda: [OBS_KEY, OBS_PRIV_KEY])
 
 cs = ConfigStore.instance()
 cs.store("ppo_gru", node=PPOConfig, group="algo")
 cs.store("ppo_lstm", node=PPOConfig(rnn="lstm"), group="algo")
+
+
+def make_encoder(mlp_keys, cnn_keys, aux_keys):
+    """
+    Make a small encoder network for the observation.
+    A CNN is used for the height scan, and an MLP for the rest.
+    """
+    if "height_scan" in cnn_keys:
+        cnn = nn.Sequential(make_conv([8, 8, 8]), nn.LazyLinear(64), nn.LayerNorm(64))
+        modules = [
+            CatTensors(mlp_keys, "_lowdim", del_keys=False),
+            TensorDictModule(make_mlp([256]), "_lowdim", ["_mlp"]),
+            TensorDictModule(cnn, ["height_scan"], ["_cnn"]),
+            CatTensors(["_cnn", "_mlp"], "_feature"),
+        ]
+    else:
+        modules = [
+            CatTensors(mlp_keys, "_lowdim", del_keys=False),
+            TensorDictModule(make_mlp([256]), "_lowdim", ["_feature"]),
+        ]
+    return modules
 
 
 class PPORNNPolicy(TensorDictModuleBase):
@@ -129,18 +151,18 @@ class PPORNNPolicy(TensorDictModuleBase):
             self.value_norm = ValueNormFake().to(self.device)
 
         fake_input = observation_spec.zero()
-        
+    
+        rnn = TensorDictModule(
+            GRUModule(128, self.cfg.learnable_init, self.cfg.skip_conn), 
+            ["_feature", "is_init", "actor_hx"], 
+            ["_actor_in", ("next", "actor_hx")]
+        )
         actor_modules = [
-            TensorDictModule(
-                GRUModule(128, self.cfg.learnable_init, self.cfg.skip_conn), 
-                [OBS_KEY, "is_init", "actor_hx"], 
-                ["_actor_in", ("next", "actor_hx")]
-            ),
-            TensorDictModule(Actor(self.action_dim), ["_actor_in"], ["loc", "scale"]),
+            *make_encoder(*parse_keys(observation_spec, self.cfg.actor_in_keys)),
+            rnn,
+            TensorDictModule(Actor(self.action_dim), ["_feature"], ["loc", "scale"]),
         ]
-        if self.cfg.aux_target:
-            actor_modules.append(TensorDictModule(nn.LazyLinear(self.aux_dim), ["_actor_in"], ["aux_pred"]))
-        
+
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=TensorDictSequential(*actor_modules),
             in_keys=["loc", "scale"],
@@ -149,10 +171,10 @@ class PPORNNPolicy(TensorDictModuleBase):
             return_log_prob=True,
         ).to(self.device)
 
-        critic_module = nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1))
+        critic_module = nn.Sequential(make_mlp([256, 256]), nn.LazyLinear(1))
         self.critic = TensorDictSequential(
-            CatTensors([OBS_KEY, OBS_PRIV_KEY], "policy_priv", del_keys=False),
-            TensorDictModule(critic_module, ["policy_priv"], ["state_value"])
+            *make_encoder(*parse_keys(observation_spec, self.cfg.critic_in_keys)),
+            TensorDictModule(critic_module, ["_feature"], ["state_value"])
         ).to(self.device)
 
         self._maybe_init_state(fake_input)
@@ -165,6 +187,9 @@ class PPORNNPolicy(TensorDictModuleBase):
                 nn.init.constant_(module.bias, 0.0)
             elif isinstance(module, (nn.GRUCell, nn.LSTMCell)):
                 nn.init.orthogonal_(module.weight_hh)
+            elif isinstance(module, nn.Conv2d):
+                nn.init.orthogonal_(module.weight)
+                nn.init.constant_(module.bias, 0.0)
 
         self.actor.apply(init_)
         self.critic.apply(init_)
@@ -206,7 +231,7 @@ class PPORNNPolicy(TensorDictModuleBase):
             })
 
     def train_op(self, tensordict: TensorDict):
-
+        tensordict = tensordict.copy()
         with torch.no_grad():
             self.critic(tensordict)
             self.critic(tensordict["next"])
@@ -258,11 +283,11 @@ class PPORNNPolicy(TensorDictModuleBase):
 
         loss = policy_loss + entropy_loss + value_loss
         
-        if self.cfg.aux_target:
-            aux_loss = F.mse_loss(tensordict["aux_target_"], tensordict["aux_pred"])
-            loss += aux_loss
-        else:
-            aux_loss = torch.tensor(0., device=self.device)
+        # if self.cfg.aux_target:
+        #     aux_loss = F.mse_loss(tensordict["aux_target_"], tensordict["aux_pred"])
+        #     loss += aux_loss
+        # else:
+        #     aux_loss = torch.tensor(0., device=self.device)
 
         self.actor_opt.zero_grad()
         self.critic_opt.zero_grad()
@@ -280,7 +305,7 @@ class PPORNNPolicy(TensorDictModuleBase):
             "critic/grad_norm": critic_grad_norm,
             "critic/value_loss": value_loss,
             "critic/explained_var": explained_var,
-            "aux/pred_loss": aux_loss,
+            # "aux/pred_loss": aux_loss,
         }
         
 

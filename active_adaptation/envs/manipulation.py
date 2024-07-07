@@ -23,12 +23,6 @@ class QuadrupedManip(LocomotionEnv):
         self.base_legs_indices = self.robot.actuators["base_legs"].joint_indices
         self.arm_indices = self.robot.actuators["arm"].joint_indices
 
-    @property
-    def action_dim(self):
-        asset: Articulation = self.scene["robot"]
-        return sum(act.num_joints for act in asset.actuators.values())
-
-
     class ee_pos(Observation):
         def __init__(self, env, ee_name: str):
             super().__init__(env)

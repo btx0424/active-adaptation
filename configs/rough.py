@@ -90,7 +90,6 @@ class EnvCfg:
 
     max_episode_length: int = 1000
     payload: bool = False
-    action_scaling: float = 0.5
 
     history_length: int = 32
 
@@ -105,6 +104,7 @@ class EnvCfg:
     decimation: int  = 4
     sim = sim_utils.SimulationCfg(dt=0.005, disable_contact_processing=True)
     
+    action: Dict = MISSING
     command: Dict = MISSING
     reward: Dict[str, float] = MISSING
     observation: Dict[str, List] = MISSING
@@ -133,7 +133,6 @@ def LocomotionEnvCfg(task_cfg):
 
     env_cfg = EnvCfg(
         max_episode_length=task_cfg.max_episode_length,
-        action_scaling=task_cfg.action_scaling,
         payload=task_cfg.payload,
         scene = LocomotionSceneCfg(
             num_envs=task_cfg.num_envs,                                                                                                                                                         
@@ -141,6 +140,7 @@ def LocomotionEnvCfg(task_cfg):
             terrain=terrain_cfg,
             replicate_physics=False,
         ),
+        action = task_cfg.action,
         command = task_cfg.command,
         reward = task_cfg.reward,
         observation = task_cfg.observation,
