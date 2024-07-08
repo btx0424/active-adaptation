@@ -224,13 +224,14 @@ class linvel_exp(Reward):
     
     def update(self):
         if self.body_ids is None:
-            linvel = self.asset.data.root_lin_vel_b
+            linvel_w = self.asset.data.root_lin_vel_w
         else:
-            linvel = quat_rotate_inverse(
-                self.asset.data.root_quat_w,
-                (self.asset.data.body_lin_vel_w[:, self.body_ids] * self.body_masses).sum(1)
-            )
-        self.linvel[:] = linvel
+            linvel_w = (self.asset.data.body_lin_vel_w[:, self.body_ids] * self.body_masses).sum(1)
+        if self.yaw_only:
+            quat = yaw_quat(self.asset.data.root_quat_w)
+        else:
+            quat = self.asset.data.root_quat_w
+        self.linvel[:] = quat_rotate_inverse(quat, linvel_w)
         
     def compute(self) -> torch.Tensor:
         linvel_error = (
@@ -251,6 +252,36 @@ class linvel_exp(Reward):
             linvel,
             color=(0.8, 0.1, 0.8, 1.)
         )
+
+
+class linvel_projection(Reward):
+    def __init__(
+        self, 
+        env, 
+        weight: float, 
+        enabled: bool = True,
+        dim: int=2,
+        yaw_only: bool=False,
+    ):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.dim = dim
+        self.yaw_only = yaw_only
+        self.linvel = torch.zeros(self.num_envs, 3, device=self.device)
+    
+    def update(self):
+        linvel_w = self.asset.data.root_lin_vel_w
+        if self.yaw_only:
+            quat = yaw_quat(self.asset.data.root_quat_w)
+        else:
+            quat = self.asset.data.root_quat_w
+        self.linvel[:] = quat_rotate_inverse(quat, linvel_w)
+    
+    def compute(self) -> torch.Tensor:
+        command_linvel_b = self.env.command_manager._command_linvel[:, :self.dim]
+        projection = (self.linvel[:, :self.dim] * command_linvel_b).sum(dim=-1, keepdim=True)
+        reward = projection.clamp_max(self.env.command_manager._command_speed)
+        return reward.reshape(self.num_envs, 1)
 
 
 class linvel_yaw_exp(Reward):

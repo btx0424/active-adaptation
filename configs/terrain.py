@@ -259,7 +259,7 @@ STAIRS = TerrainGeneratorCfg(
 )
 
 
-STAIRS_EASY = TerrainGeneratorCfg(
+SLOPES_AND_CURBS = TerrainGeneratorCfg(
     seed=0,
     size=(8.0, 8.0),
     border_width=40.0,
@@ -271,37 +271,27 @@ STAIRS_EASY = TerrainGeneratorCfg(
     use_cache=False,
     sub_terrains={
         "flat": MeshPlaneTerrainCfg(
-            proportion=0.20,
+            proportion=0.25,
         ),
-        "random_rough_easy": HfRandomUniformTerrainCfg(
-            proportion=0.20,
-            noise_range=(0.0, 0.04),
-            noise_step=0.02,
-            border_width=0.5
+        "pyramid_stairs_inv": MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.25,
+            step_height_range=(0.05, 0.1),
+            step_width=0.40,
+            platform_width=3.5,
+            border_width=1.0,
+            holes=False,
         ),
-        "box": MeshRepeatedBoxesTerrainCfg(
-            proportion=0.20,
-            object_params_start=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
-                num_objects=36, height=0.12, size=(0.6, 0.6), max_yx_angle=12),
-            object_params_end=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
-                num_objects=36, height=0.12, size=(0.6, 0.6), max_yx_angle=12),
+        "boxes": MeshRandomGridTerrainCfg(
+            proportion=0.25, 
+            grid_width=0.60, 
+            grid_height_range=(0.02, 0.05), 
             platform_width=2.0
         ),
-        "pyramid_stairs_inv_a": MeshInvertedPyramidStairsTerrainCfg(
-            proportion=0.20,
-            step_height_range=(0.05, 0.15),
-            step_width=0.40,
-            platform_width=3.5,
-            border_width=1.0,
-            holes=False,
-        ),
-        "pyramid_stairs_inv_b": MeshInvertedPyramidStairsTerrainCfg(
-            proportion=0.20,
-            step_height_range=(0.05, 0.15),
-            step_width=0.40,
-            platform_width=3.5,
-            border_width=1.0,
-            holes=False,
+        "pyramid_slope_inv": HfPyramidSlopedTerrainCfg(
+            proportion=0.25,
+            slope_range=(0.10, 0.20),
+            platform_width=1.0,
+            border_width=0.25
         ),
     },
 )
@@ -325,5 +315,5 @@ TERRAINS = {
     "hard": ROUGH_HARD,
     "flat": FLAT,
     "stairs": STAIRS,
-    "stairs_easy": STAIRS_EASY,
+    "snc": SLOPES_AND_CURBS,
 }

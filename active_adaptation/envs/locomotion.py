@@ -91,13 +91,6 @@ class LocomotionEnv(Env):
             return torch.zeros(self.num_envs, self.action_dim, device=self.device)
         return self.last_action
     
-    @mdp.reward_func
-    def linvel_projection(self):
-        linvel_b = self.scene["robot"].data.root_lin_vel_b[:, :2]
-        command_linvel_b = self.command_manager._command_linvel[:, :2]
-        projection = (linvel_b * command_linvel_b).sum(dim=-1, keepdim=True) 
-        return projection.clamp_max(self.command_manager._command_speed)
-    
     # @mdp.reward_func
     # def heading(self):
     #     root_quat = self.scene["robot"].data.root_quat_w
