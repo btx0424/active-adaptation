@@ -162,6 +162,8 @@ class PPORNNPolicy(TensorDictModuleBase):
             rnn,
             TensorDictModule(Actor(self.action_dim), ["_feature"], ["loc", "scale"]),
         ]
+        if self.aux_dim > 0:
+            actor_modules.append(TensorDictModule(nn.LazyLinear(self.aux_dim), ["_feature"], ["aux_pred"]))
 
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=TensorDictSequential(*actor_modules),
@@ -196,6 +198,8 @@ class PPORNNPolicy(TensorDictModuleBase):
 
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=cfg.lr)
         self.critic_opt = torch.optim.Adam(self.critic.parameters(), lr=cfg.lr)
+        self.aux_opt = torch.optim.Adam(self.actor.parameters(), lr=cfg.lr)
+        self.num_update = 0
 
     def _maybe_init_state(self, tensordict: TensorDict):
         shape = tensordict.get(OBS_KEY).shape[:-1]
@@ -257,11 +261,35 @@ class PPORNNPolicy(TensorDictModuleBase):
                 batch = make_batch(tensordict, self.cfg.num_minibatches, self.cfg.seq_len)
                 for minibatch in batch:
                     infos.append(TensorDict(self._update(minibatch), []))
-
-        infos: TensorDict = torch.stack(infos).to_tensordict()
-        infos = infos.apply(torch.mean, batch_size=[])
+        
+        infos = collect_info(infos)
         infos["critic/value_mean"] = tensordict["ret"].mean()
-        return {k: v.item() for k, v in sorted(infos.items())}
+
+        if self.aux_dim > 0 and self.num_update % 4 == 0:
+            aux_losses = []
+            with set_recurrent_mode(True):
+                with torch.no_grad():
+                    self.actor(tensordict)
+                for minibatch in make_batch(tensordict, self.cfg.num_minibatches, self.cfg.seq_len):
+                    dist_old = self.actor.build_dist_from_params(minibatch)
+                    dist_new = self.actor.get_dist(minibatch)
+                    aux_target = minibatch["aux_target_"]
+                    aux_pred = self.actor(minibatch)["aux_pred"]
+                    aux_loss = F.mse_loss(aux_target, aux_pred)
+                    kl = D.kl_divergence(dist_old, dist_new).mean()
+                    self.aux_opt.zero_grad()
+                    (aux_loss + kl).backward()
+                    self.aux_opt.step()
+                    
+                    aux_losses.append(TensorDict({
+                        "aux/pred_loss": aux_loss,
+                        "aux/kl": kl,
+                    }, []))
+            infos.update(collect_info(aux_losses))
+        
+        self.num_update += 1
+
+        return dict(sorted(infos.items()))
 
     def _update(self, tensordict: TensorDict):
         dist = self.actor.get_dist(tensordict)

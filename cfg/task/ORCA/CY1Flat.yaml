@@ -47,8 +47,9 @@ observation:
     cum_error:        {}
     rewards:     {}
   aux_target_:
-    root_linvel_b:
+    root_linvel_b:    {yaw_only: true}
     root_angvel_b:    {yaw_only: true}
+    rewards:          {}
 
 reward:
   linvel_exp:         {weight: 1.5, enabled: true, dim: 3, yaw_only: true}
