@@ -78,3 +78,15 @@ class Humanoid(LocomotionEnv):
                 color=(1, 0, 0, 1)
             )
 
+    class root_orientation(mdp.Reward):
+            
+        env: "Humanoid"
+
+        def __init__(self, env, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+            self.asset: Articulation = self.env.scene["robot"]
+
+        def compute(self) -> torch.Tensor:
+            return self.asset.data.projected_gravity_b[:, 2].square().unsqueeze(1)
+    
+

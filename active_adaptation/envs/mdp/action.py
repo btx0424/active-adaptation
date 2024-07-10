@@ -9,6 +9,9 @@ class ActionManager:
     def __init__(self, env):
         self.env = env
     
+    def reset(self, env_ids: torch.Tensor):
+        pass
+    
     @property
     def num_envs(self):
         return self.env.num_envs

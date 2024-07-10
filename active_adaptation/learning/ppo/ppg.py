@@ -45,9 +45,9 @@ class PPGConfig:
     actor_predict_std: bool = False
     orthogonal_init: bool = True
 
-    aux_target: bool = True
+    aux_target: bool = False
     kl_prior: bool = False
-    free_bits: float = 100
+    free_bits: float = 0.
     rep_loss: float = 0.05
 
     num_minibatches: int = 8
@@ -278,7 +278,7 @@ class PPGPolicy(TensorDictModuleBase):
         self.critic_priv = TensorDictSequential(
             CatTensors([OBS_KEY, OBS_PRIV_KEY], "_critic_in", del_keys=False),
             TensorDictModule(
-                nn.Sequential(make_mlp([256, 256, 256]), nn.LazyLinear(1)), 
+                nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1)), 
                 ["_critic_in"], ["value_priv"]
             ),
         ).to(self.device)
@@ -481,10 +481,13 @@ class PPGPolicy(TensorDictModuleBase):
 
         rewards = tensordict[REWARD_KEY]
         dones = tensordict[DONE_KEY]
+
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
 
         adv, ret = self.gae(rewards, dones, values, next_values)
+        self.value_norm.update(values)
+        ret = self.value_norm.normalize(ret)
 
         tensordict.set(f"adv_{key}", adv)
         tensordict.set(f"ret_{key}", ret)
@@ -520,7 +523,7 @@ class PPGPolicy(TensorDictModuleBase):
         context_dist_priv = D.Normal(tensordict["context_priv_loc"], tensordict["context_priv_scale"])
         context_dist_pred = D.Normal(tensordict["context_adapt_loc"], tensordict["context_adapt_scale"])
         context_kl = kl_divergence(context_dist_priv, context_dist_pred).mean(-1)
-        losses["actor/rep_loss"] = 0.1 * context_kl.clamp_min(1.0).mean()
+        losses["actor/rep_loss"] = 0.1 * context_kl.clamp_min(self.cfg.free_bits).mean()
 
         if self.cfg.aux_target:
             actor_aux = tensordict["actor_aux"]

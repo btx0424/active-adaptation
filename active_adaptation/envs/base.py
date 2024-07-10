@@ -114,6 +114,7 @@ class Env(EnvBase):
         self._step_callbacks = []
         self.command_manager: mdp.Command = hydra.utils.instantiate(self.cfg.command, env=self)
         self.action_manager: mdp.ActionManager = hydra.utils.instantiate(self.cfg.action, env=self)
+        self._reset_callbacks.append(self.action_manager.reset)
         
         self.action_spec = CompositeSpec(
             {
