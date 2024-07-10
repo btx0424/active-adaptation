@@ -119,7 +119,8 @@ class PPOROAPolicy(TensorDictModuleBase):
 
         self.entropy_coef = self.cfg.entropy_coef
         self.clip_param = self.cfg.clip_param
-        self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
+        self.critic_loss_fn = nn.MSELoss(reduction="none")
+        # self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(0.99, 0.95)
 
@@ -157,11 +158,12 @@ class PPOROAPolicy(TensorDictModuleBase):
             ).to(self.device)
 
         def make_actor(context_key: str) -> ProbabilisticActor:
-            actor_module = nn.Sequential(make_mlp([512, 256, 256]), Actor(self.action_dim, self.cfg.actor_predict_std))
+            _actor = Actor(self.action_dim, self.cfg.actor_predict_std)
             actor = ProbabilisticActor(
                 module=TensorDictSequential(
-                    CatTensors([OBS_KEY, context_key], "actor_feature", del_keys=False),
-                    TensorDictModule(actor_module, ["actor_feature"], ["loc", "scale"])
+                    CatTensors([OBS_KEY, context_key], "actor_input", del_keys=False),
+                    TensorDictModule(make_mlp([256, 256, 256]), ["actor_input"], ["actor_feature"]),
+                    TensorDictModule(_actor, ["actor_feature"], ["loc", "scale"])
                 ),
                 in_keys=["loc", "scale"],
                 out_keys=[ACTION_KEY],
@@ -195,23 +197,18 @@ class PPOROAPolicy(TensorDictModuleBase):
                 nn.init.orthogonal_(module.weight, 0.01)
                 nn.init.constant_(module.bias, 0.)
 
-        checkpoint_path = parse_path(self.cfg.checkpoint_path)
-        if checkpoint_path is not None:
-            state_dict = torch.load(checkpoint_path)
-            self.load_state_dict(state_dict, strict=True)
-        elif self.cfg.orthogonal_init:
-            self.encoder_priv.apply(init_)
-            self.actor_expert.apply(init_)
-            self.critic.apply(init_)
-            self.adapt_module.apply(init_)
-
         self.opt = torch.optim.Adam([
             {"params": self.encoder_priv.parameters()},
             {"params": self.actor_expert.parameters()},
             {"params": self.critic.parameters()},
         ], lr=self.cfg.lr)
-
         self.opt_adapt = torch.optim.Adam(self.adapt_module.parameters(), lr=self.cfg.lr)
+
+        if self.cfg.orthogonal_init:
+            self.encoder_priv.apply(init_)
+            self.actor_expert.apply(init_)
+            self.critic.apply(init_)
+            self.adapt_module.apply(init_)
 
         # self.mode = "expert"
         self.lmbda = 0. # regularization
@@ -256,8 +253,8 @@ class PPOROAPolicy(TensorDictModuleBase):
 
     def train_op(self, tensordict: TensorDict):
         infos = {}
-        infos.update(self.train_expert(tensordict.to_tensordict()))
-        infos.update(self.train_adaptation(tensordict.to_tensordict()))            
+        infos.update(self.train_expert(tensordict.copy()))
+        infos.update(self.train_adaptation(tensordict.copy()))      
         self.num_frames += tensordict.numel()
         self.num_updates += 1
         infos["lambda"] = self.lmbda
@@ -270,6 +267,7 @@ class PPOROAPolicy(TensorDictModuleBase):
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches)
             for minibatch in batch:
+                minibatch["adv"] = normalize(minibatch["adv"], subtract_mean=True)
                 infos.append(self._update_policy(minibatch))
         hard_copy_(self.actor_expert, self.actor_adapt)
 
@@ -313,7 +311,6 @@ class PPOROAPolicy(TensorDictModuleBase):
         if update_value_norm:
             self.value_norm.update(ret)
         ret = self.value_norm.normalize(ret)
-        adv = normalize(adv, subtract_mean=True)
 
         tensordict.set(adv_key, adv)
         tensordict.set(ret_key, ret)
