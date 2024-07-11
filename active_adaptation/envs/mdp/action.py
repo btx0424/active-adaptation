@@ -8,6 +8,7 @@ class ActionManager:
 
     def __init__(self, env):
         self.env = env
+        self.asset: Articulation = self.env.scene["robot"]
     
     def reset(self, env_ids: torch.Tensor):
         pass
@@ -34,7 +35,6 @@ class JointPosition(ActionManager):
         self.action_scaling = action_scaling
         self.max_delay = max_delay
 
-        self.asset: Articulation = self.env.scene["robot"]
         self.joint_ids = self.asset.find_joints(joint_names)[0]
         self.action_dim = len(self.joint_ids)
         
@@ -64,3 +64,46 @@ class JointPosition(ActionManager):
             pos_target.clamp_(-torch.pi, torch.pi)
             self.asset.set_joint_position_target(pos_target)
         self.asset.write_data_to_sim()
+
+
+class HumanoidWithArm(ActionManager):
+
+    def __init__(
+        self, 
+        env, 
+        joint_names: str=".*", 
+        action_scaling: float=0.5
+    ):
+        super().__init__(env)
+        self.action_scaling = action_scaling
+        self.joint_ids = self.asset.find_joints(joint_names)[0]
+        self.action_dim = len(self.joint_ids) + 6
+
+        self.default_joint_pos = self.asset.data.default_joint_pos.clone()
+
+        with torch.device(self.device):
+            self.command_arm_linvel = torch.zeros(self.num_envs, 2, 3)
+            self.action_buf = torch.zeros(self.num_envs, len(self.joint_ids), 4)
+            self.applied_action = torch.zeros(self.num_envs, len(self.joint_ids))
+    
+    def __call__(self, tensordict: TensorDictBase, substep: int):
+        if substep == 0:
+            action_joint, action_arm_cmd = tensordict["action"].split([len(self.joint_ids), 6], dim=-1)
+            action_arm_cmd = clamp_norm(action_arm_cmd.reshape(self.num_envs, 2, 3), 3.0)
+            self.command_arm_linvel[:] = action_arm_cmd
+
+            action_joint = action_joint.clamp(-10, 10)
+            self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
+            self.action_buf[:, :, 0] = action_joint
+            self.applied_action.lerp_(action_joint, 0.8)
+            
+            pos_target = self.default_joint_pos.clone()
+            pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
+            pos_target.clamp_(-torch.pi, torch.pi)
+            self.asset.set_joint_position_target(pos_target)
+        self.asset.write_data_to_sim()
+
+
+def clamp_norm(x: torch.Tensor, max_norm: float):
+    norm = x.norm(dim=-1, keepdim=True)
+    return x * (max_norm / norm.clamp(min=1e-6)).clamp(max=1.0)

@@ -190,7 +190,7 @@ class linvel_rational(Reward):
                 (self.asset.data.body_lin_vel_w[:, self.body_ids] * self.body_masses).mean(1)
             )
         linvel_error = (
-            (linvel[:, :self.dim] - self.env.command_manager._command_linvel[:, :self.dim])
+            (linvel[:, :self.dim] - self.env.command_manager.command_linvel[:, :self.dim])
             .square()
             .sum(-1, True)
         )
@@ -235,7 +235,7 @@ class linvel_exp(Reward):
         
     def compute(self) -> torch.Tensor:
         linvel_error = (
-            (self.linvel[:, :self.dim] - self.env.command_manager._command_linvel[:, :self.dim])
+            (self.linvel[:, :self.dim] - self.env.command_manager.command_linvel[:, :self.dim])
             .square()
             .sum(-1, True)
         )
@@ -278,9 +278,9 @@ class linvel_projection(Reward):
         self.linvel[:] = quat_rotate_inverse(quat, linvel_w)
     
     def compute(self) -> torch.Tensor:
-        command_linvel_b = self.env.command_manager._command_linvel[:, :self.dim]
+        command_linvel_b = self.env.command_manager.command_linvel[:, :self.dim]
         projection = (self.linvel[:, :self.dim] * command_linvel_b).sum(dim=-1, keepdim=True)
-        reward = projection.clamp_max(self.env.command_manager._command_speed)
+        reward = projection.clamp_max(self.env.command_manager.command_speed)
         return reward.reshape(self.num_envs, 1)
 
 
@@ -290,7 +290,7 @@ class linvel_yaw_exp(Reward):
         self.asset: Articulation = self.env.scene["robot"]
     
     def compute(self) -> torch.Tensor:
-        command_linvel_b = self.env.command_manager._command_linvel[:, :2]
+        command_linvel_b = self.env.command_manager.command_linvel[:, :2]
         linvel_yaw_b = quat_rotate_inverse(
             yaw_quat(self.asset.data.root_quat_w),
             self.asset.data.root_lin_vel_w
@@ -360,7 +360,7 @@ class linvel_and_height(Reward):
         command = self.env.command_manager.command
         linvel = self.asset.data.root_lin_vel_b
         linvel_error = (
-            (linvel - self.env.command_manager._command_linvel)
+            (linvel - self.env.command_manager.command_linvel)
             .square()
             .sum(-1, True)
         )

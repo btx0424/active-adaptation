@@ -90,3 +90,30 @@ class Humanoid(LocomotionEnv):
             return self.asset.data.projected_gravity_b[:, 2].square().unsqueeze(1)
     
 
+    class arm_velocity_exp(mdp.Reward):
+
+        def __init__(self, env, arm_names: str, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+            self.asset: Articulation = self.env.scene["robot"]
+            self.arm_ids = self.asset.find_bodies(arm_names)[0]
+
+            self.action_manager: mdp.action.HumanoidWithArm = self.env.action_manager
+            if not isinstance(self.action_manager, mdp.action.HumanoidWithArm):
+                raise ValueError("`HumanoidWithArm` action manager required")
+            
+        def compute(self) -> torch.Tensor:
+            root_quat = self.asset.data.root_quat_w
+            arm_linvel_w = self.asset.data.body_lin_vel_w[:, self.arm_ids]
+            arm_linvel_b = quat_rotate_inverse(root_quat.unsqueeze(1), arm_linvel_w)
+            error = (arm_linvel_b - self.action_manager.command_arm_linvel).square().sum(dim=-1)
+            r = torch.exp(- error / 0.25 ).mean(1, True)
+            return r
+
+        def debug_draw(self):
+            arm_pos_w = self.asset.data.body_pos_w[:, self.arm_ids]
+            command_arm_linvel = quat_rotate(self.asset.data.root_quat_w.unsqueeze(1), self.action_manager.command_arm_linvel)
+            self.env.debug_draw.vector(
+                arm_pos_w.reshape(-1, 3),
+                command_arm_linvel.reshape(-1, 3),
+                color=(0.5, 0.6, 0.5, 1),
+            )

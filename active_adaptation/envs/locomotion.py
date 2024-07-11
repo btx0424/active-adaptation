@@ -47,13 +47,7 @@ class LocomotionEnv(Env):
         self.last_action: torch.Tensor = self.action_manager.applied_action
 
     def _reset_idx(self, env_ids: torch.Tensor):
-        init_root_state = self.init_root_state[env_ids]
-        if self.scene.terrain.cfg.terrain_type == "plane":
-            origins = self.scene.env_origins[env_ids]
-        else:
-            origins = self.scene.env_origins[torch.randint(0, self.scene.num_envs, (len(env_ids),), device=self.device)]
-        init_root_state[:, :3] += origins
-        init_root_state[:, 3:7] = sample_quat(len(env_ids), device=self.device)
+        init_root_state = self.command_manager.sample_init(env_ids)
         
         self.robot.write_root_state_to_sim(
             init_root_state, 
@@ -87,9 +81,7 @@ class LocomotionEnv(Env):
     
     @mdp.observation_func
     def applied_action(self):
-        if not hasattr(self, "last_action"):
-            return torch.zeros(self.num_envs, self.action_dim, device=self.device)
-        return self.last_action
+        return self.action_manager.applied_action
     
     # @mdp.reward_func
     # def heading(self):

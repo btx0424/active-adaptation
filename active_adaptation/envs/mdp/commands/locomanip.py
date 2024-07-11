@@ -28,8 +28,8 @@ class CommandEEPose(Command):
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 2 + 1 + 3 + 3)
             self.target_yaw = torch.zeros(self.num_envs)
-            self._command_linvel = torch.zeros(self.num_envs, 3)
-            self._command_speed = torch.zeros(self.num_envs, 1)
+            self.command_linvel = torch.zeros(self.num_envs, 3)
+            self.command_speed = torch.zeros(self.num_envs, 1)
             self.command_angvel = torch.zeros(self.num_envs)
 
             self.command_ee_pos_b = torch.zeros(self.num_envs, 3)

@@ -149,26 +149,32 @@ class Env(EnvBase):
         # self.sim.physics_sim_view.flush()
         
         reward_spec = CompositeSpec({
-            "reward": UnboundedContinuousTensorSpec(1),
             "stats": {
-                "return": UnboundedContinuousTensorSpec(1),
                 "episode_len": UnboundedContinuousTensorSpec(1),
                 "success": UnboundedContinuousTensorSpec(1),
                 "reward_clip_ratio": UnboundedContinuousTensorSpec(1),
             }
         })
-        enabled_rewards = 0
-        for key, params in self.cfg.reward.items():
-            reward = REW_FUNCS[key](self, **params)
-            if reward.enabled:
-                enabled_rewards += 1
-            self.reward_funcs[key] = reward
-            self._update_callbacks.append(reward.update)
-            self._reset_callbacks.append(reward.reset)
-            self._debug_draw_callbacks.append(reward.debug_draw)
-            self._step_callbacks.append(reward.step)
-            reward_spec["stats", key] = UnboundedContinuousTensorSpec(1, device=self.device)
-        self._reward_buf = torch.zeros(self.num_envs, enabled_rewards, device=self.device)
+
+        # parse rewards
+        self.reward_groups = OrderedDict()
+        for group_name, func_specs in self.cfg.reward.items():
+            print(f"Reward group: {group_name}")
+            funcs = OrderedDict()
+            for key, params in func_specs.items():
+                reward: mdp.Reward = REW_FUNCS[key](self, **params)
+                funcs[key] = reward
+                reward_spec["stats", group_name, key] = UnboundedContinuousTensorSpec(1, device=self.device)
+                self._update_callbacks.append(reward.update)
+                self._reset_callbacks.append(reward.reset)
+                self._debug_draw_callbacks.append(reward.debug_draw)
+                self._step_callbacks.append(reward.step)
+                print(f"\t{key}: \t{reward.weight:.2f}, \t{reward.enabled}")
+            self.reward_groups[group_name] = RewardGroup(self, group_name, funcs)
+            reward_spec["stats", group_name, "return"] = UnboundedContinuousTensorSpec(1, device=self.device)
+
+        reward_spec["reward"] = UnboundedContinuousTensorSpec(len(self.reward_groups), device=self.device)
+
         self.reward_spec = reward_spec.expand(self.num_envs).to(self.device)
         self.stats = self.reward_spec["stats"].zero()
 
@@ -224,7 +230,6 @@ class Env(EnvBase):
             env_mask = torch.ones(self.num_envs, dtype=bool, device=self.device)
         env_ids = env_mask.nonzero().squeeze(-1)
         self._reset_idx(env_ids)
-        self._reward_buf[env_ids] = 0.
         for callback in self._reset_callbacks:
             callback(env_ids)
         # self.sim._physics_sim_view.flush()
@@ -263,20 +268,19 @@ class Env(EnvBase):
     
     def _compute_reward(self) -> TensorDictBase:
         rewards = []
-        for key, reward_func in self.reward_funcs.items():
-            reward = reward_func()
-            self.stats[key].add_(reward)
-            if reward_func.enabled:
-                rewards.append(reward)
-        self._reward_buf[:] = torch.cat(rewards, 1)
-        reward = self._reward_buf.sum(1, True)
-        neg_rewar = reward < 0.
-        reward = reward.clamp(min=0.)
-        self.stats["return"].add_(reward)
+        for group, reward_group in self.reward_groups.items():
+            reward = reward_group.compute()
+            rewards.append(reward)
+            self.stats[group, "return"].add_(reward)
+        rewards = torch.cat(rewards, 1)
+        
+        neg_rewar = (rewards < 0.).sum(1, True)
+        rewards = rewards.clamp(min=0.)
+
         self.stats["reward_clip_ratio"].add_(neg_rewar.float())
         self.stats["episode_len"][:] = self.episode_length_buf.unsqueeze(1)
         self.stats["success"][:] = (self.episode_length_buf >= self.max_episode_length * 0.9).unsqueeze(1).float()
-        return {"reward": reward, "stats": self.stats.clone()}
+        return {"reward": rewards, "stats": self.stats.clone()}
     
     def _compute_termination(self) -> TensorDictBase:
         flags = torch.cat([func() for func in self.termination_funcs.values()], dim=-1)
@@ -360,4 +364,23 @@ def generate_mask(size: int, split: torch.Tensor, device: str):
     masks = masks.scatter(-1, torch.randint(len(split), (*size, 1), device=device), 1)
     masks = torch.repeat_interleave(masks, repeats, -1)
     return masks
+
+
+class RewardGroup:
+    def __init__(self, env: Env, name: str, funcs: OrderedDict[str, mdp.Reward]):
+        self.env = env
+        self.name = name
+        self.funcs = funcs
+        self.enabled_rewards = sum([func.enabled for func in funcs.values()])
+        self.rew_buf = torch.zeros(env.num_envs, self.enabled_rewards, device=env.device)
+    
+    def compute(self) -> torch.Tensor:
+        rewards = []
+        for key, func in self.funcs.items():
+            reward = func()
+            self.env.stats[self.name, key].add_(reward)
+            if func.enabled:
+                rewards.append(reward)
+        self.rew_buf[:] = torch.cat(rewards, 1)
+        return self.rew_buf.sum(1, True)
 

@@ -56,14 +56,14 @@ class feet_swing(Reward):
     def compute(self) -> torch.Tensor:
         feet_linvel = self.feet_vel_buf.mean(-1)
         swing_vel = torch.zeros_like(feet_linvel)
-        swing_vel[:] = self.command_manager._command_linvel.unsqueeze(1)
+        swing_vel[:] = self.command_manager.command_linvel.unsqueeze(1)
         phase_sin = self.phase.sin()
         swing_vel[:, 0] *= (phase_sin > +0.15).float().unsqueeze(1)
         swing_vel[:, 1] *= (phase_sin < -0.15).float().unsqueeze(1)
         swing_vel = quat_rotate(yaw_quat(self.asset.data.root_quat_w).unsqueeze(1), swing_vel)
         # reward = torch.exp(- 2 * (feet_linvel - swing_vel).abs().sum(-1)).sum(1, True)
 
-        max_speed = self.command_manager._command_speed.unsqueeze(1).clamp_max(0.6)
+        max_speed = self.command_manager.command_speed.unsqueeze(1).clamp_max(0.6)
         reward = dot(normalize(swing_vel), feet_linvel).clamp_max(max_speed)
         reward = torch.where(reward>0, reward.sqrt(), reward).sum(1, True)
         return reward.reshape(self.num_envs, 1) * (~self.command_manager.is_standing_env)
@@ -72,7 +72,7 @@ class feet_swing(Reward):
         feet_pos = self.asset.data.body_pos_w[:, self.feet_id]
         feet_linvel = self.feet_vel_buf.mean(-1)
         swing_vel = torch.zeros_like(feet_pos)
-        swing_vel[:] = self.command_manager._command_linvel.unsqueeze(1)
+        swing_vel[:] = self.command_manager.command_linvel.unsqueeze(1)
         swing_vel[:, 0] *= (self.phase.sin() > +0.15).float().unsqueeze(1)
         swing_vel[:, 1] *= (self.phase.sin() < -0.15).float().unsqueeze(1)
         swing_vel = quat_rotate(yaw_quat(self.asset.data.root_quat_w).unsqueeze(1), swing_vel)
@@ -218,14 +218,14 @@ class arm_swing(Reward):
         arm_linvel = self.arm_vel_buf.mean(-1)
         phase_sin = self.phase.sin()
         swing_vel = torch.zeros_like(arm_linvel)
-        swing_vel[:] = self.command_manager._command_linvel.unsqueeze(1)
+        swing_vel[:] = self.command_manager.command_linvel.unsqueeze(1)
         phase_sin = self.phase.sin()
         swing_vel[:, 0] *= (phase_sin < +0.15).float().unsqueeze(1)
         swing_vel[:, 1] *= (phase_sin > -0.15).float().unsqueeze(1)
         swing_vel = quat_rotate(yaw_quat(self.asset.data.root_quat_w).unsqueeze(1), swing_vel)
         
         reward = (normalize(swing_vel) * arm_linvel).sum(-1)
-        reward = reward.clamp(max=self.command_manager._command_speed).sum(1, True)
+        reward = reward.clamp(max=self.command_manager.command_speed).sum(1, True)
         # reward = torch.where(reward>0, reward.log1p().clamp(max=1.0), reward).sum(1, True)
         return reward.reshape(self.num_envs, 1) * (~self.command_manager.is_standing_env)
 

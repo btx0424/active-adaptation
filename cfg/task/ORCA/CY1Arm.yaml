@@ -1,15 +1,16 @@
 # @package task
 
-name: OrcaFlat
+name: OrcaArm
 task: Humanoid
 
 defaults:
   # see https://hydra.cc/docs/advanced/overriding_packages/
   - /task/Velocity@_here_
+  - override action: null
   - _self_
 
 robot: cy1
-terrain: easy
+terrain: plane
 payload: false
 
 command:
@@ -20,6 +21,10 @@ command:
   yaw_stiffness_range: [0.5, 0.7]
   use_stiffness_ratio: 1.0
   stand_prob: 0.05
+
+action:
+  _target_: active_adaptation.envs.mdp.action.HumanoidWithArm
+  action_scaling: 0.5
 
 observation:
   policy:
@@ -49,6 +54,8 @@ observation:
     root_linvel_b:    {yaw_only: true}
     root_angvel_b:    {yaw_only: true}
     rewards:          {}
+  arm_velocity_:
+    body_vel:         {body_names: .*arm_link5}
 
 reward:
   loco:
@@ -75,6 +82,8 @@ reward:
     joint_pos_default:  {weight: 0.1, enabled: true}
     joint_vel_l2:       {weight: 0.002, enabled: true, joint_names: .*arm_joint.*}
     feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}
+  arm:
+    arm_velocity_exp:   {weight: 1.2, enabled: true, arm_names: .*arm_link5}
 
 randomization:
   push:     {body_names: ["base_link", "waist_yaw_link"], force_range: [0.0, 0.1]}
@@ -98,6 +107,5 @@ randomization:
 termination:
   crash: 
     body_names_expr: ["base_link", "[l,r]arm_link4"]
-    z_thres: -0.6
-  # feet_too_close: {feet_names: ".*leg_link6", thres: 0.11}
+    z_thres: -0.3
   cum_error: {thres: 0.9}

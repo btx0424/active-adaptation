@@ -219,7 +219,7 @@ class PPGPolicy(TensorDictModuleBase):
                 ]
             else:
                 modules = [
-                    TensorDictModule(make_mlp([256]), [OBS_KEY], ["_feature"])
+                    TensorDictModule(make_mlp([256]), [OBS_PRIV_KEY], ["_feature"])
                 ]
             return modules
         

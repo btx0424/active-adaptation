@@ -37,3 +37,4 @@ from .ppo_him import PPOHIMPolicy
 from .ppo_priv import PPOPrivPolicy
 from .ppo_low import LowPolicy
 from .ppo_swap import PPOPolicy as PPOSwap
+from .ppo_cmd import PPOPolicy as PPOCmd
