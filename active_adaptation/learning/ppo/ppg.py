@@ -50,9 +50,9 @@ class PPGConfig:
     free_bits: float = 0.
     rep_loss: float = 0.05
 
-    num_minibatches: int = 8
+    num_minibatches: int = 16
     lr: float = 5e-4
-    clip_param: float = 0.1
+    clip_param: float = 0.2
     phase: str = "train"
 
 cs = ConfigStore.instance()
@@ -518,7 +518,7 @@ class PPGPolicy(TensorDictModuleBase):
         b_returns = tensordict["ret_priv"]
         values = self.critic_priv(tensordict)["value_priv"]
         value_loss = self.critic_loss_fn(b_returns, values) * (~tensordict["is_init"])
-        losses["critic/value_loss"] = value_loss.mean()
+        losses["critic/value_loss_priv"] = value_loss.mean()
 
         context_dist_priv = D.Normal(tensordict["context_priv_loc"], tensordict["context_priv_scale"])
         context_dist_pred = D.Normal(tensordict["context_adapt_loc"], tensordict["context_adapt_scale"])

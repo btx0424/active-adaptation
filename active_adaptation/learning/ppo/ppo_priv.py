@@ -44,7 +44,7 @@ class PPGConfig:
 
     num_minibatches: int = 8
     lr: float = 5e-4
-    clip_param: float = 0.1
+    clip_param: float = 0.2
     phase: str = "train"
 
 cs = ConfigStore.instance()

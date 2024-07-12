@@ -3,5 +3,5 @@
 _target_: active_adaptation.envs.mdp.action.JointPosition
 joint_names: .*
 action_scaling: 0.5
-max_delay: 4
+max_delay: 2
 alpha: 0.8

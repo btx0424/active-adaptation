@@ -125,3 +125,15 @@ class Humanoid(LocomotionEnv):
                 command_arm_linvel.reshape(-1, 3),
                 color=(0.5, 0.6, 0.5, 1),
             )
+    
+    class command_arm_linvel(mdp.Observation):
+        def __init__(self, env):
+            super().__init__(env)
+            self.asset: Articulation = self.env.scene["robot"]
+            self.action_manager: mdp.action.HumanoidWithArm = self.env.action_manager
+            if not isinstance(self.action_manager, mdp.action.HumanoidWithArm):
+                raise ValueError("`HumanoidWithArm` action manager required")
+
+        def compute(self) -> torch.Tensor:
+            return self.action_manager.command_arm_linvel.reshape(self.num_envs, -1)
+

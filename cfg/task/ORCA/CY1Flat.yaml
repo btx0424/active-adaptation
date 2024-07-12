@@ -20,7 +20,7 @@ command:
   yaw_stiffness_range: [0.5, 0.7]
   use_stiffness_ratio: 1.0
   stand_prob: 0.05
-
+  
 observation:
   policy:
     command:
@@ -29,7 +29,7 @@ observation:
     projected_gravity_b: {noise_std: 0.01}
     joint_pos: {noise_std: 0.05}
     joint_vel: {noise_std: 0.2}
-    prev_actions:   {steps: 2}
+    prev_actions:   {steps: 3}
     phase: {cycle_range: [1.0, 1.2]}
   priv:
     applied_action:   {}
@@ -65,7 +65,8 @@ reward:
     # stand: 0.5
     root_orientation:   {weight: 0.5, enabled: true}
     survival:           {weight: 1.0, enabled: true}
-    action_rate_l2:     {weight: 0.01, enabled: true}
+    action_rate_l2:     {weight: 0.02, enabled: true}
+    action_rate2_l2:    {weight: 0.01, enabled: true}
     feet_air_time:      {weight: 1.0, enabled: true, body_names: .*leg_link6, thres: 0.4}
     feet_slip:          {weight: 0.5, enabled: true, body_names: .*leg_link6}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*leg_link6}

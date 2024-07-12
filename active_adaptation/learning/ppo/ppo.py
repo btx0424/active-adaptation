@@ -222,7 +222,7 @@ class PPOPolicy(TensorDictModuleBase):
         ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
-        policy_loss = - torch.mean(torch.min(surr1, surr2))
+        policy_loss = - torch.mean(torch.min(surr1, surr2) * (~tensordict["is_init"]))
         entropy_loss = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
