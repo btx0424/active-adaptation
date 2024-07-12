@@ -179,7 +179,7 @@ def evaluate(
     
     info = {}
     compute_std_for = ["return", "survival"]
-    for k, v in sorted(trajs["next", "stats"].items(True, True)):
+    for k, v in trajs["next", "stats"].items(True, True):
         v = take_first_episode(v)
         info["eval/stats." + k] = torch.mean(v.float()).item()
         if k in compute_std_for:

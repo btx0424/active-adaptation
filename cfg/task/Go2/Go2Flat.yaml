@@ -44,15 +44,14 @@ observation:
     # applied_torques: {actuator_name: base_legs}
   priv:
     # _mask_: true # randomly mask one of the items
-    # projected_gravity_b:
-    # joint_pos:
-    # joint_vel:
     applied_action:
-    root_linvel_b:
+    root_linvel_b:    {yaw_only: true}
+    root_angvel_b:
     feet_pos_b:
     # feet_vel_b:
     feet_height_map:  {feet_names: .*foot }
     applied_torques:  {actuator_name: base_legs}
+    joint_forces:     {}
     # motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     # body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
     # motor_failure:    {actuator_name: base_legs}
@@ -68,33 +67,31 @@ observation:
     rewards: {}
 
 reward:
-  linvel_exp:         {weight: 1.5, enabled: true, dim: 3}
-  # linvel_rational:    {weight: 0.5, enabled: true, dim: 3}
-  angvel_z_exp:       {weight: 0.75, enabled: true}
-  angvel_z_exp_shaped: {weight: 0.75, enabled: false}
-  linvel_projection:  {weight: 0.5, enabled: true}
-  linacc_z_l2:        {weight: 0.005, enabled: false}
-  angvel_xy_l2:       {weight: 0.02, enabled: true, clip_range: [-1., 0.]}
-  linvel_z_l2:        {weight: 2.0, enabled: true}
-  base_height_l1:     {weight: 0.5, enabled: true, target_height: 0.3}
-  energy_l1:          {weight: 0.0002, enabled: true}
-  joint_acc_l2:       {weight: 2.5e-7, enabled: true, clip_range: [-1., 0.]}
-  joint_torques_l2:   {weight: 2.0e-4, enabled: true, clip_range: [-1., 0.]}
-  quadruped_stand:    {weight: 0.5}
-  orientation:        {weight: 1.0, enabled: false}
-  survival:           {weight: 1.0, enabled: true}
-  action_rate_l2:     {weight: 0.01, enabled: true}
-  action_rate2_l2:    {weight: 0.005, enabled: true}
-  # impact_force_l2:    {weight: 1.0, enabled: false, body_names: .*_foot}
-  feet_air_time:      {weight: 0.4, enabled: true, body_names: .*_foot, thres: 0.4}
-  feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
-  feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
-  undesired_contact:  {body_names: [.*_calf, .*thigh], weight: 0.25, enabled: true}
-  step_up:            {weight: 2.0, enabled: true}
-  step_up_needed:     {weight: 1.0, enabled: false}
+  loco:
+    linvel_exp:         {weight: 1.5, enabled: true, dim: 3, yaw_only: true}
+    angvel_z_exp:       {weight: 0.75, enabled: true}
+    angvel_z_exp_shaped: {weight: 0.75, enabled: false}
+    linvel_projection:  {weight: 0.5, enabled: true, yaw_only: true}
+    linacc_z_l2:        {weight: 0.005, enabled: false}
+    angvel_xy_l2:       {weight: 0.02, enabled: true}
+    linvel_z_l2:        {weight: 2.0, enabled: true}
+    base_height_l1:     {weight: 0.5, enabled: true, target_height: 0.3}
+    energy_l1:          {weight: 0.0002, enabled: true}
+    joint_acc_l2:       {weight: 2.5e-7, enabled: true}
+    joint_torques_l2:   {weight: 2.0e-4, enabled: true}
+    quadruped_stand:    {weight: 0.5}
+    survival:           {weight: 1.0, enabled: true}
+    action_rate_l2:     {weight: 0.01, enabled: true}
+    action_rate2_l2:    {weight: 0.005, enabled: true}
+    feet_air_time:      {weight: 0.4, enabled: true, body_names: .*_foot, thres: 0.4}
+    feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
+    feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
+    undesired_contact:  {body_names: [.*_calf, .*thigh], weight: 0.25, enabled: true}
+    step_up:            {weight: 2.0, enabled: true}
+    step_up_needed:     {weight: 1.0, enabled: false}
 
 termination:
-  crash: {body_names_expr: [Head.*, "base"], t_thres: 1.0, z_thres: 0.}
+  crash: {body_names_expr: [Head.*, "base"], t_thres: 0.5, z_thres: 0.}
   # joint_acc_exceeds: {thres: 5000}
   cum_error: {thres: 0.9}
 
