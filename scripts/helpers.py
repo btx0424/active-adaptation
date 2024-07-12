@@ -46,7 +46,7 @@ class EpisodeStats:
         return len(self)
     
     def pop(self):
-        stats: TensorDictBase = torch.stack(self._stats).to_tensordict()
+        stats: TensorDictBase = torch.stack(self._stats)
         self._stats.clear()
         return stats
 

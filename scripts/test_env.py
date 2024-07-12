@@ -122,7 +122,7 @@ def main(cfg):
 
         if i % log_interval == 0 and len(episode_stats):
             for k, v in sorted(episode_stats.pop().items(True, True)):
-                key = "train/" + (".".join(k) if isinstance(k, tuple) else k)
+                key = "train/" + ("/".join(k) if isinstance(k, tuple) else k)
                 info[key] = torch.mean(v.float()).item()
         
         info.update(policy.train_op(data))

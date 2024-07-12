@@ -3,6 +3,8 @@ name: Track
 defaults:
   # see https://hydra.cc/docs/advanced/overriding_packages/
   - /base/sim_base@_here_
+  - action: JointPosition
+  - _self_
 
 num_envs: 4096
 max_episode_length: 1000
@@ -10,9 +12,3 @@ max_episode_length: 1000
 robot: a1
 terrain: plane
 
-action:
-  _target_: active_adaptation.envs.mdp.action.JointPosition
-  joint_names: .*
-  action_scaling: 0.5
-  max_delay: 4
-  alpha: 0.8

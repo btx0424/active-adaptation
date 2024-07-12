@@ -449,18 +449,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
     
     def train_op(self, tensordict: TensorDict):
         infos = {}
-        # match self.phase:
-        #     case "train":
-        #         infos.update(self.train_expert(tensordict.copy()))
-        #         infos.update(self.train_adaptation(tensordict.copy()))
-        #     case "adapt":
-        #         infos.update(self.train_adaptation(tensordict.copy()))
-        #         infos.update(self.train_target(tensordict.copy(), train_actor=False))
-        #     case "finetune":
-        #         infos.update(self.train_adaptation(tensordict.copy()))
-        #         infos.update(self.train_target(tensordict.copy(), train_actor=True))
-        #     case _:
-        #         raise NotImplementedError
         if self.phase == "train":
             infos.update(self.train_expert(tensordict.copy()))
             if self.cfg.train_adapt:
@@ -482,9 +470,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         infos = []
         
         with torch.no_grad():
-            with tensordict.view(-1) as _tensordict:
-                self.encoder_priv(_tensordict["next"])
-            
             self._compute_advantage(
                 tensordict, self._critic_obs, "value_obs", "adv_obs", "ret_obs", value_norm=self.value_norms["obs"])
             self._compute_advantage(
@@ -493,9 +478,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             value_obs = self.value_norms["obs"].denormalize(tensordict["value_obs"])
             value_priv = self.value_norms["priv"].denormalize(tensordict["value_priv"])
             value_gap = value_obs - value_priv
-            adv_gap = tensordict["adv_obs"] - tensordict["adv_priv"]
             tensordict["value_gap"] = value_gap
-            tensordict["adv_gap"] = adv_gap
         
         # save some memory?
         del tensordict["next"]
@@ -534,7 +517,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         hard_copy_(self._actor_expert, self._actor_adapt)
         
         infos["critic/value_gap"]   = tensordict["value_gap"].square().mean()
-        infos["critic/adv_gap"]     = tensordict["adv_gap"].square().mean()
         infos["critic/value_obs"]   = tensordict["value_obs"].mean()
         infos["critic/value_priv"]  = tensordict["value_priv"].mean()
 
@@ -623,8 +605,10 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             for minibatch in batch:
                 infos.append(self._update_adaptation(minibatch))
         
-        # hard_copy_(self.adapt_modules[self.cfg.adapt_module], self.adapt_module_ema)
-        soft_copy_(self.adapt_modules[self.cfg.adapt_module], self.adapt_module_ema, 0.05)
+        if self.phase == "finetune":
+            soft_copy_(self.adapt_modules[self.cfg.adapt_module], self.adapt_module_ema, 0.05)
+        else:
+            hard_copy_(self.adapt_modules[self.cfg.adapt_module], self.adapt_module_ema)
     
         infos = {f"adapt/{k}": v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         with torch.no_grad():
@@ -671,11 +655,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         # losses["adapt_module_a_loss"] = self._feature_mse(tensordict.copy(), self.adapt_module_a)
         losses["adapt_module_a_loss"] = self._nll(tensordict.copy(), self.adapt_module_a)
         # losses["adapt_module_a_loss"] = self._evi(tensordict.copy(), self.adapt_module_a)
-        if not self.cfg.ensemble:
-            losses["adapt_module_b_loss"] = (
-                self._action_kl(tensordict.copy(), self.adapt_module_b)
-                + self._feature_mse(tensordict.copy(), self.adapt_module_b)
-            )
         self.opt_adapt.zero_grad()
         sum(v for k, v in losses.items() if k.endswith("loss")).backward()
         for param_group in self.opt_adapt.param_groups:

@@ -1,0 +1,7 @@
+# @package task.action
+
+_target_: active_adaptation.envs.mdp.action.JointPosition
+joint_names: .*
+action_scaling: 0.5
+max_delay: 4
+alpha: 0.8

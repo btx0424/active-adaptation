@@ -120,6 +120,8 @@ class PPOPolicy(TensorDictModuleBase):
             return_log_prob=True,
             log_prob_key="log_prob_cmd"
         ).to(self.device)
+
+        self.output = CatTensors(["action_joint", "action_cmd"], ACTION_KEY, del_keys=False, sort=False)
         
         _critic = nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(2))
         self.critic = TensorDictSequential(
@@ -131,6 +133,7 @@ class PPOPolicy(TensorDictModuleBase):
         self.actor_joint(fake_input)
         self.actor_cmd(fake_input)
         self.critic(fake_input)
+        self.output(fake_input)
 
         self.opt = torch.optim.Adam(
             [
@@ -159,7 +162,8 @@ class PPOPolicy(TensorDictModuleBase):
             self.encoder,
             self.actor_joint,
             self.actor_cmd,
-            CatTensors(["action_joint", "action_cmd"], ACTION_KEY, del_keys=False),
+            # TensorDictModule(nn.Identity(), ["arm_velocity_"], ["action_cmd"]),
+            self.output,
         )
         return policy
 

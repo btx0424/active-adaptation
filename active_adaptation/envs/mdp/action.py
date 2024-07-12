@@ -86,11 +86,16 @@ class HumanoidWithArm(ActionManager):
             self.action_buf = torch.zeros(self.num_envs, len(self.joint_ids), 4)
             self.applied_action = torch.zeros(self.num_envs, len(self.joint_ids))
     
+    def reset(self, env_ids: torch.Tensor):
+        self.action_buf[env_ids] = 0
+        self.applied_action[env_ids] = 0
+        self.command_arm_linvel[env_ids] = 0
+
     def __call__(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
             action_joint, action_arm_cmd = tensordict["action"].split([len(self.joint_ids), 6], dim=-1)
-            action_arm_cmd = clamp_norm(action_arm_cmd.reshape(self.num_envs, 2, 3), 3.0)
-            self.command_arm_linvel[:] = action_arm_cmd
+            action_arm_cmd = action_arm_cmd.reshape(self.num_envs, 2, 3)
+            self.command_arm_linvel.lerp_(action_arm_cmd, 0.75)
 
             action_joint = action_joint.clamp(-10, 10)
             self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]

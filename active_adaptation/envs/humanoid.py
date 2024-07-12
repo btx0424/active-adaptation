@@ -101,12 +101,20 @@ class Humanoid(LocomotionEnv):
             if not isinstance(self.action_manager, mdp.action.HumanoidWithArm):
                 raise ValueError("`HumanoidWithArm` action manager required")
             
-        def compute(self) -> torch.Tensor:
-            root_quat = self.asset.data.root_quat_w
+            with torch.device(self.device):
+                self.arm_linvel_w = torch.zeros(self.num_envs, len(self.arm_ids), 3)
+                self.arm_linvel_b = torch.zeros(self.num_envs, len(self.arm_ids), 3)
+                self.error = torch.zeros(self.num_envs, len(self.arm_ids))
+
+        def update(self):
             arm_linvel_w = self.asset.data.body_lin_vel_w[:, self.arm_ids]
-            arm_linvel_b = quat_rotate_inverse(root_quat.unsqueeze(1), arm_linvel_w)
-            error = (arm_linvel_b - self.action_manager.command_arm_linvel).square().sum(dim=-1)
-            r = torch.exp(- error / 0.25 ).mean(1, True)
+            arm_linvel_b = quat_rotate_inverse(self.asset.data.root_quat_w.unsqueeze(1), arm_linvel_w)
+            self.error = (arm_linvel_b - self.action_manager.command_arm_linvel).square().sum(dim=-1)
+            self.arm_linvel_w[:] = arm_linvel_w
+            self.arm_linvel_b[:] = arm_linvel_b
+            
+        def compute(self) -> torch.Tensor:
+            r = torch.exp(- self.error / 0.25 ).mean(1, True)
             return r
 
         def debug_draw(self):

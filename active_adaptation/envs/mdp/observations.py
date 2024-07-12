@@ -778,22 +778,30 @@ class rewards(Observation):
         return _
 
 
-# class incoming_wrench(Observation):
-#     def __init__(self, env):
-#         super().__init__(env)
-#         self.asset: Articulation = self.env.scene["robot"]
-#         self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum().to(self.env.device) * 9.81
+class incoming_wrench(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.default_mass_total = (
+            self.asset.root_physx_view.get_masses()[0]
+            .sum().to(self.env.device) * 9.81
+        )
 
-#     def __call__(self) -> torch.Tensor:
-#         self.forces = self.asset.root_physx_view.get_link_incoming_joint_force()[:, :, :3]
-#         return self.forces / self.default_mass_total
+    def compute(self) -> torch.Tensor:
+        # measured_forces = self.asset.root_physx_view.get_dof_projected_joint_forces()
+        self.forces = self.asset.root_physx_view.get_link_incoming_joint_force()
+        return (self.forces / self.default_mass_total).reshape(self.num_envs, -1)
 
-#     def debug_draw(self):
-#         self.env.debug_draw.vector(
-#             self.asset.data.body_pos_w[:, [1, 2]],
-#             self.forces[:, [1, 2]],
-#             color=(1., 1., 0., 1.)
-#         )
+
+class joint_forces(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+
+    def compute(self) -> torch.Tensor:
+        measured_forces = self.asset.root_physx_view.get_dof_projected_joint_forces()
+        return measured_forces
+
 
 class cum_error(Observation):
     def __init__(self, env):
