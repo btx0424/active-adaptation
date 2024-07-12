@@ -181,9 +181,10 @@ def evaluate(
     compute_std_for = ["return", "survival"]
     for k, v in trajs["next", "stats"].items(True, True):
         v = take_first_episode(v)
-        info["eval/stats." + k] = torch.mean(v.float()).item()
+        key = "eval/" + ("/".join(k) if isinstance(k, tuple) else k)
+        info[key] = torch.mean(v.float()).item()
         if k in compute_std_for:
-            info["eval/stats." + k + "_std"] = torch.std(v.float()).item()
+            info[key + "_std"] = torch.std(v.float()).item()
 
     # log video
     if len(frames):
@@ -194,4 +195,4 @@ def evaluate(
         write_video(video_path, video_array, fps=1 / env.step_dt)
 
     info["episode_cnt"] = episode_cnt
-    return info, trajs
+    return dict(sorted(info.items())), trajs

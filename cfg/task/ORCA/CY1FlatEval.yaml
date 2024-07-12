@@ -1,6 +1,6 @@
 # @package task
 
-name: CY1FlatEval
+name: ORCAFlatEval
 task: Humanoid
 
 defaults:
@@ -13,13 +13,17 @@ terrain: easy
 command:
   _target_: active_adaptation.envs.mdp.Command2
   linvel_x_range: [0., 1.25]
-  linvel_y_range: [-0.0, 0.0]
-  angvel_range: [-1.0, 1.0]
+  linvel_y_range: [-0.1, 0.1]
+  angvel_range: [-1.5, 1.5]
   yaw_stiffness_range: [0.5, 0.7]
+  use_stiffness_ratio: 0.5
   stand_prob: 0.05
 
+action:
+  max_delay: 3
+
 randomization:
-  push:     {body_names: ["base_link", "waist_yaw_link"], force_range: [0.1, 0.3]}
+  push:     {body_names: ["base_link", "waist_yaw_link"], force_range: [0.0, 0.2]}
   perturb_body_mass:
     .*: [0.8, 1.2]
   perturb_body_materials:
@@ -38,6 +42,3 @@ randomization:
     rel: true
   # stumble:  {body_names: ".*leg_link6", stumble_height: 0.045, friction_range: [0.4, 1.8]}
 
-termination:
-  crash: 
-    body_names_expr: ["waist_yaw_link"]
