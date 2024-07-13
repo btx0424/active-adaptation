@@ -150,7 +150,7 @@ class Command2(Command):
         resample_interval: int = 300, 
         resample_prob: float = 0.75, 
         stand_prob=0.2,
-        target_yaw_range=(-torch.pi, torch.pi),
+        target_yaw_range=(0, torch.pi * 2),
     ):
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
