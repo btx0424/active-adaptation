@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import hydra
+import cv2
 
 from tensordict.tensordict import TensorDictBase, TensorDict
 from torchrl.envs import EnvBase
@@ -87,7 +88,7 @@ class Env(EnvBase):
                     "done": BinaryDiscreteTensorSpec(1, dtype=bool),
                     "terminated": BinaryDiscreteTensorSpec(1, dtype=bool),
                     "truncated": BinaryDiscreteTensorSpec(1, dtype=bool),
-                }, 
+                },
             )
             .expand(self.num_envs)
             .to(self.device)
@@ -210,6 +211,15 @@ class Env(EnvBase):
         
         self.time_stamp = 0
     
+        # Video recording variables
+        self.video_frames = []
+        self.complete_video_frames = None
+        self.record_now = False
+        self.render_decimation = 1
+        self.last_recording_it = 0
+
+        self.lookat_env_i = 0
+
     @property
     def action_dim(self) -> int:
         return self.action_manager.action_dim
@@ -240,6 +250,12 @@ class Env(EnvBase):
             self.num_envs,
             device=self.device
         )
+        if self.record_now and env_ids[self.lookat_env_i]:
+            if self.complete_video_frames is None:
+                self.complete_video_frames = []
+            else:
+                self.complete_video_frames.extend(self.video_frames)
+            self.video_frames = []
         return tensordict
 
     @abstractmethod
@@ -313,6 +329,9 @@ class Env(EnvBase):
         # print(end - start, self.cfg.decimation)
         self._update()
         
+        if self.time_stamp % self.render_decimation == 0:
+            self._render_headless()
+        
         tensordict = TensorDict({}, self.num_envs, device=self.device)
         tensordict.update(self._compute_observation())
         tensordict.update(self._compute_reward())
@@ -328,7 +347,36 @@ class Env(EnvBase):
         # rep.set_global_seed(seed)
         torch.manual_seed(seed)
 
+    def start_recording(self, render_decimation: int = 1):
+        if not self.record_now:
+            self.complete_video_frames = None
+            self.render_decimation = render_decimation
+            self.record_now = True
+
+    def pause_recording(self):
+        self.complete_video_frames = self.video_frames[:]
+        self.video_frames = []
+        self.record_now = False
+
+    def get_complete_frames(self):
+        if self.complete_video_frames is None:
+            return []
+        return self.complete_video_frames
+
+    def _render_headless(self):
+        if self.record_now and self.complete_video_frames is not None and len(self.complete_video_frames) == 0:
+            frame = self.render(mode="rgb_array")
+            # font = cv2.FONT_HERSHEY_SIMPLEX
+            # cv2.putText(frame, f'Timestamp: {self.time_stamp}', (10, 30), font, 1, (255, 255, 255), 2, cv2.LINE_AA)
+            self.video_frames.append(frame)
+
     def render(self, mode: str = "human"):
+        if mode == "rgb_array":
+            robot_pos = self.robot.data.root_pos_w[self.lookat_env_i].cpu()
+            eye = torch.tensor(self.cfg.viewer.eye) + robot_pos
+            lookat = torch.tensor(self.cfg.viewer.lookat) + robot_pos
+            self.sim.set_camera_view(eye, lookat)
+
         self.sim.render()
         if mode == "human":
             return None

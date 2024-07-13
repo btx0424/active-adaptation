@@ -6,8 +6,8 @@ import itertools
 from omegaconf import OmegaConf
 
 from omni.isaac.lab.app import AppLauncher
-from omni_drones.utils.wandb import init_wandb
-from omni_drones.utils.torchrl import SyncDataCollector
+# from omni_drones.utils.wandb import init_wandb
+# from omni_drones.utils.torchrl import SyncDataCollector
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from tensordict.nn import TensorDictSequential

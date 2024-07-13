@@ -1,5 +1,4 @@
-# @package task
-name: Go2M
+name: Go2M_cont
 task: QuadrupedManip
 
 defaults:
@@ -13,14 +12,20 @@ payload: false
 homogeneous: false
 
 command:
-  _target_: active_adaptation.envs.mdp.CommandEEPose_Loco
+  _target_: active_adaptation.envs.mdp.CommandEEPose_Cont
   ee_name: arm_link06
-  lin_vel_x_range: [-1.0, 1.4]
-  lin_vel_y_range: [-0.5, 0.5]
+  lin_vel_x_range: [-0.5, 0.7]
+  lin_vel_y_range: [-0.2, 0.2]
   ang_vel_range: [-1., 1.]
   yaw_range: [-2.5, 2.5]
   pitch_range: [-1.5, 0.5]
   radius_range: [0.4, 0.8]
+  update_interval: 10
+  resample_interval: 300
+  threshold: 0.5
+  tolerance: 0
+  future_targets: 2
+  imagined_root: true
 
 observation:
   policy:
@@ -53,40 +58,44 @@ reward:
   survival:           {weight: 1.0, enabled: true}
   # regularizations
   orientation:        {weight: 1.0, enabled: true}
-  quadruped_stand:    {weight: 0.5, enabled: true}
+  quadruped_stand:    {weight: 0.25, enabled: true}
   energy_l1:          {weight: 0.0002, enabled: true}
   action_rate_l2:     {weight: 0.01, enabled: true}
   action_rate2_l2:    {weight: 0.005, enabled: true}
 
   # locomotion
-  base_lin_vel_exp: {weight: 1.5, enabled: true}
+  base_lin_vel_exp: {weight: 1.5, enabled: true, l: 0.1}
   base_lin_vel_projection: {weight: 0.5, enabled: true}
-  base_ang_vel_exp: {weight: 0.5, enabled: true}
+  base_ang_vel_exp: {weight: 0.5, enabled: true, l: 0.1}
   # regularizations
   linvel_z_l2:        {weight: 2.0, enabled: true}
-  angvel_xy_l2:       {weight: 0.1, enabled: true, clip_range: [-1.0, 0.0]}
-  joint_acc_l2:       {weight: 2.5e-7, enabled: true, clip_range: [-1., 0.]}
-  feet_air_time:      {weight: 0.4, enabled: true, body_names: .*_foot, thres: 0.4}
+  angvel_xy_l2:       {weight: 0.25, enabled: true, clip_range: [-1.0, 0.0]}
+  # feet_air_time:      {weight: 0.4, enabled: true, body_names: .*_foot, thres: 0.1}
 
   # manipulation
-  ee_pos_tracking:    {weight: 4.0, enabled: true, ee_name: arm_link06}
-  ee_ori_tracking:    {weight: 1.0, enabled: true, ee_name: arm_link06, use_exp: false}
-  # ee_forward_tracking: {weight: 2.0, enabled: true, ee_name: arm_link06}
+  ee_pos_tracking_w:    {weight: 4.0, enabled: true, ee_name: arm_link06, l: 0.1}
+  ee_pos_error_w_l1:    {weight: 1.0, enabled: false, ee_name: arm_link06}
+  ee_failed_track_counts: {weight: 1.0, enabled: false}
 
-  ee_pos_error_l1:    {weight: 1.0, enabled: false, ee_name: arm_link06}
+  ee_ori_tracking:    {weight: 0.5, enabled: true, ee_name: arm_link06}
   ee_ori_forward_error_l2: {weight: 1.0, enabled: false, ee_name: arm_link06}
   ee_ori_upward_error_l2: {weight: 1.0, enabled: false, ee_name: arm_link06}
   # regularizations
-  ee_acc_penalty:     {weight: 0.05, enabled: true, ee_name: arm_link06}
-  ee_acc_l2:          {weight: 1.0, enabled: false, ee_name: arm_link06}
-  # base_joint_heading: {weight: 0.5, enabled: true, base_joint_name: joint1}
-  base_joint_ang_vel_pd_exp: {weight: 1.0, enabled: true, base_joint_name: joint1, kp: 1.0, kd: 0.2}
+  base_joint_heading: {weight: 0.5, enabled: true, base_joint_name: joint1}
+  joint_acc_penalty: {weight: 0.01, enabled: true, joint_name: joint1}
+  joint_acc_l2:     {weight: 1.0, enabled: false, joint_name: joint1}
 
+  ee_acc_penalty:     {weight: 0.01, enabled: true, ee_name: arm_link06}
+  ee_acc_l2:          {weight: 1.0, enabled: false, ee_name: arm_link06}
+
+  base_joint_ang_vel_pd_exp: {weight: 2.0, enabled: true, base_joint_name: joint1, kp: 1.0, kd: 0.2, l: 0.1}
+  arm_joint_acc_penalty: {weight: 0.02, enabled: true}
+  arm_joint_acc_l1: {weight: 1.0, enabled: false}
 
 termination:
   crash: {body_names_expr: [Head.*, "base", "arm_link.*"], t_thres: 0.4, z_thres: 0.}
   # joint_acc_exceeds: {thres: 5000}
-  # cum_error: {thres: 0.85}
+  # ee_cum_error: {thres: 1.5}
 
 randomization:
 #   random_scale: [1.0, 1.2]
@@ -100,19 +109,26 @@ randomization:
 #     dynamic_friction_range: [0.6, 2.0]
 #     restitution_range:      [0.0, 0.2]
 #     homogeneous: true # ${task.homogeneous}
-#   motor_params:
-#     actuator_name: base_legs
-#     stiffness_range:  [0.8, 1.2]
-#     damping_range:    [0.8, 1.2]
-#     homogeneous: ${task.homogeneous}
+  # motor_params:
+  #   actuator_name: arm
+  #   stiffness_range:  [0.8, 1.2]
+  #   damping_range:    [0.8, 1.2]
+  #   homogeneous: ${task.homogeneous}
 #   # random_motor_failure:
 #   #   actuator_name: base_legs
 #   #   joint_names: .*_calf_joint
 #   #   failure_prob: 0.0
-  drag: {body_names: arm_link06, drag_range: [0.01, 0.02]}
+  # drag: {body_names: arm_link06, drag_range: [0.001, 0.002]}
   reset_joint_states_uniform:
     pos_ranges:
-      joint.*: [0., 0.4]
+      joint1: [-2.5, 2.5]
+      joint2: [0.0, 1.0]
+      joint3: [-2.5, 0.0]
+      joint4: [-1.0, 1.0]
+      joint5: [-1.0, 1.0]
+      joint6: [-2.5, 2.5]
+      .*_joint: [-0.4, 0.4]
+      # joint.*: [-0.4, 0.4]
     rel: true
   # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
   # stumble: {body_names: .*_foot}

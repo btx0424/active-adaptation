@@ -50,8 +50,8 @@ class PPOConfig:
     _target_: str = "active_adaptation.learning.ppo.ppo_cmd.PPOPolicy"
     name: str = "ppo_cmd"
     train_every: int = 32
-    ppo_epochs: int = 5
-    num_minibatches: int = 8
+    ppo_epochs: int = 4
+    num_minibatches: int = 16
     lr: float = 5e-4
     clip_param: float = 0.2
     entropy_coef: float = 0.002

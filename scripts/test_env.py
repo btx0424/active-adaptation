@@ -1,4 +1,5 @@
 import torch
+import torchvision
 # import warp
 import hydra
 import numpy as np
@@ -26,6 +27,29 @@ torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
 
+
+def log_video(env, it, render_interval, render_decimation):
+    if it == 0 or it - env.last_recording_it >= render_interval:
+        env.start_recording(render_decimation)
+        env.last_recording_it = it
+
+    frames = env.get_complete_frames()
+    if len(frames) > 0:
+        env.pause_recording()
+        video_array = np.stack(frames, axis=0).transpose(0, 3, 1, 2)
+        video_tensor = torch.from_numpy(video_array)
+
+        run_dir = wandb.run.dir
+        video_path = os.path.join(run_dir, f"video_{it}.mp4")
+        torchvision.io.write_video(
+            video_path,
+            video_tensor.permute(0, 2, 3, 1),  # Change to (T, H, W, C) format
+            fps=1 / env.step_dt / env.render_decimation
+        )
+        
+        wandb.log({"video": wandb.Video(video_path)}, step=it)
+
+
 @hydra.main(config_path="../cfg", config_name="train")
 def main(cfg):
     OmegaConf.resolve(cfg)
@@ -34,8 +58,17 @@ def main(cfg):
     app_launcher = AppLauncher(OmegaConf.to_container(cfg.app))
     simulation_app = app_launcher.app
 
-    run = wandb.init(**cfg.wandb)
+    run = wandb.init(
+        job_type=cfg.wandb.job_type,
+        entity=cfg.wandb.entity,
+        project=cfg.wandb.project,
+        mode=cfg.wandb.mode,
+        tags=cfg.wandb.tags,
+    )
     run.config.update(OmegaConf.to_container(cfg))
+    default_run_name = f"{cfg.exp_name}-{datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}"
+    run_idx = run.name.split("-")[-1]
+    run.name = f"{run_idx}-{default_run_name}"
     setproctitle(run.name)
 
     env, policy, vecnorm = make_env_policy(cfg)
@@ -51,6 +84,8 @@ def main(cfg):
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
     total_iters = total_frames // frames_per_batch
     eval_interval = cfg.get("eval_interval", -1)
+    render_interval = cfg.get("render_interval", -1)
+    render_decimation = cfg.get("render_decimation", 1)
     save_interval = cfg.get("save_interval", -1)
 
     log_interval = (env.max_episode_length // cfg.algo.train_every) + 1
@@ -135,6 +170,9 @@ def main(cfg):
         
         if save_interval > 0  and i % save_interval == 0:
             save(policy, f"checkpoint_{i}")
+
+        if render_interval > 0:
+            log_video(env, i, render_interval, render_decimation)
 
         run.log(info)
 

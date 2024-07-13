@@ -190,7 +190,7 @@ class Command2(Command):
             self._cum_linvel_error = self._cum_error[:, 0].unsqueeze(1)
             self._cum_angvel_error = self._cum_error[:, 1].unsqueeze(1)
         
-    def reset(self, env_ids):
+    def reset(self, env_ids, reward_stats = None):
         self.command[env_ids] = 0.
         self.sample_vel_command(env_ids)
         self.sample_yaw_command(env_ids)

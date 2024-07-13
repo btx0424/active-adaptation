@@ -29,6 +29,7 @@ action:
 observation:
   policy:
     command:
+    command_arm_linvel:
     # root_quat_w:
     root_angvel_b:  {noise_std: 0.05}
     projected_gravity_b: {noise_std: 0.01}

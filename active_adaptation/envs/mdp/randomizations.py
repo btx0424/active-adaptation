@@ -319,6 +319,34 @@ class push(Randomization):
             color=(1., 0.8, .4, 1.)
         )
 
+class drag(Randomization):
+    def __init__(self, env, body_names, drag_range=(0.0, 0.1)):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_indices, self.body_names = self.asset.find_bodies(body_names)
+        self.num_bodies = len(self.body_indices)
+        self.drag_coeffs = sample_uniform((self.num_envs, self.num_bodies, 1), *drag_range, self.device).expand(self.num_envs, self.num_bodies, 3)
+        self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum() * 9.81
+
+        with torch.device(self.env.device):
+            self.forces = torch.zeros(self.env.num_envs, len(self.body_indices), 3)
+            self.torques = torch.zeros(self.env.num_envs, len(self.body_indices), 3)
+
+    def reset(self, env_ids: torch.Tensor):
+        self.forces[env_ids] = 0.
+
+    def step(self, substep):
+        lin_vel = self.asset.data.body_lin_vel_w[:, self.body_indices]
+        drag_forces = - lin_vel * self.drag_coeffs
+        self.forces = drag_forces * self.default_mass_total
+        self.asset.set_external_force_and_torque(self.forces, self.torques, body_ids=self.body_indices)
+
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.asset.data.body_pos_w[:, self.body_indices],
+            self.forces / self.default_mass_total * 100,
+            color=(0.6, 0.8, 0.6, 1.)
+        )
 
 class stumble(Randomization):
     def __init__(
