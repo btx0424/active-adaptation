@@ -803,6 +803,18 @@ class joint_forces(Observation):
         return measured_forces
 
 
+class jacobians(Observation):
+    def __init__(self, env, body_names: str=".*"):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_ids, self.body_names = self.asset.find_bodies(body_names)
+        self.body_ids = torch.tensor(self.body_ids, device=self.device)
+    
+    def compute(self) -> torch.Tensor:
+        jacobian = self.asset.root_physx_view.get_jacobians()[:, self.body_ids]
+        return jacobian.reshape(self.num_envs, -1)
+
+
 class cum_error(Observation):
     def __init__(self, env):
         super().__init__(env)

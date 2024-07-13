@@ -65,14 +65,17 @@ class cum_error(Termination):
         return (self.command_manager._cum_error > self.thres).any(-1, True)
 
 class ee_cum_error(Termination):
-    def __init__(self, env, thres: float = 1.0):
+    def __init__(self, env, thres: float = 1.0, min_steps: int = 50):
         super().__init__(env)
         from .commands import CommandEEPose_Cont
-        self.thres = thres
+        self.thres = torch.as_tensor(thres, device=self.env.device)
+        self.min_steps = min_steps
         self.command_manager: CommandEEPose_Cont = self.env.command_manager
     
     def __call__(self) -> torch.Tensor:
-        return (self.command_manager._cum_error > self.thres).any(-1, True)
+        a = (self.command_manager._cum_error > self.thres).any(-1)
+        b = self.env.episode_length_buf > self.min_steps
+        return (a & b).reshape(-1, 1)
 
 
 class joint_acc_exceeds(Termination):

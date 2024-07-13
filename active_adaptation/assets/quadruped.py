@@ -23,9 +23,18 @@ UNITREE_GO2M_CFG.actuators["arm"] = DCMotorCfg(
     effort_limit=200.,
     saturation_effort=200.,
     velocity_limit=5.0,
-    stiffness=30.0,
-    damping=1.0,
-    friction=0.0,
+    # stiffness=30.0,
+    # damping=1.0,
+    # friction=0.0,
+    stiffness={
+        "joint[1-3]": 20.0,
+        "joint[4-6]": 15.0,
+    },
+    damping={
+        "joint[1-3]": 1.0,
+        "joint[4-6]": 0.5,
+    },
+    friction=0.001,
 )
 
 CYBERDOG_CFG = copy.deepcopy(UNITREE_A1_CFG)

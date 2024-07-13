@@ -28,9 +28,26 @@ class QuadrupedManip(LocomotionEnv):
             super().__init__(env)
             self.asset: Articulation = self.env.scene["robot"]
         
-        def __call__(self) -> torch.Tensor:
+        def compute(self) -> torch.Tensor:
             return self.asset.data.ee_pos_b
 
+    class ee_ori(Observation):
+        def __init__(self, env, ee_name: str):
+            super().__init__(env)
+            self.asset: Articulation = self.env.scene["robot"]
+            self.body_id, self.body_names = self.asset.find_bodies(ee_name)
+            self.body_id = self.body_id[0]
+            self.fwd_vec = torch.tensor([1., 0., 0.], device=self.device).expand(self.num_envs, -1)
+            self.up_vec = torch.tensor([0., 0., 1.], device=self.device).expand(self.num_envs, -1)
+
+        def compute(self) -> torch.Tensor:
+            root_quat_yaw = yaw_quat(self.asset.data.root_quat_w)
+            ee_quat = self.asset.data.body_quat_w[:, self.body_id]
+            ee_fwd_w = quat_rotate(ee_quat, self.fwd_vec)
+            ee_up_w = quat_rotate(ee_quat, self.up_vec)
+            ee_fwd_b = quat_rotate_inverse(root_quat_yaw, ee_fwd_w)
+            ee_up_b = quat_rotate_inverse(root_quat_yaw, ee_up_w)
+            return torch.cat([ee_fwd_b, ee_up_b], dim=-1)
 
     class ee_vel(Observation):
         def __init__(self, env, ee_name: str):
@@ -39,7 +56,7 @@ class QuadrupedManip(LocomotionEnv):
             self.ee_id, self.ee_names = self.asset.find_bodies(ee_name)
             self.ee_id = self.ee_id[0]
         
-        def __call__(self) -> torch.Tensor:
+        def compute(self) -> torch.Tensor:
             quat_yaw = yaw_quat(self.asset.data.root_quat_w)
             ee_linvel = quat_rotate_inverse(
                 quat_yaw, 
@@ -59,7 +76,7 @@ class QuadrupedManip(LocomotionEnv):
         def reset(self, env_ids: torch.Tensor):
             self.hist[env_ids] = 0.
         
-        def __call__(self) -> torch.Tensor:
+        def compute(self) -> torch.Tensor:
             quat_yaw = yaw_quat(self.asset.data.root_quat_w)
             ee_linvel = quat_rotate_inverse(
                 quat_yaw, 
@@ -164,7 +181,7 @@ class QuadrupedManip(LocomotionEnv):
 
             r1 = (self.ee_forward_w * self.env.command_manager.command_ee_forward_w).sum(-1, True)
             r2 = (self.ee_up_w * self.env.command_manager.command_ee_upward_w).sum(-1, True)
-            r = r1.sign() * r1.square() + r2.sign() * r2.square()
+            r = 0.5 * (r1.sign() * r1.square() + r2.sign() * r2.square())
             return r
         
         def debug_draw(self):

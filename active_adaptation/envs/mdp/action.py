@@ -1,6 +1,8 @@
 import torch
+from typing import Dict
 from tensordict import TensorDictBase
 from omni.isaac.lab.assets import Articulation
+import omni.isaac.lab.utils.string as string_utils
 
 class ActionManager:
     
@@ -27,15 +29,21 @@ class JointPosition(ActionManager):
         self, 
         env, 
         joint_names: str, 
-        action_scaling: float = 0.5,
+        action_scaling: Dict[str, float] = 0.5,
         max_delay: int = 4,
         alpha: float = 0.8
     ):
         super().__init__(env)
-        self.action_scaling = action_scaling
+        self.joint_ids, self.joint_names = self.asset.find_joints(joint_names)
+        action_joint_ids, _, self.action_scaling = string_utils.resolve_matching_names_values(
+            dict(action_scaling), self.asset.joint_names)
+        
+        if not self.joint_ids == action_joint_ids:
+            raise ValueError("`action_scaling` must match `joint_names`")
+        
+        self.action_scaling = torch.tensor(self.action_scaling, device=self.device)
         self.max_delay = max_delay
 
-        self.joint_ids = self.asset.find_joints(joint_names)[0]
         self.action_dim = len(self.joint_ids)
         
         with torch.device(self.device):

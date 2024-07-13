@@ -1,9 +1,15 @@
 import torch
+import einops
+
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.utils.math import yaw_quat, wrap_to_pi, quat_from_euler_xyz, quat_mul, quat_inv, euler_xyz_from_quat, normalize
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
+from active_adaptation.utils.helpers import batchify
 from .locomotion import Command, sample_quat_yaw, sample_uniform, clamp_norm
 from tensordict import TensorDict
+
+quat_rotate = batchify(quat_rotate)
+quat_rotate_inverse = batchify(quat_rotate_inverse)
 
 def slerp_angle(angle1, angle2, t):
     """Spherical linear interpolation for angles."""
@@ -408,7 +414,8 @@ class CommandEEPose_Cont(Command):
             self.command_ee_quat_b = torch.zeros(self.num_envs, future_targets, 4)
             
             ## world frame targets for reward computation
-            self.command_ee_pos_w = torch.zeros(self.num_envs, 3)
+            self.command_ee_pos_w_ = torch.zeros(self.num_envs, future_targets, 3)
+            self.command_ee_pos_w = self.command_ee_pos_w_[:, 0]
 
             self.command_ee_quat_w = torch.zeros(self.num_envs, 4)
             self.fwd_vec = torch.tensor([1., 0., 0.]).expand(self.num_envs, -1)
@@ -478,14 +485,16 @@ class CommandEEPose_Cont(Command):
         # update cum error
         ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id]
         ee_pos_error = (ee_pos_w - self.command_ee_pos_w).norm(dim=-1)
+        # print(ee_pos_error)
         
         ee_quat_w = self.asset.data.body_quat_w[:, self.ee_id]
         ee_forward_w = quat_rotate(ee_quat_w, self.fwd_vec)
         ee_upward_w = quat_rotate(ee_quat_w, self.up_vec)
         ee_ori_error = 1 - (ee_forward_w * self.command_ee_forward_w).sum(dim=-1) / 2 - (ee_upward_w * self.command_ee_upward_w).sum(dim=-1) / 2
 
-        self._cum_ee_pos_error.mul_(0.98).add_(0.02 * ee_pos_error)
-        self._cum_ee_ori_error.mul_(0.98).add_(0.02 * ee_ori_error)
+        self._cum_ee_pos_error.add_(ee_pos_error).mul_(0.98)
+        self._cum_ee_ori_error.add_(ee_ori_error).mul_(0.98)
+        # print(self._cum_error)
             
         # update failed track counts, do not update if just resampled
         update_mask = torch.logical_and((self.steps_since_last_sample % self.update_interval) == 0, self.steps_since_last_sample != 0)
@@ -507,15 +516,15 @@ class CommandEEPose_Cont(Command):
             self.command_root_pos_w[resample_mask] = root_pos_w[resample_mask]
         
         # update command to be the linear interpolation between last and current target
-        command_alpha = (self.steps_since_last_sample.unsqueeze(-1) // self.update_interval + self.steps) / self.updates_per_resample
+        command_alpha = (self.steps_since_last_sample.unsqueeze(-1) // self.update_interval + self.steps * 4) / self.updates_per_resample
         command_alpha.clamp_(0., 1.)
         # TODO: at the end of this sample, maybe need to inform about the next sample target?
         # command_alpha: [num_envs, future_steps]
 
         ## interpolate target position
         current_r, current_pitch, current_yaw = interpolate_position(
-            self.last_target_pos_radius_pitch_yaw.unsqueeze(1).expand(-1, self.future_targets, -1),
-            self.next_target_pos_radius_pitch_yaw.unsqueeze(1).expand(-1, self.future_targets, -1),
+            einops.repeat(self.last_target_pos_radius_pitch_yaw, 'n d -> n t d', t=self.future_targets),
+            einops.repeat(self.next_target_pos_radius_pitch_yaw, 'n d -> n t d', t=self.future_targets),
             command_alpha,
             self.yaw_range
         )
@@ -561,10 +570,10 @@ class CommandEEPose_Cont(Command):
             root_pos_w = self.command_root_pos_w
             
         # compute commanded ee position and orientation in world frame
-        self.command_ee_pos_w[:] = quat_rotate(
-            quat_yaw,
-            self.command_ee_pos_b[:, 0, :]
-        ) + root_pos_w
+        self.command_ee_pos_w_[:] = quat_rotate(
+            quat_yaw.unsqueeze(1),
+            self.command_ee_pos_b
+        ) + root_pos_w.unsqueeze(1)
 
         self.command_ee_quat_w[:] = quat_mul(quat_yaw, self.command_ee_quat_b[:, 0, :])
         self.command_ee_forward_w[:] = quat_rotate(self.command_ee_quat_w, self.fwd_vec)
@@ -595,7 +604,7 @@ class CommandEEPose_Cont(Command):
         curr_pos_pitch = -torch.asin(ee_pos_b[:, 2] / curr_pos_radius)
         curr_pos_yaw = torch.atan2(ee_pos_b[:, 1], ee_pos_b[:, 0])
         self.last_target_pos_radius_pitch_yaw[env_ids] = torch.stack([curr_pos_radius, curr_pos_pitch, curr_pos_yaw], dim=-1)
-        self.command_ee_pos_w[env_ids] = self.asset.data.body_pos_w[env_ids, self.ee_id]
+        self.command_ee_pos_w_[env_ids] = self.asset.data.body_pos_w[env_ids, self.ee_id].unsqueeze(1)
 
         ee_quat_w = self.asset.data.body_quat_w[env_ids, self.ee_id]
         root_quat_w = self.asset.data.root_quat_w[env_ids]
@@ -633,48 +642,55 @@ class CommandEEPose_Cont(Command):
     def debug_draw(self):
         # append to self.debug_draw_dict
         # which will contain the keys: commmand_ee_pos_w, command_ee_forward_w, command_ee_upward_w
-        if len(self.debug_draw_dict) == 0:
-            self.debug_draw_dict = {
-                "command_ee_pos_w": torch.empty(self.num_envs, 0, 3, device=self.device),
-                "command_ee_forward_w": torch.empty(self.num_envs, 0, 3, device=self.device),
-                "command_ee_upward_w": torch.empty(self.num_envs, 0, 3, device=self.device)
-            }
+        # if len(self.debug_draw_dict) == 0:
+        #     self.debug_draw_dict = {
+        #         "command_ee_pos_w": torch.empty(self.num_envs, 0, 3, device=self.device),
+        #         "command_ee_forward_w": torch.empty(self.num_envs, 0, 3, device=self.device),
+        #         "command_ee_upward_w": torch.empty(self.num_envs, 0, 3, device=self.device)
+        #     }
         
-        if self.debug_draw_count % 2 == 1:
-        # if True:
-            self.debug_draw_dict["command_ee_pos_w"] = torch.cat([self.debug_draw_dict["command_ee_pos_w"], self.command_ee_pos_w.unsqueeze(1)], dim=1)
-            self.debug_draw_dict["command_ee_forward_w"] = torch.cat([self.debug_draw_dict["command_ee_forward_w"], self.command_ee_forward_w.unsqueeze(1)], dim=1)
-            self.debug_draw_dict["command_ee_upward_w"] = torch.cat([self.debug_draw_dict["command_ee_upward_w"], self.command_ee_upward_w.unsqueeze(1)], dim=1)
+        # if self.debug_draw_count % 2 == 1:
+        # # if True:
+        #     self.debug_draw_dict["command_ee_pos_w"] = torch.cat([self.debug_draw_dict["command_ee_pos_w"], self.command_ee_pos_w.unsqueeze(1)], dim=1)
+        #     self.debug_draw_dict["command_ee_forward_w"] = torch.cat([self.debug_draw_dict["command_ee_forward_w"], self.command_ee_forward_w.unsqueeze(1)], dim=1)
+        #     self.debug_draw_dict["command_ee_upward_w"] = torch.cat([self.debug_draw_dict["command_ee_upward_w"], self.command_ee_upward_w.unsqueeze(1)], dim=1)
         
         self.debug_draw_count += 1
         
-        for i in range(self.num_envs):
-            self.env.debug_draw.plot(
-                self.debug_draw_dict["command_ee_pos_w"][i],
-                color=(0., 0.8, 0., 1.)
-            )
+        # for i in range(self.num_envs):
+        #     self.env.debug_draw.plot(
+        #         self.debug_draw_dict["command_ee_pos_w"][i],
+        #         color=(0., 0.8, 0., 1.)
+        #     )
+        # self.env.debug_draw.vector(
+        #     self.debug_draw_dict["command_ee_pos_w"].view(-1, 3),
+        #     self.debug_draw_dict["command_ee_forward_w"].view(-1, 3) * 0.2,
+        #     color=(1., 0., 0., 1.)
+        # )
+        # self.env.debug_draw.vector(
+        #     self.debug_draw_dict["command_ee_pos_w"].view(-1, 3),
+        #     self.debug_draw_dict["command_ee_upward_w"].view(-1, 3) * 0.2,
+        #     color=(1., 0., 0., 1.)
+        # )
+        ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id].unsqueeze(1)
+        ee_pos_diff = self.command_ee_pos_w_ - ee_pos_w
         self.env.debug_draw.vector(
-            self.debug_draw_dict["command_ee_pos_w"].view(-1, 3),
-            self.debug_draw_dict["command_ee_forward_w"].view(-1, 3) * 0.2,
-            color=(1., 0., 0., 1.)
-        )
-        self.env.debug_draw.vector(
-            self.debug_draw_dict["command_ee_pos_w"].view(-1, 3),
-            self.debug_draw_dict["command_ee_upward_w"].view(-1, 3) * 0.2,
-            color=(1., 0., 0., 1.)
+            ee_pos_w.expand_as(ee_pos_diff).reshape(-1, 3),
+            ee_pos_diff.reshape(-1, 3),
+            color=(0., 0.8, 0., 1.)
         )
         
-        zeros = torch.zeros(self.num_envs, device=self.device)
-        self.env.debug_draw.vector(
-            self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
-            torch.stack([zeros, zeros, self._cum_ee_pos_error], dim=-1),
-            color=(0.2, 1.0, 0.2, 1)
-        )
-        self.env.debug_draw.vector(
-            self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
-            torch.stack([zeros, zeros, self._cum_ee_ori_error], dim=-1),
-            color=(1.0, 0.2, 0.2, 1)
-        )
+        # zeros = torch.zeros(self.num_envs, device=self.device)
+        # self.env.debug_draw.vector(
+        #     self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
+        #     torch.stack([zeros, zeros, self._cum_ee_pos_error], dim=-1),
+        #     color=(0.2, 1.0, 0.2, 1)
+        # )
+        # self.env.debug_draw.vector(
+        #     self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
+        #     torch.stack([zeros, zeros, self._cum_ee_ori_error], dim=-1),
+        #     color=(1.0, 0.2, 0.2, 1)
+        # )
         # ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id]
         # ee_pos_target = quat_rotate(
         #     yaw_quat(self.asset.data.root_quat_w),
