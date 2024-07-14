@@ -84,7 +84,6 @@ reward:
     # regularizations
     linvel_z_l2:        {weight: 2.0, enabled: true}
     angvel_xy_l2:       {weight: 0.25, enabled: true}
-    energy_l1:          {weight: 0.0002, enabled: true}
     feet_air_time:      {weight: 0.5, enabled: true, body_names: .*_foot, thres: 0.4}
     feet_slip:          {weight: 0.5, enabled: true, body_names: .*_foot}
   
@@ -102,6 +101,7 @@ reward:
     # joint_acc_l2:     {weight: 1.0, enabled: false, joint_name: joint1}
 
     ee_acc_penalty:     {weight: 2e-4, enabled: true, ee_name: arm_link06}
+    ee_angvel_penalty:  {weight: 0.1, enabled: true, ee_name: arm_link06}
     # ee_acc_l2:          {weight: 1.0, enabled: false, ee_name: arm_link06}
 
     # base_joint_ang_vel_pd_exp: {weight: 2.0, enabled: true, base_joint_name: joint1, kp: 1.0, kd: 0.2, l: 0.1}

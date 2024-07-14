@@ -102,8 +102,8 @@ class QuadrupedManip(LocomotionEnv):
         def compute(self) -> torch.Tensor:
             ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id]
             command_ee_pos_w = self.env.command_manager.command_ee_pos_w
-            pos_error = ((ee_pos_w - command_ee_pos_w) / self.l).square().sum(1, True)
-            r = torch.exp(- pos_error)
+            pos_error = (ee_pos_w - command_ee_pos_w).square().sum(1, True)
+            r = torch.exp(- pos_error / self.l)
             return r
 
     class ee_pos_tracking_b(Reward):
@@ -475,6 +475,18 @@ class QuadrupedManip(LocomotionEnv):
             target_base_ang_vel = self.env.command_manager.command[:, 2]
             ang_vel_error = (base_ang_vel_z - target_base_ang_vel).square().unsqueeze_(1)
             return torch.exp(- ang_vel_error / self.l)
+
+    class ee_angvel_penalty(Reward):
+        def __init__(self, env, ee_name: str, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+            self.asset: Articulation = self.env.scene["robot"]
+            self.body_id = self.asset.find_bodies(ee_name)[0]
+            self.body_id = self.body_id[0]
+
+        def compute(self) -> torch.Tensor:
+            ee_angvel_w = self.asset.data.body_ang_vel_w[:, self.body_id]
+            return - ee_angvel_w.square().sum(1, True)
+
 
 
 def random_scale(x: torch.Tensor, low: float, high: float):
