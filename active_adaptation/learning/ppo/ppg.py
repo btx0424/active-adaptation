@@ -318,6 +318,7 @@ class PPGPolicy(TensorDictModuleBase):
         )
         self.opt_adapt = torch.optim.Adam(
             [
+                {"params": self.encoder.parameters()},
                 {"params": self.adapt_module.parameters()}
             ],
             lr=self.cfg.lr
@@ -352,7 +353,6 @@ class PPGPolicy(TensorDictModuleBase):
     
     def get_rollout_policy(self, mode: str):
         modules = []
-        exclude_keys = ["loc", "scale"]
         if mode in ("train", "eval"):
             modules.append(self.encoder)
             modules.append(self.sample_context)
@@ -372,12 +372,13 @@ class PPGPolicy(TensorDictModuleBase):
             modules.append(self.sample_context_adapt)
             modules.append(self.actor_adapt)
 
-        policy = TensorDictSequential(*modules, ExcludeTransform(*exclude_keys))
+        policy = TensorDictSequential(*modules)
         return policy
         
     
     def step_schedule(self, progress: float):
-        self.beta = self.beta_schedule.compute(progress)
+        self.beta = progress * 0.5
+        # self.beta = self.beta_schedule.compute(progress)
         # self.gae.gamma.copy_(min(0.99 + progress * 0.005, 0.995))
 
     def train_op(self, tensordict: TensorDictBase):
@@ -408,6 +409,7 @@ class PPGPolicy(TensorDictModuleBase):
         
         infos = collect_info(infos)
         infos["critic/value_priv"] = self.value_norm.denormalize(tensordict["ret_priv"]).mean().item()
+        infos["actor/noise_std"] = tensordict["scale"].mean()
         infos["beta"] = self.beta
         return infos
     
@@ -433,31 +435,41 @@ class PPGPolicy(TensorDictModuleBase):
     # @torch.compile
     def train_adaptation(self, tensordict: TensorDictBase, reverse: bool=False):
         infos = []
-        
-        with torch.no_grad(): # update the contexts
-            self.encoder(tensordict)
 
+        with torch.no_grad():
+            self.encoder(tensordict)
+            self.actor(tensordict)
+        
+        self.actor.requires_grad_(False)
+        
         for epoch in range(2):
             batch = make_batch(tensordict, 8, self.cfg.train_every)
             for minibatch in batch:
                 losses = {}
+
+                act_dist_old = self.actor.build_dist_from_params(minibatch)
+                act_dist_new = self.actor.get_dist(self.sample_context(self.encoder(minibatch)))
+
                 self.adapt_module(minibatch)
                 context_dist_priv = D.Normal(minibatch["context_priv_loc"], minibatch["context_priv_scale"])
                 context_dist_pred = D.Normal(minibatch["context_adapt_loc"], minibatch["context_adapt_scale"])
-                if not reverse:
-                    kl = kl_divergence(context_dist_priv, context_dist_pred)
-                else:
-                    kl = kl_divergence(context_dist_pred, context_dist_priv)
-                losses["adapt/adapt_module_loss"] = kl.mean(-1).mean()
+
+                losses["adapt/adapt_module_loss"] = D.kl_divergence(detach(context_dist_priv), context_dist_pred).mean()
+                losses["adapt/rep_loss"] = self.beta * D.kl_divergence(context_dist_priv, detach(context_dist_pred)).mean()
+                losses["adapt/bc"] = D.kl_divergence(act_dist_old, act_dist_new).mean()
 
                 loss = sum(losses.values())
                 self.opt_adapt.zero_grad()
                 loss.backward()
                 losses["adapt/adapt_module_grad_norm"] = nn.utils.clip_grad_norm_(self.adapt_module.parameters(), 10.)
+                losses["adapt/encoder_grad_norm"] = nn.utils.clip_grad_norm_(self.encoder.parameters(), 5.)
                 self.opt_adapt.step()
+                losses["adapt/context_std"] = minibatch["context_priv_scale"].mean()
                 losses["adapt/context_adapt_std"] = minibatch["context_adapt_scale"].mean()
                 infos.append(TensorDict(losses, []))
-    
+        
+        self.actor.requires_grad_(True)
+
         infos = collect_info(infos)
         return infos
     
@@ -523,12 +535,7 @@ class PPGPolicy(TensorDictModuleBase):
         context_dist_priv = D.Normal(tensordict["context_priv_loc"], tensordict["context_priv_scale"])
         context_dist_pred = D.Normal(tensordict["context_adapt_loc"], tensordict["context_adapt_scale"])
         context_kl = kl_divergence(context_dist_priv, context_dist_pred).mean(-1)
-        losses["actor/rep_loss"] = 0.1 * context_kl.clamp_min(self.cfg.free_bits).mean()
-
-        if self.cfg.aux_target:
-            actor_aux = tensordict["actor_aux"]
-            actor_aux_target = tensordict["aux_target_"]
-            losses["aux/pred_loss"] = F.mse_loss(actor_aux, actor_aux_target)
+        # losses["actor/rep_loss"] = 0.1 * context_kl.clamp_min(self.cfg.free_bits).mean()
 
         loss = sum(losses.values())
         self.opt.zero_grad()
@@ -615,3 +622,8 @@ class PPGPolicy(TensorDictModuleBase):
                 failed_keys.append(name)
         print(colored(f"[Info]: Successfully loaded {success_keys}.", "green"))
         return success_keys
+
+
+def detach(dist: D.Normal):
+    return D.Normal(dist.loc.detach(), dist.scale.detach())
+
