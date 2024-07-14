@@ -438,6 +438,7 @@ class PPGPolicy(TensorDictModuleBase):
 
         with torch.no_grad():
             self.encoder(tensordict)
+            self.sample_context(tensordict)
             self.actor(tensordict)
         
         self.actor.requires_grad_(False)
@@ -456,11 +457,12 @@ class PPGPolicy(TensorDictModuleBase):
 
                 kl_right = D.kl_divergence(detach(context_dist_priv), context_dist_pred).mean(-1)
                 kl_left = D.kl_divergence(context_dist_priv, detach(context_dist_pred)).mean(-1)
-                bc = D.kl_divergence(act_dist_old, act_dist_new).mean(-1)
-                
-                losses["adapt/adapt_module_loss"] = (kl_right * (~minibatch["is_init"])).mean()
-                losses["adapt/rep_loss"] = self.beta * (kl_left * (~minibatch["is_init"])).mean()
-                losses["adapt/bc"] = (bc * (~minibatch["is_init"])).mean()
+                bc = D.kl_divergence(act_dist_old, act_dist_new)
+                valid = (~minibatch["is_init"]).squeeze(-1).float()
+
+                losses["adapt/adapt_module_loss"] = (kl_right * valid).mean()
+                losses["adapt/rep_loss"] = self.beta * (kl_left * valid).mean()
+                losses["adapt/bc"] = (bc * valid).mean()
 
                 loss = sum(losses.values())
                 self.opt_adapt.zero_grad()
