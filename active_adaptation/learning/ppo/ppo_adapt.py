@@ -488,7 +488,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 self.encoder_priv(minibatch)
                 losses = {}
                 minibatch["adv_priv"] = normalize(minibatch["adv_priv"], True)
-                self._policy_loss(minibatch, self._actor_expert, "adv_priv")
+                losses.update(self._policy_loss(minibatch, self._actor_expert, "adv_priv"))
                 losses["critic/value_loss_obs"] = self._value_loss(
                     minibatch, self._critic_obs, "value_obs", "ret_obs").mean()
                 losses["critic/value_loss_priv"] = self._value_loss(
@@ -560,7 +560,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 losses = {}
                 if actor is not None:
                     minibatch[adv_key] = normalize(minibatch[adv_key])
-                    self._policy_loss(minibatch, self._actor_adapt, adv_key)
+                    losses.update(self._policy_loss(minibatch, self._actor_adapt, adv_key))
                 losses["critic/value_loss_priv"] = self._value_loss(
                     minibatch, self._critic_priv, "value_priv", "ret_priv").mean()
                 losses["critic/value_loss_adapt"] = self._value_loss(
