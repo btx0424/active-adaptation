@@ -492,9 +492,11 @@ class CommandEEPose_Cont(Command):
         ee_upward_w = quat_rotate(ee_quat_w, self.up_vec)
         ee_ori_error = 1 - (ee_forward_w * self.command_ee_forward_w).sum(dim=-1) / 2 - (ee_upward_w * self.command_ee_upward_w).sum(dim=-1) / 2
 
-        self._cum_ee_pos_error.add_(ee_pos_error).mul_(0.98)
-        self._cum_ee_ori_error.add_(ee_ori_error).mul_(0.98)
-        # print(self._cum_error)
+        valid = (self.env.episode_length_buf > 2).float()
+        ee_pos_error.mul_(valid)
+        ee_ori_error.mul_(valid)
+        self._cum_ee_pos_error.add_(ee_pos_error * self.env.step_dt).mul_(0.99)
+        self._cum_ee_ori_error.add_(ee_ori_error * self.env.step_dt).mul_(0.99)
             
         # update failed track counts, do not update if just resampled
         update_mask = torch.logical_and((self.steps_since_last_sample % self.update_interval) == 0, self.steps_since_last_sample != 0)
@@ -678,6 +680,13 @@ class CommandEEPose_Cont(Command):
             ee_pos_w.expand_as(ee_pos_diff).reshape(-1, 3),
             ee_pos_diff.reshape(-1, 3),
             color=(0., 0.8, 0., 1.)
+        )
+        
+        ee_ori_fwd = quat_rotate(self.command_ee_quat_w, self.fwd_vec)
+        self.env.debug_draw.vector(
+            ee_pos_w.squeeze(1),
+            ee_ori_fwd.reshape(-1, 3) * 0.2,
+            color=(1., 0., 0., 1.)
         )
         
         # zeros = torch.zeros(self.num_envs, device=self.device)

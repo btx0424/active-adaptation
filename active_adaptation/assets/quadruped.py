@@ -36,6 +36,7 @@ UNITREE_GO2M_CFG.actuators["arm"] = DCMotorCfg(
     },
     friction=0.001,
 )
+UNITREE_GO2M_CFG.init_state.joint_pos["joint[1,2]"] = 0.3
 
 CYBERDOG_CFG = copy.deepcopy(UNITREE_A1_CFG)
 CYBERDOG_CFG.spawn.usd_path = f"{ASSET_PATH}/cyberdog2_v3.usd"
