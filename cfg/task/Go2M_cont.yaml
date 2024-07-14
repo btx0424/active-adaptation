@@ -85,11 +85,11 @@ reward:
     linvel_z_l2:        {weight: 2.0, enabled: true}
     angvel_xy_l2:       {weight: 0.25, enabled: true}
     feet_air_time:      {weight: 0.5, enabled: true, body_names: .*_foot, thres: 0.4}
-    feet_slip:          {weight: 0.5, enabled: true, body_names: .*_foot}
+    feet_slip:          {weight: 0.5, enabled: false, body_names: .*_foot}
   
     # manipulation
-    # ee_pos_tracking_w:    {weight: 2.0, enabled: true, ee_name: arm_link06, l: 0.25}
-    # ee_pos_error_w_l1:    {weight: 1.0, enabled: false, ee_name: arm_link06}
+    ee_pos_tracking_w:    {weight: 1.5, enabled: true, ee_name: arm_link06, l: 0.1}
+    ee_pos_error_w_l1:    {weight: 1.0, enabled: false, ee_name: arm_link06}
     # ee_failed_track_counts: {weight: 1.0, enabled: false}
 
     # ee_ori_tracking:    {weight: 1.0, enabled: true, ee_name: arm_link06}
@@ -97,7 +97,8 @@ reward:
     # ee_ori_upward_error_l2: {weight: 1.0, enabled: false, ee_name: arm_link06}
     # regularizations
     # base_joint_heading: {weight: 0.5, enabled: true, base_joint_name: joint1}
-    joint_acc_penalty: {weight: 2e-4, enabled: true, joint_name: joint1}
+    joint_vel_penalty: {weight: 0.02, enabled: true, joint_name: joint.*}
+    joint_acc_penalty: {weight: 2e-4, enabled: true, joint_name: joint.*}
     # joint_acc_l2:     {weight: 1.0, enabled: false, joint_name: joint1}
 
     ee_acc_penalty:     {weight: 2e-4, enabled: true, ee_name: arm_link06}

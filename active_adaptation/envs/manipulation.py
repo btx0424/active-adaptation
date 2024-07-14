@@ -377,7 +377,7 @@ class QuadrupedManip(LocomotionEnv):
         
         def compute(self) -> torch.Tensor:
             ee_acc = self.asset.data.body_lin_acc_w[:, self.ee_id]
-            return - ee_acc.abs().sum(1, True)
+            return - ee_acc.square().sum(1, True)
 
             # TODO, maybe try: when ee_pos_error is large, reduce this penalty? only apply this penalty when the ee_pos_error is small enough?
     
@@ -401,7 +401,18 @@ class QuadrupedManip(LocomotionEnv):
         
         def compute(self) -> torch.Tensor:
             joint_acc = self.asset.data.joint_acc[:, self.joint_id]
-            return - joint_acc.abs().unsqueeze_(1)
+            return - joint_acc.square().unsqueeze_(1)
+    
+    class joint_vel_penalty(Reward):
+        def __init__(self, env, joint_name: str, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+            self.asset: Articulation = self.env.scene["robot"]
+            joint_ids, joint_names = self.asset.find_joints(joint_name)
+            self.joint_id = joint_ids[0]
+        
+        def compute(self) -> torch.Tensor:
+            joint_vel = self.asset.data.joint_vel[:, self.joint_id]
+            return - joint_vel.square().unsqueeze_(1)
 
     class joint_acc_l2(Reward):
         def __init__(self, env, joint_name: str, weight: float, enabled: bool = True):
