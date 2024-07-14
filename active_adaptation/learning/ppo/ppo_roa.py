@@ -141,7 +141,8 @@ class PPOROAPolicy(TensorDictModuleBase):
             fake_input["context_adapt_hx"] = torch.zeros(fake_input.shape[0], 128)
         
         self.encoder_priv = TensorDictModule(
-            nn.Sequential(make_mlp([self.cfg.context_dim]), nn.LazyLinear(self.cfg.context_dim)), 
+            # nn.Sequential(make_mlp([self.cfg.context_dim]), nn.LazyLinear(self.cfg.context_dim)), 
+            make_mlp([self.cfg.context_dim]),
             [OBS_PRIV_KEY], ["context_expert"]
         ).to(self.device)
         
@@ -273,6 +274,7 @@ class PPOROAPolicy(TensorDictModuleBase):
 
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         infos["critic/value_priv"] = self.value_norm.denormalize(tensordict["ret"]).mean().item()
+        infos["adapt/context_expert"] = tensordict["context_priv"].norm(dim=-1).mean().item()
         return infos
     
     def train_adaptation(self, tensordict: TensorDictBase):
