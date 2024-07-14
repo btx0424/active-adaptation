@@ -454,9 +454,13 @@ class PPGPolicy(TensorDictModuleBase):
                 context_dist_priv = D.Normal(minibatch["context_priv_loc"], minibatch["context_priv_scale"])
                 context_dist_pred = D.Normal(minibatch["context_adapt_loc"], minibatch["context_adapt_scale"])
 
-                losses["adapt/adapt_module_loss"] = D.kl_divergence(detach(context_dist_priv), context_dist_pred).mean()
-                losses["adapt/rep_loss"] = self.beta * D.kl_divergence(context_dist_priv, detach(context_dist_pred)).mean()
-                losses["adapt/bc"] = D.kl_divergence(act_dist_old, act_dist_new).mean()
+                kl_right = D.kl_divergence(detach(context_dist_priv), context_dist_pred).mean(-1)
+                kl_left = D.kl_divergence(context_dist_priv, detach(context_dist_pred)).mean(-1)
+                bc = D.kl_divergence(act_dist_old, act_dist_new).mean(-1)
+                
+                losses["adapt/adapt_module_loss"] = (kl_right * (~minibatch["is_init"])).mean()
+                losses["adapt/rep_loss"] = self.beta * (kl_left * (~minibatch["is_init"])).mean()
+                losses["adapt/bc"] = (bc * (~minibatch["is_init"])).mean()
 
                 loss = sum(losses.values())
                 self.opt_adapt.zero_grad()

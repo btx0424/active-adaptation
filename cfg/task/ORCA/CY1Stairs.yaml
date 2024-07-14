@@ -1,6 +1,6 @@
 # @package task
 
-name: CY1Flat
+name: OrcaStairs
 task: Humanoid
 
 defaults:
@@ -14,10 +14,10 @@ payload: false
 
 command:
   _target_: active_adaptation.envs.mdp.Command2
-  linvel_x_range: [0., 1.5]
+  linvel_x_range: [0., 1.25]
   linvel_y_range: [-0.1, 0.1]
   angvel_range: [-1.5, 1.5]
-  yaw_stiffness_range: [0.5, 0.5]
+  yaw_stiffness_range: [0.5, 0.7]
   use_stiffness_ratio: 1.0
   stand_prob: 0.05
   target_yaw_range: 
