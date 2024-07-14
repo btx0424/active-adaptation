@@ -3,11 +3,11 @@ task: Biped
 
 defaults:
   # see https://hydra.cc/docs/advanced/overriding_packages/
-  - /task/CassieFlat@_here_
+  - /task/Cassie/CassieFlat@_here_
   - _self_
 
-terrain: easy
+terrain: stairs_easy
 
-observation:
-  height_scan:
-    height_scan:  {prim_path: pelvis}
+# observation:
+#   height_scan:
+#     height_scan:  {prim_path: pelvis}

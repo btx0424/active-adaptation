@@ -31,6 +31,8 @@ observation:
   # priv:
   #   applied_action:   {}
   #   # joint_acc:        {}
+  #   joint_forces:     {}
+  #   jacobians:        {body_names: .*ankle_link}
   #   root_linvel_b:    {}
   #   feet_pos_b:       {}
   #   feet_vel_b:       {}
@@ -44,22 +46,23 @@ observation:
   #   last_rewards:     {}
 
 reward:
-  linvel_exp:         {weight: 1.5, body_names: ["pelvis", "torso_link"], enabled: true, dim: 3}
-  linacc_z_l2:        {weight: 0.005}
-  linvel_projection:  {weight: 1.0, enabled: true}
-  angvel_z_exp:       {weight: 1.0, enabled: true}
-  angvel_z_exp_shaped: {weight: 1.0, enabled: false}
-  # linvel_z_l2:        {weight: 1.0, enabled: true}
-  energy_l1:          {weight: 2.0e-4, enabled: true}
-  joint_acc_l2:       {weight: 3.5e-8, enabled: true}
-  joint_torques_l2:   {weight: 5.0e-7, enabled: true}
-  # stand: 0.5
-  orientation:        {weight: 0.5, enabled: true}
-  survival:           {weight: 1.0, enabled: true}
-  action_rate_l2:     {weight: 0.01, enabled: true}
-  feet_air_time:      {weight: 1.0, enabled: true, body_names: .*ankle_link, thres: 0.4}
-  feet_slip:          {weight: 0.5, enabled: true, body_names: .*ankle_link}
-  feet_contact_count: {weight: 1.0, enabled: false, body_names: .*ankle_link}
+  loco:
+    linvel_exp:         {weight: 1.5, body_names: ["pelvis", "torso_link"], enabled: true, dim: 3}
+    linacc_z_l2:        {weight: 0.005}
+    linvel_projection:  {weight: 1.0, enabled: true}
+    angvel_z_exp:       {weight: 1.0, enabled: true}
+    angvel_z_exp_shaped: {weight: 1.0, enabled: false}
+    # linvel_z_l2:        {weight: 1.0, enabled: true}
+    energy_l1:          {weight: 2.0e-4, enabled: true}
+    joint_acc_l2:       {weight: 3.5e-8, enabled: true}
+    joint_torques_l2:   {weight: 5.0e-7, enabled: true}
+    # stand: 0.5
+    orientation:        {weight: 0.5, enabled: true}
+    survival:           {weight: 1.0, enabled: true}
+    action_rate_l2:     {weight: 0.01, enabled: true}
+    feet_air_time:      {weight: 1.0, enabled: true, body_names: .*ankle_link, thres: 0.4}
+    feet_slip:          {weight: 0.5, enabled: true, body_names: .*ankle_link}
+    feet_contact_count: {weight: 1.0, enabled: false, body_names: .*ankle_link}
 
 randomization:
   # push:     {body_names: ["pelvis", ".*shoulder_pitch_link"]}

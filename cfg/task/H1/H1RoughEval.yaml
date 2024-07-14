@@ -1,13 +1,13 @@
-name: H1RoughS
+name: H1RoughEval
 task: Humanoid
 
 defaults:
   # see https://hydra.cc/docs/advanced/overriding_packages/
-  - /task/H1RoughS@_here_
+  - /task/H1/H1RoughS@_here_
   - randomization: []
   - _self_
 
-terrain: easy
+terrain: stairs_easy
 
 randomization:
   push:     {body_names: ["pelvis", ".*shoulder_pitch_link"], force_range: [0.2, 0.3]}

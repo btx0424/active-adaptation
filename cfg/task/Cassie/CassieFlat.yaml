@@ -13,10 +13,11 @@ homogeneous: true
 
 command:
   _target_: active_adaptation.envs.mdp.Command2
-  linvel_x_range: [-0.75, 1.6]
+  linvel_x_range: [-0.75, 1.5]
   linvel_y_range: [-0.5, 0.5]
-  angvel_range: [-1.0, 1.0]
+  angvel_range: [-1.5, 1.5]
   yaw_stiffness_range: [0.5, 0.8]
+  use_stiffness_ratio: 1.0
   base_height_range: [0.25, 0.35]
   stand_prob: 0.1
 
@@ -32,6 +33,8 @@ observation:
     # - "motor_params"
   # priv:
   #   applied_action:   {}
+  #   joint_forces:     {}
+  #   jacobians:        {body_names: .*toe}
   #   # joint_acc:        {}
   #   root_linvel_b:    {}
   #   feet_pos_b:       {}
@@ -49,20 +52,21 @@ observation:
     root_angvel_b:
 
 reward:
-  linvel_exp:         {weight: 1.25, enabled: true}
-  # linacc_z_l2:        {weight: 0.005}
-  linvel_projection:  {weight: 1.0, enabled: false}
-  angvel_z_exp:       {weight: 1.0, enabled: true}
-  # linvel_z_l2:        {weight: 1.0, enabled: true}
-  energy_l1:          {weight: 2.0e-4, enabled: true}
-  joint_acc_l2:       {weight: 3.5e-8, enabled: true}
-  joint_torques_l2:   {weight: 2.0e-5, enabled: true}
-  # stand: 0.5
-  orientation:        {weight: 0.5, enabled: true}
-  survival:           {weight: 1.0, enabled: true}
-  feet_air_time:      {weight: 2.0, enabled: true, body_names: .*_toe, thres: 0.75}
-  feet_slip:          {weight: 1.0, enabled: false, body_names: .*_toe}
-  feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_toe}
+  loco:
+    linvel_exp:         {weight: 1.25, enabled: true}
+    # linacc_z_l2:        {weight: 0.005}
+    linvel_projection:  {weight: 1.0, enabled: false}
+    angvel_z_exp:       {weight: 1.0, enabled: true}
+    # linvel_z_l2:        {weight: 1.0, enabled: true}
+    energy_l1:          {weight: 2.0e-4, enabled: true}
+    joint_acc_l2:       {weight: 3.5e-8, enabled: true}
+    joint_torques_l2:   {weight: 2.0e-5, enabled: true}
+    # stand: 0.5
+    orientation:        {weight: 0.5, enabled: true}
+    survival:           {weight: 1.0, enabled: true}
+    feet_air_time:      {weight: 2.0, enabled: true, body_names: .*_toe, thres: 0.75}
+    feet_slip:          {weight: 1.0, enabled: false, body_names: .*_toe}
+    feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_toe}
 
 randomization:
   perturb_body_mass:
@@ -88,3 +92,4 @@ randomization:
 termination:
   crash: 
     body_names_expr: ["pelvis"]
+  cum_error: {thres: 0.9}

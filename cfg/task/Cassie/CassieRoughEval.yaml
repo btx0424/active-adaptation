@@ -6,7 +6,7 @@ defaults:
   - /task/CassieFlat@_here_
   - _self_
 
-terrain: easy
+terrain: stairs_easy
 homogeneous: false
 
 observation:
