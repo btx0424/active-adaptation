@@ -358,6 +358,7 @@ class CommandEEPose_Cont(Command):
         self, 
         env,
         ee_name: str,
+        ee_base_name: str = 'arm_link00',
         # lin vel in x, y, ang vel
         lin_vel_x_range: tuple =(-1.0, 1.4),
         lin_vel_y_range: tuple =(-0.5, 0.5),
@@ -376,9 +377,12 @@ class CommandEEPose_Cont(Command):
     ) -> None:
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
-        self.ee_id, self.ee_name = self.asset.find_bodies(ee_name)
-        assert len(self.ee_id) == 1
-        self.ee_id = self.ee_id[0]
+        ee_ids, ee_names = self.asset.find_bodies(ee_name)
+        assert len(ee_ids) == 1
+        self.ee_id = ee_ids[0]
+        ee_base_ids, ee_base_names = self.asset.find_bodies(ee_base_name)
+        assert len(ee_base_ids) == 1
+        self.ee_base_id = ee_base_ids[0]
 
         self.lin_vel_x_range = lin_vel_x_range
         self.lin_vel_y_range = lin_vel_y_range
@@ -427,6 +431,11 @@ class CommandEEPose_Cont(Command):
             if self.imagined_root:
                 self.command_heading_yaw_w = torch.zeros(self.num_envs)
                 self.command_root_pos_w = torch.zeros(self.num_envs, 3)
+
+                # get the offset of arm base link relative to root in base frame
+                arm_base_offset_w = self.asset.data.body_pos_w[:, self.ee_base_id] - self.asset.data.root_pos_w
+                root_quat_w = self.asset.data.root_quat_w
+                self.arm_base_offset_b = quat_rotate_inverse(root_quat_w, arm_base_offset_w)
 
             # ee pose interpolation
             self.last_target_pos_radius_pitch_yaw = torch.zeros(self.num_envs, 3)
@@ -569,13 +578,15 @@ class CommandEEPose_Cont(Command):
             self.command_root_pos_w += command_lin_vel_w * self.env.step_dt
 
             quat_yaw = command_quat_yaw_w
-            root_pos_w = self.command_root_pos_w
+            arm_base_pos_w = self.command_root_pos_w + quat_rotate(quat_yaw, self.arm_base_offset_b)
+        else:
+            arm_base_pos_w = self.asset.data.body_pos_w[:, self.ee_base_id]
             
         # compute commanded ee position and orientation in world frame
         self.command_ee_pos_w_[:] = quat_rotate(
             quat_yaw.unsqueeze(1),
             self.command_ee_pos_b
-        ) + root_pos_w.unsqueeze(1)
+        ) + arm_base_pos_w.unsqueeze(1)
 
         self.command_ee_quat_w[:] = quat_mul(quat_yaw, self.command_ee_quat_b[:, 0, :])
         self.command_ee_forward_w[:] = quat_rotate(self.command_ee_quat_w, self.fwd_vec)
