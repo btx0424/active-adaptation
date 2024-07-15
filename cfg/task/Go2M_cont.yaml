@@ -67,7 +67,7 @@ observation:
 reward:
   loco:
     survival:           {weight: 1.0, enabled: true}
-    base_height_l1:     {weight: 0.5, enabled: true, target_height: 0.3}
+    base_height_l1:     {weight: 1.0, enabled: true, target_height: 0.3}
     undesired_contact:  {body_names: [.*_calf, .*thigh], weight: 0.25, enabled: true}
 
     # regularizations
@@ -88,7 +88,7 @@ reward:
     feet_slip:          {weight: 0.5, enabled: false, body_names: .*_foot}
   
     # manipulation
-    ee_pos_tracking_w:    {weight: 1.5, enabled: true, ee_name: arm_link06, l: 0.1}
+    ee_pos_tracking_w:    {weight: 1.5, enabled: true, ee_name: arm_link06, l: 0.25}
     ee_pos_error_w_l1:    {weight: 1.0, enabled: false, ee_name: arm_link06}
     # ee_failed_track_counts: {weight: 1.0, enabled: false}
 
@@ -98,15 +98,15 @@ reward:
     # regularizations
     # base_joint_heading: {weight: 0.5, enabled: true, base_joint_name: joint1}
     joint_vel_penalty: {weight: 0.02, enabled: true, joint_name: joint.*}
-    joint_acc_penalty: {weight: 2e-4, enabled: true, joint_name: joint.*}
+    joint_acc_penalty: {weight: 1e-4, enabled: true, joint_name: joint.*}
     # joint_acc_l2:     {weight: 1.0, enabled: false, joint_name: joint1}
 
     ee_acc_penalty:     {weight: 2e-4, enabled: true, ee_name: arm_link06}
-    ee_angvel_penalty:  {weight: 0.1, enabled: true, ee_name: arm_link06}
+    ee_angvel_penalty:  {weight: 0.02, enabled: true, ee_name: arm_link06}
     # ee_acc_l2:          {weight: 1.0, enabled: false, ee_name: arm_link06}
 
     # base_joint_ang_vel_pd_exp: {weight: 2.0, enabled: true, base_joint_name: joint1, kp: 1.0, kd: 0.2, l: 0.1}
-    arm_joint_acc_penalty: {weight: 2e-4, enabled: true}
+    # arm_joint_acc_penalty: {weight: 2e-4, enabled: true}
     arm_joint_acc_l1: {weight: 1.0, enabled: false}
 
 termination:
