@@ -87,6 +87,7 @@ reward:
     feet_air_time:      {weight: 0.5, enabled: true, body_names: .*_foot, thres: 0.4}
     feet_slip:          {weight: 0.5, enabled: false, body_names: .*_foot}
   
+  manip:
     # manipulation
     ee_pos_tracking_w:    {weight: 1.5, enabled: true, ee_name: arm_link06, l: 0.1}
     ee_pos_error_w_l1:    {weight: 1.0, enabled: false, ee_name: arm_link06}
