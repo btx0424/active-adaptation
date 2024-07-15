@@ -187,7 +187,7 @@ class PPOPolicy(TensorDictModuleBase):
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches)
             for minibatch in batch:
-                infos.append(TensorDict(self._update(minibatch, epoch), []))
+                infos.append(TensorDict(self._update(minibatch), []))
         
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         infos["critic/value_mean"] = tensordict["ret"].mean().item()
@@ -229,7 +229,7 @@ class PPOPolicy(TensorDictModuleBase):
         return min(max((self.counter - self.mixing_schedule[1]) / self.mixing_schedule[2], 0), 1) * self.mixing_schedule[0]
 
     # @torch.compile
-    def _update(self, tensordict: TensorDict, epoch: int):
+    def _update(self, tensordict: TensorDict):
         dist = self.actor.get_dist(tensordict)
         log_probs = dist.base_dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy().mean()

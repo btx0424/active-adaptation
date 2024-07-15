@@ -102,9 +102,9 @@ class QuadrupedManip(LocomotionEnv):
         def compute(self) -> torch.Tensor:
             ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id]
             command_ee_pos_w = self.env.command_manager.command_ee_pos_w
-            pos_error = (ee_pos_w - command_ee_pos_w).square().sum(1, True)
-            r = torch.exp(- pos_error / self.l)
-            return r
+            pos_error = (ee_pos_w - command_ee_pos_w).norm(dim=-1, keepdim=True)
+            r = 1 - pos_error + torch.exp(- pos_error / self.l)
+            return 0.5 * r
 
     class ee_pos_tracking_b(Reward):
     
