@@ -143,7 +143,7 @@ class PPOROAPolicy(TensorDictModuleBase):
         self.encoder_priv = TensorDictModule(
             # nn.Sequential(make_mlp([self.cfg.context_dim]), nn.LazyLinear(self.cfg.context_dim)), 
             make_mlp([self.cfg.context_dim]),
-            [OBS_PRIV_KEY], ["context_expert"]
+            [OBS_PRIV_KEY], ["context_priv"]
         ).to(self.device)
         
         if self.cfg.adapt_arch == "rnn":
@@ -173,7 +173,7 @@ class PPOROAPolicy(TensorDictModuleBase):
             ).to(self.device)
             return actor
         
-        self.actor_expert = make_actor("context_expert")
+        self.actor_expert = make_actor("context_priv")
         self.actor_adapt = make_actor("context_adapt")
         
         critic_module = nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1))
@@ -235,7 +235,7 @@ class PPOROAPolicy(TensorDictModuleBase):
             )
         elif mode == "eval":
             class _ActionKL(TensorDictModuleBase):
-                in_keys = ["context_expert", "context_adapt"]
+                in_keys = ["context_priv", "context_adapt"]
                 out_keys = ["action_kl"]
                 def forward(_, tensordict: TensorDictBase):
                     kl = self._action_kl(tensordict, reduce=False)
@@ -274,7 +274,7 @@ class PPOROAPolicy(TensorDictModuleBase):
 
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         infos["critic/value_priv"] = self.value_norm.denormalize(tensordict["ret"]).mean().item()
-        infos["adapt/context_expert"] = tensordict["context_priv"].norm(dim=-1).mean().item()
+        infos["adapt/context_priv"] = tensordict["context_priv"].norm(dim=-1).mean().item()
         return infos
     
     def train_adaptation(self, tensordict: TensorDictBase):
@@ -323,7 +323,7 @@ class PPOROAPolicy(TensorDictModuleBase):
         self.encoder_priv(tensordict)
         with torch.no_grad():
             self.adapt_module(tensordict)
-        priv_reg_loss = self.lmbda * F.mse_loss(tensordict["context_expert"], tensordict["context_adapt"])
+        priv_reg_loss = self.lmbda * F.mse_loss(tensordict["context_priv"], tensordict["context_adapt"])
         if not self.cfg.regularize:
             priv_reg_loss = priv_reg_loss.detach()
         losses["priv_reg_loss"] = priv_reg_loss
@@ -360,7 +360,7 @@ class PPOROAPolicy(TensorDictModuleBase):
         losses = {}
         losses["adapt/adaptation_loss"] = F.mse_loss(
             self.adapt_module(tensordict)["context_adapt"],
-            tensordict["context_expert"]
+            tensordict["context_priv"]
         )
         loss = sum(losses.values())
         self.opt_adapt.zero_grad()
