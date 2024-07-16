@@ -35,7 +35,7 @@ command:
   threshold: 0.5
   tolerance: 0
   future_targets: 4
-  imagined_root: true
+  imagined_root: false
 
 observation:
   policy:
@@ -88,16 +88,18 @@ reward:
     feet_slip:          {weight: 0.5, enabled: false, body_names: .*_foot}
   
   manip:
+    survival:           {weight: 0.5, enabled: true}
     # manipulation
-    ee_pos_tracking_w:    {weight: 1.5, enabled: true, ee_name: arm_link06, l: 0.25}
+    ee_tracking_hybrid: {weight: 1.0, enabled: true, ee_name: arm_link06, base_joint_name: joint1, l: 0.25}
+
+    ee_pos_tracking_w:    {weight: 1.5, enabled: false, ee_name: arm_link06, l: 0.25, use_exp: true}
     ee_pos_error_w_l1:    {weight: 1.0, enabled: false, ee_name: arm_link06}
     # ee_failed_track_counts: {weight: 1.0, enabled: false}
 
-    # ee_ori_tracking:    {weight: 1.0, enabled: true, ee_name: arm_link06}
-    # ee_ori_forward_error_l2: {weight: 1.0, enabled: false, ee_name: arm_link06}
-    # ee_ori_upward_error_l2: {weight: 1.0, enabled: false, ee_name: arm_link06}
+    ee_ori_tracking:    {weight: 1.0, enabled: false, ee_name: arm_link06}
+    ee_ori_forward_error_l2: {weight: 1.0, enabled: false, ee_name: arm_link06}
+    ee_ori_upward_error_l2: {weight: 1.0, enabled: false, ee_name: arm_link06}
     # regularizations
-    # base_joint_heading: {weight: 0.5, enabled: true, base_joint_name: joint1}
     joint_vel_penalty: {weight: 0.02, enabled: true, joint_name: joint.*}
     joint_acc_penalty: {weight: 1e-4, enabled: true, joint_name: joint.*}
     # joint_acc_l2:     {weight: 1.0, enabled: false, joint_name: joint1}

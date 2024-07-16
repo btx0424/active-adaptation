@@ -153,7 +153,6 @@ class Env(EnvBase):
             "stats": {
                 "episode_len": UnboundedContinuousTensorSpec(1),
                 "success": UnboundedContinuousTensorSpec(1),
-                "reward_clip_ratio": UnboundedContinuousTensorSpec(1),
             }
         })
 
@@ -173,6 +172,7 @@ class Env(EnvBase):
                 print(f"\t{key}: \t{reward.weight:.2f}, \t{reward.enabled}")
             self.reward_groups[group_name] = RewardGroup(self, group_name, funcs)
             reward_spec["stats", group_name, "return"] = UnboundedContinuousTensorSpec(1, device=self.device)
+            reward_spec["stats", group_name, "reward_clip_ratio"] = UnboundedContinuousTensorSpec(1, device=self.device)
 
         reward_spec["reward"] = UnboundedContinuousTensorSpec(len(self.reward_groups), device=self.device)
 
@@ -288,12 +288,13 @@ class Env(EnvBase):
             reward = reward_group.compute()
             rewards.append(reward)
             self.stats[group, "return"].add_(reward)
+
+            neg_rewar = reward < 0.
+            self.stats[group, "reward_clip_ratio"].add_(neg_rewar.float())
+
         rewards = torch.cat(rewards, 1)
-        
-        neg_rewar = (rewards < 0.).sum(1, True)
         rewards = rewards.clamp(min=0.)
 
-        self.stats["reward_clip_ratio"].add_(neg_rewar.float())
         self.stats["episode_len"][:] = self.episode_length_buf.unsqueeze(1)
         self.stats["success"][:] = (self.episode_length_buf >= self.max_episode_length * 0.9).unsqueeze(1).float()
         return {"reward": rewards, "stats": self.stats.clone()}
