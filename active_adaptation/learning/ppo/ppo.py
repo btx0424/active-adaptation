@@ -196,7 +196,7 @@ class PPOPolicy(TensorDictModuleBase):
         values = tensordict["state_value"]
         next_values = tensordict["next", "state_value"]
 
-        rewards = tensordict[REWARD_KEY]
+        rewards = tensordict[REWARD_KEY].sum(-1, keepdim=True)
         # dones = tensordict["next", "done"]
         # rewards = torch.where(dones, rewards + values * self.gae.gamma, rewards)
         dones = tensordict[DONE_KEY]
