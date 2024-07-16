@@ -498,6 +498,14 @@ class QuadrupedManip(LocomotionEnv):
             ee_angvel_w = self.asset.data.body_ang_vel_w[:, self.body_id]
             return - ee_angvel_w.square().sum(1, True)
 
+    class root_orientation(Reward):
+            
+        def __init__(self, env, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+            self.asset: Articulation = self.env.scene["robot"]
+
+        def compute(self) -> torch.Tensor:
+            return self.asset.data.projected_gravity_b[:, 2].square().unsqueeze(1)
 
 
 def random_scale(x: torch.Tensor, low: float, high: float):
