@@ -40,3 +40,4 @@ from .ppo_swap import PPOPolicy as PPOSwap
 from .ppo_cmd import PPOPolicy as PPOCmd
 from .ppo_adv_mix import PPOPolicy as PPOAdvMix
 from .roa_old import PPOROAPolicy as PPOROAOldPolicy
+from .ppo_dwl import PPODWLPolicy
