@@ -4,20 +4,6 @@ from .sac import SAC
 from .hbc import HBC
 
 ALGOS = {
-    "ppo": PPOPolicy,
-    "ppo_asy": PPOAsyPolicy,
-    "ppo_dual": PPODualPolicy,
-    "ppo_rnn": PPORNNPolicy,
-    "ppo_roa": PPOROAPolicy,
-    "ppo_guided": PPOGuidedPolicy,
-    "ppo_adapt": PPOAdaptPolicy,
-    "ppo_ji": PPOJi,
-    "ppo_stoch": PPOStochPolicy,
-    "ppo_mask": PPOMaskPolicy,
-    "ppo_him": PPOHIMPolicy,
-    "ppo_priv": PPOPrivPolicy,
-    # "ppo_rma": PPORMAPolicy,
-    "ppg": PPGPolicy,
     "sac": SAC,
     "hbc": HBC,
     "bc": BCPolicy
