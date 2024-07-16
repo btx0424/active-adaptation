@@ -1,5 +1,5 @@
 import torch
-from typing import Dict
+from typing import Dict, Tuple
 from tensordict import TensorDictBase
 from omni.isaac.lab.assets import Articulation
 import omni.isaac.lab.utils.string as string_utils
@@ -31,7 +31,7 @@ class JointPosition(ActionManager):
         joint_names: str, 
         action_scaling: Dict[str, float] = 0.5,
         max_delay: int = 4,
-        alpha: float = 0.8
+        alpha: Tuple[float, float] = (0.5, 1.0)
     ):
         super().__init__(env)
         self.joint_ids, self.joint_names = self.asset.find_joints(joint_names)
@@ -43,13 +43,18 @@ class JointPosition(ActionManager):
         
         self.action_scaling = torch.tensor(self.action_scaling, device=self.device)
         self.max_delay = max_delay
+        
+        if isinstance(alpha, float):
+            self.alpha_range = (alpha, alpha)
+        else:
+            self.alpha_range = tuple(alpha)
 
         self.action_dim = len(self.joint_ids)
         
         with torch.device(self.device):
             self.action_buf = torch.zeros(self.num_envs, self.action_dim, 4)
             self.applied_action = torch.zeros(self.num_envs, self.action_dim)
-            self.alpha = torch.ones(self.num_envs, 1) * alpha
+            self.alpha = torch.ones(self.num_envs, 1)
             self.delay = torch.zeros(self.num_envs, 1, dtype=int)
         
         self.default_joint_pos = self.asset.data.default_joint_pos.clone()
@@ -58,6 +63,9 @@ class JointPosition(ActionManager):
         self.delay[env_ids] = torch.randint(0, self.max_delay, (len(env_ids), 1), device=self.device)
         self.action_buf[env_ids] = 0
         self.applied_action[env_ids] = 0
+
+        alpha = torch.empty(len(env_ids), 1, device=self.device).uniform_(*self.alpha_range)
+        self.alpha[env_ids] = alpha
 
     def __call__(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:

@@ -45,6 +45,7 @@ class motor_params(Randomization):
         stiffness_range = (1.0, 1.0),
         damping_range = (1.0, 1.0),
         strength_range = (1.0, 1.0),
+        armature_range = (0.0, 0.1),
         homogeneous: bool = False,
     ):
         super().__init__(env)
@@ -53,18 +54,28 @@ class motor_params(Randomization):
         self.stiffness_range = stiffness_range
         self.damping_range = damping_range
         self.strength_range = strength_range
+        self.armature_range = armature_range
+
         self.homogeneous = homogeneous
         self.motors: Union[DCMotor, ImplicitActuator] = self.asset.actuators[self.actuator_name]
+        self.num_joints = self.motors.num_joints
         
         self.default_stiffness = self.motors.default_stiffness = self.motors.stiffness.clone()
         self.default_damping = self.motors.default_damping = self.motors.damping.clone()
         self.default_strength = torch.ones_like(self.default_stiffness)
+        self.default_armature = self.motors.armature.clone()
+        
         if isinstance(self.motors, DCMotor):
             if isinstance(self.motors._saturation_effort, float):
                 self.default_strength.fill_(self.motors._saturation_effort)
                 self.motors._saturation_effort = self.default_strength.clone()
         elif isinstance(self.motors, ImplicitActuator):
             self.default_strength[:] = self.motors.effort_limit
+        
+        armature = self.default_armature.clone().uniform_(*self.armature_range)
+        if self.homogeneous:
+            armature[:] = armature.mean(-1, keepdim=True)
+        self.asset.write_joint_armature_to_sim(armature, joint_ids=self.motors.joint_indices)
         
     def reset(self, env_ids: torch.Tensor=slice(None)):
         stiffness, _ = random_scale(
