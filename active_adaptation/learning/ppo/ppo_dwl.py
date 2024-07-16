@@ -28,9 +28,9 @@ import torch.distributions as D
 import warnings
 import functools
 
-from torchrl.data import CompositeSpec, TensorSpec
+from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuousTensorSpec
 from torchrl.modules import ProbabilisticActor
-from torchrl.envs.transforms import CatTensors, VecNorm
+from torchrl.envs.transforms import CatTensors, TensorDictPrimer
 from tensordict import TensorDict
 from tensordict.nn import TensorDictModuleBase, TensorDictModule, TensorDictSequential
 
@@ -42,33 +42,49 @@ from collections import OrderedDict
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
 from ..modules.distributions import IndependentNormal
 from .common import *
+from ..modules.rnn import GRU, set_recurrent_mode
 
-torch.set_float32_matmul_precision('high')
 
 @dataclass
 class PPOConfig:
-    _target_: str = "active_adaptation.learning.ppo.ppo_him.PPOHIMPolicy"
-    name: str = "ppo_him"
+    _target_: str = "active_adaptation.learning.ppo.ppo_dwl.PPODWLPolicy"
+    name: str = "ppo"
     train_every: int = 32
     ppo_epochs: int = 5
     num_minibatches: int = 8
     lr: float = 5e-4
     clip_param: float = 0.2
-    entropy_coef: float = 0.002
+    entropy_coef: float = 0.001
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
-    short_history: int = 6
-    num_prototypes: int = 32
-    temperature: float = 3.0
     checkpoint_path: Union[str, None] = None
+    dwl_weight: float = 1.0
+    l1_reg: float = 0.002
 
 cs = ConfigStore.instance()
-cs.store("ppo_him", node=PPOConfig, group="algo")
+cs.store("ppo_dwl", node=PPOConfig, group="algo")
 
 
-class PPOHIMPolicy(TensorDictModuleBase):
+class DWL(nn.Module):
+    def __init__(self, latent_dim: int = 24):
+        super().__init__()
+        self.inp = nn.LazyLinear(64)
+        self.gru = GRU(64, 256)
+        self.out = nn.Sequential(nn.Mish(), nn.Linear(256, latent_dim))
 
+    def forward(self, obs: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor):
+        x = self.inp(obs)
+        x, hx = self.gru(x, is_init, hx)
+        return self.out(x), hx.contiguous()
+
+
+class PPODWLPolicy(TensorDictModuleBase):
+    """
+    Denoising World Model Learning as described in the paper:
+    https://roboticsconference.org/program/papers/58/
+
+    """
     def __init__(
         self, 
         cfg: PPOConfig, 
@@ -85,13 +101,9 @@ class PPOHIMPolicy(TensorDictModuleBase):
         self.max_grad_norm = 1.0
         self.clip_param = self.cfg.clip_param
         self.critic_loss_fn = nn.MSELoss(reduction="none")
+        self.observation_spec = observation_spec
         self.action_dim = action_spec.shape[-1]
-        if "aux_target_" in observation_spec.keys(True, True):
-            # target for explicit estimation, e.g., base velocity
-            self.aux_target_dim = observation_spec["aux_target_"].shape[-1]
-        else:
-            raise ValueError("Specify aux_target_ to use HIM.")
-
+        self.hidden_dim = 256
         self.gae = GAE(0.99, 0.95)
         
         if cfg.value_norm:
@@ -101,83 +113,69 @@ class PPOHIMPolicy(TensorDictModuleBase):
         self.value_norm = value_norm_cls(input_shape=1).to(self.device)
 
         fake_input = observation_spec.zero()
-        print(fake_input)
+
+        _actor = nn.Sequential(make_mlp([48]), Actor(self.action_dim))
+        self.dwl_enc = TensorDictModule(
+            DWL(latent_dim=24), 
+            [OBS_KEY, "is_init", "estimator_hx"], 
+            ["_latent", ("next", "estimator_hx")]
+        ).to(self.device)
         
-        actor_module=TensorDictSequential(
-            CatTensors([OBS_KEY, "aux_pred", "latent"], "_actor_input", del_keys=False),
-            TensorDictModule(
-                nn.Sequential(
-                    make_mlp([512, 256, 128], norm=self.cfg.layer_norm), 
-                    Actor(self.action_dim)
-                ),
-                ["_actor_input"], ["loc", "scale"]
-            )
-        )
+        self.dwl_dec = TensorDictModule(
+            nn.Sequential(make_mlp([64]), nn.LazyLinear(observation_spec[OBS_PRIV_KEY].shape[-1])),
+            ["_latent"],
+            [OBS_PRIV_KEY + "_recon"]
+        ).to(self.device)
+        
         self.actor: ProbabilisticActor = ProbabilisticActor(
-            module=actor_module,
+            module=TensorDictModule(_actor, ["_latent"], ["loc", "scale"]),
             in_keys=["loc", "scale"],
             out_keys=[ACTION_KEY],
             distribution_class=IndependentNormal,
             return_log_prob=True
         ).to(self.device)
         
-        def make_critic():
-            return nn.Sequential(make_mlp([512, 256, 128], norm=self.cfg.layer_norm), nn.LazyLinear(1))
-        
+        _critic = nn.Sequential(make_mlp([512, 256, 128]), nn.LazyLinear(1))
         self.critic = TensorDictSequential(
-            CatTensors([OBS_KEY, OBS_PRIV_KEY], "_critic_input", del_keys=False),
-            TensorDictModule(make_critic(), [OBS_KEY], ["state_value"])
+            CatTensors([OBS_KEY, OBS_PRIV_KEY], "_critic_feature", del_keys=False),
+            TensorDictModule(_critic, ["_critic_feature"], ["state_value"])
         ).to(self.device)
 
-        # HIM estimation module
-        def _make_mlp(num_units):
-            return nn.Sequential(make_mlp(num_units[:-1]), nn.LazyLinear(num_units[-1]))
-        
-        self.encoder = TensorDictModule(
-            nn.Sequential(
-                _make_mlp([128, 64, 16 + self.aux_target_dim]),
-                Split([16, self.aux_target_dim])
-            ),
-            [OBS_HIST_KEY], ["latent", "aux_pred"]
-        ).to(self.device)
-        self._target = _make_mlp([128, 64, 16]).to(self.device)
-        self._proto = nn.Embedding(self.cfg.num_prototypes, 16).to(self.device)
-        
-        self.encoder(fake_input)
+        # lazy initialization
+        with torch.device(self.device):
+            fake_input["is_init"] = torch.ones(fake_input.shape[0], 1, dtype=torch.bool)
+            fake_input["estimator_hx"] = torch.zeros(fake_input.shape[0], self.hidden_dim)
+
+        self.dwl_enc(fake_input)
+        self.dwl_dec(fake_input)
         self.actor(fake_input)
         self.critic(fake_input)
 
-        self.opt = torch.optim.Adam(
-            [
-                {"params": self.actor.parameters()},
-                {"params": self.critic.parameters()},
-            ],
-            lr=cfg.lr
-        )
-
-        self.opt_him = torch.optim.Adam(
-            [
-                {"params": self.encoder.parameters()},
-                {"params": self._target.parameters()},
-                {"params": self._proto.parameters()}
-            ]
-        )
+        self.opt = torch.optim.Adam([
+            {"params": self.actor.parameters()},
+            {"params": self.critic.parameters()},
+            {"params": self.dwl_enc.parameters()},
+            {"params": self.dwl_dec.parameters()},
+        ], lr=cfg.lr)
         
         def init_(module):
             if isinstance(module, nn.Linear):
-                nn.init.orthogonal_(module.weight, 0.1)
+                nn.init.orthogonal_(module.weight, 0.01)
                 nn.init.constant_(module.bias, 0.)
         
         self.actor.apply(init_)
         self.critic.apply(init_)
-
-        # compile_mode = "reduce-overhead"
-        # self._update = torch.compile(self._update, mode=compile_mode)
-        # self._update_estimation = torch.compile(self._update_estimation, mode=compile_mode)
+        self.dwl_enc.apply(init_)
+        self.dwl_dec.apply(init_)
+    
+    def make_tensordict_primer(self):
+        num_envs = self.observation_spec.shape[0]
+        spec = UnboundedContinuousTensorSpec((num_envs, self.hidden_dim), device=self.device)
+        return TensorDictPrimer({"estimator_hx": spec}, reset_key="done")
     
     def get_rollout_policy(self, mode: str="train"):
         policy = TensorDictSequential(
-            self.encoder,
+            self.dwl_enc,
             self.actor,
         )
         return policy
@@ -189,17 +187,15 @@ class PPOHIMPolicy(TensorDictModuleBase):
         self._compute_advantage(tensordict, self.critic, "adv", "ret", update_value_norm=True)
         tensordict["adv"] = normalize(tensordict["adv"], subtract_mean=True)
 
-        for epoch in range(self.cfg.ppo_epochs):
-            batch = make_batch(tensordict, self.cfg.num_minibatches)
-            for minibatch in batch:
-                infos.append(TensorDict({
-                    **self._update(minibatch),
-                    **self._update_estimation(minibatch)
-                }, []))
-        
-        infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
+        with set_recurrent_mode(True):
+            for epoch in range(self.cfg.ppo_epochs):
+                batch = make_batch(tensordict, self.cfg.num_minibatches, tensordict.shape[1])
+                for minibatch in batch:
+                    infos.append(TensorDict(self._update(minibatch), []))
+
+        infos = {k: v.mean().item() for k, v in torch.stack(infos).items()}
         infos["critic/value_mean"] = tensordict["ret"].mean().item()
-        return infos
+        return dict(sorted(infos.items()))
 
     @torch.no_grad()
     def _compute_advantage(
@@ -210,10 +206,16 @@ class PPOHIMPolicy(TensorDictModuleBase):
         ret_key: str="ret",
         update_value_norm: bool=True,
     ):
-        values = critic(tensordict)["state_value"]
-        next_values = critic(tensordict["next"])["state_value"]
+        with tensordict.view(-1) as tensordict_flat:
+            critic(tensordict_flat)
+            critic(tensordict_flat["next"])
 
-        rewards = tensordict[REWARD_KEY]
+        values = tensordict["state_value"]
+        next_values = tensordict["next", "state_value"]
+
+        rewards = tensordict[REWARD_KEY].sum(-1, keepdim=True)
+        # dones = tensordict["next", "done"]
+        # rewards = torch.where(dones, rewards + values * self.gae.gamma, rewards)
         dones = tensordict[DONE_KEY]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
@@ -227,9 +229,9 @@ class PPOHIMPolicy(TensorDictModuleBase):
         tensordict.set(ret_key, ret)
         return tensordict
 
+    # @torch.compile
     def _update(self, tensordict: TensorDict):
-        with torch.no_grad():
-            self.encoder(tensordict)
+        self.dwl_enc(tensordict)
         dist = self.actor.get_dist(tensordict)
         log_probs = dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy().mean()
@@ -245,8 +247,12 @@ class PPOHIMPolicy(TensorDictModuleBase):
         values = self.critic(tensordict)["state_value"]
         value_loss = self.critic_loss_fn(b_returns, values)
         value_loss = (value_loss * (~tensordict["is_init"])).mean()
-        
-        loss = policy_loss + entropy_loss + value_loss
+
+        dwl_loss = self.cfg.dwl_weight * F.mse_loss(self.dwl_dec(tensordict)[OBS_PRIV_KEY + "_recon"], tensordict[OBS_PRIV_KEY])
+        # l1-norm regularization
+        dwl_reg = self.cfg.l1_reg * torch.mean(tensordict["_latent"].abs().sum(-1))
+
+        loss = policy_loss + entropy_loss + value_loss + dwl_loss + dwl_reg
         self.opt.zero_grad()
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
@@ -261,37 +267,9 @@ class PPOHIMPolicy(TensorDictModuleBase):
             "critic/value_loss": value_loss,
             "critic/grad_norm": critic_grad_norm,
             "critic/explained_var": explained_var,
+            "adapt/dwl_loss": dwl_loss,
+            "adapt/reg_loss": dwl_reg
         }
-    
-    def _update_estimation(self, tensordict: TensorDictBase):
-        self.encoder(tensordict)
-        
-        z_s = tensordict["latent"]
-        z_t = self._target(tensordict["next", OBS_KEY])
-
-        with torch.no_grad():
-            w = self._proto.weight.data.clone()
-            w = F.normalize(w, dim=-1, p=2)
-            self._proto.weight.copy_(w)
-
-        score_s = F.normalize(z_s, dim=-1, p=2) @ self._proto.weight.T
-        score_t = F.normalize(z_t, dim=-1, p=2) @ self._proto.weight.T
-
-        with torch.no_grad():
-            q_s = sinkhorn(score_s)
-            q_t = sinkhorn(score_t)
-
-        log_p_s = F.log_softmax(score_s / self.cfg.temperature, dim=-1)
-        log_p_t = F.log_softmax(score_t / self.cfg.temperature, dim=-1)
-
-        swap_loss = -0.5 * (q_s * log_p_t + q_t * log_p_s).mean()
-        estimation_loss = F.mse_loss(tensordict["aux_pred"], tensordict["aux_target_"])
-        loss = estimation_loss + swap_loss
-        self.opt_him.zero_grad()
-        loss.backward()
-        self.opt_him.step()
-        
-        return {"adapt/estimation_loss": estimation_loss, "adapt/swap_loss": swap_loss}
 
     def state_dict(self):
         state_dict = OrderedDict()
@@ -315,23 +293,8 @@ class PPOHIMPolicy(TensorDictModuleBase):
 
 
 def normalize(x: torch.Tensor, subtract_mean: bool=False):
+    dim = tuple(range(x.ndim))
     if subtract_mean:
-        return (x - x.mean()) / x.std().clamp(1e-7)
+        return (x - x.mean(dim)) / x.std(dim).clamp(1e-7)
     else:
-        return x  / x.std().clamp(1e-7)
-
-@torch.no_grad()
-def sinkhorn(out, eps=0.05, iters=3):
-    Q = torch.exp(out / eps).T
-    K, B = Q.shape[0], Q.shape[1]
-    Q /= Q.sum()
-
-    for it in range(iters):
-        # normalize each row: total weight per prototype must be 1/K
-        Q /= torch.sum(Q, dim=1, keepdim=True)
-        Q /= K
-
-        # normalize each column: total weight per sample must be 1/B
-        Q /= torch.sum(Q, dim=0, keepdim=True)
-        Q /= B
-    return (Q * B).T
+        return x  / x.std(dim).clamp(1e-7)
