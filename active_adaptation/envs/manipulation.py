@@ -367,6 +367,42 @@ class QuadrupedManip(LocomotionEnv):
             base_joint_angvel = self.asset.data.joint_vel[:, self.base_joint_id]
             ang_vel_error = (target_angvel - base_joint_angvel).square().unsqueeze_(1)
             return torch.exp(- ang_vel_error / self.l)
+        
+    class ee_tracking_hybrid(Reward):
+        def __init__(self, env, ee_name: str, base_joint_name: str, weight: float, enabled: bool = True, l: float = 0.25):
+            super().__init__(env, weight, enabled)
+            self.asset: Articulation = self.env.scene["robot"]
+            ee_ids, ee_names = self.asset.find_bodies(ee_name)
+            self.ee_id = ee_ids[0]
+            base_joint_ids, base_joint_names = self.asset.find_joints(base_joint_name)
+            self.base_joint_id = base_joint_ids[0]
+            self.l = l
+            
+            with torch.device(self.device):
+                self.fwd_vec = torch.tensor([1., 0., 0.]).expand(self.num_envs, -1)
+                self.up_vec = torch.tensor([0., 0., 1.]).expand(self.num_envs, -1)
+                self.ee_forward_w = torch.zeros(self.num_envs, 3)
+                self.ee_up_w = torch.zeros(self.num_envs, 3)
+
+        def compute(self) -> torch.Tensor:
+            command_ee_pos_b_yaw = self.env.command_manager.command_ee_pos_b_yaw
+            base_joint_yaw = self.asset.data.joint_pos[:, self.base_joint_id]
+            arm_base_ori_cosine = torch.cos(command_ee_pos_b_yaw - base_joint_yaw).unsqueeze_(1)
+            
+            ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id]
+            command_ee_pos_w = self.env.command_manager.command_ee_pos_w
+            ee_pos_error = (ee_pos_w - command_ee_pos_w).norm(dim=-1, keepdim=True)
+            ee_pos_rew = 1 - ee_pos_error + torch.exp(- ee_pos_error / self.l)
+            
+            ee_quat_w = self.asset.data.body_quat_w[:, self.ee_id]
+            self.ee_forward_w[:] = quat_rotate(ee_quat_w, self.fwd_vec)
+            self.ee_up_w[:] = quat_rotate(ee_quat_w, self.up_vec)
+            
+            r1 = (self.ee_forward_w * self.env.command_manager.command_ee_forward_w).sum(-1, True)
+            r2 = (self.ee_up_w * self.env.command_manager.command_ee_upward_w).sum(-1, True)
+            ee_ori_rew = 0.5 * (r1.sign() * r1.square() + r2.sign() * r2.square())
+            
+            return arm_base_ori_cosine * (ee_pos_rew + ee_ori_rew)
             
     class ee_acc_penalty(Reward):
         def __init__(self, env, ee_name: str, weight: float, enabled: bool = True):

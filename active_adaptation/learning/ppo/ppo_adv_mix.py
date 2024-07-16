@@ -182,7 +182,9 @@ class PPOPolicy(TensorDictModuleBase):
 
         # reconstruct the sample log prob
         dist = D.Normal(tensordict['loc'], tensordict['scale'])
-        tensordict['sample_log_prob'] = dist.log_prob(tensordict['action']).detach()
+        sample_log_probs = dist.log_prob(tensordict['action'])
+        sample_log_prob_groups = torch.split(sample_log_probs, self.group_action_dims, dim=-1)
+        tensordict['sample_log_prob_grouped'] = torch.stack([group.sum(dim=-1) for group in sample_log_prob_groups], dim=-1)
 
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches)
@@ -233,12 +235,11 @@ class PPOPolicy(TensorDictModuleBase):
         dist = self.actor.get_dist(tensordict)
         log_probs = dist.base_dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy().mean()
+        log_prob_groups = torch.split(log_probs, self.group_action_dims, dim=-1)
+        log_prob_grouped = torch.stack([group.sum(dim=-1) for group in log_prob_groups], dim=-1)
+        ratio_grouped = torch.exp(log_prob_grouped - tensordict["sample_log_prob_grouped"])
 
         adv = tensordict["adv"]
-        ratios = torch.exp(log_probs - tensordict["sample_log_prob"])
-        ratio_groups = torch.split(ratios, self.group_action_dims, dim=-1)
-        ratio_grouped = torch.stack([group.sum(dim=-1) for group in ratio_groups], dim=-1)
-
         assert adv.shape[-1] == 2
         # do advantage mixing
         value_mixing_ratio = self.get_value_mixing_ratio()
@@ -295,7 +296,8 @@ class PPOPolicy(TensorDictModuleBase):
 
 
 def normalize(x: torch.Tensor, subtract_mean: bool=False):
+    dims = tuple(range(x.dim() - 1))
     if subtract_mean:
-        return (x - x.mean()) / x.std().clamp(1e-7)
+        return (x - x.mean(dims)) / x.std(dims).clamp(min=1e-7)
     else:
-        return x  / x.std().clamp(1e-7)
+        return x / x.std(dims).clamp(min=1e-7)
