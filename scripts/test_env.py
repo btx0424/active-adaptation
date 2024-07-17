@@ -50,7 +50,7 @@ def log_video(env, it, render_interval, render_decimation):
         wandb.log({"video": wandb.Video(video_path)}, step=it)
 
 
-@hydra.main(config_path="../cfg", config_name="train")
+@hydra.main(config_path="../cfg", config_name="train", version_base=None)
 def main(cfg):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)

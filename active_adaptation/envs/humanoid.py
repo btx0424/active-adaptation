@@ -4,6 +4,7 @@ import torch
 from omni.isaac.lab.sensors import ContactSensor, RayCaster
 from omni.isaac.lab.actuators import DCMotor
 from omni.isaac.lab.assets import Articulation
+from omni.isaac.lab.utils.math import yaw_quat
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 
@@ -31,7 +32,26 @@ class Humanoid(LocomotionEnv):
             distance_xy = (feet_pos[:, 0, :2] - feet_pos[:, 1, :2]).norm(dim=-1)
             return (distance_xy < self.threshold).reshape(-1, 1)
     
+    class arm_swing(mdp.Reward):
+        def __init__(self, env, arm_names: str,weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+            self.asset: Articulation = self.env.scene["robot"]
+            self.arm_ids = self.asset.find_bodies(arm_names)[0]
+            self.phase: torch.Tensor = self.asset.data.phase
+            self.fwd_vec = torch.tensor([1., 0., 0.], device=self.device)
+            self.command_manager = self.env.command_manager
 
+        def compute(self) -> torch.Tensor:
+            quat_root = yaw_quat(self.asset.data.root_quat_w)
+            arm_displacement = (
+                + self.asset.data.body_pos_w[:, self.arm_ids[0]]
+                - self.asset.data.body_pos_w[:, self.arm_ids[1]]
+            )
+            arm_displacement = (quat_rotate(quat_root, self.fwd_vec) * arm_displacement).sum(-1, True)
+            reward = (self.phase.cos().sign().unsqueeze(1) * arm_displacement).clamp(max=0.3)
+            return reward.reshape(self.num_envs, 1) * (~self.command_manager.is_standing_env)
+
+        
     class step_up(mdp.Reward):
         
         env: "Humanoid"
