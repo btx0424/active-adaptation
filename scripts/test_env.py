@@ -10,7 +10,7 @@ import os
 import time
 import datetime
 
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, DictConfig
 from collections import OrderedDict
 from tqdm import tqdm
 from setproctitle import setproctitle
@@ -51,7 +51,7 @@ def log_video(env, it, render_interval, render_decimation):
 
 
 @hydra.main(config_path="../cfg", config_name="train", version_base=None)
-def main(cfg):
+def main(cfg: DictConfig):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
     
@@ -66,6 +66,10 @@ def main(cfg):
         tags=cfg.wandb.tags,
     )
     run.config.update(OmegaConf.to_container(cfg))
+    cfg_save_path = os.path.join(run.dir, "cfg.yaml")
+    OmegaConf.save(cfg, cfg_save_path)
+    run.save(cfg_save_path, policy="now")
+    
     default_run_name = f"{cfg.exp_name}-{datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}"
     run_idx = run.name.split("-")[-1]
     run.name = f"{run_idx}-{default_run_name}"
