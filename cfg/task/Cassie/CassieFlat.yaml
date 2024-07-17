@@ -31,23 +31,24 @@ observation:
     joint_vel:    {noise_std: 0.2}
     prev_actions: {steps: 2}
     # - "motor_params"
-  # priv:
-  #   applied_action:   {}
-  #   joint_forces:     {}
+  priv:
+    applied_action:   {}
+    joint_forces:     {}
   #   jacobians:        {body_names: .*toe}
   #   # joint_acc:        {}
-  #   root_linvel_b:    {}
-  #   feet_pos_b:       {}
+    root_linvel_b:    {}
+    feet_pos_b:       {}
+    feet_vel_b:       {}
   #   # feet_height:      {feet_names: .*_toe}
-  #   feet_height_map:  {feet_names: .*toe}
-  #   applied_torques:  {actuator_name: legs}
+    feet_height_map:  {feet_names: .*toe}
+    applied_torques:  {actuator_name: legs}
   #   motor_params:     {actuator_name: legs, homogeneous: "${task.homogeneous}"}
   #   body_materials:   {body_names: .*toe, homogeneous: "${task.homogeneous}"}
   #   body_mass:        {body_names: "pelvis"}
   #   # body_momentum:    {body_names: "pelvis"}
   #   cum_error:          {}
   #   last_rewards:       {}
-  recon_target_:
+  recon_target:
     root_angvel_b:
     projected_gravity_b:
     joint_pos:
@@ -56,7 +57,7 @@ observation:
     feet_pos_b:
     feet_vel_b:
     feet_height_map:  {feet_names: .*toe }
-    applied_torques:  {actuator_name: base_legs}
+    applied_torques:  {actuator_name: legs}
     joint_forces:
   aux_target_:
     root_linvel_b:

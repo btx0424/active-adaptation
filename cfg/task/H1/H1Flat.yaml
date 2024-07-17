@@ -28,23 +28,23 @@ observation:
     joint_pos: {noise_std: 0.05}
     joint_vel: {noise_std: 0.2}
     prev_actions:   {steps: 4}
-  # priv:
-  #   applied_action:   {}
+  priv:
+    applied_action:   {}
   #   # joint_acc:        {}
-  #   joint_forces:     {}
+    joint_forces:     {}
   #   jacobians:        {body_names: .*ankle_link}
-  #   root_linvel_b:    {}
-  #   feet_pos_b:       {}
-  #   feet_vel_b:       {}
+    root_linvel_b:    {}
+    feet_pos_b:       {}
+    feet_vel_b:       {}
   #   # feet_height:      {feet_names: .*ankle_link}
-  #   # feet_height_map:  {feet_names: .*ankle_link }
-  #   applied_torques:  {actuator_name: base_legs}
+    feet_height_map:  {feet_names: .*ankle_link }
+    applied_torques:  {actuator_name: base_legs}
   #   motor_params:     {actuator_name: "base_legs"}
   #   body_materials:   {body_names: ".*ankle_link"}
   #   body_mass:        {body_names: ["torso_link", "pelvis"]}
   #   cum_error:        {}
   #   last_rewards:     {}
-  recon_target_: 
+  recon_target: 
     root_angvel_b:
     projected_gravity_b:
     joint_pos:

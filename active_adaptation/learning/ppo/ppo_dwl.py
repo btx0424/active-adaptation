@@ -46,10 +46,12 @@ from .common import *
 from ..modules.rnn import GRU, set_recurrent_mode
 
 
+RECON_KEY = "recon_target"
+
 @dataclass
 class PPOConfig:
     _target_: str = "active_adaptation.learning.ppo.ppo_dwl.PPODWLPolicy"
-    name: str = "ppo"
+    name: str = "ppo_dwl"
     train_every: int = 32
     ppo_epochs: int = 5
     num_minibatches: int = 8
@@ -60,10 +62,11 @@ class PPOConfig:
     value_norm: bool = False
 
     checkpoint_path: Union[str, None] = None
+    dwl_latent_dim: int = 48
     dwl_weight: float = 0.2
-    l1_reg: float = 0.002
+    l1_reg: float = dwl_weight / 500
 
-    in_keys: List[str] = field(default_factory=lambda: ["policy", "priv", "recon_target_"])
+    in_keys: List[str] = field(default_factory=lambda: ["policy", "priv", RECON_KEY])
 
 cs = ConfigStore.instance()
 cs.store("ppo_dwl", node=PPOConfig, group="algo")
@@ -117,14 +120,14 @@ class PPODWLPolicy(TensorDictModuleBase):
 
         fake_input = observation_spec.zero()
 
-        _actor = nn.Sequential(make_mlp([48]), Actor(self.action_dim))
+        _actor = nn.Sequential(make_mlp([64]), Actor(self.action_dim))
         self.dwl_enc = TensorDictModule(
-            DWL(latent_dim=24), 
+            DWL(latent_dim=self.cfg.dwl_latent_dim), 
             [OBS_KEY, "is_init", "estimator_hx"], 
             ["_latent", ("next", "estimator_hx")]
         ).to(self.device)
         
-        self.recon_dim = self.observation_spec["recon_target_"].shape[-1]
+        self.recon_dim = self.observation_spec[RECON_KEY].shape[-1]
         self.dwl_dec = TensorDictModule(
             nn.Sequential(make_mlp([64]), nn.LazyLinear(self.recon_dim)),
             ["_latent"],
@@ -253,7 +256,7 @@ class PPODWLPolicy(TensorDictModuleBase):
         value_loss = (value_loss * (~tensordict["is_init"])).mean()
 
         recon = self.dwl_dec(tensordict)["recon"]
-        recon_target = tensordict["recon_target_"]
+        recon_target = tensordict[RECON_KEY]
         dwl_loss = self.cfg.dwl_weight * F.mse_loss(recon, recon_target)
         # l1-norm regularization
         dwl_reg = self.cfg.l1_reg * torch.mean(tensordict["_latent"].abs().sum(-1))
