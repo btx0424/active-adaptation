@@ -66,14 +66,16 @@ def main(cfg: DictConfig):
         tags=cfg.wandb.tags,
     )
     run.config.update(OmegaConf.to_container(cfg))
-    cfg_save_path = os.path.join(run.dir, "cfg.yaml")
-    OmegaConf.save(cfg, cfg_save_path)
-    run.save(cfg_save_path, policy="now")
     
-    default_run_name = f"{cfg.exp_name}-{datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}"
+    default_run_name = f"{cfg.exp_name}-{datetime.datetime.now().strftime('%Y-%m-%d-%H-%M')}"
     run_idx = run.name.split("-")[-1]
     run.name = f"{run_idx}-{default_run_name}"
     setproctitle(run.name)
+
+    cfg_save_path = os.path.join(run.dir, "cfg.yaml")
+    OmegaConf.save(cfg, cfg_save_path)
+    run.save(cfg_save_path, policy="now")
+    run.save(os.path.join(run.dir, "config.yaml"), policy="now")
 
     env, policy, vecnorm = make_env_policy(cfg)
 
