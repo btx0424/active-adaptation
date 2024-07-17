@@ -47,6 +47,17 @@ observation:
   #   # body_momentum:    {body_names: "pelvis"}
   #   cum_error:          {}
   #   last_rewards:       {}
+  recon_target_:
+    root_angvel_b:
+    projected_gravity_b:
+    joint_pos:
+    joint_vel:
+    root_linvel_b:
+    feet_pos_b:
+    feet_vel_b:
+    feet_height_map:  {feet_names: .*toe }
+    applied_torques:  {actuator_name: base_legs}
+    joint_forces:
   aux_target_:
     root_linvel_b:
     root_angvel_b:

@@ -27,6 +27,7 @@ import torch.nn.functional as F
 import torch.distributions as D
 import warnings
 import functools
+from typing import List
 
 from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuousTensorSpec
 from torchrl.modules import ProbabilisticActor
@@ -35,7 +36,7 @@ from tensordict import TensorDict
 from tensordict.nn import TensorDictModuleBase, TensorDictModule, TensorDictSequential
 
 from hydra.core.config_store import ConfigStore
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Union
 from collections import OrderedDict
 
@@ -59,8 +60,10 @@ class PPOConfig:
     value_norm: bool = False
 
     checkpoint_path: Union[str, None] = None
-    dwl_weight: float = 1.0
+    dwl_weight: float = 0.2
     l1_reg: float = 0.002
+
+    in_keys: List[str] = field(default_factory=lambda: ["policy", "priv", "recon_target_"])
 
 cs = ConfigStore.instance()
 cs.store("ppo_dwl", node=PPOConfig, group="algo")
@@ -121,10 +124,11 @@ class PPODWLPolicy(TensorDictModuleBase):
             ["_latent", ("next", "estimator_hx")]
         ).to(self.device)
         
+        self.recon_dim = self.observation_spec["recon_target_"].shape[-1]
         self.dwl_dec = TensorDictModule(
-            nn.Sequential(make_mlp([64]), nn.LazyLinear(observation_spec[OBS_PRIV_KEY].shape[-1])),
+            nn.Sequential(make_mlp([64]), nn.LazyLinear(self.recon_dim)),
             ["_latent"],
-            [OBS_PRIV_KEY + "_recon"]
+            ["recon"]
         ).to(self.device)
         
         self.actor: ProbabilisticActor = ProbabilisticActor(
@@ -248,7 +252,9 @@ class PPODWLPolicy(TensorDictModuleBase):
         value_loss = self.critic_loss_fn(b_returns, values)
         value_loss = (value_loss * (~tensordict["is_init"])).mean()
 
-        dwl_loss = self.cfg.dwl_weight * F.mse_loss(self.dwl_dec(tensordict)[OBS_PRIV_KEY + "_recon"], tensordict[OBS_PRIV_KEY])
+        recon = self.dwl_dec(tensordict)["recon"]
+        recon_target = tensordict["recon_target_"]
+        dwl_loss = self.cfg.dwl_weight * F.mse_loss(recon, recon_target)
         # l1-norm regularization
         dwl_reg = self.cfg.l1_reg * torch.mean(tensordict["_latent"].abs().sum(-1))
 

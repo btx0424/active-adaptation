@@ -61,6 +61,15 @@ observation:
     # rewards:          {}
     contact_indicator: {body_names: [".*_foot"], timing: true}
     cum_error:
+  recon_target_:
+    root_angvel_b:
+    projected_gravity_b:
+    joint_pos:
+    joint_vel:
+    root_linvel_b:
+    feet_height_map:  {feet_names: .*foot }
+    applied_torques:  {actuator_name: base_legs}
+    joint_forces:
   aux_target_:
     root_linvel_b:
     root_angvel_b:
