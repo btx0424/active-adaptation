@@ -33,6 +33,9 @@ class Humanoid(LocomotionEnv):
             return (distance_xy < self.threshold).reshape(-1, 1)
     
     class arm_swing(mdp.Reward):
+        
+        l: float = 0.2
+
         def __init__(self, env, arm_names: str,weight: float, enabled: bool = True):
             super().__init__(env, weight, enabled)
             self.asset: Articulation = self.env.scene["robot"]
@@ -48,7 +51,7 @@ class Humanoid(LocomotionEnv):
                 - self.asset.data.body_pos_w[:, self.arm_ids[1]]
             )
             arm_displacement = (quat_rotate(quat_root, self.fwd_vec) * arm_displacement).sum(-1, True)
-            reward = (self.phase.cos().sign().unsqueeze(1) * arm_displacement).clamp(max=0.3)
+            reward = (self.phase.cos().sign().unsqueeze(1) * arm_displacement).clamp(max=self.l)
             return reward.reshape(self.num_envs, 1) * (~self.command_manager.is_standing_env)
 
         

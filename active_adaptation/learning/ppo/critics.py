@@ -55,8 +55,9 @@ class PPOConfig:
     num_minibatches: int = 8
     lr: float = 5e-4
     clip_param: float = 0.2
-    entropy_coef: float = 0.001
+    entropy_coef: float = 0.002
 
+    adv_key: str = "adv_priv"
     in_keys: List[str] = field(default_factory=lambda: [OBS_KEY, OBS_PRIV_KEY, "params"])
 
 cs = ConfigStore.instance()
@@ -169,7 +170,7 @@ class Critics(TensorDictModuleBase):
                 log_probs = dist.log_prob(minibatch[ACTION_KEY])
                 entropy = dist.entropy().mean()
 
-                adv = normalize(minibatch["adv_priv"], subtract_mean=True)
+                adv = normalize(minibatch[self.cfg.adv_key], subtract_mean=True)
                 log_ratio = (log_probs - minibatch["sample_log_prob"]).unsqueeze(-1)
                 ratio = torch.exp(log_ratio)
                 surr1 = adv * ratio
