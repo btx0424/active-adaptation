@@ -48,19 +48,23 @@ observation:
     root_linvel_b:    {yaw_only: true}
     root_angvel_b:
     feet_pos_b:
-    # feet_vel_b:
+    feet_vel_b:
     feet_height_map:  {feet_names: .*foot }
     applied_torques:  {actuator_name: base_legs}
     joint_forces:     {}
     # motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     # body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
     # motor_failure:    {actuator_name: base_legs}
-    body_scale:       {}
+    # body_scale:       {}
     # body_mass:        {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # body_momentum:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # rewards:          {}
     contact_indicator: {body_names: [".*_foot"], timing: true}
     cum_error:
+  params:
+    motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
+    body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
+    body_mass:        {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
   recon_target_:
     root_angvel_b:
     projected_gravity_b:
@@ -120,6 +124,7 @@ randomization:
     actuator_name: base_legs
     stiffness_range:  [0.8, 1.2]
     damping_range:    [0.8, 1.2]
+    armature_range:   [0.0, 0.02]
     homogeneous: ${task.homogeneous}
   # random_motor_failure:
   #   actuator_name: base_legs
