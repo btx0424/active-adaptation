@@ -201,7 +201,7 @@ class Critics(TensorDictModuleBase):
                 losses["actor/approx_kl"] = ((ratio - 1) - log_ratio).mean()
                 infos.append(TensorDict(losses, []))
         
-        infos = infos[-self.cfg.ppo_epochs:]
+        infos = infos[-self.cfg.num_minibatches:]
         infos = {k: v.mean().item() for k, v in torch.stack(infos).items()}
         for key in ("obs", "priv", "both"):
             infos[f"critic/value_mean_{key}"] = tensordict[f"ret_{key}"].mean().item()

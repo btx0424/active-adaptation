@@ -1,0 +1,335 @@
+task:
+  sim:
+    dt: 0.016
+    substeps: 1
+    gravity:
+    - 0
+    - 0
+    - -9.81
+    replicate_physics: false
+    use_flatcache: true
+    use_gpu_pipeline: true
+    device: cuda:0
+    solver_type: 1
+    use_gpu: true
+    bounce_threshold_velocity: 0.2
+    friction_offset_threshold: 0.04
+    friction_correlation_distance: 0.025
+    enable_stabilization: true
+    gpu_max_rigid_contact_count: 524288
+    gpu_max_rigid_patch_count: 163840
+    gpu_found_lost_pairs_capacity: 4194304
+    gpu_found_lost_aggregate_pairs_capacity: 33554432
+    gpu_total_aggregate_pairs_capacity: 4194304
+    gpu_max_soft_body_contacts: 1048576
+    gpu_max_particle_contacts: 1048576
+    gpu_heap_capacity: 67108864
+    gpu_temp_buffer_capacity: 16777216
+    gpu_max_num_partitions: 8
+  action:
+    _target_: active_adaptation.envs.mdp.action.JointPosition
+    joint_names: .*
+    action_scaling:
+      .*: 0.5
+    max_delay: 2
+    alpha:
+    - 0.5
+    - 1.0
+  name: OrcaStairs
+  num_envs: 4096
+  max_episode_length: 1000
+  robot: cy1
+  terrain: stairs_easy
+  task: Humanoid
+  payload: false
+  command:
+    _target_: active_adaptation.envs.mdp.Command2
+    linvel_x_range:
+    - 0.0
+    - 1.25
+    linvel_y_range:
+    - -0.1
+    - 0.1
+    angvel_range:
+    - -1.5
+    - 1.5
+    yaw_stiffness_range:
+    - 0.5
+    - 0.7
+    use_stiffness_ratio: 1.0
+    stand_prob: 0.05
+    target_yaw_range:
+    - - -0.3927
+      - 0.3927
+    - - 1.1781
+      - 1.9635
+    - - 2.7489
+      - 3.5343
+    - - 4.3197
+      - 5.1051
+  observation:
+    policy:
+      command: null
+      root_angvel_b:
+        noise_std: 0.05
+      projected_gravity_b:
+        noise_std: 0.01
+      joint_pos:
+        noise_std: 0.05
+      joint_vel:
+        noise_std: 0.2
+      prev_actions:
+        steps: 3
+      phase:
+        cycle_range:
+        - 1.0
+        - 1.2
+    priv:
+      applied_action: {}
+      root_linvel_b:
+        yaw_only: true
+      body_pos:
+        body_names:
+        - .*leg_link6
+        - .*arm_link5
+        yaw_only: true
+      body_vel:
+        body_names:
+        - .*leg_link6
+        - .*arm_link5
+        yaw_only: true
+      feet_height_map:
+        feet_names: .*leg_link6
+      applied_torques:
+        actuator_name: base_legs
+      contact_indicator:
+        body_names:
+        - .*leg_link6
+        timing: false
+      joint_forces: {}
+      jacobians:
+        body_names:
+        - base_link
+        - .*leg_link6
+        - .*arm_link5
+      cum_error: {}
+      rewards: {}
+    aux_target_:
+      root_linvel_b:
+        yaw_only: true
+      root_angvel_b:
+        yaw_only: true
+      rewards: {}
+  reward:
+    loco:
+      linvel_exp:
+        weight: 1.5
+        enabled: true
+        dim: 3
+        yaw_only: true
+      linacc_z_l2:
+        weight: 0.005
+        enabled: false
+      linvel_projection:
+        weight: 1.0
+        enabled: true
+        yaw_only: true
+      angvel_z_exp:
+        weight: 1.5
+        enabled: true
+        world_frame: true
+      angvel_z_exp_shaped:
+        weight: 1.0
+        enabled: false
+      linvel_z_l2:
+        weight: 0.5
+        enabled: true
+      angvel_xy_l2:
+        weight: 0.2
+        enabled: true
+      energy_l1:
+        weight: 0.0005
+        enabled: true
+      joint_acc_l2:
+        weight: 1.0e-08
+        enabled: true
+      joint_torques_l2:
+        weight: 1.0e-05
+        enabled: true
+        joint_names: .*arm_joint.*
+      root_orientation:
+        weight: 0.5
+        enabled: true
+      survival:
+        weight: 1.0
+        enabled: true
+      action_rate_l2:
+        weight: 0.02
+        enabled: true
+      action_rate2_l2:
+        weight: 0.01
+        enabled: true
+      feet_air_time:
+        weight: 1.0
+        enabled: true
+        body_names: .*leg_link6
+        thres: 0.4
+      feet_slip:
+        weight: 0.5
+        enabled: true
+        body_names: .*leg_link6
+      feet_contact_count:
+        weight: 1.0
+        enabled: false
+        body_names: .*leg_link6
+      feet_swing:
+        weight: 1.1
+        enabled: true
+        feet_names: .*leg_link6
+      feet_orientation:
+        weight: 0.2
+        enabled: true
+        feet_names: .*leg_link6
+      feet_step:
+        weight: 1.0
+        enabled: true
+        feet_names: .*leg_link6
+      arm_swing:
+        weight: 1.0
+        enabled: true
+        arm_names: .*arm_link5
+      joint_pos_default:
+        weight: 0.1
+        enabled: true
+      joint_vel_l2:
+        weight: 0.002
+        enabled: true
+        joint_names: .*arm_joint.*
+      feet_clearance:
+        weight: 2.0
+        enabled: true
+        feet_names: .*leg_link6
+  randomization:
+    push:
+      body_names:
+      - base_link
+      - waist_yaw_link
+      force_range:
+      - 0.0
+      - 0.1
+    perturb_body_mass:
+      .*:
+      - 0.9
+      - 1.1
+    perturb_body_materials:
+      body_names: .*leg_link6
+      static_friction_range:
+      - 0.6
+      - 2.0
+      dynamic_friction_range:
+      - 0.6
+      - 2.0
+      restitution_range:
+      - 0.0
+      - 0.2
+    motor_params:
+      actuator_name: base_legs
+      stiffness_range:
+      - 0.7
+      - 1.0
+      damping_range:
+      - 0.7
+      - 1.0
+    reset_joint_states_uniform:
+      pos_ranges:
+        .*:
+        - -0.3
+        - 0.3
+      rel: true
+  termination:
+    crash:
+      body_names_expr:
+      - base_link
+      - '[l,r]arm_link4'
+      z_thres: -0.6
+    cum_error:
+      thres: 0.9
+algo:
+  _target_: active_adaptation.learning.ppo.ppo_adapt.PPOAdaptPolicy
+  name: ppo_adapt
+  train_every: 32
+  ppo_epochs: 4
+  num_minibatches: 16
+  lr: 0.0005
+  clip_param: 0.2
+  entropy_coef: 0.002
+  vecnorm: train
+  gae_gamma: 0.99
+  opt: adam
+  actor_predict_std: false
+  orthogonal_init: true
+  layer_norm: true
+  value_norm: false
+  aux_reward: 0.0
+  aux_epochs: -1
+  train_adapt: true
+  context_dim: 128
+  reg_alpha: 0.0
+  adapt_module: mse
+  ensemble: false
+  adapt_reward: false
+  tune_alpha: true
+  target_kl: 1.0
+  unbiased_critic: true
+  phase: train
+  checkpoint_path: null
+headless: true
+exp_name: +arm_swing
+app:
+  headless: true
+  enable_cameras: false
+sim:
+  dt: 0.016
+  substeps: 1
+  gravity:
+  - 0
+  - 0
+  - -9.81
+  replicate_physics: false
+  use_flatcache: true
+  use_gpu_pipeline: true
+  device: cuda:0
+  solver_type: 1
+  use_gpu: true
+  bounce_threshold_velocity: 0.2
+  friction_offset_threshold: 0.04
+  friction_correlation_distance: 0.025
+  enable_stabilization: true
+  gpu_max_rigid_contact_count: 524288
+  gpu_max_rigid_patch_count: 163840
+  gpu_found_lost_pairs_capacity: 4194304
+  gpu_found_lost_aggregate_pairs_capacity: 33554432
+  gpu_total_aggregate_pairs_capacity: 4194304
+  gpu_max_soft_body_contacts: 1048576
+  gpu_max_particle_contacts: 1048576
+  gpu_heap_capacity: 67108864
+  gpu_temp_buffer_capacity: 16777216
+  gpu_max_num_partitions: 8
+total_frames: 250000000
+max_iters: -1
+eval_interval: -1
+eval_render: false
+save_interval: 150
+render_interval: -1
+render_decimation: 4
+seed: 0
+checkpoint_path: null
+vecnorm: train
+camera_follow: true
+wandb:
+  name: +arm_swing/07-18_09-07
+  job_type: train
+  entity: btx0424
+  project: adaptation
+  mode: online
+  tags: []

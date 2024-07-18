@@ -15,8 +15,8 @@ from torchrl.data import (
 from copy import deepcopy
 
 import torch
-from omni.isaac.orbit.managers import RewardManager
-from omni.isaac.orbit.envs import RLTaskEnv
+from omni.isaac.lab.managers import RewardManager
+from omni.isaac.lab.envs import RLTaskEnv
 
 
 def reset(self: RewardManager, env_ids: torch.Tensor) -> dict[str, torch.Tensor]:

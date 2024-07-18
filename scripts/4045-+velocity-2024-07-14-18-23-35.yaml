@@ -1,0 +1,16 @@
+episode_cnt: 16
+eval/episode_len: 939.75
+eval/loco/angvel_z_exp: 819.9052734375
+eval/loco/energy_l1: -49.92980194091797
+eval/loco/feet_air_time: -56.75091552734375
+eval/loco/feet_contact_count: 64.75
+eval/loco/feet_slip: -47.82466506958008
+eval/loco/joint_acc_l2: -15.314208984375
+eval/loco/joint_torques_l2: -120.44965362548828
+eval/loco/linvel_exp: 1054.7359619140625
+eval/loco/linvel_projection: 467.04248046875
+eval/loco/orientation: -6.712790012359619
+eval/loco/return: 2565.233642578125
+eval/loco/reward_clip_ratio: 1.75
+eval/loco/survival: 939.75
+eval/success: 0.9375

@@ -12,14 +12,11 @@ app:
 sim: ${task.sim}
 # env: ${task.env}
 
-total_frames: 300_000_000
-# total_frames: 150_000_000
+total_frames: 150_000_000
 max_iters: -1
 eval_interval: -1
 eval_render: false
 save_interval: 150
-render_interval: -1
-render_decimation: 4
 seed: 0
 checkpoint_path: null
 vecnorm: ${oc.select:algo.vecnorm,train}
@@ -29,14 +26,11 @@ camera_follow: true
 wandb:
   name: ${..exp_name}/${now:%m-%d}_${now:%H-%M}
   job_type: train
-  # entity: cyber dribble
-  # project: go2m_cont
   entity: btx0424
   project: adaptation
   mode: online # set to 'disabled' when debugging locally
-  tags: []
 
 defaults:
   - task: Velocity
-  - algo: ppo_adv_mix
+  - algo: ppo
   - _self_
