@@ -160,3 +160,29 @@ class Humanoid(LocomotionEnv):
         def compute(self) -> torch.Tensor:
             return self.action_manager.command_arm_linvel.reshape(self.num_envs, -1)
 
+    class symmetry(mdp.Observation):
+        def __init__(self, env, arm_names: str, feet_names: str):
+            super().__init__(env)
+            self.asset: Articulation = self.env.scene["robot"]
+            self.arm_ids, self.arm_names = self.asset.find_bodies(arm_names)
+            self.feet_ids, self.feet_names = self.asset.find_bodies(feet_names)
+            self.fliplr = torch.tensor([1., -1., 1.], device=self.device)
+
+        def compute(self) -> torch.Tensor:
+            root_quat = self.asset.data.root_quat_w
+            root_pos  = self.asset.data.root_pos_w
+            arm_pos = quat_rotate_inverse(
+                root_quat.unsqueeze(1),
+                self.asset.data.body_pos_w[:, self.arm_ids] - root_pos.unsqueeze(1)
+            )
+            feet_pos = quat_rotate_inverse(
+                root_quat.unsqueeze(1),
+                self.asset.data.body_pos_w[:, self.feet_ids] - root_pos.unsqueeze(1)
+            )
+            original = torch.cat([arm_pos, feet_pos], dim=-1)
+            mirrored = torch.cat([self._mirror(arm_pos), self._mirror(feet_pos)], dim=-1)
+            return torch.stack([original.flatten(1), mirrored.flatten(1)], dim=1)
+
+        def _mirror(self, tensor: torch.Tensor):
+            return (tensor.fliplr() * self.fliplr)
+

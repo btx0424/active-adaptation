@@ -41,11 +41,12 @@ observation:
     contact_indicator: {body_names: [".*leg_link6"], timing: false}
     joint_forces:     {}
     jacobians:        {body_names: [base_link, .*leg_link6, .*arm_link5]}
-  #   motor_params:     {actuator_name: "base_legs"}
-  #   body_materials:   {body_names: ".*ankle_link"}
-  #   body_mass:        {body_names: ["torso_link", "pelvis"]}
     cum_error:        {}
-    rewards:     {}
+    # rewards:     {}
+  params:
+    motor_params:     {actuator_name: "base_legs"}
+    body_materials:   {body_names: ".*leg_link6"}
+    body_mass:        {body_names: [base_link, waist_yaw_link]}
   aux_target_:
     root_linvel_b:    {yaw_only: true}
     root_angvel_b:    {yaw_only: true}
