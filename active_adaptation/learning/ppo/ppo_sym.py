@@ -206,7 +206,7 @@ class PPOPolicy(TensorDictModuleBase):
 
         infos_symmetry = []
         for iter in range(8):
-            batch = self.buffer.sample()
+            batch = self.buffer.sample().to(self.device)
             infos_symmetry.append(TensorDict(self._update_symmetry(batch), []))
         
         infos = collect_info(infos)
@@ -302,7 +302,6 @@ class PPOPolicy(TensorDictModuleBase):
             left_score,
             left_obs, 
             torch.ones_like(left_score),
-            create_graph=True,
             retain_graph=True,
         )[0]
         gradient_penalty = torch.mean(grad.square().sum(dim=-1))
