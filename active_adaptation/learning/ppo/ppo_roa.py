@@ -122,6 +122,7 @@ class PPOROAPolicy(TensorDictModuleBase):
         self.critic_loss_fn = nn.MSELoss(reduction="none")
         # self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
         self.action_dim = action_spec.shape[-1]
+        self.max_grad_norm = 2.0
         self.gae = GAE(0.99, 0.95)
 
         if cfg.value_norm:
@@ -194,6 +195,8 @@ class PPOROAPolicy(TensorDictModuleBase):
             if isinstance(module, nn.Linear):
                 nn.init.orthogonal_(module.weight, 0.01)
                 nn.init.constant_(module.bias, 0.)
+            elif isinstance(module, nn.GRUCell):
+                nn.init.orthogonal_(module.weight_hh)
             if isinstance(module, nn.Conv1d):
                 nn.init.orthogonal_(module.weight, 0.01)
                 nn.init.constant_(module.bias, 0.)
@@ -349,8 +352,9 @@ class PPOROAPolicy(TensorDictModuleBase):
         loss = sum(losses.values())
         self.opt.zero_grad()
         loss.backward()
-        losses["actor/grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.actor_expert.parameters(), 10)
-        losses["critic/grad_norm"] = nn.utils.clip_grad.clip_grad_norm_(self.critic.parameters(), 10)
+        losses["actor/encoder_grad_norm"] = nn.utils.clip_grad_norm_(self.encoder_priv.parameters(), self.max_grad_norm)
+        losses["actor/grad_norm"] = nn.utils.clip_grad_norm_(self.actor_expert.parameters(), self.max_grad_norm)
+        losses["critic/grad_norm"] = nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
         self.opt.step()
 
         losses["critic/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()

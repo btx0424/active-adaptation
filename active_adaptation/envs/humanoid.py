@@ -175,12 +175,20 @@ class Humanoid(LocomotionEnv):
                 root_quat.unsqueeze(1),
                 self.asset.data.body_pos_w[:, self.arm_ids] - root_pos.unsqueeze(1)
             )
+            arm_vel = quat_rotate_inverse(
+                root_quat.unsqueeze(1),
+                self.asset.data.body_lin_vel_w[:, self.arm_ids]
+            )
             feet_pos = quat_rotate_inverse(
                 root_quat.unsqueeze(1),
                 self.asset.data.body_pos_w[:, self.feet_ids] - root_pos.unsqueeze(1)
             )
-            original = torch.cat([arm_pos, feet_pos], dim=-1)
-            mirrored = torch.cat([self._mirror(arm_pos), self._mirror(feet_pos)], dim=-1)
+            feet_vel = quat_rotate_inverse(
+                root_quat.unsqueeze(1),
+                self.asset.data.body_lin_vel_w[:, self.feet_ids]
+            )
+            original = torch.stack([arm_pos, arm_vel, feet_pos, feet_vel], dim=2) # [*, 2, 4, 3]
+            mirrored = self._mirror(original)
             return torch.stack([original.flatten(1), mirrored.flatten(1)], dim=1)
 
         def _mirror(self, tensor: torch.Tensor):
