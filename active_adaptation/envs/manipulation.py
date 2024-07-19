@@ -369,7 +369,7 @@ class QuadrupedManip(LocomotionEnv):
             return torch.exp(- ang_vel_error / self.l)
         
     class ee_tracking_hybrid(Reward):
-        def __init__(self, env, ee_name: str, base_joint_name: str, weight: float, enabled: bool = True, l: float = 0.25):
+        def __init__(self, env, ee_name: str, base_joint_name: str, weight: float, enabled: bool = True, l: float = 0.25, pos_exp_weight: float = 1, ori_add_linear: bool = False):
             super().__init__(env, weight, enabled)
             self.asset: Articulation = self.env.scene["robot"]
             ee_ids, ee_names = self.asset.find_bodies(ee_name)
@@ -377,6 +377,8 @@ class QuadrupedManip(LocomotionEnv):
             base_joint_ids, base_joint_names = self.asset.find_joints(base_joint_name)
             self.base_joint_id = base_joint_ids[0]
             self.l = l
+            self.pos_exp_weight = pos_exp_weight
+            self.ori_add_linear = ori_add_linear
             
             with torch.device(self.device):
                 self.fwd_vec = torch.tensor([1., 0., 0.]).expand(self.num_envs, -1)
@@ -392,7 +394,7 @@ class QuadrupedManip(LocomotionEnv):
             ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id]
             command_ee_pos_w = self.env.command_manager.command_ee_pos_w
             ee_pos_error = (ee_pos_w - command_ee_pos_w).norm(dim=-1, keepdim=True)
-            ee_pos_rew = 1 - ee_pos_error + torch.exp(- ee_pos_error / self.l)
+            ee_pos_rew = 1 - ee_pos_error + self.pos_exp_weight * torch.exp(- ee_pos_error / self.l)
             
             ee_quat_w = self.asset.data.body_quat_w[:, self.ee_id]
             self.ee_forward_w[:] = quat_rotate(ee_quat_w, self.fwd_vec)
@@ -400,7 +402,10 @@ class QuadrupedManip(LocomotionEnv):
             
             r1 = (self.ee_forward_w * self.env.command_manager.command_ee_forward_w).sum(-1, True)
             r2 = (self.ee_up_w * self.env.command_manager.command_ee_upward_w).sum(-1, True)
-            ee_ori_rew = 0.5 * (r1.sign() * r1.square() + r2.sign() * r2.square())
+            if self.ori_add_linear:
+                ee_ori_rew = 0.5 * (r1.sign() * r1.square() + r2.sign() * r2.square() + r1 + r2)
+            else:
+                ee_ori_rew = 0.5 * (r1.sign() * r1.square() + r2.sign() * r2.square())
             
             return arm_base_ori_cosine * (ee_pos_rew + ee_ori_rew)
             
@@ -522,6 +527,26 @@ class QuadrupedManip(LocomotionEnv):
             target_base_ang_vel = self.env.command_manager.command[:, 2]
             ang_vel_error = (base_ang_vel_z - target_base_ang_vel).square().unsqueeze_(1)
             return torch.exp(- ang_vel_error / self.l)
+
+    class joint_pos_l2_penalty(Reward):
+        def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf)):
+            super().__init__(env, weight, enabled, clip_range)
+            self.asset: Articulation = self.env.scene["robot"]
+            self.joint_ids = self.asset.actuators["base_legs"].joint_indices
+
+        def compute(self):
+            jpos_error = (
+                self.asset.data.joint_pos[:, self.joint_ids] - 
+                self.asset.data.default_joint_pos[:, self.joint_ids]
+            ).square().sum(dim=1, keepdim=True)
+
+            return - jpos_error
+            # front_symmetry = self.asset.data.feet_pos_b[:, [0, 1], 1].sum(dim=1, keepdim=True).abs()
+            # back_symmetry = self.asset.data.feet_pos_b[:, [2, 3], 1].sum(dim=1, keepdim=True).abs()
+            # cost = - (jpos_error + front_symmetry + back_symmetry)
+
+            # return cost * self.env.command_manager.is_standing_env.reshape(self.num_envs, 1)
+
 
     class ee_angvel_penalty(Reward):
         def __init__(self, env, ee_name: str, weight: float, enabled: bool = True):
