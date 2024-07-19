@@ -88,10 +88,6 @@ class LocomotionEnv(Env):
     #     root_quat = self.scene["robot"].data.root_quat_w
     #     heading_b_x = quat_rotate_inverse(root_quat, self.command_manager._command_heading)[:, [0]]
     #     return 0.5 * (heading_b_x + heading_b_x.sign() * heading_b_x.square())
-    
-    @mdp.reward_func
-    def joint_torques_l2(self):
-        return - self.scene["robot"].data.applied_torque.square().sum(dim=-1, keepdim=True)
 
     @mdp.reward_func
     def action_rate_l2(self):

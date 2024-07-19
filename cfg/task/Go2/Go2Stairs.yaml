@@ -8,25 +8,30 @@ defaults:
   - _self_
 
 robot: go2
-terrain: plane
+terrain: stairs_test
 payload: false
 homogeneous: false
 
 command:
-  _target_: active_adaptation.envs.mdp.Command2
-  linvel_x_range: [-1.0, 1.4]
-  linvel_y_range: [-0.4, 0.4]
+  _target_: active_adaptation.envs.mdp.commands.CommandPosVel
+  linvel_x_range: [0.4, 1.4]
+  linvel_y_range: [-0., 0.]
   angvel_range:   [-1.5, 1.5]
   yaw_stiffness_range: [0.5, 0.7]
   use_stiffness_ratio: 1.0
   base_height_range: [0.25, 0.35]
   resample_prob: 0.5
   stand_prob: 0.05
-  target_yaw_range: 
+  target_yaw_range:
     - [-0.3927,  0.3927]
-    - [ 1.1781,  1.9635]
+    # - [ 1.1781,  1.9635]
     - [ 2.7489,  3.5343]
-    - [ 4.3197,  5.1051]
+    # - [ 4.3197,  5.1051]
+
+# command:
+#   _target_: active_adaptation.envs.mdp.commands.InterpCommand
+#   linvel_x_range: [0.5, 1.4]
+#   angvel_range:   [-1.5, 1.5]
 
 observation:
   policy:
@@ -44,36 +49,24 @@ observation:
     # applied_torques: {actuator_name: base_legs}
   priv:
     # _mask_: true # randomly mask one of the items
+    # projected_gravity_b:
+    # joint_pos:
+    # joint_vel:
     applied_action:
-    root_linvel_b:    {yaw_only: true}
-    root_angvel_b:
+    root_linvel_b:
     feet_pos_b:
-    feet_vel_b:
+    # feet_vel_b:
     feet_height_map:  {feet_names: .*foot }
     applied_torques:  {actuator_name: base_legs}
-    joint_forces:     {}
     # motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     # body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
     # motor_failure:    {actuator_name: base_legs}
-    # body_scale:       {}
+    body_scale:       {}
     # body_mass:        {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # body_momentum:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # rewards:          {}
     contact_indicator: {body_names: [".*_foot"], timing: true}
     cum_error:
-  params:
-    motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
-    body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-    body_mass:        {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
-  recon_target_:
-    root_angvel_b:
-    projected_gravity_b:
-    joint_pos:
-    joint_vel:
-    root_linvel_b:
-    feet_height_map:  {feet_names: .*foot }
-    applied_torques:  {actuator_name: base_legs}
-    joint_forces:
   aux_target_:
     root_linvel_b:
     root_angvel_b:
@@ -81,32 +74,33 @@ observation:
 
 reward:
   loco:
-    linvel_exp:         {weight: 1.5, enabled: true, dim: 3, yaw_only: true}
+    linvel_exp:         {weight: 1.5, enabled: true, dim: 3}
+    # linvel_rational:    {weight: 0.5, enabled: true, dim: 3}
     angvel_z_exp:       {weight: 0.75, enabled: true}
     angvel_z_exp_shaped: {weight: 0.75, enabled: false}
-    linvel_projection:  {weight: 0.5, enabled: true, yaw_only: true}
+    linvel_projection:  {weight: 0.5, enabled: true}
     linacc_z_l2:        {weight: 0.005, enabled: false}
-    angvel_xy_l2:       {weight: 0.02, enabled: true}
+    angvel_xy_l2:       {weight: 0.02, enabled: true, clip_range: [-1., 0.]}
     linvel_z_l2:        {weight: 2.0, enabled: true}
     base_height_l1:     {weight: 0.5, enabled: true, target_height: 0.3}
     energy_l1:          {weight: 0.0002, enabled: true}
-    joint_acc_l2:       {weight: 2.5e-7, enabled: true}
-    joint_torques_l2:   {weight: 2.0e-4, enabled: true}
+    joint_acc_l2:       {weight: 2.5e-7, enabled: true, clip_range: [-1., 0.]}
+    joint_torques_l2:   {weight: 2.0e-4, enabled: true, clip_range: [-1., 0.]}
     quadruped_stand:    {weight: 0.5}
+    orientation:        {weight: 1.0, enabled: false}
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.01, enabled: true}
     action_rate2_l2:    {weight: 0.005, enabled: true}
+    # impact_force_l2:    {weight: 1.0, enabled: false, body_names: .*_foot}
     feet_air_time:      {weight: 0.4, enabled: true, body_names: .*_foot, thres: 0.4}
     feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
     undesired_contact:  {body_names: [.*_calf, .*thigh], weight: 0.25, enabled: true}
-    step_up:            {weight: 2.0, enabled: true}
-    step_up_needed:     {weight: 1.0, enabled: false}
 
 termination:
-  crash: {body_names_expr: [Head.*, "base"], t_thres: 0.5, z_thres: 0.}
+  crash: {body_names_expr: [Head.*, "base"], t_thres: 1.0, z_thres: 0.}
   # joint_acc_exceeds: {thres: 5000}
-  cum_error: {thres: 0.9}
+  # cum_error: {thres: 0.9}
 
 randomization:
   random_scale: [1.0, 1.2]
@@ -124,7 +118,6 @@ randomization:
     actuator_name: base_legs
     stiffness_range:  [0.8, 1.2]
     damping_range:    [0.8, 1.2]
-    armature_range:   [0.0, 0.02]
     homogeneous: ${task.homogeneous}
   # random_motor_failure:
   #   actuator_name: base_legs

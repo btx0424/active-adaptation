@@ -1,3 +1,4 @@
+from math import pi
 import torch
 import torch.distributions as D
 import math
@@ -483,6 +484,73 @@ class InterpCommand(Command):
         )
 
 
+class CommandPosVel(Command2):
+
+    def __init__(
+        self, 
+        env, 
+        linvel_x_range=(-1, 1), 
+        linvel_y_range=(-1, 1), 
+        angvel_range=(-1, 1), 
+        yaw_stiffness_range=(0.5, 0.6), 
+        use_stiffness_ratio: float = 0.5, 
+        base_height_range=(0.2, 0.4), 
+        resample_interval: int = 300, 
+        resample_prob: float = 0.75, 
+        stand_prob=0.2, 
+        target_yaw_range=(0, torch.pi * 2)
+    ):
+        super().__init__(
+            env, 
+            linvel_x_range, 
+            linvel_y_range, 
+            angvel_range, 
+            yaw_stiffness_range, 
+            use_stiffness_ratio, 
+            base_height_range, 
+            resample_interval, 
+            resample_prob, 
+            stand_prob, 
+            target_yaw_range
+        )
+        self.ground_mesh = _initialize_warp_meshes("/World/ground", "cuda")
+        with torch.device(self.device):
+            self.target_pos_w = torch.zeros(self.num_envs, 3)
+            self.ray_starts = torch.tensor([
+                [0., 0., 10.], 
+                [0.1, 0.1, 10.],
+                [0.1, -.1, 10.],
+                [-.1, -.1, 10.],
+                [-.1, 0.1, 10.],
+            ])
+            self.ray_directions = torch.tensor([0., 0., -1.])
+        self.default_height = 0.35
+
+    def _height(self, pos_w: torch.Tensor):
+        ray_starts = self.ray_starts + pos_w.unsqueeze(1)
+        ray_directions = self.ray_directions.expand_as(ray_starts).clone()
+        ray_hits_w = raycast_mesh(ray_starts, ray_directions, max_dist=100, mesh=self.ground_mesh)[0]
+        assert not ray_hits_w.isnan().any()
+        height = ray_hits_w[:, :, 2].mean(1)
+        return height + self.default_height
+    
+    def reset(self, env_ids, reward_stats=None):
+        super().reset(env_ids, reward_stats)
+        self.target_pos_w[env_ids] = self.asset.data.root_pos_w[env_ids]
+
+    def update(self):
+        super().update()
+        command_linvel_w = quat_rotate(self.asset.data.root_quat_w, self.command_linvel)
+        self.target_pos_w.add_(command_linvel_w * self.env.step_dt)
+        self.target_pos_w[:, 2] = self._height(self.target_pos_w)
+        self.target_pos_w.lerp_(self.asset.data.root_pos_w, 0.01)
+    
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            self.target_pos_w - self.asset.data.root_pos_w,
+            color=(1., 1., 1., 1.)
+        )
 
 def sample_uniform(size, low: float, high: float, device: torch.device = "cpu"):
     return torch.rand(size, device=device) * (high - low) + low

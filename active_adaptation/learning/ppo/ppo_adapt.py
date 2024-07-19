@@ -508,6 +508,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
 
                 infos.append(TensorDict(losses, []))
         
+        infos = infos[-self.cfg.num_minibatches:]
         infos = {k: v.mean() for k, v in torch.stack(infos).items(True, True)}
         
         hard_copy_(self._actor_expert, self.__actor_expert)
@@ -694,7 +695,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         log_probs = dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy().mean()
         adv = tensordict[adv_key]
-        ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
+        log_ratio = (log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
+        ratio = torch.exp(log_ratio)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
         losses = {}
@@ -702,6 +704,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         losses["actor/entropy_loss"] = - self.entropy_coef * entropy
         losses["actor/entropy"] = entropy.detach()
         losses["actor/noise_std"] = tensordict["scale"].mean().detach()
+        losses["actor/approx_kl"] = ((ratio - 1) - log_ratio).mean().detach()
         return losses
 
     def _value_loss(

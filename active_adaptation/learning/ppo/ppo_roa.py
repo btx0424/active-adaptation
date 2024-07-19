@@ -272,10 +272,11 @@ class PPOROAPolicy(TensorDictModuleBase):
                 infos.append(self._update_policy(minibatch))
         hard_copy_(self.actor_expert, self.actor_adapt)
 
-        infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
+        infos = infos[-self.cfg.num_minibatches:]
+        infos = {k: v.mean().item() for k, v in torch.stack(infos).items()}
         infos["critic/value_priv"] = self.value_norm.denormalize(tensordict["ret"]).mean().item()
         infos["adapt/context_priv"] = tensordict["context_priv"].norm(dim=-1).mean().item()
-        return infos
+        return dict(sorted(infos.items()))
     
     def train_adaptation(self, tensordict: TensorDictBase):
         infos = []
@@ -333,7 +334,8 @@ class PPOROAPolicy(TensorDictModuleBase):
         entropy = dist.entropy().mean()
 
         adv = tensordict["adv"]
-        ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
+        log_ratio = (log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
+        ratio = torch.exp(log_ratio)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
         losses["actor/policy_loss"] = - torch.mean(torch.min(surr1, surr2) * (~tensordict["is_init"]))
@@ -354,6 +356,7 @@ class PPOROAPolicy(TensorDictModuleBase):
         losses["critic/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
         losses["actor/noise_std"] = tensordict["scale"].mean()
         losses["actor/entropy"] = entropy
+        losses["actor/approx_kl"] = ((ratio - 1) - log_ratio).mean()
         return TensorDict(losses, [])
     
     def _update_adaptation(self, tensordict: TensorDictBase):

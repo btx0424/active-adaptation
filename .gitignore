@@ -177,4 +177,5 @@ scripts/*.png
 scripts/*.pt
 scripts/*.txt
 scripts/eval
+scripts/*.yaml
 checkpoint*.pt

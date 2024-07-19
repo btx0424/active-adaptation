@@ -80,12 +80,6 @@ def joint_acc_l2(self):
 
 
 @reward_func
-def joint_torques_l2(self):
-    asset: Articulation = self.scene["robot"]
-    return - asset.data.applied_torque.square().sum(dim=-1, keepdim=True)
-
-
-@reward_func
 def survival(self):
     return torch.ones(self.num_envs, 1, device=self.device)
 
@@ -106,6 +100,17 @@ def heading_yaw(self):
     asset: Articulation = self.scene["robot"]
     yaw_diff = self.command_manager.command[:, 2].abs()
     return  - yaw_diff.unsqueeze(1)
+
+
+class joint_torques_l2(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True, joint_names: str=".*"):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids =  self.asset.find_joints(joint_names)[0]
+        self.joint_ids = torch.tensor(self.joint_ids, device=self.device)
+    
+    def compute(self) -> torch.Tensor:
+        return - self.asset.data.applied_torque[:, self.joint_ids].square().sum(1, keepdim=True)
 
 
 class undesired_contact(Reward):

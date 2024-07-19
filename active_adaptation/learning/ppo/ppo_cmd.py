@@ -155,7 +155,9 @@ class PPOPolicy(TensorDictModuleBase):
         self.actor_cmd.apply(init_)
         self.critic.apply(init_)
 
-        self.train_cmd = False
+        self.train_cmd = True
+        self.num_updates = 0
+        self.cmd_weight = 1.0
     
     def get_rollout_policy(self, mode: str="train"):
         policy = TensorDictSequential(
@@ -186,6 +188,11 @@ class PPOPolicy(TensorDictModuleBase):
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         infos["critic/value_mean"] = tensordict["ret"][..., 0].mean().item()
         infos["critic/value_mean_cmd"] = tensordict["ret"][..., 1].mean().item()
+
+        if self.train_cmd and infos["critic/value_mean_cmd"] < infos["critic/value_mean"] * 0.5:
+            self.cmd_weight = min(self.cmd_weight + 0.1, 2.0)
+        infos["cmd_weight"] = self.cmd_weight
+        self.num_updates += 1
         return infos
 
     @torch.no_grad()
@@ -211,7 +218,7 @@ class PPOPolicy(TensorDictModuleBase):
         ret = self.value_norm.normalize(ret)
 
         adv_loco, adv_arm = adv.unbind(-1)
-        tensordict.set("adv_joint", (adv_loco + adv_arm).unsqueeze(-1))
+        tensordict.set("adv_joint", (adv_loco + self.cmd_weight * adv_arm).unsqueeze(-1))
         tensordict.set("adv_cmd", adv_loco.unsqueeze(-1))
         tensordict.set("ret", ret)
         return tensordict
@@ -236,16 +243,16 @@ class PPOPolicy(TensorDictModuleBase):
 
         dist = self.actor_cmd.get_dist(tensordict)
         entropy_cmd = dist.entropy().mean()
-        if self.train_cmd:
+        if not self.train_cmd:
+            log_probs = dist.log_prob(tensordict["next", "arm_velocity_"])
+            losses["actor_cmd/policy_loss"] = - torch.mean(log_probs.unsqueeze(-1) * (~tensordict["is_init"]))
+        else:
             log_probs = dist.log_prob(action_cmd)
             adv = tensordict["adv_cmd"]
             ratio = torch.exp(log_probs - tensordict["log_prob_cmd"]).unsqueeze(-1)
             surr1 = adv * ratio
             surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
             losses["actor_cmd/policy_loss"] = - torch.mean(torch.min(surr1, surr2) * (~tensordict["is_init"]))
-        else:
-            log_probs = dist.log_prob(tensordict["next", "arm_velocity_"])
-            losses["actor_cmd/policy_loss"] = - torch.mean(log_probs.unsqueeze(-1) * (~tensordict["is_init"]))
         losses["actor_cmd/entropy_loss"] = - self.entropy_coef * entropy_cmd
 
         b_returns = tensordict["ret"]

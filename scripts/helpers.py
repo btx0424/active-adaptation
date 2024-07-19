@@ -12,8 +12,8 @@ from tensordict import TensorDictBase
 from termcolor import colored
 from collections import OrderedDict
 from torchvision.io import write_video
-
-from active_adaptation.learning import ALGOS
+from omegaconf import OmegaConf, DictConfig
+import active_adaptation.learning
 
 
 class Every:
@@ -54,7 +54,8 @@ class EpisodeStats:
         return len(self._stats)
 
 
-def make_env_policy(cfg):
+def make_env_policy(cfg: DictConfig):
+    OmegaConf.set_struct(cfg, False)
 
     from active_adaptation.envs import TASKS
     from active_adaptation.utils.torchrl import StackFrames
@@ -66,7 +67,14 @@ def make_env_policy(cfg):
         state_dict = torch.load(checkpoint_path)
     else:
         state_dict = {}
+    
+    policy_in_keys = cfg.algo.get("in_keys", ["policy", "priv"])
 
+    for obs_group_key in list(cfg.task.observation.keys()):
+        if obs_group_key not in policy_in_keys:
+            cfg.task.observation.pop(obs_group_key)
+            print(colored(f"Discard obs group {obs_group_key} as it is not used.", "yellow"))
+    
     env_cfg = LocomotionEnvCfg(cfg.task)
 
     base_env = TASKS[cfg.task.task](env_cfg)
@@ -178,10 +186,12 @@ def evaluate(
         return torch.take_along_dim(tensor, indices, dim=1).reshape(-1)
     
     info = {}
+    stats = {}
     compute_std_for = ["return", "survival"]
     for k, v in trajs["next", "stats"].items(True, True):
         v = take_first_episode(v)
         key = "eval/" + ("/".join(k) if isinstance(k, tuple) else k)
+        stats[key] = v
         info[key] = torch.mean(v.float()).item()
         if k in compute_std_for:
             info[key + "_std"] = torch.std(v.float()).item()
@@ -195,4 +205,4 @@ def evaluate(
         write_video(video_path, video_array, fps=1 / env.step_dt)
 
     info["episode_cnt"] = episode_cnt
-    return dict(sorted(info.items())), trajs
+    return dict(sorted(info.items())), trajs, stats
