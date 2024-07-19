@@ -194,6 +194,7 @@ class Env(EnvBase):
                 (self.num_envs, len(funcs)), 
                 device=self.device, dtype=bool
             )
+            print("\t Split: ", [t.shape[-1] for t in tensors])
 
         self.observation_spec = CompositeSpec(
             observation_spec, 
