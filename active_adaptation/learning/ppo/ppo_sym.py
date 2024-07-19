@@ -27,9 +27,10 @@ import torch.nn.functional as F
 import torch.distributions as D
 import warnings
 import functools
+import copy
 from typing import List
 
-from torchrl.data import CompositeSpec, TensorSpec
+from torchrl.data import CompositeSpec, TensorSpec, TensorDictReplayBuffer, LazyTensorStorage
 from torchrl.modules import ProbabilisticActor
 from torchrl.envs.transforms import CatTensors, VecNorm
 from tensordict import TensorDict
@@ -151,10 +152,11 @@ class PPOPolicy(TensorDictModuleBase):
             [
                 {"params": self.actor.parameters()},
                 {"params": self.critic.parameters()},
-                {"params": self.symmetry.parameters()},
             ],
             lr=cfg.lr
         )
+
+        self.opt_symmetry = torch.optim.Adam(self.symmetry.parameters(), lr=cfg.lr)
         
         def init_(module):
             if isinstance(module, nn.Linear):
@@ -164,6 +166,15 @@ class PPOPolicy(TensorDictModuleBase):
         self.actor.apply(init_)
         self.critic.apply(init_)
         self.symmetry.apply(init_)
+
+        self.symmetry_ema = copy.deepcopy(self.symmetry)
+        self.symmetry_ema.requires_grad_(False)
+        
+        self.buffer = TensorDictReplayBuffer(
+            storage=LazyTensorStorage(max_size=observation_spec.shape[0] * 32),
+            batch_size=observation_spec.shape[0] // 2,
+            prefetch=1,
+        )
     
     def get_rollout_policy(self, mode: str="train"):
         policy = TensorDictSequential(
@@ -176,10 +187,13 @@ class PPOPolicy(TensorDictModuleBase):
         tensordict = tensordict.copy()
         infos = []
 
+        self.buffer.extend(tensordict.select("symmetry").view(-1).cpu())
+
         with torch.no_grad():
             left_obs, right_obs = tensordict["symmetry"].unbind(2)
+            left_score = self.symmetry(left_obs)
             right_score = self.symmetry(right_obs)
-            symmetry_reward = (1 - (right_score - 1).square()).clamp(0., 1.)
+            symmetry_reward = (1 - (right_score - 1).square()).clamp(-1., 1.)
             tensordict[REWARD_KEY] += symmetry_reward
 
         self._compute_advantage(tensordict, self.critic, "adv", "ret", update_value_norm=True)
@@ -189,10 +203,19 @@ class PPOPolicy(TensorDictModuleBase):
             batch = make_batch(tensordict, self.cfg.num_minibatches)
             for minibatch in batch:
                 infos.append(TensorDict(self._update(minibatch), []))
+
+        infos_symmetry = []
+        for iter in range(8):
+            batch = self.buffer.sample()
+            infos_symmetry.append(TensorDict(self._update_symmetry(batch), []))
         
-        infos = {k: v.mean().item() for k, v in torch.stack(infos).items()}
+        infos = collect_info(infos)
+        infos.update(collect_info(infos_symmetry))
+
         infos["critic/value_mean"] = tensordict["ret"].mean().item()
         infos["symmetry/reward"] = symmetry_reward.mean().item()
+        infos["symmetry/ema_acc"] = ((left_score > 0) & (right_score < 0)).float().mean().item()
+        infos["symmetry/score"] = right_score.mean().item()
         return dict(sorted(infos.items()))
 
     @torch.no_grad()
@@ -246,26 +269,7 @@ class PPOPolicy(TensorDictModuleBase):
         value_loss = self.critic_loss_fn(b_returns, values)
         value_loss = (value_loss * (~tensordict["is_init"])).mean()
         
-        left_obs, right_obs = tensordict["symmetry"].unbind(1)
-        left_obs.requires_grad_(True)
-        left_score = self.symmetry(left_obs)
-        right_score = self.symmetry(right_obs)
-        symmetry_loss = (
-            F.mse_loss(left_score, torch.ones_like(left_score))
-            + F.mse_loss(right_score, -torch.ones_like(right_score))
-        )
-
-        left_obs = left_obs.clone().requires_grad_(True)
-        grad = torch.autograd.grad(
-            self.symmetry(left_obs),
-            left_obs, 
-            torch.ones_like(left_score),
-            create_graph=True,
-            retain_graph=True,
-        )[0]
-        gradient_penalty = torch.mean(grad.square().sum(dim=-1))
-
-        loss = policy_loss + entropy_loss + value_loss + symmetry_loss + 0.5 * gradient_penalty
+        loss = policy_loss + entropy_loss + value_loss
         self.opt.zero_grad()
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
@@ -281,6 +285,33 @@ class PPOPolicy(TensorDictModuleBase):
             "critic/value_loss": value_loss,
             "critic/grad_norm": critic_grad_norm,
             "critic/explained_var": explained_var,
+        }
+    
+    def _update_symmetry(self, tensordict: TensorDict):
+
+        left_obs, right_obs = tensordict["symmetry"].unbind(1)
+        left_obs.requires_grad_(True)
+        left_score = self.symmetry(left_obs)
+        right_score = self.symmetry(right_obs)
+        symmetry_loss = (
+            F.mse_loss(left_score, torch.ones_like(left_score))
+            + F.mse_loss(right_score, -torch.ones_like(right_score))
+        )
+
+        grad = torch.autograd.grad(
+            left_score,
+            left_obs, 
+            torch.ones_like(left_score),
+            create_graph=True,
+            retain_graph=True,
+        )[0]
+        gradient_penalty = torch.mean(grad.square().sum(dim=-1))
+        
+        self.opt_symmetry.zero_grad()
+        (symmetry_loss + gradient_penalty).backward()
+        self.opt_symmetry.step()
+
+        return {
             "symmetry/loss": symmetry_loss,
             "symmetry/gradient_penalty": gradient_penalty,
             "symmetry/acc": ((left_score > 0) & (right_score < 0)).float().mean(),
