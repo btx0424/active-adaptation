@@ -53,6 +53,7 @@ observation:
     ee_pos:       {ee_name: arm_link06}
     ee_ori:       {ee_name: arm_link06}
     ee_vel:       {ee_name: arm_link06}
+    feet_height_map: {}
     # cum_error:    {}
     # rewards:      {}
     # ee_vel_hist:    {ee_name: arm_link06, hist_len: 1}
@@ -85,14 +86,15 @@ reward:
     linvel_z_l2:        {weight: 2.0, enabled: true}
     angvel_xy_l2:       {weight: 0.25, enabled: true}
     feet_air_time:      {weight: 0.5, enabled: true, body_names: .*_foot, thres: 0.4}
-    feet_slip:          {weight: 0.5, enabled: false, body_names: .*_foot}
+    feet_slip:          {weight: 0.5, enabled: true, body_names: .*_foot}
+    joint_pos_l2_penalty: {weight: 0.25, enabled: true}
   
   manip:
     survival:           {weight: 0.5, enabled: true}
     # manipulation
     ee_tracking_hybrid: {weight: 1.0, enabled: true, ee_name: arm_link06, base_joint_name: joint1, l: 0.25}
 
-    ee_pos_tracking_w:    {weight: 1.5, enabled: false, ee_name: arm_link06, l: 0.25, use_exp: true}
+    ee_pos_tracking_w:    {weight: 1.5, enabled: false, ee_name: arm_link06, l: 0.25}
     ee_pos_error_w_l1:    {weight: 1.0, enabled: false, ee_name: arm_link06}
     # ee_failed_track_counts: {weight: 1.0, enabled: false}
 
@@ -108,8 +110,8 @@ reward:
     ee_angvel_penalty:  {weight: 0.02, enabled: true, ee_name: arm_link06}
     # ee_acc_l2:          {weight: 1.0, enabled: false, ee_name: arm_link06}
 
-    # base_joint_ang_vel_pd_exp: {weight: 2.0, enabled: true, base_joint_name: joint1, kp: 1.0, kd: 0.2, l: 0.1}
-    # arm_joint_acc_penalty: {weight: 2e-4, enabled: true}
+    base_joint_ang_vel_pd_exp: {weight: 2.0, enabled: true, base_joint_name: joint1, kp: 1.0, kd: 0.2, l: 0.1}
+    arm_joint_acc_penalty: {weight: 2e-4, enabled: true}
     arm_joint_acc_l1: {weight: 1.0, enabled: false}
 
 termination:
@@ -151,4 +153,4 @@ randomization:
       # joint.*: [-0.4, 0.4]
     rel: true
   # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
-  # stumble: {body_names: .*_foot}
+  stumble: {body_names: .*_foot}

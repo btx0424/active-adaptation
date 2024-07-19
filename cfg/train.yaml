@@ -36,5 +36,5 @@ wandb:
 
 defaults:
   - task: Velocity
-  - algo: ppo_adv_mix
+  - algo: ppo
   - _self_
