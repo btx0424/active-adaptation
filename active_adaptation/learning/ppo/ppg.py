@@ -399,7 +399,7 @@ class PPGPolicy(TensorDictModuleBase):
             tensordict["sample_log_prob"] = self._compute_logprobs(tensordict, self.actor)
         
         for epoch in range(self.cfg.ppo_epochs):
-            for minibatch in make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every):
+            for minibatch in make_batch(tensordict, self.cfg.num_minibatches):
                 minibatch["adv"] = normalize(minibatch["adv_priv"], True)
                 infos.append(TensorDict(self._update(minibatch), []))
         
@@ -523,7 +523,7 @@ class PPGPolicy(TensorDictModuleBase):
                 self.sample_context_adapt(tensordict)
             dist = actor.get_dist(tensordict)
             log_probs = dist.log_prob(tensordict[ACTION_KEY])
-            entropy = dist.entropy()
+            entropy = dist.entropy().mean()
         
         adv = tensordict["adv"]
         log_ratio = (log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
