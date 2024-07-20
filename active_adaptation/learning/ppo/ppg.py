@@ -42,11 +42,12 @@ class PPGConfig:
     # short_history: int = 5
     actor_predict_std: bool = False
     orthogonal_init: bool = True
+    use_logsumexp: bool = False
 
     aux_target: bool = False
     kl_prior: bool = False
     free_bits: float = 0.
-    rep_loss: float = 1.0
+    rep_loss: float = 0.5
 
     num_minibatches: int = 16
     lr: float = 5e-4
@@ -183,7 +184,7 @@ class PPGPolicy(TensorDictModuleBase):
         self.gae = GAE(0.99, 0.95).to(self.device)
         
         self.beta = 0.
-        self.beta_schedule = LinearSchedule(0., self.cfg.rep_loss, 0.0, 1.0)
+        self.beta_schedule = LinearSchedule(0., self.cfg.rep_loss, 0.2, 1.0)
 
         if cfg.value_norm:
             value_norm_cls = ValueNorm1
@@ -512,12 +513,18 @@ class PPGPolicy(TensorDictModuleBase):
         return tensordict
     
     def _compute_policy_loss(self, tensordict: TensorDictBase, actor: ProbabilisticActor):
-        if actor is self.actor:
+        if self.cfg.use_logsumexp:
             log_probs = self._compute_logprobs(tensordict, actor)
+            entropy = - log_probs.mean()
         else:
-            log_probs = actor.get_dist(tensordict).log_prob(tensordict[ACTION_KEY])
-        entropy = - log_probs.mean()
-
+            if actor is self.actor:
+                self.sample_context(tensordict)
+            else:
+                self.sample_context_adapt(tensordict)
+            dist = actor.get_dist(tensordict)
+            log_probs = dist.log_prob(tensordict[ACTION_KEY])
+            entropy = dist.entropy()
+        
         adv = tensordict["adv"]
         log_ratio = (log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
         ratio = torch.exp(log_ratio)
