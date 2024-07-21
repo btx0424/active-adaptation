@@ -31,7 +31,7 @@ command:
 observation:
   policy:
     command:
-    root_angvel_b: {noise_std: 0.05}
+    # root_angvel_b: {noise_std: 0.05}
     projected_gravity_b: {noise_std: 0.05}
     joint_pos:    {noise_std: 0.05}
     joint_vel:    {noise_std: 0.2}

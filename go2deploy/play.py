@@ -12,9 +12,6 @@ from tensordict import TensorDict
 
 from setproctitle import setproctitle
 
-import rclpy
-from sensor_msgs.msg import JointState
-
 np.set_printoptions(precision=3, suppress=True, floatmode="fixed")
 
 ORBIT_JOINT_ORDER = [
@@ -130,6 +127,7 @@ class Robot:
         return self._compute_obs()
 
     def _compute_obs(self):
+        # self.rot = R.from_euler("xyz", self.rpy)
         # angvel = self.rot.inv().apply(self.angvel)
         angvel = self.angvel
         
