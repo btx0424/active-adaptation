@@ -7,6 +7,9 @@ from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from active_adaptation.utils.helpers import batchify
 from .locomotion import Command, sample_quat_yaw, sample_uniform, clamp_norm
 from tensordict import TensorDict
+from .generate_command_traj import generate_random_trajectory
+
+from typing import Dict, Optional
 
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
@@ -25,60 +28,158 @@ def slerp_angle_with_limit(angle1, angle2, t, limit):
 
     return angle1 + t * (angle2 - angle1)
 
+import pickle
+import numpy as np
+from tqdm import tqdm
+
 def pitch_yaw_to_vec(pitch, yaw):
-    """Convert pitch and yaw to a 3D unit vector.
-    [...] [...] -> [..., 3]"""
-    return torch.stack([
-        torch.cos(yaw) * torch.cos(pitch),
-        torch.sin(yaw) * torch.cos(pitch),
-        -torch.sin(pitch)
-    ], dim=-1)
+    """Convert pitch and yaw to 3D unit vectors."""
+    return np.concatenate([
+        np.cos(yaw) * np.cos(pitch),
+        np.sin(yaw) * np.cos(pitch),
+        -np.sin(pitch)
+    ], axis=-1)
 
 def vec_to_pitch_yaw(vec):
-    """Convert a 3D unit vector to pitch and yaw.
-    [..., 3] -> [...], [...]"""
-    pitch = -torch.asin(vec[..., 2])
-    yaw = torch.atan2(vec[..., 1], vec[..., 0])
+    """Convert 3D unit vectors to pitch and yaw."""
+    pitch = -np.arcsin(vec[..., 2])
+    yaw = np.arctan2(vec[..., 1], vec[..., 0])
     return pitch, yaw
 
 def slerp_vec(v1, v2, t):
-    """Spherical linear interpolation for vectors.
-    [..., 3] [..., 3] [...] -> [..., 3]
-    """
-    dot = torch.sum(v1 * v2, dim=-1)
-    dot = torch.clamp(dot, -1.0, 1.0)
-    theta = torch.acos(dot)
-    sin_theta = torch.sin(theta)
+    """Spherical linear interpolation for vectors."""
+    dot = np.sum(v1 * v2, axis=-1, keepdims=True)
+    dot = np.clip(dot, -1.0, 1.0)
+    theta = np.arccos(dot)
+    sin_theta = np.sin(theta)
 
-    # Handle cases where vectors are very close
     mask = sin_theta > 1e-6
-    t1 = torch.where(mask, torch.sin((1 - t) * theta) / sin_theta, 1 - t)
-    t2 = torch.where(mask, torch.sin(t * theta) / sin_theta, t)
+    t1 = np.where(mask, np.sin((1 - t) * theta) / sin_theta, 1 - t)
+    t2 = np.where(mask, np.sin(t * theta) / sin_theta, t)
 
-    return normalize(v1 * t1.unsqueeze(-1) + v2 * t2.unsqueeze(-1))
+    result = v1 * t1 + v2 * t2
+    return result / np.linalg.norm(result, axis=-1, keepdims=True)
 
+def slerp_angle(a1, a2, t):
+    """Spherical linear interpolation for angles."""
+    return a1 + t * (a2 - a1)
 
-def interpolate_position(last_target_pos_radius_pitch_yaw, next_target_pos_radius_pitch_yaw, command_alpha, yaw_range):
-    last_r, last_pitch, last_yaw = last_target_pos_radius_pitch_yaw.unbind(dim=-1)
-    next_r, next_pitch, next_yaw = next_target_pos_radius_pitch_yaw.unbind(dim=-1)
+def slerp_angle_with_limit(a1, a2, t, angle_range):
+    """Spherical linear interpolation for angles with range limit."""
+    a1 = np.clip(a1, *angle_range)
+    a2 = np.clip(a2, *angle_range)
+    return a1 + t * (a2 - a1)
 
-    current_r = last_r + command_alpha * (next_r - last_r)
-    current_pitch = slerp_angle(last_pitch, next_pitch, command_alpha)
-    current_yaw = slerp_angle_with_limit(last_yaw, next_yaw, command_alpha, yaw_range)
+def interpolate_position(last_pos, next_pos, t, yaw_range):
+    last_r, last_pitch, last_yaw = np.split(last_pos, 3, axis=-1)
+    next_r, next_pitch, next_yaw = np.split(next_pos, 3, axis=-1)
+
+    current_r = last_r + t * (next_r - last_r)
+    current_pitch = slerp_angle(last_pitch, next_pitch, t)
+    current_yaw = slerp_angle_with_limit(last_yaw, next_yaw, t, yaw_range)
     
     return current_r, current_pitch, current_yaw
 
-def interpolate_orientation(last_target_ori_roll_pitch_yaw, next_target_ori_roll_pitch_yaw, command_alpha):
-    last_roll, last_ori_pitch, last_ori_yaw = last_target_ori_roll_pitch_yaw.unbind(dim=-1)
-    next_roll, next_ori_pitch, next_ori_yaw = next_target_ori_roll_pitch_yaw.unbind(dim=-1)
+def interpolate_orientation(last_ori, next_ori, t):
+    last_roll, last_ori_pitch, last_ori_yaw = np.split(last_ori, 3, axis=-1)
+    next_roll, next_ori_pitch, next_ori_yaw = np.split(next_ori, 3, axis=-1)
 
-    current_roll = last_roll + command_alpha * wrap_to_pi(next_roll - last_roll)
+    current_roll = last_roll + t * (next_roll - last_roll)
     last_ori_dir = pitch_yaw_to_vec(last_ori_pitch, last_ori_yaw)
     next_ori_dir = pitch_yaw_to_vec(next_ori_pitch, next_ori_yaw)
-    current_ori_dir = slerp_vec(last_ori_dir, next_ori_dir, command_alpha)
+    current_ori_dir = slerp_vec(last_ori_dir, next_ori_dir, t[:, np.newaxis])
     current_ori_pitch, current_ori_yaw = vec_to_pitch_yaw(current_ori_dir)
 
     return current_roll, current_ori_pitch, current_ori_yaw
+
+if __name__ == "__main__":
+    sampling_rate = 50
+    parsed_plan = []
+    yaw_range = [-2.5, 2.5]
+    pitch_range = [-1.5, 0.5]
+    radius_range = [0.4, 0.8]
+    ee_lin_vel_bounds = np.array([0.05, 2.0])
+    episode_len = 300
+    num_waypoints = 30
+    num_trajectories = 40
+
+    for _ in tqdm(range(num_trajectories)):
+        last_pos_waypoint = np.column_stack((
+            np.random.uniform(*radius_range),
+            np.random.uniform(*pitch_range),
+            np.random.uniform(*yaw_range)
+        ))
+        last_ori_waypoint = np.column_stack((
+            0.0,
+            last_pos_waypoint[0, 1] + np.random.uniform(-np.pi/4, np.pi/4),
+            last_pos_waypoint[0, 2] + np.random.uniform(-np.pi/4, np.pi/4)
+        ))
+
+        ee_pos = []
+        ee_forward = []
+        
+        while sum([pos.shape[0] for pos in ee_pos]) < episode_len:
+            # generate a new waypoint
+            new_pos_waypoint = np.column_stack((
+                np.random.uniform(*radius_range),
+                np.random.uniform(*pitch_range),
+                np.random.uniform(*yaw_range)
+            ))
+            new_ori_waypoint = np.column_stack((
+                0.0,
+                new_pos_waypoint[0, 1] + np.random.uniform(-np.pi/4, np.pi/4),
+                new_pos_waypoint[0, 2] + np.random.uniform(-np.pi/4, np.pi/4)
+            ))
+            
+            distance = np.linalg.norm(new_pos_waypoint - last_pos_waypoint)
+                
+            time = distance / np.random.uniform(*ee_lin_vel_bounds)
+            try:
+                n_steps = int(time * sampling_rate)
+            except ZeroDivisionError:
+                breakpoint()
+                continue
+            
+            if n_steps < 20:
+                continue
+
+            t = np.linspace(1 / n_steps, 1, n_steps)[:, None]
+            
+            r, pitch, yaw = interpolate_position(last_pos_waypoint, new_pos_waypoint, t, yaw_range)
+            pos = np.concatenate((
+                r * np.cos(yaw) * np.cos(pitch),
+                r * np.sin(yaw) * np.cos(pitch),
+                -r * np.sin(pitch)
+            ), axis=-1)
+            ee_pos.append(pos)
+            
+            _, ori_pitch, ori_yaw = interpolate_orientation(last_ori_waypoint, new_ori_waypoint, t)
+            forward = pitch_yaw_to_vec(ori_pitch, ori_yaw)
+            ee_forward.append(forward)
+            
+            last_pos_waypoint = new_pos_waypoint
+            last_ori_waypoint = new_ori_waypoint
+        
+        ee_pos = np.concatenate(ee_pos)[:episode_len]
+        ee_forward = np.concatenate(ee_forward)[:episode_len]
+        t = np.linspace(0, episode_len / sampling_rate, episode_len + 1)
+
+        parsed_plan.append({
+            "t": t,
+            "pos": ee_pos,
+            "forward": ee_forward,
+        })
+
+    pickle.dump(parsed_plan, open("command_traj.pkl", "wb"))
+def rotation_angle_from_matrix(r_matrix):
+    trace = torch.diagonal(r_matrix, dim1=-2, dim2=-1).sum(dim=-1)
+    trace.clamp_(-1. + 1e-8, 3. - 1e-8)
+    rotation_magnitude = torch.acos((trace - 1.) / 2.)
+    assert not torch.isnan(rotation_magnitude).any()
+    assert torch.all(rotation_magnitude >= 0.)
+    assert torch.all(rotation_magnitude <= torch.pi)
+    return rotation_magnitude
+    
 
 class CommandEEPose(Command):
     def __init__(
@@ -730,3 +831,312 @@ class CommandEEPose_Cont(Command):
         #     ee_pos_target - ee_pos_w,
         #     color=(0., 0.8, 0., 1.)
         # )
+
+class CommandEEPose_UMI(Command):
+    """For each environment, sample a target to reach in the next 300 steps.
+    Set the command as the linear interpolation between the current and target pose, command updated every 10 steps.
+    When to sample a new target:
+    1. At the beginning of the episode (reset)
+    2. Every 300 steps
+    3. If the robot fails to track the command within some error `threshold` for `tolerance` * 10 steps
+    """
+    def __init__(
+        self, 
+        env,
+        ee_name: str,
+        ee_base_name: str = 'arm_link00',
+        # umi
+        pos_obs_scale: float = 10,
+        orn_obs_scale: float = 1.5,
+        pos_err_sigma: float = 0.5,
+        orn_err_sigma: float = 1.5,
+        pos_sigma_curriculum: Optional[
+            Dict[float, float]
+        ] = None,  # maps from error to sigma
+        orn_sigma_curriculum: Optional[
+            Dict[float, float]
+        ] = None,  # maps from error to sigma
+        smoothing_dt_multiplier: float = 4.0,
+        episode_length: int = 300,
+        target_times: list = [0.02, 0.04, 0.06, 1.0],
+        ee_lin_vel_range: tuple = (0.05, 1.0),
+        # lin vel in x, y, ang vel
+        lin_vel_x_range: tuple = (-1.0, 1.4),
+        lin_vel_y_range: tuple = (-0.5, 0.5),
+        ang_vel_range: tuple = (-1., 1.),
+        # ee pose
+        yaw_range: tuple = (-torch.pi, torch.pi),
+        pitch_range: tuple = (-torch.pi / 3, 0.),
+        radius_range: tuple = (0.4, 0.8),
+    ) -> None:
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        ee_ids, ee_names = self.asset.find_bodies(ee_name)
+        assert len(ee_ids) == 1
+        self.ee_id = ee_ids[0]
+        ee_base_ids, ee_base_names = self.asset.find_bodies(ee_base_name)
+        assert len(ee_base_ids) == 1
+        self.ee_base_id = ee_base_ids[0]
+
+        self.lin_vel_x_range = lin_vel_x_range
+        self.lin_vel_y_range = lin_vel_y_range
+        self.ang_vel_range = ang_vel_range
+        
+        self.yaw_range = yaw_range
+        self.pitch_range = pitch_range
+        self.radius_range = radius_range
+        self.ee_lin_vel_range = ee_lin_vel_range
+        
+        self.last_env_reset_ids = None
+
+        self.episode_length = episode_length
+        self.future_targets = future_targets = len(target_times)
+
+        self.pos_obs_scale = pos_obs_scale
+        self.orn_obs_scale = orn_obs_scale
+        self.smoothing_dt_multiplier = smoothing_dt_multiplier
+
+        with torch.device(self.device):
+            self.command = torch.zeros(self.num_envs, 2 + 1 + 3 * future_targets + 3 * future_targets)
+
+            # Locomotion
+            self.command_lin_vel = torch.zeros(self.num_envs, 3)
+            self._command_speed = torch.zeros(self.num_envs, 1)
+            self.command_ang_vel = torch.zeros(self.num_envs)
+            self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
+
+            # Manipulation
+            self.target_steps = (torch.tensor(target_times) / self.env.step_dt).round().long()
+            self.command_ee_pos_b_traj = torch.zeros(self.num_envs, episode_length, 3)
+            self.command_ee_fwd_b_traj = torch.zeros(self.num_envs, episode_length, 3)
+
+            self.command_ee_pos_b = torch.zeros(self.num_envs, future_targets, 3)
+            self.command_ee_fwd_b = torch.zeros(self.num_envs, future_targets, 3)
+            
+            ## world frame targets for visualization
+            self._command_ee_pos_w = torch.zeros(self.num_envs, future_targets, 3)
+            self._command_ee_fwd_w = torch.zeros(self.num_envs, 3)
+            self._fwd_vec = torch.tensor([1., 0., 0.]).expand(self.num_envs, -1)
+            
+            ## current target for error computation
+            self.ee_pos_error = torch.zeros(self.num_envs, 1)
+            self.ee_orn_error = torch.zeros(self.num_envs, 1)
+            self._pos_err_sigma = torch.zeros(self.num_envs, 1)
+            self._orn_err_sigma = torch.zeros(self.num_envs, 1)
+            self.ee_pos_rew = torch.zeros(self.num_envs, 1)
+            self.ee_orn_rew = torch.zeros(self.num_envs, 1)
+
+            self._cum_error = torch.zeros(self.num_envs, 2)
+            self.past_pos_error = self._cum_error[:, 0]
+            self.past_orn_error = self._cum_error[:, 1]
+            
+            # asset states
+            self.ee_pos_b = self.asset.data.ee_pos_b = torch.zeros(self.num_envs, 3, device=self.device)
+            self.command_ee_pos_b_yaw = self.asset.data.command_ee_pos_b_yaw = torch.zeros(self.num_envs)
+        
+        # stats for curriculum
+        self.pos_err_sigma = pos_err_sigma
+        self.orn_err_sigma = orn_err_sigma
+        self.pos_sigma_curriculum_level = 0
+        self.orn_sigma_curriculum_level = 0
+        self.pos_sigma_curriculum = pos_sigma_curriculum
+        self.orn_sigma_curriculum = orn_sigma_curriculum
+        if self.pos_sigma_curriculum is not None:
+            # make sure the curriculum is sorted
+            self.pos_sigma_curriculum = dict(
+                map(
+                    lambda x: (float(x[0]), float(x[1])),
+                    sorted(
+                        self.pos_sigma_curriculum.items(),
+                        key=lambda x: x[0],
+                        reverse=True,
+                    ),
+                )
+            )
+            self.pos_err_sigma = list(self.pos_sigma_curriculum.values())[
+                self.pos_sigma_curriculum_level
+            ]
+            self.past_pos_error *= list(self.pos_sigma_curriculum.keys())[
+                self.pos_sigma_curriculum_level
+            ]
+        if self.orn_sigma_curriculum is not None:
+            # make sure the curriculum is sorted
+            self.orn_sigma_curriculum = dict(
+                map(
+                    lambda x: (float(x[0]), float(x[1])),
+                    sorted(
+                        self.orn_sigma_curriculum.items(),
+                        key=lambda x: x[0],
+                        reverse=True,
+                    ),
+                )
+            )
+            self.orn_err_sigma = list(self.orn_sigma_curriculum.values())[
+                self.orn_sigma_curriculum_level
+            ]
+            self.past_orn_error *= list(self.orn_sigma_curriculum.keys())[
+                self.orn_sigma_curriculum_level
+            ]
+        self.debug_draw_dict = {}
+        self.debug_draw_count = 0
+
+    def reset(self, env_ids: torch.Tensor):
+        self.command[env_ids] = 0.
+        self._cum_error[env_ids] = 0.
+        self.last_env_reset_ids = env_ids
+        self.debug_draw_dict = {}
+        self.debug_draw_count = 0
+
+        self.sample_loco(env_ids=env_ids)
+
+        # sample a entire trajectory
+        # TODO: check sampling execution time
+        # TODO: now takes around 10 seconds, need to parallel
+        ee_pos_trajs, ee_forward_trajs = [], []
+        import time
+        st = time.time()
+        print("sampling trajectory...")
+        for i in env_ids:
+            ee_pos, ee_forward = generate_random_trajectory(self.yaw_range, self.pitch_range, self.radius_range, self.ee_lin_vel_range, self.episode_length, self.env.step_dt, self.device)
+            ee_pos_trajs.append(ee_pos)
+            ee_forward_trajs.append(ee_forward)
+        self.command_ee_pos_b_traj[env_ids] = torch.stack(ee_pos_trajs, dim=0)
+        self.command_ee_fwd_b_traj[env_ids] = torch.stack(ee_forward_trajs, dim=0)
+        print("sampling trajectory done in", time.time() - st)
+
+        # update curriculum
+        if self.pos_sigma_curriculum is not None:
+            avg_pos_err = self.past_pos_error.mean().item()
+            # find the first threshold that is greater than the average error
+            for level, (threshold, sigma) in enumerate(
+                self.pos_sigma_curriculum.items()
+            ):
+                if avg_pos_err < threshold:
+                    self.pos_err_sigma = sigma
+                    self._pos_err_sigma.fill_(sigma)
+                    self.pos_sigma_curriculum_level = level
+        if self.orn_sigma_curriculum is not None:
+            avg_orn_err = self.past_orn_error.mean().item()
+            # find the first threshold that is greater than the average error
+            for level, (threshold, sigma) in enumerate(
+                self.orn_sigma_curriculum.items()
+            ):
+                if avg_orn_err < threshold:
+                    self.orn_err_sigma = sigma
+                    self._orn_err_sigma.fill_(sigma)
+                    self.orn_sigma_curriculum_level = level
+    
+    def get_targets_at_steps(self):
+        # get the index of the closest time
+        target_indices = self.env.episode_length_buf.unsqueeze(1) + self.target_steps.unsqueeze(0)
+        target_indices = torch.clamp(target_indices, 0, self.episode_length - 1)
+        command_ee_pos_b = torch.gather(self.command_ee_pos_b_traj, 1, target_indices.unsqueeze(-1).expand(-1, -1, 3))
+        command_ee_fwd_b = torch.gather(self.command_ee_fwd_b_traj, 1, target_indices.unsqueeze(-1).expand(-1, -1, 3))
+        return command_ee_pos_b, command_ee_fwd_b
+
+    def update(self):
+        # update asset states
+        root_quat_yaw = yaw_quat(self.asset.data.root_quat_w)
+        arm_base_pos_w = self.asset.data.body_pos_w[:, self.ee_base_id]
+        self.ee_pos_b[:] = quat_rotate_inverse(
+            root_quat_yaw, 
+            self.asset.data.body_pos_w[:, self.ee_id] - arm_base_pos_w
+        )
+        self.command_ee_pos_b_yaw[:] = torch.atan2(self.command_ee_pos_b[:, 0, 1], self.command_ee_pos_b[:, 0, 0])
+
+        indices = self.env.episode_length_buf.unsqueeze(-1).unsqueeze(-1).expand(-1, 1, 3)
+        current_command_ee_pos_b = self.command_ee_pos_b_traj.gather(1, indices).squeeze(1)
+        current_command_ee_pos_w = quat_rotate(
+            root_quat_yaw,
+            current_command_ee_pos_b
+        ) + arm_base_pos_w
+        current_command_ee_fwd_b = self.command_ee_fwd_b_traj.gather(1, indices).squeeze(1)
+        current_command_ee_fwd_w = quat_rotate(root_quat_yaw, current_command_ee_fwd_b)
+
+        # update pos and ori cum error
+        ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id]
+        self.ee_pos_error[:] = (ee_pos_w - current_command_ee_pos_w).norm(dim=-1, keepdim=True)
+        self.ee_pos_rew[:] = torch.exp(-self.ee_pos_error / self.pos_err_sigma)
+
+        ee_quat_w = self.asset.data.body_quat_w[:, self.ee_id]
+        ee_fwd_w = quat_rotate(ee_quat_w, self._fwd_vec)
+        self.ee_orn_error[:] = 1 - (ee_fwd_w * current_command_ee_fwd_w).sum(dim=-1, keepdim=True) # 1 - cos(theta)
+        self.ee_orn_rew[:] = torch.exp(-self.ee_orn_error / self.orn_err_sigma)
+
+        # moving average of the error
+        valid = (self.env.episode_length_buf > 2).float()
+        smoothing = self.env.step_dt * self.smoothing_dt_multiplier
+        breakpoint()
+        self.past_pos_error.mul_(1 - smoothing).add_(smoothing * self.ee_pos_error * valid)
+        self.past_orn_error.mul_(1 - smoothing).add_(smoothing * self.ee_orn_error * valid)
+        
+        # get new command ee pos from the trajectory
+        command_ee_pos_b, command_ee_fwd_b = self.get_targets_at_steps()
+        self.command_ee_pos_b[:] = command_ee_pos_b
+        self.command_ee_fwd_b[:] = command_ee_fwd_b
+        
+        # set new command
+        self.command[:, :2] = self.command_lin_vel[:, :2]
+        self.command[:, 2] = self.command_ang_vel
+        self.command[:, 3:3+3*self.future_targets] = self.command_ee_pos_b.view(self.num_envs, -1) * self.pos_obs_scale
+        self.command[:, 3+3*self.future_targets:] = self.command_ee_fwd_b.view(self.num_envs, -1) * self.orn_obs_scale
+
+        # compute commanded ee position and orientation in world frame
+        self._command_ee_pos_w[:] = quat_rotate(
+            root_quat_yaw.unsqueeze(1),
+            self.command_ee_pos_b
+        ) + arm_base_pos_w.unsqueeze(1)
+
+        self._command_ee_fwd_w[:] = quat_mul(root_quat_yaw, self.command_ee_fwd_b[:, 0, :])
+        
+    def sample_loco(self, env_ids: torch.Tensor):
+        # sample speed and direction
+        linvel = torch.zeros(len(env_ids), 2, device=self.device)
+        linvel[:, 0].uniform_(*self.lin_vel_x_range)
+        linvel[:, 1].uniform_(*self.lin_vel_y_range)
+        speed = linvel.norm(dim=-1, keepdim=True)
+        stand = speed < 0.3
+        speed = speed * (~stand)
+        self.command_lin_vel[env_ids, :2] = linvel
+        self._command_speed[env_ids] = speed
+        self.is_standing_env[env_ids] = stand
+
+        # sample angvel
+        self.command_ang_vel[env_ids] = torch.empty(env_ids.shape, device=self.device).uniform_(*self.ang_vel_range)
+        still = self.command_ang_vel[env_ids] < 0.1
+        self.command_ang_vel[env_ids[still]] = 0.
+
+
+    def debug_draw(self):
+        # append to self.debug_draw_dict
+        # which will contain the keys: commmand_ee_pos_w, command_ee_forward_w, command_ee_upward_w
+        # if len(self.debug_draw_dict) == 0:
+        #     self.debug_draw_dict = {
+        #         "command_ee_pos_w": torch.empty(self.num_envs, 0, 3, device=self.device),
+        #         "command_ee_forward_w": torch.empty(self.num_envs, 0, 3, device=self.device),
+        #         "command_ee_upward_w": torch.empty(self.num_envs, 0, 3, device=self.device)
+        #     }
+        
+        # if self.debug_draw_count % 2 == 1:
+        # # if True:
+        #     self.debug_draw_dict["command_ee_pos_w"] = torch.cat([self.debug_draw_dict["command_ee_pos_w"], self.command_ee_pos_w.unsqueeze(1)], dim=1)
+        #     self.debug_draw_dict["command_ee_forward_w"] = torch.cat([self.debug_draw_dict["command_ee_forward_w"], self.command_ee_forward_w.unsqueeze(1)], dim=1)
+        #     self.debug_draw_dict["command_ee_upward_w"] = torch.cat([self.debug_draw_dict["command_ee_upward_w"], self.command_ee_upward_w.unsqueeze(1)], dim=1)
+        
+        self.debug_draw_count += 1
+        
+        ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id].unsqueeze(1)
+        ee_pos_diff = self._command_ee_pos_w - ee_pos_w
+        self.env.debug_draw.vector(
+            ee_pos_w.expand_as(ee_pos_diff).reshape(-1, 3),
+            ee_pos_diff.reshape(-1, 3),
+            color=(0., 0.8, 0., 1.)
+        )
+        
+        ee_ori_fwd = quat_rotate(self._command_ee_fwd_w, self._fwd_vec)
+        self.env.debug_draw.vector(
+            ee_pos_w.squeeze(1),
+            ee_ori_fwd.reshape(-1, 3) * 0.2,
+            color=(1., 0., 0., 1.)
+        )
+        
