@@ -30,7 +30,7 @@ observation:
     joint_pos: {noise_std: 0.05}
     joint_vel: {noise_std: 0.2}
     prev_actions:   {steps: 3}
-    phase: {cycle_range: [1.0, 1.2]}
+    phase: {cycle_range: [1.0, 1.2], deriv: true}
   priv:
     applied_action:   {}
     root_linvel_b:    {yaw_only: true}
@@ -47,9 +47,18 @@ observation:
     motor_params:     {actuator_name: "base_legs"}
     body_materials:   {body_names: ".*leg_link6"}
     body_mass:        {body_names: [base_link, waist_yaw_link]}
-  symmetry:
+  recon_target: # for DWL
+    root_angvel_b:
+    projected_gravity_b:
+    joint_pos:
+    joint_vel:
+    root_linvel_b:
+    feet_height_map:  {feet_names: .*leg_link6 }
+    applied_torques:  {actuator_name: base_legs}
+    joint_forces:
+  symmetry: # for symmetry reward
     symmetry:         {arm_names: .*arm_link5, feet_names: .*leg_link6}
-  aux_target_:
+  aux_target_: # for HIM
     root_linvel_b:    {yaw_only: true}
     root_angvel_b:    {yaw_only: true}
     rewards:          {}

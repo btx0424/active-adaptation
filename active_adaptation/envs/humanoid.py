@@ -128,11 +128,17 @@ class Humanoid(LocomotionEnv):
                 self.arm_linvel_w = torch.zeros(self.num_envs, len(self.arm_ids), 3)
                 self.arm_linvel_b = torch.zeros(self.num_envs, len(self.arm_ids), 3)
                 self.error = torch.zeros(self.num_envs, len(self.arm_ids))
+                self.cum_error = torch.zeros(self.num_envs, len(self.arm_ids))
+                self.action_manager.cum_error = self.cum_error
+
+        def reset(self, env_ids):
+            self.cum_error[env_ids] = 0
 
         def update(self):
             arm_linvel_w = self.asset.data.body_lin_vel_w[:, self.arm_ids]
             arm_linvel_b = quat_rotate_inverse(self.asset.data.root_quat_w.unsqueeze(1), arm_linvel_w)
             self.error = (arm_linvel_b - self.action_manager.command_arm_linvel).square().sum(dim=-1)
+            self.cum_error.add_(self.error * self.env.step_dt).mul_(0.99)
             self.arm_linvel_w[:] = arm_linvel_w
             self.arm_linvel_b[:] = arm_linvel_b
             
@@ -148,6 +154,24 @@ class Humanoid(LocomotionEnv):
                 command_arm_linvel.reshape(-1, 3),
                 color=(0.5, 0.6, 0.5, 1),
             )
+            self.env.debug_draw.vector(
+                arm_pos_w.reshape(-1, 3),
+                self.arm_linvel_w.reshape(-1, 3),
+                color=(0.6, 0.5, 0.5, 1),
+            )
+    
+    class arm_velocity_cum_error(mdp.Termination):
+        def __init__(self, env, thres: float=0.8):
+            super().__init__(env)
+            self.threshold = thres
+            self.asset: Articulation = self.env.scene["robot"]
+            self.action_manager: mdp.action.HumanoidWithArm = self.env.action_manager
+            if not isinstance(self.action_manager, mdp.action.HumanoidWithArm):
+                raise ValueError("`HumanoidWithArm` action manager required")
+            self.cum_error = self.action_manager.cum_error
+
+        def __call__(self):
+            return (self.cum_error > self.threshold).any(1, True)
     
     class command_arm_linvel(mdp.Observation):
         def __init__(self, env):

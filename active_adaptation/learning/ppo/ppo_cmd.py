@@ -189,9 +189,9 @@ class PPOPolicy(TensorDictModuleBase):
         infos["critic/value_mean"] = tensordict["ret"][..., 0].mean().item()
         infos["critic/value_mean_cmd"] = tensordict["ret"][..., 1].mean().item()
 
-        if self.train_cmd and infos["critic/value_mean_cmd"] < infos["critic/value_mean"] * 0.5:
-            self.cmd_weight = min(self.cmd_weight + 0.1, 2.0)
-        infos["cmd_weight"] = self.cmd_weight
+        # if self.train_cmd and infos["critic/value_mean_cmd"] < infos["critic/value_mean"] * 0.5:
+        #     self.cmd_weight = min(self.cmd_weight + 0.1, 2.0)
+        # infos["cmd_weight"] = self.cmd_weight
         self.num_updates += 1
         return infos
 

@@ -35,8 +35,8 @@ from tensordict import TensorDict
 from tensordict.nn import TensorDictModuleBase, TensorDictModule, TensorDictSequential
 
 from hydra.core.config_store import ConfigStore
-from dataclasses import dataclass
-from typing import Union
+from dataclasses import dataclass, field
+from typing import Union, List
 from collections import OrderedDict
 
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
@@ -59,6 +59,7 @@ class PPOConfig:
     value_norm: bool = False
 
     checkpoint_path: Union[str, None] = None
+    in_keys: List[str] = field(default_factory=lambda: [OBS_KEY])
 
 cs = ConfigStore.instance()
 cs.store("ppo", node=PPOConfig, group="algo")
@@ -93,24 +94,15 @@ class PPOPolicy(TensorDictModuleBase):
 
         fake_input = observation_spec.zero()
         
-        def make_cnn():
-            cnn = nn.Sequential(
-                nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1),
-                nn.LeakyReLU(),
-                nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1),
-                nn.LeakyReLU(),
-                nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1),
-                nn.LeakyReLU(),
-                nn.Flatten(),
-                nn.LazyLinear(64),
-                nn.LayerNorm(64),
-            )
-            return cnn
-        
         def make_encoder(out_key: str):
             if "height_scan" in observation_spec.keys(True, True):
+                cnn = nn.Sequential(
+                    make_conv(num_channels=[8, 8, 8]),
+                    nn.LazyLinear(64),
+                    nn.LayerNorm(64),
+                )
                 modules = [
-                    TensorDictModule(make_cnn(), ["height_scan"], ["_cnn"]),
+                    TensorDictModule(cnn, ["height_scan"], ["_cnn"]),
                     TensorDictModule(make_mlp([256]), [OBS_KEY], ["_mlp"]),
                     CatTensors(["_cnn", "_mlp"], out_key),
                 ]
