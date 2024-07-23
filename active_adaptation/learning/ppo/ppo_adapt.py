@@ -197,11 +197,8 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self.critic_loss_fn = nn.MSELoss(reduction="none")
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(self.cfg.gae_gamma, 0.95)
+        self.max_grad_norm = 2.0
         self.reg_alpha = 0.
-
-        if not cfg.layer_norm:
-            global make_mlp
-            make_mlp = functools.partial(make_mlp, norm=None)
 
         if cfg.value_norm:
             value_norm_cls = ValueNorm1
@@ -227,9 +224,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             fake_input["context_adapt_hx"] = torch.zeros(fake_input.shape[0], 128)
         print(fake_input)
 
-        self.log_alpha = nn.Parameter(torch.tensor(0.))
-        self.opt_alpha = torch.optim.Adam([self.log_alpha], lr=1e-2)
-        self.target_kl = self.cfg.target_kl
         self.context_dim = self.cfg.context_dim
         
         if "height_scan" in observation_spec.keys(True, True):
@@ -272,7 +266,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 ).to(self.device)
             return module
         
-        self.adapt_module_a = make_adapt_module("stoch")
+        self.adapt_module_a = make_adapt_module()
         self.adapt_module_a(fake_input)
 
         self.adapt_module_b = make_adapt_module()
@@ -340,8 +334,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self._critic_priv(fake_input)
         self._critic_adapt(fake_input)
 
-        opt_class = {"adam": torch.optim.Adam, "adamw": torch.optim.AdamW}[self.cfg.opt]
-        self.opt_expert: torch.optim.Optimizer = opt_class(
+        self.opt_expert = torch.optim.Adam(
             [
                 {"params": self.encoder_priv.parameters()},
                 {"params": self._actor_expert.parameters()},
@@ -351,7 +344,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             lr=cfg.lr
         )
 
-        self.opt_target: torch.optim.Optimizer = torch.optim.Adam(
+        self.opt_target = torch.optim.Adam(
             [
                 {"params": self._actor_adapt.parameters()},
                 {"params": self._critic_adapt.parameters()},
@@ -359,7 +352,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             lr=cfg.lr
         )
 
-        self.opt_adapt: torch.optim.Optimizer = torch.optim.Adam(
+        self.opt_adapt = torch.optim.Adam(
             [
                 {"params": self.adapt_module_a.parameters(), "name": "adapt_module_a", "max_grad_norm": 5.},
                 {"params": self.adapt_module_b.parameters(), "name": "adapt_module_b", "max_grad_norm": 5.},
@@ -387,8 +380,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         self.__actor_expert.requires_grad_(False)
 
         self.adapt_module_ema.requires_grad_(False)
-
-        self.log_alpha.data.zero_()
 
     def step_schedule(self, progress: float):
         # if isinstance(self.cfg.gae_gamma, (tuple, list)):
@@ -495,13 +486,14 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                     minibatch, self._critic_priv, "value_priv", "ret_priv").mean()
                 if self.reg_alpha > 0.:
                     reg_loss = F.mse_loss(minibatch["context_expert"], minibatch["context_adapt"])
-                    losses["adapt/reg_loss"] = self.cfg.reg_alpha * reg_loss
+                    losses["adapt/reg_loss"] = self.reg_alpha * reg_loss
 
                 loss = sum(v for k, v in losses.items())
                 self.opt_expert.zero_grad(set_to_none=True)
                 loss.backward()
-                for param_group in self.opt_expert.param_groups:
-                    nn.utils.clip_grad_norm_(param_group["params"], 2.)
+                losses["actor/encoder_grad_norm"] = nn.utils.clip_grad_norm_(self.encoder_priv.parameters(), self.max_grad_norm)
+                losses["actor/grad_norm"] = nn.utils.clip_grad_norm_(self._actor_expert.parameters(), self.max_grad_norm)
+                losses["critic/grad_norm"] = nn.utils.clip_grad_norm_(self._critic_priv.parameters(), self.max_grad_norm)
                 self.opt_expert.step()
                 losses["critic/explained_var_obs"] = 1 - F.mse_loss(minibatch["value_obs"], minibatch["ret_obs"]) / minibatch["ret_obs"].var()
                 losses["critic/explained_var"] = 1 - F.mse_loss(minibatch["value_priv"], minibatch["ret_priv"]) / minibatch["ret_priv"].var()
@@ -529,8 +521,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
             self.adapt_module_ema(_tensordict["next"])
             del _tensordict["next", "next"]
             action_kl = self._action_kl(_tensordict.copy(), self.adapt_module_a, reduce=False)
-            if self.cfg.adapt_reward:
-                _tensordict[REWARD_KEY] = _tensordict[REWARD_KEY] - self.log_alpha.exp() * action_kl
 
         self._compute_advantage(
             tensordict, self._critic_priv, "value_priv", "adv_priv", "ret_priv", value_norm=self.value_norms["priv"])
@@ -541,13 +531,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         # save some memory?
         del tensordict["next"]
         del tensordict["critic_priv_input"]
-
-        if self.cfg.tune_alpha:
-            # alpha_loss = - self.log_alpha * (action_kl - self.target_kl)
-            alpha_loss = - self.log_alpha.exp() * (action_kl.mean() - self.target_kl)
-            self.opt_alpha.zero_grad()
-            alpha_loss.backward()
-            self.opt_alpha.step()
 
         actor = self._actor_adapt if train_actor else None
         if self.cfg.unbiased_critic:
@@ -572,7 +555,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 self.opt_target.zero_grad(set_to_none=True)
                 loss.backward()
                 for param_group in self.opt_expert.param_groups:
-                    nn.utils.clip_grad_norm_(param_group["params"], 2.)
+                    nn.utils.clip_grad_norm_(param_group["params"], self.max_grad_norm)
                 self.opt_expert.step()
                 self.opt_target.step()
 
@@ -587,7 +570,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         infos["critic/value_gap"] = (value_adapt - value_priv)[~tensordict["is_init"]].square().mean()
         infos["critic/value_adapt"] = value_adapt.mean()
         infos["critic/value_priv"] = value_priv.mean()
-        infos["alpha"] = self.log_alpha.exp()
         return {k: v.item() for k, v in sorted(infos.items())}
     
     def train_adaptation(self, tensordict: TensorDict):

@@ -9,7 +9,7 @@ defaults:
 robot: cassie
 terrain: plane
 payload: false
-homogeneous: true
+homogeneous: false
 
 command:
   _target_: active_adaptation.envs.mdp.Command2

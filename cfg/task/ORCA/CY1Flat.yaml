@@ -47,6 +47,8 @@ observation:
     motor_params:     {actuator_name: "base_legs"}
     body_materials:   {body_names: ".*leg_link6"}
     body_mass:        {body_names: [base_link, waist_yaw_link]}
+  symmetry:
+    symmetry:         {arm_names: .*arm_link5, feet_names: .*leg_link6}
   aux_target_:
     root_linvel_b:    {yaw_only: true}
     root_angvel_b:    {yaw_only: true}

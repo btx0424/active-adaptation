@@ -17,7 +17,7 @@ command:
   linvel_x_range: [0.4, 1.4]
   linvel_y_range: [-0., 0.]
   angvel_range:   [-1.5, 1.5]
-  yaw_stiffness_range: [0.5, 0.7]
+  yaw_stiffness_range: [0.7, 0.7]
   use_stiffness_ratio: 1.0
   base_height_range: [0.25, 0.35]
   resample_prob: 0.5
@@ -80,12 +80,12 @@ reward:
     angvel_z_exp_shaped: {weight: 0.75, enabled: false}
     linvel_projection:  {weight: 0.5, enabled: true}
     linacc_z_l2:        {weight: 0.005, enabled: false}
-    angvel_xy_l2:       {weight: 0.02, enabled: true, clip_range: [-1., 0.]}
+    angvel_xy_l2:       {weight: 0.02, enabled: true}
     linvel_z_l2:        {weight: 2.0, enabled: true}
     base_height_l1:     {weight: 0.5, enabled: true, target_height: 0.3}
     energy_l1:          {weight: 0.0002, enabled: true}
-    joint_acc_l2:       {weight: 2.5e-7, enabled: true, clip_range: [-1., 0.]}
-    joint_torques_l2:   {weight: 2.0e-4, enabled: true, clip_range: [-1., 0.]}
+    joint_acc_l2:       {weight: 2.5e-7, enabled: true}
+    joint_torques_l2:   {weight: 2.0e-4, enabled: true}
     quadruped_stand:    {weight: 0.5}
     orientation:        {weight: 1.0, enabled: false}
     survival:           {weight: 1.0, enabled: true}
@@ -118,6 +118,7 @@ randomization:
     actuator_name: base_legs
     stiffness_range:  [0.8, 1.2]
     damping_range:    [0.8, 1.2]
+    armature_range:   [0.0, 0.02]
     homogeneous: ${task.homogeneous}
   # random_motor_failure:
   #   actuator_name: base_legs
