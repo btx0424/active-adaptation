@@ -368,6 +368,69 @@ class QuadrupedManip(LocomotionEnv):
             ang_vel_error = (target_angvel - base_joint_angvel).square().unsqueeze_(1)
             return torch.exp(- ang_vel_error / self.l)
         
+    class ee_pos_umi(Reward):
+        def __init__(self, env, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+        
+        def compute(self) -> torch.Tensor:
+            return self.env.command_manager.ee_pos_rew
+    
+    class ee_orn_umi(Reward):
+        def __init__(self, env, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+        
+        def compute(self) -> torch.Tensor:
+            return self.env.command_manager.ee_orn_rew
+    
+    class ee_pose_umi(Reward):
+        def __init__(self, env, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+        
+        def compute(self) -> torch.Tensor:
+            return self.env.command_manager.ee_pos_rew * self.env.command_manager.ee_orn_rew
+    
+    class ee_pos_error_umi(Reward):
+        def __init__(self, env, weight: float = 1.0, enabled: bool = False):
+            super().__init__(env, weight, enabled)
+        
+        def compute(self) -> torch.Tensor:
+            return self.env.command_manager.ee_pos_error
+    
+    class ee_orn_error_umi(Reward):
+        def __init__(self, env, weight: float = 1.0, enabled: bool = False):
+            super().__init__(env, weight, enabled)
+        
+        def compute(self) -> torch.Tensor:
+            return self.env.command_manager.ee_orn_error
+    
+    class ee_past_pos_error_umi(Reward):
+        def __init__(self, env, weight: float = 1.0, enabled: bool = False):
+            super().__init__(env, weight, enabled)
+        
+        def compute(self) -> torch.Tensor:
+            return self.env.command_manager.past_pos_err
+    
+    class ee_past_orn_error_umi(Reward):
+        def __init__(self, env, weight: float = 1.0, enabled: bool = False):
+            super().__init__(env, weight, enabled)
+        
+        def compute(self) -> torch.Tensor:
+            return self.env.command_manager.past_orn_err
+        
+    class ee_pos_sigma_umi(Reward):
+        def __init__(self, env, weight: float = 1.0, enabled: bool = False):
+            super().__init__(env, weight, enabled)
+        
+        def compute(self) -> torch.Tensor:
+            return self.env.command_manager._pos_err_sigma
+    
+    class ee_orn_sigma_umi(Reward):
+        def __init__(self, env, weight: float = 1.0, enabled: bool = False):
+            super().__init__(env, weight, enabled)
+        
+        def compute(self) -> torch.Tensor:
+            return self.env.command_manager._orn_err_sigma
+        
     class ee_tracking_hybrid(Reward):
         def __init__(self, env, ee_name: str, base_joint_name: str, weight: float, enabled: bool = True, l: float = 0.25, pos_exp_weight: float = 1, ori_add_linear: bool = False):
             super().__init__(env, weight, enabled)

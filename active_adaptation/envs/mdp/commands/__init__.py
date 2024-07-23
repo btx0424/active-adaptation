@@ -1,2 +1,2 @@
-from .locomotion import Command2, InterpCommand, CommandPosVel
-from .locomanip import CommandEEPose, CommandEEPose_Loco, CommandEEPose_Cont
+from .locomotion import Command, Command2, InterpCommand, CommandPosVel
+from .locomanip import CommandEEPose, CommandEEPose_Loco, CommandEEPose_Cont, CommandEEPose_UMI

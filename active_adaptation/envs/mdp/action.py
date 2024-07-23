@@ -81,6 +81,41 @@ class JointPosition(ActionManager):
             self.asset.set_joint_position_target(pos_target)
         self.asset.write_data_to_sim()
 
+class QuadrupedWithArm(JointPosition):
+    def __init__(
+        self, 
+        env, 
+        joint_names: str=".*", 
+        action_scaling: Dict[str, float]=0.5,
+        max_delay: int=4,
+        alpha: Tuple[float, float]=(0.5, 1.0),
+        arm_joint_names: str = "joint.*",
+    ):
+        super().__init__(env, joint_names, action_scaling, max_delay, alpha)
+        self.arm_joint_ids, _ = self.asset.find_joints(arm_joint_names)
+        self.arm_joint_pos = self.default_joint_pos[:, self.arm_joint_ids].clone()
+    
+    def reset(self, env_ids: torch.Tensor):
+        super().reset(env_ids)
+        self.arm_joint_pos[env_ids] = self.default_joint_pos[env_ids.unsqueeze(-1), self.arm_joint_ids]
+
+    def __call__(self, tensordict: TensorDictBase, substep: int):
+        if substep == 0:
+            action = tensordict["action"].clamp(-10, 10)
+            self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
+            self.action_buf[:, :, 0] = action
+            action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
+            self.applied_action.lerp_(action.squeeze(-1), self.alpha)
+
+            pos_target = self.default_joint_pos.clone()
+            pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
+            pos_target.clamp_(-torch.pi, torch.pi)
+
+            # overwrite arm joint positions with incremental action control
+            self.arm_joint_pos += self.applied_action[:, self.arm_joint_ids] * self.action_scaling[self.arm_joint_ids]
+            pos_target[:, self.arm_joint_ids] = self.arm_joint_pos
+            self.asset.set_joint_position_target(pos_target)
+        self.asset.write_data_to_sim()
 
 class HumanoidWithArm(ActionManager):
 
