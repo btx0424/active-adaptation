@@ -26,9 +26,9 @@ command:
     - [ 2.7489,  3.5343]
     - [ 4.3197,  5.1051]
 
-# observation:
-#   height_scan:
-#     height_scan:      {prim_path: base_link}
+observation:
+  height_scan:
+    height_scan:      {prim_path: base_link}
 
 randomization:
   push:     {body_names: ["base_link", "waist_yaw_link"], force_range: [0.0, 0.1]}

@@ -835,10 +835,11 @@ class clock(Observation):
         return torch.cat([t.sin(), t.cos()], dim=1)
 
 class phase(Observation):
-    def __init__(self, env, cycle_range = (1.0, 1.2)):
+    def __init__(self, env, cycle_range = (1.0, 1.2), deriv: bool=False):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.cycle_range = cycle_range
+        self.deriv = deriv
         self.offset_range= [torch.pi/3, 2 * torch.pi/3]
         self.asset.data.phase = torch.zeros(self.num_envs, device=self.device)
         self.phase: torch.Tensor = self.asset.data.phase
@@ -859,7 +860,15 @@ class phase(Observation):
         self.phase[:] = self.offset + self.env.episode_length_buf * self.omega * self.env.step_dt
 
     def compute(self) -> torch.Tensor:
-        return torch.stack([self.phase.sin(), self.phase.cos()], 1)
+        phase_sin = self.phase.sin()
+        phase_cos = self.phase.cos()
+        if self.deriv:
+            return torch.stack([
+                phase_sin, self.omega * phase_cos,
+                phase_cos, -self.omega * phase_sin
+            ], 1)
+        else:
+            return torch.stack([phase_sin, phase_cos], 1)
         
     
 class dummy(Observation):
