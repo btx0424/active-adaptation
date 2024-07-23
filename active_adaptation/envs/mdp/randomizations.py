@@ -381,7 +381,9 @@ class stumble(Randomization):
         self.feet_height: torch.Tensor = self.asset.data.feet_height
 
     def reset(self, env_ids: torch.Tensor):
-        self.friction_coef[env_ids] = sample_uniform((len(env_ids), 1, 1), 0.0, 0.2, self.device)
+        friction = torch.empty(len(env_ids), 1, 1, device=self.device)
+        friction.uniform_(*self.friction_range)
+        self.friction_coef[env_ids] = friction
 
     def step(self, substep):
         # feet_height = self.asset.data.feet_height_map.mean(-1).reshape(-1)
@@ -418,6 +420,55 @@ class random_joint_friction(Randomization):
         friction = torch.zeros_like(self.joints.friction)
         friction.uniform_(*self.friction_range)
         self.asset.write_joint_friction_to_sim(friction, joint_ids=self.joints.joint_indices)
+
+
+class pull(Randomization):
+    def __init__(
+        self, 
+        env,
+        drag_prob: float = 0.2,
+        drag_range=(0.0, 0.2)
+    ):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.drag_prob = drag_prob
+        self.drag_range = drag_range
+        self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum().to(self.device) * 9.81
+        
+        with torch.device(self.device):
+            self.forces = torch.zeros(self.num_envs, 3)
+            self.axis = torch.zeros(self.num_envs, 3)
+            self.apply_drag = torch.zeros(self.num_envs, 1, dtype=bool)
+            self.drag_magnitude = torch.zeros(self.num_envs, 1)
+
+    def reset(self, env_ids: torch.Tensor):
+        self.forces[env_ids] = 0.
+        
+        # pull direction
+        a = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
+        axis = torch.stack([torch.cos(a), torch.sin(a), torch.zeros_like(a)], -1)
+        self.axis[env_ids] = axis
+
+        drag_magnitude = torch.empty(len(env_ids), 1, device=self.device).uniform_(*self.drag_range)
+        self.drag_magnitude[env_ids] = drag_magnitude * self.default_mass_total
+        self.apply_drag[env_ids] = (torch.rand(len(env_ids), 1, device=self.device) < self.drag_prob)
+    
+    def update(self):
+        pass
+
+    def step(self, substep):
+        force =  self.axis * self.drag_magnitude
+        self.forces[:] = torch.where(self.apply_drag, force, torch.zeros_like(self.forces))
+        self.asset.set_external_force_and_torque(
+            quat_rotate_inverse(self.asset.data.root_quat_w, self.forces).unsqueeze(1), 
+            torch.zeros_like(force).unsqueeze(1), [0])
+
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w, 
+            self.forces / self.default_mass_total, 
+            color=(0.6, 0.8, 0.6, 1.)
+        )
 
 
 def random_scale(x: torch.Tensor, low: float, high: float, homogeneous: bool=False):
