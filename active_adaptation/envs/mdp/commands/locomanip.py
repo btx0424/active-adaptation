@@ -7,7 +7,7 @@ from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from active_adaptation.utils.helpers import batchify
 from .locomotion import Command, sample_quat_yaw, sample_uniform, clamp_norm
 from tensordict import TensorDict
-from .generate_command_traj import generate_random_trajectory
+from .generate_command_traj import generate_random_trajectories
 
 from typing import Dict, Optional
 
@@ -907,8 +907,8 @@ class CommandEEPose_UMI(Command):
 
             # Manipulation
             self.target_steps = (torch.tensor(target_times) / self.env.step_dt).round().long()
-            self.command_ee_pos_b_traj = torch.zeros(self.num_envs, episode_length, 3)
-            self.command_ee_fwd_b_traj = torch.zeros(self.num_envs, episode_length, 3)
+            self.command_ee_pos_b_traj = torch.zeros(self.num_envs, episode_length + 1, 3)
+            self.command_ee_fwd_b_traj = torch.zeros(self.num_envs, episode_length + 1, 3)
 
             self.command_ee_pos_b = torch.zeros(self.num_envs, future_targets, 3)
             self.command_ee_fwd_b = torch.zeros(self.num_envs, future_targets, 3)
@@ -927,8 +927,8 @@ class CommandEEPose_UMI(Command):
             self.ee_orn_rew = torch.zeros(self.num_envs, 1)
 
             self._cum_error = torch.zeros(self.num_envs, 2)
-            self.past_pos_error = self._cum_error[:, 0]
-            self.past_orn_error = self._cum_error[:, 1]
+            self.past_pos_error = self._cum_error[:, 0:1]
+            self.past_orn_error = self._cum_error[:, 1:2]
             
             # asset states
             self.ee_pos_b = self.asset.data.ee_pos_b = torch.zeros(self.num_envs, 3, device=self.device)
@@ -981,6 +981,7 @@ class CommandEEPose_UMI(Command):
         self.debug_draw_count = 0
 
     def reset(self, env_ids: torch.Tensor):
+        # TODO: check reset logic
         self.command[env_ids] = 0.
         self._cum_error[env_ids] = 0.
         self.last_env_reset_ids = env_ids
@@ -992,17 +993,18 @@ class CommandEEPose_UMI(Command):
         # sample a entire trajectory
         # TODO: check sampling execution time
         # TODO: now takes around 10 seconds, need to parallel
-        ee_pos_trajs, ee_forward_trajs = [], []
         import time
         st = time.time()
-        print("sampling trajectory...")
-        for i in env_ids:
-            ee_pos, ee_forward = generate_random_trajectory(self.yaw_range, self.pitch_range, self.radius_range, self.ee_lin_vel_range, self.episode_length, self.env.step_dt, self.device)
-            ee_pos_trajs.append(ee_pos)
-            ee_forward_trajs.append(ee_forward)
-        self.command_ee_pos_b_traj[env_ids] = torch.stack(ee_pos_trajs, dim=0)
-        self.command_ee_fwd_b_traj[env_ids] = torch.stack(ee_forward_trajs, dim=0)
-        print("sampling trajectory done in", time.time() - st)
+        print(f"Sampling trajectories for {env_ids}...")
+        ee_pos_trajs, ee_forward_trajs = generate_random_trajectories(
+            len(env_ids), 
+            self.yaw_range, self.pitch_range, self.radius_range, self.ee_lin_vel_range, 
+            self.episode_length + 1, self.env.step_dt, self.device
+        )
+        torch.cuda.synchronize()
+        print("Sampling time:", time.time() - st)
+        self.command_ee_pos_b_traj[env_ids] = ee_pos_trajs
+        self.command_ee_fwd_b_traj[env_ids] = ee_forward_trajs
 
         # update curriculum
         if self.pos_sigma_curriculum is not None:
@@ -1045,6 +1047,7 @@ class CommandEEPose_UMI(Command):
         self.command_ee_pos_b_yaw[:] = torch.atan2(self.command_ee_pos_b[:, 0, 1], self.command_ee_pos_b[:, 0, 0])
 
         indices = self.env.episode_length_buf.unsqueeze(-1).unsqueeze(-1).expand(-1, 1, 3)
+        assert torch.all(indices <= self.episode_length)
         current_command_ee_pos_b = self.command_ee_pos_b_traj.gather(1, indices).squeeze(1)
         current_command_ee_pos_w = quat_rotate(
             root_quat_yaw,
@@ -1064,9 +1067,8 @@ class CommandEEPose_UMI(Command):
         self.ee_orn_rew[:] = torch.exp(-self.ee_orn_error / self.orn_err_sigma)
 
         # moving average of the error
-        valid = (self.env.episode_length_buf > 2).float()
+        valid = (self.env.episode_length_buf > 2).float().unsqueeze(-1)
         smoothing = self.env.step_dt * self.smoothing_dt_multiplier
-        breakpoint()
         self.past_pos_error.mul_(1 - smoothing).add_(smoothing * self.ee_pos_error * valid)
         self.past_orn_error.mul_(1 - smoothing).add_(smoothing * self.ee_orn_error * valid)
         
@@ -1087,7 +1089,7 @@ class CommandEEPose_UMI(Command):
             self.command_ee_pos_b
         ) + arm_base_pos_w.unsqueeze(1)
 
-        self._command_ee_fwd_w[:] = quat_mul(root_quat_yaw, self.command_ee_fwd_b[:, 0, :])
+        self._command_ee_fwd_w[:] = quat_rotate(root_quat_yaw, self.command_ee_fwd_b[:, 0, :])
         
     def sample_loco(self, env_ids: torch.Tensor):
         # sample speed and direction

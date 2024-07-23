@@ -403,6 +403,20 @@ class QuadrupedManip(LocomotionEnv):
         def compute(self) -> torch.Tensor:
             return self.env.command_manager.ee_orn_error
     
+    class ee_past_pos_error_umi(Reward):
+        def __init__(self, env, weight: float = 1.0, enabled: bool = False):
+            super().__init__(env, weight, enabled)
+        
+        def compute(self) -> torch.Tensor:
+            return self.env.command_manager.past_pos_err
+    
+    class ee_past_orn_error_umi(Reward):
+        def __init__(self, env, weight: float = 1.0, enabled: bool = False):
+            super().__init__(env, weight, enabled)
+        
+        def compute(self) -> torch.Tensor:
+            return self.env.command_manager.past_orn_err
+        
     class ee_pos_sigma_umi(Reward):
         def __init__(self, env, weight: float = 1.0, enabled: bool = False):
             super().__init__(env, weight, enabled)
