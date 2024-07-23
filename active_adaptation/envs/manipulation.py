@@ -408,28 +408,36 @@ class QuadrupedManip(LocomotionEnv):
             super().__init__(env, weight, enabled)
         
         def compute(self) -> torch.Tensor:
-            return self.env.command_manager.past_pos_err
+            return self.env.command_manager.past_pos_error
     
     class ee_past_orn_error_umi(Reward):
         def __init__(self, env, weight: float = 1.0, enabled: bool = False):
             super().__init__(env, weight, enabled)
         
         def compute(self) -> torch.Tensor:
-            return self.env.command_manager.past_orn_err
+            return self.env.command_manager.past_orn_error
         
     class ee_pos_sigma_umi(Reward):
         def __init__(self, env, weight: float = 1.0, enabled: bool = False):
             super().__init__(env, weight, enabled)
+            self.pos_err_sigma = torch.zeros(self.num_envs, 1, device=self.device)
+        
+        def update(self):
+            self.pos_err_sigma.fill_(self.env.command_manager.pos_err_sigma)
         
         def compute(self) -> torch.Tensor:
-            return self.env.command_manager._pos_err_sigma
+            return self.pos_err_sigma
     
     class ee_orn_sigma_umi(Reward):
         def __init__(self, env, weight: float = 1.0, enabled: bool = False):
             super().__init__(env, weight, enabled)
+            self.orn_err_sigma = torch.zeros(self.num_envs, 1, device=self.device)
+        
+        def update(self):
+            self.orn_err_sigma.fill_(self.env.command_manager.orn_err_sigma)
         
         def compute(self) -> torch.Tensor:
-            return self.env.command_manager._orn_err_sigma
+            return self.orn_err_sigma
         
     class ee_tracking_hybrid(Reward):
         def __init__(self, env, ee_name: str, base_joint_name: str, weight: float, enabled: bool = True, l: float = 0.25, pos_exp_weight: float = 1, ori_add_linear: bool = False):

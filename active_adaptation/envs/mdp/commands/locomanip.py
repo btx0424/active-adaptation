@@ -10,6 +10,7 @@ from tensordict import TensorDict
 from .generate_command_traj import generate_random_trajectories
 
 from typing import Dict, Optional
+import wandb
 
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
@@ -887,8 +888,6 @@ class CommandEEPose_UMI(Command):
         self.radius_range = radius_range
         self.ee_lin_vel_range = ee_lin_vel_range
         
-        self.last_env_reset_ids = None
-
         self.episode_length = episode_length
         self.future_targets = future_targets = len(target_times)
 
@@ -921,14 +920,11 @@ class CommandEEPose_UMI(Command):
             ## current target for error computation
             self.ee_pos_error = torch.zeros(self.num_envs, 1)
             self.ee_orn_error = torch.zeros(self.num_envs, 1)
-            self._pos_err_sigma = torch.zeros(self.num_envs, 1)
-            self._orn_err_sigma = torch.zeros(self.num_envs, 1)
             self.ee_pos_rew = torch.zeros(self.num_envs, 1)
             self.ee_orn_rew = torch.zeros(self.num_envs, 1)
 
-            self._cum_error = torch.zeros(self.num_envs, 2)
-            self.past_pos_error = self._cum_error[:, 0:1]
-            self.past_orn_error = self._cum_error[:, 1:2]
+            self.past_pos_error = torch.zeros(self.num_envs, 1)
+            self.past_orn_error = torch.zeros(self.num_envs, 1)
             
             # asset states
             self.ee_pos_b = self.asset.data.ee_pos_b = torch.zeros(self.num_envs, 3, device=self.device)
@@ -956,9 +952,9 @@ class CommandEEPose_UMI(Command):
             self.pos_err_sigma = list(self.pos_sigma_curriculum.values())[
                 self.pos_sigma_curriculum_level
             ]
-            self.past_pos_error *= list(self.pos_sigma_curriculum.keys())[
+            self.past_pos_error.fill_(list(self.pos_sigma_curriculum.keys())[
                 self.pos_sigma_curriculum_level
-            ]
+            ])
         if self.orn_sigma_curriculum is not None:
             # make sure the curriculum is sorted
             self.orn_sigma_curriculum = dict(
@@ -974,35 +970,29 @@ class CommandEEPose_UMI(Command):
             self.orn_err_sigma = list(self.orn_sigma_curriculum.values())[
                 self.orn_sigma_curriculum_level
             ]
-            self.past_orn_error *= list(self.orn_sigma_curriculum.keys())[
+            self.past_orn_error.fill_(list(self.orn_sigma_curriculum.keys())[
                 self.orn_sigma_curriculum_level
-            ]
+            ])
         self.debug_draw_dict = {}
         self.debug_draw_count = 0
 
     def reset(self, env_ids: torch.Tensor):
         # TODO: check reset logic
-        self.command[env_ids] = 0.
-        self._cum_error[env_ids] = 0.
-        self.last_env_reset_ids = env_ids
-        self.debug_draw_dict = {}
-        self.debug_draw_count = 0
-
         self.sample_loco(env_ids=env_ids)
 
         # sample a entire trajectory
         # TODO: check sampling execution time
         # TODO: now takes around 10 seconds, need to parallel
-        import time
-        st = time.time()
-        print(f"Sampling trajectories for {env_ids}...")
+        # import time
+        # st = time.time()
+        # print(f"Sampling trajectories for {env_ids}...")
         ee_pos_trajs, ee_forward_trajs = generate_random_trajectories(
             len(env_ids), 
             self.yaw_range, self.pitch_range, self.radius_range, self.ee_lin_vel_range, 
             self.episode_length + 1, self.env.step_dt, self.device
         )
-        torch.cuda.synchronize()
-        print("Sampling time:", time.time() - st)
+        # torch.cuda.synchronize()
+        # print("Sampling time:", time.time() - st)
         self.command_ee_pos_b_traj[env_ids] = ee_pos_trajs
         self.command_ee_fwd_b_traj[env_ids] = ee_forward_trajs
 
@@ -1010,13 +1000,15 @@ class CommandEEPose_UMI(Command):
         if self.pos_sigma_curriculum is not None:
             avg_pos_err = self.past_pos_error.mean().item()
             # find the first threshold that is greater than the average error
+            old_pos_error_sigma = self.pos_err_sigma
             for level, (threshold, sigma) in enumerate(
                 self.pos_sigma_curriculum.items()
             ):
                 if avg_pos_err < threshold:
                     self.pos_err_sigma = sigma
-                    self._pos_err_sigma.fill_(sigma)
                     self.pos_sigma_curriculum_level = level
+            if old_pos_error_sigma != self.pos_err_sigma:
+                print(f"avg pos error: {avg_pos_err}, new sigma level {self.pos_sigma_curriculum_level} with sigma {self.pos_err_sigma}")
         if self.orn_sigma_curriculum is not None:
             avg_orn_err = self.past_orn_error.mean().item()
             # find the first threshold that is greater than the average error
@@ -1025,8 +1017,14 @@ class CommandEEPose_UMI(Command):
             ):
                 if avg_orn_err < threshold:
                     self.orn_err_sigma = sigma
-                    self._orn_err_sigma.fill_(sigma)
                     self.orn_sigma_curriculum_level = level
+                
+        if wandb.run is not None:
+            wandb.log({"pos_err_sigma": self.pos_err_sigma, "pos_err_sigma_level": self.pos_sigma_curriculum_level, "orn_err_sigma": self.orn_err_sigma, "orn_err_sigma_level": self.orn_sigma_curriculum_level}, commit=False)
+
+        self.command[env_ids] = 0.
+        self.debug_draw_dict = {}
+        self.debug_draw_count = 0
     
     def get_targets_at_steps(self):
         # get the index of the closest time
@@ -1069,8 +1067,8 @@ class CommandEEPose_UMI(Command):
         # moving average of the error
         valid = (self.env.episode_length_buf > 2).float().unsqueeze(-1)
         smoothing = self.env.step_dt * self.smoothing_dt_multiplier
-        self.past_pos_error.mul_(1 - smoothing).add_(smoothing * self.ee_pos_error * valid)
-        self.past_orn_error.mul_(1 - smoothing).add_(smoothing * self.ee_orn_error * valid)
+        self.past_pos_error.mul_(1 - smoothing * valid).add_(smoothing * self.ee_pos_error * valid)
+        self.past_orn_error.mul_(1 - smoothing * valid).add_(smoothing * self.ee_orn_error * valid)
         
         # get new command ee pos from the trajectory
         command_ee_pos_b, command_ee_fwd_b = self.get_targets_at_steps()
@@ -1135,10 +1133,17 @@ class CommandEEPose_UMI(Command):
             color=(0., 0.8, 0., 1.)
         )
         
-        ee_ori_fwd = quat_rotate(self._command_ee_fwd_w, self._fwd_vec)
         self.env.debug_draw.vector(
             ee_pos_w.squeeze(1),
-            ee_ori_fwd.reshape(-1, 3) * 0.2,
+            self._command_ee_fwd_w.reshape(-1, 3) * 0.2,
             color=(1., 0., 0., 1.)
         )
+        ee_quat = self.asset.data.body_quat_w[:, self.ee_id]
+        ee_fwd = quat_rotate(ee_quat, self._fwd_vec)
+        self.env.debug_draw.vector(
+            ee_pos_w.squeeze(1),
+            ee_fwd.reshape(-1, 3) * 0.2,
+            color=(0.1, 1., 0.1, 1.)
+        )
+        
         
