@@ -80,9 +80,9 @@ class linvel_z_l2(Reward):
         self.command_manager = self.env.command_manager
 
     def compute(self) -> torch.Tensor:
-        command_speed = self.command_manager.command_linvel[:, 2].norm(dim=-1, keepdim=True)
+        # command_speed = self.command_manager.command_linvel[:, 2].norm(dim=-1, keepdim=True)
         linvel_z = self.asset.data.root_lin_vel_b[:, 2].unsqueeze(1)
-        return - linvel_z.square() * (command_speed < 1.5).float()
+        return - linvel_z.square() * self.command_manager.command[:, 3].unsqueeze(1)
 
 
 @reward_func
