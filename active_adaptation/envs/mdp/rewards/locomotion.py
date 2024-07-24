@@ -131,7 +131,7 @@ class energy_l1(Reward):
         return - self.power.sum(1, keepdim=True)
 
 
-class energy_dist_l2(Reward):
+class energy_dist_lr(Reward):
     def __init__(self, env, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
@@ -143,6 +143,20 @@ class energy_dist_l2(Reward):
         energy_left = self.energy_ema[:, self.left_joint_ids]
         energy_right = self.energy_ema[:, self.right_joint_ids]
         return - (energy_left - energy_right).square().sum(1, keepdim=True)
+
+
+class energy_dist_fb(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.energy_ema: Articulation = self.asset.data.energy_ema
+        self.front_joint_ids = self.asset.find_joints("F[L,R]_.*_joint")[0]
+        self.rear_joint_ids = self.asset.find_joints("R[L,R]_.*_joint")[0]
+
+    def compute(self) -> torch.Tensor:
+        energy_front = self.energy_ema[:, self.front_joint_ids]
+        energy_rear = self.energy_ema[:, self.rear_joint_ids]
+        return - (energy_front - energy_rear).square().sum(1, keepdim=True)
 
 
 class joint_torques_l2(Reward):
