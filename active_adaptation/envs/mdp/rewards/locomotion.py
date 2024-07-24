@@ -72,10 +72,18 @@ def joint_acc_l2(self):
 def survival(self):
     return torch.ones(self.num_envs, 1, device=self.device)
 
-@reward_func
-def linvel_z_l2(self):
-    asset: Articulation = self.scene["robot"]
-    return - asset.data.root_lin_vel_b[:, [2]].square()
+
+class linvel_z_l2(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.command_manager = self.env.command_manager
+
+    def compute(self) -> torch.Tensor:
+        command_speed = self.command_manager.command_linvel[:, 2].norm(dim=-1, keepdim=True)
+        linvel_z = self.asset.data.root_lin_vel_b[:, 2].unsqueeze(1)
+        return - linvel_z.square() * (command_speed < 1.5).float()
+
 
 @reward_func
 def angvel_xy_l2(self):
