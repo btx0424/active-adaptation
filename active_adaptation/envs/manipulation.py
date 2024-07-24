@@ -367,6 +367,24 @@ class QuadrupedManip(LocomotionEnv):
             base_joint_angvel = self.asset.data.joint_vel[:, self.base_joint_id]
             ang_vel_error = (target_angvel - base_joint_angvel).square().unsqueeze_(1)
             return torch.exp(- ang_vel_error / self.l)
+    
+    class ee_pos_exp_linear(Reward):
+        def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
+            super().__init__(env, weight, enabled)
+            self.l = l
+        
+        def compute(self) -> torch.Tensor:
+            pos_error = self.env.command_manager.ee_pos_error
+            return torch.exp(- pos_error / self.l) + 1 - pos_error
+    
+    class ee_orn_exp_linear(Reward):
+        def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
+            super().__init__(env, weight, enabled)
+            self.l = l
+        
+        def compute(self) -> torch.Tensor:
+            orn_error = self.env.command_manager.ee_orn_error
+            return torch.exp(- orn_error / self.l) + 1 - orn_error
         
     class ee_pos_umi(Reward):
         def __init__(self, env, weight: float, enabled: bool = True):

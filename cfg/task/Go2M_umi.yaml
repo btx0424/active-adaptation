@@ -61,6 +61,7 @@ observation:
     ee_pos:       {ee_name: arm_link06}
     ee_ori:       {ee_name: arm_link06}
     ee_vel:       {ee_name: arm_link06}
+    feet_pos_b:   {feet_names: .*foot}
     feet_height_map: {}
     # cum_error:    {}
     # rewards:      {}
@@ -68,8 +69,6 @@ observation:
     # ee_vel_hist:    {ee_name: arm_link06, hist_len: 2}
     # ee_vel_hist:    {ee_name: arm_link06, hist_len: 4}
     # ee_vel_hist:    {ee_name: arm_link06, hist_len: 8}
-  priv:
-    feet_pos_b:   {feet_names: .*foot}
   aux_target_:
     ee_vel:       {ee_name: arm_link06}
 
@@ -100,9 +99,11 @@ reward:
   manip:
     survival:           {weight: 1.0, enabled: true}
     # manipulation
+    ee_pos_exp_linear: {weight: 1.0, enabled: true, l: 0.25}
+    ee_orn_exp_linear: {weight: 1.0, enabled: true, l: 0.25}
     ee_pos_umi:    {weight: 1.0, enabled: false}
     ee_orn_umi:    {weight: 1.0, enabled: false}
-    ee_pose_umi:    {weight: 4.0, enabled: true}
+    ee_pose_umi:    {weight: 4.0, enabled: false}
 
     ee_pos_error_umi:    {weight: 1.0, enabled: false}
     ee_orn_error_umi: {weight: 1.0, enabled: false}
