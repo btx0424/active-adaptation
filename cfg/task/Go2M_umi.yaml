@@ -14,13 +14,13 @@ homogeneous: false
 
 action:
   _target_: active_adaptation.envs.mdp.action.QuadrupedWithArm
-  joint_names: .*
+  joint_names: ^(?!joint6$).*
   action_scaling:
     (?!joint).*: 0.5
-    joint.*: 0.25
+    joint[1-5]: 0.25
   max_delay: 1
   alpha: 0.8
-  arm_joint_names: joint.*
+  arm_joint_names: ^joint[1-5]$
 
 command:
   _target_: active_adaptation.envs.mdp.CommandEEPose_UMI
@@ -30,6 +30,16 @@ command:
   orn_obs_scale: 1.0
   pos_err_sigma: 0.25
   orn_err_sigma: 0.25
+  pos_sigma_curriculum:
+    2.0: 0.25
+    0.2: 0.2
+    0.1: 0.1
+    0.05: 0.05
+  orn_sigma_curriculum:
+    2.0: 0.25
+    0.2: 0.2
+    0.1: 0.1
+    0.05: 0.05
   smoothing_dt_multiplier: 0.25
   episode_length: ${..max_episode_length}
   target_times:
@@ -74,7 +84,7 @@ observation:
 
 reward:
   loco:
-    survival:           {weight: 1.0, enabled: true}
+    survival:           {weight: 2.0, enabled: true}
     base_height_l1:     {weight: 1.0, enabled: true, target_height: 0.3}
     undesired_contact:  {body_names: [.*_calf, .*thigh], weight: 0.25, enabled: true}
 
@@ -92,17 +102,17 @@ reward:
     # regularizations
     linvel_z_l2:        {weight: 2.0, enabled: true}
     angvel_xy_l2:       {weight: 0.25, enabled: true}
-    feet_air_time:      {weight: 0.5, enabled: true, body_names: .*_foot, thres: 0.4}
+    feet_air_time:      {weight: 0.5, enabled: false, body_names: .*_foot, thres: 0.4}
     feet_slip:          {weight: 0.5, enabled: true, body_names: .*_foot}
-    joint_pos_l2_penalty: {weight: 0.25, enabled: true}
+    joint_pos_l2_penalty: {weight: 0.25, enabled: false}
   
   manip:
     survival:           {weight: 1.0, enabled: true}
     # manipulation
-    ee_pos_exp_linear: {weight: 1.0, enabled: true, l: 0.25}
-    ee_orn_exp_linear: {weight: 1.0, enabled: true, l: 0.25}
-    ee_pos_umi:    {weight: 1.0, enabled: false}
-    ee_orn_umi:    {weight: 1.0, enabled: false}
+    ee_pos_exp_linear: {weight: 1.0, enabled: false, l: 0.25}
+    ee_orn_exp_linear: {weight: 1.0, enabled: false, l: 0.25}
+    ee_pos_umi:    {weight: 1.0, enabled: true}
+    ee_orn_umi:    {weight: 1.0, enabled: true}
     ee_pose_umi:    {weight: 4.0, enabled: false}
 
     ee_pos_error_umi:    {weight: 1.0, enabled: false}

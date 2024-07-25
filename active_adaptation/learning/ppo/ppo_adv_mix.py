@@ -59,8 +59,8 @@ class PPOAdvMixConfig:
     value_norm: bool = False
 
     reward_groups: Tuple[str, ...] = field(default_factory=lambda: ('loco', 'manip'))
-    group_action_dims: Tuple[int, ...] = field(default_factory=lambda: (12, 6))
-    mixing_schedule: Tuple[float, int, int] = field(default_factory=lambda: (1.0, 500, 1000))
+    group_action_dims: Tuple[int, ...] = field(default_factory=lambda: (12, 5))
+    mixing_schedule: Tuple[float, int, int] = field(default_factory=lambda: (1.0, 1000, 1000))
 
     checkpoint_path: Union[str, None] = None
 

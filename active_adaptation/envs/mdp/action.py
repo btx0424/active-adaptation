@@ -94,6 +94,7 @@ class QuadrupedWithArm(JointPosition):
         super().__init__(env, joint_names, action_scaling, max_delay, alpha)
         self.arm_joint_ids, _ = self.asset.find_joints(arm_joint_names)
         self.arm_joint_pos = self.default_joint_pos[:, self.arm_joint_ids].clone()
+        self.arm_joint_limits = self.asset.data.joint_limits[:, self.arm_joint_ids]
     
     def reset(self, env_ids: torch.Tensor):
         super().reset(env_ids)
@@ -113,6 +114,7 @@ class QuadrupedWithArm(JointPosition):
 
             # overwrite arm joint positions with incremental action control
             self.arm_joint_pos += self.applied_action[:, self.arm_joint_ids] * self.action_scaling[self.arm_joint_ids]
+            self.arm_joint_pos.clamp_(self.arm_joint_limits[..., 0], self.arm_joint_limits[..., 1])
             pos_target[:, self.arm_joint_ids] = self.arm_joint_pos
             self.asset.set_joint_position_target(pos_target)
         self.asset.write_data_to_sim()
