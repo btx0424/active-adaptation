@@ -147,7 +147,7 @@ class Command2(Command):
         angvel_range=(-1, 1),
         yaw_stiffness_range=(0.5, 0.6),
         use_stiffness_ratio: float = 0.5,
-        base_height_range=(0.2, 0.4), 
+        aux_input_range=(0.2, 0.4), 
         resample_interval: int = 300, 
         resample_prob: float = 0.75, 
         stand_prob=0.2,
@@ -160,7 +160,7 @@ class Command2(Command):
         self.angvel_range = angvel_range
         self.use_stiffness_ratio = use_stiffness_ratio
         self.yaw_stiffness_range = yaw_stiffness_range
-        self.base_height_range = base_height_range
+        self.aux_input_range = aux_input_range
         self.resample_interval = resample_interval
         self.resample_prob = resample_prob
         self.stand_prob = stand_prob
@@ -185,7 +185,7 @@ class Command2(Command):
             self.command_linvel = torch.zeros(self.num_envs, 3)
             self.command_angvel = torch.zeros(self.num_envs)
 
-            self._target_base_height = torch.zeros(self.num_envs, 1)
+            self.aux_input = torch.zeros(self.num_envs, 1)
 
             self._cum_error = torch.zeros(self.num_envs, 2)
             self._cum_linvel_error = self._cum_error[:, 0].unsqueeze(1)
@@ -224,7 +224,7 @@ class Command2(Command):
 
         self.command[:, :2] = self.command_linvel[:, :2]
         self.command[:, 2] = self.command_angvel
-        self.command[:, 3] = 0 # self._distance_to_cover.squeeze(1)
+        self.command[:, 3] = self.aux_input.squeeze(1)
         # self.command[:, :2] = torch.tensor([1.0, 0.], device=self.device)
     
     def sample_vel_command(self, env_ids: torch.Tensor):
@@ -244,6 +244,8 @@ class Command2(Command):
         self._target_direction[env_ids, :2] = direction
         self._target_linvel[env_ids, :2] = direction * speed
         self.is_standing_env[env_ids] = stand
+
+        self.aux_input[env_ids] = sample_uniform(env_ids.shape, *self.aux_input_range, self.device).unsqueeze(1)
 
     def sample_yaw_command(self, env_ids: torch.Tensor):
         self.target_yaw[env_ids] = self.target_yaw_dist.sample(env_ids.shape)

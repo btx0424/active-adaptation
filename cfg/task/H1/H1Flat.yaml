@@ -16,7 +16,6 @@ command:
   linvel_y_range: [-0.5, 0.5]
   angvel_range: [-1.5, 1.5]
   yaw_stiffness_range: [0.5, 0.7]
-  base_height_range: [0.25, 0.35]
   stand_prob: 0.05
 
 observation:

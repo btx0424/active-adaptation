@@ -51,17 +51,6 @@ def reward_func(func):
 
 
 @reward_func
-def energy_l1(self):
-    asset: Articulation = self.scene["robot"]
-    energy = (
-        (asset.data.joint_vel * asset.data.applied_torque)
-        .abs()
-        .sum(dim=-1, keepdim=True)
-    )
-    return - energy
-
-
-@reward_func
 def energy_l2(self):
     asset: Articulation = self.scene["robot"]
     energy = (
@@ -83,10 +72,18 @@ def joint_acc_l2(self):
 def survival(self):
     return torch.ones(self.num_envs, 1, device=self.device)
 
-@reward_func
-def linvel_z_l2(self):
-    asset: Articulation = self.scene["robot"]
-    return - asset.data.root_lin_vel_b[:, [2]].square()
+
+class linvel_z_l2(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.command_manager = self.env.command_manager
+
+    def compute(self) -> torch.Tensor:
+        # command_speed = self.command_manager.command_linvel[:, 2].norm(dim=-1, keepdim=True)
+        linvel_z = self.asset.data.root_lin_vel_b[:, 2].unsqueeze(1)
+        return - linvel_z.square() * self.command_manager.command[:, 3].unsqueeze(1)
+
 
 @reward_func
 def angvel_xy_l2(self):
@@ -100,6 +97,66 @@ def heading_yaw(self):
     asset: Articulation = self.scene["robot"]
     yaw_diff = self.command_manager.command[:, 2].abs()
     return  - yaw_diff.unsqueeze(1)
+
+
+class energy_l1(Reward):
+    
+    decay: float = 0.99
+
+    def __init__(self, env, weight: float, enabled: bool = True, joint_names=".*"):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids =  self.asset.find_joints(joint_names)[0]
+        self.joint_ids = torch.tensor(self.joint_ids, device=self.device)
+        
+        self.power = torch.zeros(self.num_envs, len(self.joint_ids), device=self.device)
+        self.energy = torch.zeros(self.num_envs, len(self.joint_ids), device=self.device)
+        self.count = torch.zeros(self.num_envs, 1, device=self.device)
+        self.asset.data.energy_ema = torch.zeros(self.num_envs, len(self.joint_ids), device=self.device)
+
+    def reset(self, env_ids):
+        self.energy[env_ids] = 0.
+        self.count[env_ids] = 0.
+
+    def update(self):
+        torques = self.asset.data.applied_torque[:, self.joint_ids]
+        joint_vel = self.asset.data.joint_vel[:, self.joint_ids]
+        self.power[:] = (torques * joint_vel).abs()
+        
+        self.energy.add_(self.power).mul_(self.decay)
+        self.count.add_(1.).mul_(self.decay)
+        self.asset.data.energy_ema[:] = self.energy / self.count
+
+    def compute(self) -> torch.Tensor:
+        return - self.power.sum(1, keepdim=True)
+
+
+class energy_dist_lr(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.energy_ema: Articulation = self.asset.data.energy_ema
+        self.left_joint_ids = self.asset.find_joints("[F,R]L_.*_joint")[0]
+        self.right_joint_ids = self.asset.find_joints("[F,R]R_.*_joint")[0]
+
+    def compute(self) -> torch.Tensor:
+        energy_left = self.energy_ema[:, self.left_joint_ids]
+        energy_right = self.energy_ema[:, self.right_joint_ids]
+        return - (energy_left - energy_right).square().sum(1, keepdim=True)
+
+
+class energy_dist_fb(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.energy_ema: Articulation = self.asset.data.energy_ema
+        self.front_joint_ids = self.asset.find_joints("F[L,R]_.*_joint")[0]
+        self.rear_joint_ids = self.asset.find_joints("R[L,R]_.*_joint")[0]
+
+    def compute(self) -> torch.Tensor:
+        energy_front = self.energy_ema[:, self.front_joint_ids]
+        energy_rear = self.energy_ema[:, self.rear_joint_ids]
+        return - (energy_front - energy_rear).square().sum(1, keepdim=True)
 
 
 class joint_torques_l2(Reward):
