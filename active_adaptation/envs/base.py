@@ -251,7 +251,7 @@ class Env(EnvBase):
             self.num_envs,
             device=self.device
         )
-        if self.record_now and env_ids[self.lookat_env_i]:
+        if self.record_now and env_mask[self.lookat_env_i]:
             if self.complete_video_frames is None:
                 self.complete_video_frames = []
             else:
