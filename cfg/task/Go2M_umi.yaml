@@ -43,10 +43,14 @@ command:
   smoothing_dt_multiplier: 0.25
   episode_length: ${..max_episode_length}
   target_times:
+  # - 0.02
+  # - 0.04
+  # - 0.06
+  # - 1.0
   - 0.02
-  - 0.04
-  - 0.06
-  - 1.0
+  - 0.2
+  - 0.4
+  - 0.6
   ee_lin_vel_range: [0.1, 1.0]
   lin_vel_x_range: [-1.0, 1.4]
   lin_vel_y_range: [-0.5, 0.5]
@@ -102,13 +106,18 @@ reward:
     # regularizations
     linvel_z_l2:        {weight: 2.0, enabled: true}
     angvel_xy_l2:       {weight: 0.25, enabled: true}
-    feet_air_time:      {weight: 0.5, enabled: false, body_names: .*_foot, thres: 0.4}
+    feet_air_time:      {weight: 0.5, enabled: true, body_names: .*_foot, thres: 0.4}
+    feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
     feet_slip:          {weight: 0.5, enabled: true, body_names: .*_foot}
     joint_pos_l2_penalty: {weight: 0.25, enabled: false}
   
   manip:
     survival:           {weight: 1.0, enabled: true}
     # manipulation
+    # ee_pos_exp_linear: {weight: 1.0, enabled: true, l: 0.25}
+    # ee_orn_exp_linear: {weight: 1.0, enabled: true, l: 0.25}
+    # ee_pos_umi:    {weight: 1.0, enabled: false}
+    # ee_orn_umi:    {weight: 1.0, enabled: false}
     ee_pos_exp_linear: {weight: 1.0, enabled: false, l: 0.25}
     ee_orn_exp_linear: {weight: 1.0, enabled: false, l: 0.25}
     ee_pos_umi:    {weight: 1.0, enabled: true}
@@ -172,7 +181,7 @@ randomization:
       joint5: [-1.0, 1.0]
       joint6: [-2.5, 2.5]
       .*_joint: [-0.4, 0.4]
-      # joint.*: [-0.4, 0.4]
+      # .*: [-0.4, 0.4]
     rel: true
   # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
   stumble: {body_names: .*_foot}

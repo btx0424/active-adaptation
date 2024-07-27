@@ -42,6 +42,7 @@ from collections import OrderedDict
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
 from ..modules.distributions import IndependentNormal
 from .common import *
+import wandb
 
 torch.set_float32_matmul_precision('high')
 
@@ -60,7 +61,12 @@ class PPOAdvMixConfig:
 
     reward_groups: Tuple[str, ...] = field(default_factory=lambda: ('loco', 'manip'))
     group_action_dims: Tuple[int, ...] = field(default_factory=lambda: (12, 5))
-    mixing_schedule: Tuple[float, int, int] = field(default_factory=lambda: (1.0, 1000, 1000))
+    mixing_schedule: Tuple[float, int, int] = field(default_factory=lambda: (1.0, 0, 0))
+    # mixing_schedule: Tuple[float, int, int] = field(default_factory=lambda: (1.0, 0, 100))
+    warmup_schedule: Tuple[float, int, int] = field(default_factory=lambda: (1.0, 0, 0))
+    # warmup_schedule: Tuple[float, int, int] = field(default_factory=lambda: (1.0, 0, 250))
+    reward_warmup_schedule: Tuple[float, int, int] = field(default_factory=lambda: (1.0, 0, 0))
+    # reward_warmup_schedule: Tuple[float, int, int] = field(default_factory=lambda: (1.0, 0, 250))
 
     checkpoint_path: Union[str, None] = None
 
@@ -146,6 +152,8 @@ class PPOPolicy(TensorDictModuleBase):
         ).to(self.device)
 
         self.mixing_schedule = cfg.mixing_schedule
+        self.warmup_schedule = cfg.warmup_schedule
+        self.reward_warmup_schedule = cfg.reward_warmup_schedule
         self.counter = 0
 
         self.actor(fake_input)
@@ -175,6 +183,7 @@ class PPOPolicy(TensorDictModuleBase):
 
     # @torch.compile
     def train_op(self, tensordict: TensorDict):
+        self.counter += 1
         tensordict = tensordict.copy()
         infos = []
         self._compute_advantage(tensordict, self.critic, "adv", "ret", update_value_norm=True)
@@ -212,6 +221,15 @@ class PPOPolicy(TensorDictModuleBase):
         next_values = tensordict["next", "state_value"]
 
         rewards = tensordict[REWARD_KEY]
+        
+        reward_mask_ratio = self.get_ratio(self.reward_warmup_schedule)
+        mask = torch.rand(*rewards.shape[:-2], device=rewards.device) < reward_mask_ratio
+        rewards[..., 1].mul_(mask[:, None])
+        if wandb.run is not None:
+            wandb.log({"reward_mask_ratio": reward_mask_ratio}, commit=False)
+        if rewards.isnan().any():
+            breakpoint()
+
         # dones = tensordict["next", "done"]
         # rewards = torch.where(dones, rewards + values * self.gae.gamma, rewards)
         dones = tensordict[DONE_KEY]
@@ -227,12 +245,13 @@ class PPOPolicy(TensorDictModuleBase):
         tensordict.set(ret_key, ret)
         return tensordict
 
-    def get_value_mixing_ratio(self):
-        return min(max((self.counter - self.mixing_schedule[1]) / self.mixing_schedule[2], 0), 1) * self.mixing_schedule[0]
+    def get_ratio(self, ratio_schedule):
+        if ratio_schedule[2] == 0:
+            return ratio_schedule[0] if self.counter >= ratio_schedule[1] else 0.0
+        return min(max((self.counter - ratio_schedule[1]) / ratio_schedule[2], 0), 1) * ratio_schedule[0]
 
     # @torch.compile
     def _update(self, tensordict: TensorDict):
-        self.counter += 1
         dist = self.actor.get_dist(tensordict)
         log_probs = dist.base_dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy().mean()
@@ -243,10 +262,15 @@ class PPOPolicy(TensorDictModuleBase):
         adv = tensordict["adv"]
         assert adv.shape[-1] == 2
         # do advantage mixing
-        value_mixing_ratio = self.get_value_mixing_ratio()
+        value_mixing_ratio = self.get_ratio(self.mixing_schedule)
+        warmup_ratio = self.get_ratio(self.warmup_schedule)
+        if wandb.run is not None:
+            wandb.log({"value_mixing_ratio": value_mixing_ratio, "warmup_ratio": warmup_ratio}, commit=False)
         adv_mixed = torch.empty_like(adv)
         adv_mixed[:, 0] = adv[:, 0] + value_mixing_ratio * adv[:, 1]
-        adv_mixed[:, 1] = adv[:, 1] + value_mixing_ratio * adv[:, 0]
+        adv_mixed[:, 1] = warmup_ratio * (adv[:, 1] + value_mixing_ratio * adv[:, 0])
+        if adv.isnan().any():
+            breakpoint()
 
         surr1 = adv_mixed * ratio_grouped
         surr2 = adv_mixed * ratio_grouped.clamp(1.-self.clip_param, 1.+self.clip_param)
