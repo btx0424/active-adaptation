@@ -14,11 +14,11 @@ homogeneous: false
 
 action:
   _target_: active_adaptation.envs.mdp.action.QuadrupedAndArm
-  regular_joints: ^(?!(endleft|endright|joint.*)$).*
+  regular_joints: ^(?!(endleft|endright)$).*
   gripper_joints: end(left|right)
   action_scaling:
     .*_joint: 0.5
-    # joint[1-6]: 0.25
+    joint[1-6]: 0.25
   max_delay: 1
   alpha: 0.8
 
@@ -96,7 +96,7 @@ reward:
     energy_dist_lr:     {weight: 0.0002, enabled: true}
     action_rate_l2:     {weight: 0.01, enabled: true}
     action_rate2_l2:    {weight: 0.005, enabled: true}
-    joint_acc_l2:       {weight: 2.5e-7, enabled: true, joint_names: ".*"}
+    joint_acc_l2:       {weight: 2.5e-7, enabled: true, joint_names: ".*_joint"}
     joint_torques_l2:   {weight: 2.0e-4, enabled: true, joint_names: ".*_joint"}
 
     # locomotion
@@ -146,16 +146,14 @@ reward:
     # arm_joint_acc_l1: {weight: 1.0, enabled: false}
 
 termination:
-  crash: {body_names_expr: [Head.*, "base", "arm_link.*"], t_thres: 0.4, z_thres: 0.}
+  crash: {body_names_expr: [Head.*, "base", "arm_link.*", "gripper.*"], t_thres: 0.4, z_thres: 0.}
   # joint_acc_exceeds: {thres: 5000}
   # ee_cum_error: {thres: [8.0, 8.0]}
 
 randomization:
 #   random_scale: [1.0, 1.2]
-#   perturb_body_mass:
-#     (?!(payload|base|Head.*)).*: [0.8, 1.2]
-#     base: [0.8, 1.2]
-#     Head.*: [25.0, 250.0]
+  perturb_body_mass:
+    arm_.*: [0.8, 1.0]
   perturb_body_materials:
     body_names: ".*_foot"
     static_friction_range:  [0.6, 2.0]
@@ -174,13 +172,14 @@ randomization:
   # drag: {body_names: gripper, drag_range: [0.001, 0.002]}
   reset_joint_states_uniform:
     pos_ranges:
-      joint1: [-2.5, 2.5]
-      joint2: [0.0, 1.0]
-      joint3: [-2.5, 0.0]
-      joint4: [-1.0, 1.0]
-      joint5: [-1.0, 1.0]
-      joint6: [-2.5, 2.5]
-      .*_joint: [-0.4, 0.4]
+      # joint1: [-2.5, 2.5]
+      # joint2: [0.0, 1.0]
+      # joint3: [-2.5, 0.0]
+      # joint4: [-1.0, 1.0]
+      # joint5: [-1.0, 1.0]
+      # joint6: [-2.5, 2.5]
+      joint.*: [0.0, 0.0]
+      .*_joint: [-0.0, 0.0]
     rel: true
   # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
   stumble: {body_names: .*_foot, stumble_height: 0.03, friction_range: [0.0, 0.2]}

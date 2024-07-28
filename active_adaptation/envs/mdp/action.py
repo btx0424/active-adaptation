@@ -197,6 +197,10 @@ class QuadrupedAndArm(ActionManager):
         self.jpos_default = self.asset.data.default_joint_pos.clone()
         self.jpos_targets = self.asset.data.default_joint_pos.clone()
 
+    def reset(self, env_ids: torch.Tensor):
+        self.action_buf[env_ids] = 0.
+        self.applied_action[env_ids] = 0.
+
     def __call__(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
             action = tensordict["action"].clamp(-10, 10)
