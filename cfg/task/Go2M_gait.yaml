@@ -15,7 +15,7 @@ homogeneous: false
 action:
   _target_: active_adaptation.envs.mdp.action.QuadrupedAndArm
   regular_joints: ^(?!(endleft|endright)$).*
-  gripper_joints: end(left|right)
+  gripper_joints: null # end(left|right)
   action_scaling:
     .*_joint: 0.5
     joint[1-6]: 0.25
@@ -24,7 +24,7 @@ action:
 
 command:
   _target_: active_adaptation.envs.mdp.CommandEEPose_UMI
-  ee_name: gripper
+  ee_name: arm_link5
   ee_base_name: arm_base
   pos_obs_scale: 1.0
   orn_obs_scale: 1.0
@@ -72,16 +72,16 @@ observation:
     root_linvel_b:
     joint_forces: {}
     # jacobians:    {body_names: [.*_foot, gripper]}
-    ee_pos:       {ee_name: gripper}
-    ee_ori:       {ee_name: gripper}
-    ee_vel:       {ee_name: gripper}
+    ee_pos:       {ee_name: arm_link5}
+    ee_ori:       {ee_name: arm_link5}
+    ee_vel:       {ee_name: arm_link5}
     feet_pos_b:   {feet_names: .*foot}
     feet_height_map: {}
     contact_indicator: {body_names: [".*_foot"], timing: true}
     # cum_error:    {}
     # rewards:      {}
   aux_target_:
-    ee_vel:       {ee_name: gripper}
+    ee_vel:       {ee_name: arm_link5}
 
 reward:
   loco:
@@ -119,7 +119,7 @@ reward:
     # ee_orn_exp_linear: {weight: 1.0, enabled: true, l: 0.25}
     # ee_pos_umi:    {weight: 1.0, enabled: false}
     # ee_orn_umi:    {weight: 1.0, enabled: false}
-    ee_pos_exp_linear: {weight: 1.0, enabled: false, l: 0.25}
+    ee_pos_exp_linear: {weight: 1.0, enabled: true, l: 0.25}
     ee_orn_exp_linear: {weight: 1.0, enabled: false, l: 0.25}
     ee_pos_umi:    {weight: 1.0, enabled: true}
     ee_orn_umi:    {weight: 1.0, enabled: true}
@@ -146,7 +146,7 @@ reward:
     # arm_joint_acc_l1: {weight: 1.0, enabled: false}
 
 termination:
-  crash: {body_names_expr: [Head.*, "base", "arm_link.*", "gripper.*"], t_thres: 0.4, z_thres: 0.}
+  crash: {body_names_expr: [Head.*, "base", "(arm_link.*|gripper.*)"], t_thres: 0.1, z_thres: 0.}
   # joint_acc_exceeds: {thres: 5000}
   # ee_cum_error: {thres: [8.0, 8.0]}
 

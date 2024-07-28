@@ -175,7 +175,10 @@ class QuadrupedAndArm(ActionManager):
         super().__init__(env)
         
         self.regular_joint_ids = self.asset.find_joints(regular_joints)[0]
-        self.gripper_joint_ids = self.asset.find_joints(gripper_joints)[0]
+        if gripper_joints is not None:
+            self.gripper_joint_ids = self.asset.find_joints(gripper_joints)[0]
+        else:
+            self.gripper_joint_ids = None
         
         self.action_scaling = torch.tensor(
             string_utils.resolve_matching_names_values(
@@ -212,7 +215,9 @@ class QuadrupedAndArm(ActionManager):
             self.jpos_targets[:, self.regular_joint_ids] = (
                 self.action_scaling * self.applied_action + self.jpos_default[:, self.regular_joint_ids]
             )
-            self.jpos_targets[:, self.gripper_joint_ids] = self.jpos_default[:, self.gripper_joint_ids]
+            
+            if self.gripper_joint_ids is not None:
+                self.jpos_targets[:, self.gripper_joint_ids] = self.jpos_default[:, self.gripper_joint_ids]
             
             self.jpos_targets.clamp_(-torch.pi, torch.pi)
             self.asset.set_joint_position_target(self.jpos_targets)
