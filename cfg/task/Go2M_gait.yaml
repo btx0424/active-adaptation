@@ -77,6 +77,7 @@ observation:
     ee_vel:       {ee_name: arm_link06}
     feet_pos_b:   {feet_names: .*foot}
     feet_height_map: {}
+    contact_indicator: {body_names: [".*_foot"], timing: true}
     # cum_error:    {}
     # rewards:      {}
     # ee_vel_hist:    {ee_name: arm_link06, hist_len: 1}
@@ -96,8 +97,9 @@ reward:
     orientation:        {weight: 1.0, enabled: true}
     quadruped_stand:    {weight: 0.25, enabled: true}
     energy_l1:          {weight: 0.0002, enabled: true}
+    energy_dist_lr:     {weight: 0.0002, enabled: true}
     action_rate_l2:     {weight: 0.01, enabled: true}
-    action_rate2_l2:    {weight: 0.002, enabled: true}
+    action_rate2_l2:    {weight: 0.005, enabled: true}
     joint_acc_l2:       {weight: 2.5e-7, enabled: true, joint_names: ".*"}
 
     # locomotion
@@ -110,7 +112,7 @@ reward:
     angvel_xy_l2:       {weight: 0.25, enabled: true}
     feet_air_time:      {weight: 0.5, enabled: true, body_names: .*_foot, thres: 0.4}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
-    feet_slip:          {weight: 0.5, enabled: true, body_names: .*_foot}
+    feet_slip:          {weight: 0.5, enabled: false, body_names: .*_foot}
     joint_pos_l2_penalty: {weight: 0.25, enabled: false}
   
   manip:
@@ -157,12 +159,12 @@ randomization:
 #     (?!(payload|base|Head.*)).*: [0.8, 1.2]
 #     base: [0.8, 1.2]
 #     Head.*: [25.0, 250.0]
-#   perturb_body_materials:
-#     body_names: ".*_foot"
-#     static_friction_range:  [0.6, 2.0]
-#     dynamic_friction_range: [0.6, 2.0]
-#     restitution_range:      [0.0, 0.2]
-#     homogeneous: true # ${task.homogeneous}
+  perturb_body_materials:
+    body_names: ".*_foot"
+    static_friction_range:  [0.6, 2.0]
+    dynamic_friction_range: [0.6, 2.0]
+    restitution_range:      [0.0, 0.2]
+    homogeneous: true # ${task.homogeneous}
   # motor_params:
   #   actuator_name: arm
   #   stiffness_range:  [0.8, 1.2]
@@ -185,4 +187,4 @@ randomization:
       # .*: [-0.4, 0.4]
     rel: true
   # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
-  stumble: {body_names: .*_foot}
+  stumble: {body_names: .*_foot, stumble_height: 0.03, force_range: [0.0, 0.4]}
