@@ -7,25 +7,25 @@ defaults:
   - override action: null
   - _self_
 
-robot: go2m
+robot: go2abp
 terrain: plane
 payload: false
 homogeneous: false
 
 action:
-  _target_: active_adaptation.envs.mdp.action.QuadrupedWithArm
-  joint_names: ^(?!joint6$).*
+  _target_: active_adaptation.envs.mdp.action.QuadrupedAndArm
+  regular_joints: ^(?!(endleft|endright|joint.*)$).*
+  gripper_joints: end(left|right)
   action_scaling:
-    (?!joint).*: 0.5
-    joint[1-5]: 0.25
+    .*_joint: 0.5
+    # joint[1-6]: 0.25
   max_delay: 1
   alpha: 0.8
-  arm_joint_names: ^joint[1-5]$
 
 command:
   _target_: active_adaptation.envs.mdp.CommandEEPose_UMI
-  ee_name: arm_link06
-  ee_base_name: arm_link00
+  ee_name: gripper
+  ee_base_name: arm_base
   pos_obs_scale: 1.0
   orn_obs_scale: 1.0
   pos_err_sigma: 0.25
@@ -71,21 +71,17 @@ observation:
 
     root_linvel_b:
     joint_forces: {}
-    # jacobians:    {body_names: [.*_foot, arm_link06]}
-    ee_pos:       {ee_name: arm_link06}
-    ee_ori:       {ee_name: arm_link06}
-    ee_vel:       {ee_name: arm_link06}
+    # jacobians:    {body_names: [.*_foot, gripper]}
+    ee_pos:       {ee_name: gripper}
+    ee_ori:       {ee_name: gripper}
+    ee_vel:       {ee_name: gripper}
     feet_pos_b:   {feet_names: .*foot}
     feet_height_map: {}
     contact_indicator: {body_names: [".*_foot"], timing: true}
     # cum_error:    {}
     # rewards:      {}
-    # ee_vel_hist:    {ee_name: arm_link06, hist_len: 1}
-    # ee_vel_hist:    {ee_name: arm_link06, hist_len: 2}
-    # ee_vel_hist:    {ee_name: arm_link06, hist_len: 4}
-    # ee_vel_hist:    {ee_name: arm_link06, hist_len: 8}
   aux_target_:
-    ee_vel:       {ee_name: arm_link06}
+    ee_vel:       {ee_name: gripper}
 
 reward:
   loco:
@@ -101,6 +97,7 @@ reward:
     action_rate_l2:     {weight: 0.01, enabled: true}
     action_rate2_l2:    {weight: 0.005, enabled: true}
     joint_acc_l2:       {weight: 2.5e-7, enabled: true, joint_names: ".*"}
+    joint_torques_l2:   {weight: 2.0e-4, enabled: true, joint_names: ".*_joint"}
 
     # locomotion
     base_lin_vel_exp: {weight: 1.5, enabled: true, l: 0.25}
@@ -137,9 +134,9 @@ reward:
     ee_orn_sigma_umi: {weight: 1.0, enabled: false}
 
     # regularizations
-    ee_acc_penalty:     {weight: 2e-4, enabled: true, ee_name: arm_link06}
-    ee_angvel_penalty:  {weight: 0.02, enabled: true, ee_name: arm_link06}
-    ee_acc_l2:          {weight: 1.0, enabled: false, ee_name: arm_link06}
+    ee_acc_penalty:     {weight: 2e-4, enabled: true, ee_name: gripper}
+    ee_angvel_penalty:  {weight: 0.02, enabled: true, ee_name: gripper}
+    ee_acc_l2:          {weight: 1.0, enabled: false, ee_name: gripper}
 
     joint_vel_penalty: {weight: 0.02, enabled: true, joint_name: joint.*}
     joint_acc_penalty: {weight: 1e-4, enabled: true, joint_name: joint.*}
@@ -174,7 +171,7 @@ randomization:
 #   #   actuator_name: base_legs
 #   #   joint_names: .*_calf_joint
 #   #   failure_prob: 0.0
-  # drag: {body_names: arm_link06, drag_range: [0.001, 0.002]}
+  # drag: {body_names: gripper, drag_range: [0.001, 0.002]}
   reset_joint_states_uniform:
     pos_ranges:
       joint1: [-2.5, 2.5]
@@ -184,7 +181,6 @@ randomization:
       joint5: [-1.0, 1.0]
       joint6: [-2.5, 2.5]
       .*_joint: [-0.4, 0.4]
-      # .*: [-0.4, 0.4]
     rel: true
   # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
-  stumble: {body_names: .*_foot, stumble_height: 0.03, force_range: [0.0, 0.4]}
+  stumble: {body_names: .*_foot, stumble_height: 0.03, friction_range: [0.0, 0.2]}

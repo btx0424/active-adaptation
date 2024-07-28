@@ -162,6 +162,61 @@ class HumanoidWithArm(ActionManager):
         self.asset.write_data_to_sim()
 
 
+class QuadrupedAndArm(ActionManager):
+    def __init__(
+        self, 
+        env,
+        regular_joints: str,
+        gripper_joints: str,
+        action_scaling: Dict[str, float],
+        max_delay: int = 1,
+        alpha: float = 0.8,      
+    ):
+        super().__init__(env)
+        
+        self.regular_joint_ids = self.asset.find_joints(regular_joints)[0]
+        self.gripper_joint_ids = self.asset.find_joints(gripper_joints)[0]
+        
+        self.action_scaling = torch.tensor(
+            string_utils.resolve_matching_names_values(
+                dict(action_scaling), 
+                self.asset.joint_names
+            )[2],
+            device=self.device
+        )
+        assert len(self.action_scaling) == len(self.regular_joint_ids)
+        
+        self.action_dim = len(self.regular_joint_ids)
+
+        with torch.device(self.device):
+            self.action_buf = torch.zeros(self.num_envs, self.action_dim, 4)
+            self.applied_action = torch.zeros(self.num_envs, self.action_dim)
+            self.alpha = torch.ones(self.num_envs, 1) * alpha
+            self.delay = torch.zeros(self.num_envs, 1, dtype=int)
+            
+        self.jpos_default = self.asset.data.default_joint_pos.clone()
+        self.jpos_targets = self.asset.data.default_joint_pos.clone()
+
+    def __call__(self, tensordict: TensorDictBase, substep: int):
+        if substep == 0:
+            action = tensordict["action"].clamp(-10, 10)
+            self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
+            self.action_buf[:, :, 0] = action
+            action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
+            self.applied_action.lerp_(action.squeeze(-1), self.alpha)
+
+            self.jpos_targets[:, self.regular_joint_ids] = (
+                self.action_scaling * self.applied_action + self.jpos_default[:, self.regular_joint_ids]
+            )
+            self.jpos_targets[:, self.gripper_joint_ids] = self.jpos_default[:, self.gripper_joint_ids]
+            
+            self.jpos_targets.clamp_(-torch.pi, torch.pi)
+            self.asset.set_joint_position_target(self.jpos_targets)
+        
+        self.asset.write_data_to_sim()
+
+
+
 def clamp_norm(x: torch.Tensor, max_norm: float):
     norm = x.norm(dim=-1, keepdim=True)
     return x * (max_norm / norm.clamp(min=1e-6)).clamp(max=1.0)
