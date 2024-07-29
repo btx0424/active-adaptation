@@ -15,7 +15,7 @@ homogeneous: false
 action:
   _target_: active_adaptation.envs.mdp.action.QuadrupedAndArm
   regular_joints: ^(?!(endleft|endright)$).*
-  gripper_joints: null # end(left|right)
+  gripper_joints: end(left|right)
   action_scaling:
     .*_joint: 0.5
     joint[1-6]: 0.5
@@ -143,7 +143,7 @@ reward:
     # ee_acc_l2:          {weight: 1.0, enabled: false, ee_name: arm_link5}
 
     joint_vel_penalty: {weight: 0.01, enabled: true, joint_name: joint1}
-    joint_acc_penalty: {weight: 1e-4, enabled: true, joint_name: joint1}
+    joint_acc_penalty: {weight: 1e-5, enabled: true, joint_name: joint1}
 
     # base_joint_ang_vel_pd_exp: {weight: 2.0, enabled: true, base_joint_name: joint1, kp: 1.0, kd: 0.2, l: 0.1}
     # arm_joint_acc_penalty: {weight: 2e-4, enabled: true}

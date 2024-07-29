@@ -1152,7 +1152,7 @@ class CommandEEPose_UMI(Command):
         self.env.debug_draw.vector(
             ee_pos_w.squeeze(1),
             ee_fwd.reshape(-1, 3) * 0.2,
-            color=(0.1, 1., 0.1, 1.)
+            color=(1., 1., 0.1, 1.)
         )
         
         

@@ -3,7 +3,7 @@ import copy
 
 import omni.isaac.lab.sim as sim_utils
 from omni.isaac.lab_assets import UNITREE_GO2_CFG, UNITREE_A1_CFG, ArticulationCfg
-from omni.isaac.lab.actuators import DCMotorCfg
+from omni.isaac.lab.actuators import DCMotorCfg, ImplicitActuatorCfg
 
 ASSET_PATH = os.path.dirname(__file__)
 
@@ -39,26 +39,31 @@ UNITREE_GO2M_CFG.actuators["arm"] = DCMotorCfg(
 UNITREE_GO2M_CFG.init_state.joint_pos["joint[1,2]"] = 0.3
 
 UNITREE_GO2ABP_CFG = copy.deepcopy(UNITREE_GO2_CFG)
-UNITREE_GO2ABP_CFG.spawn.usd_path = f"{ASSET_PATH}/Go2/go2abp.usd"
+UNITREE_GO2ABP_CFG.spawn.usd_path = f"{ASSET_PATH}/Go2/go2abpg.usd"
 UNITREE_GO2ABP_CFG.actuators["arm"] = DCMotorCfg(
-    joint_names_expr=["(joint.*|endleft|endright)"],
+    joint_names_expr=["(joint.*)"],
     effort_limit=200.,
     saturation_effort=200.,
     velocity_limit=5.0,
     stiffness={
         "joint[1-3]": 20.0,
         "joint[4-6]": 15.0,
-        # "end(left|right)": 30,
     },
     damping={
         "joint[1-3]": 1.0,
         "joint[4-6]": 0.5,
-        # "end(left|right)": 0.5
     },
     friction=0.001,
 )
-# UNITREE_GO2ABP_CFG.init_state.joint_pos["joint2"] = -0.3
-# UNITREE_GO2ABP_CFG.init_state.joint_pos["joint3"] = 0.3
+UNITREE_GO2ABP_CFG.actuators["gripper"] = ImplicitActuatorCfg(
+    joint_names_expr=["end(left|right)"],
+    effort_limit=200.,
+    stiffness=100.0,
+    damping=0.5,
+    friction=0.001,
+)
+UNITREE_GO2ABP_CFG.init_state.joint_pos["joint2"] = -0.3
+UNITREE_GO2ABP_CFG.init_state.joint_pos["joint3"] = 0.3
 # UNITREE_GO2ABP_CFG.init_state.joint_pos["endleft"] = 0.02
 # UNITREE_GO2ABP_CFG.init_state.joint_pos["endright"] = -0.02
 
