@@ -869,7 +869,8 @@ class CommandEEPose_UMI(Command):
         yaw_range: tuple = (-torch.pi, torch.pi),
         pitch_range: tuple = (-torch.pi / 3, 0.),
         radius_range: tuple = (0.4, 0.8),
-        arm_command_prob: float = 1.0
+        arm_command_prob: float = 1.0,
+        fwd_vec = (1.0, 0.0, 0.0), # for special assets
     ) -> None:
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
@@ -918,7 +919,7 @@ class CommandEEPose_UMI(Command):
             ## world frame targets for visualization
             self._command_ee_pos_w = torch.zeros(self.num_envs, future_targets, 3)
             self._command_ee_fwd_w = torch.zeros(self.num_envs, 3)
-            self._fwd_vec = torch.tensor([1., 0., 0.]).expand(self.num_envs, -1)
+            self._fwd_vec = torch.tensor(fwd_vec).expand(self.num_envs, -1)
             
             ## current target for error computation
             self.ee_pos_error = torch.zeros(self.num_envs, 1)

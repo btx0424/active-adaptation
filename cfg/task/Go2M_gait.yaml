@@ -11,6 +11,8 @@ robot: go2abp
 terrain: plane
 payload: false
 homogeneous: false
+ee_name: gripper_base
+# ee_name: arm_link5
 
 action:
   _target_: active_adaptation.envs.mdp.action.QuadrupedAndArm
@@ -24,7 +26,8 @@ action:
 
 command:
   _target_: active_adaptation.envs.mdp.CommandEEPose_UMI
-  ee_name: arm_link5
+  ee_name: ${task.ee_name}
+  fwd_vec: [0., 0., 1.]
   ee_base_name: arm_base
   pos_obs_scale: 1.0
   orn_obs_scale: 1.0
@@ -73,16 +76,16 @@ observation:
     root_linvel_b:
     joint_forces: {}
     # jacobians:    {body_names: [.*_foot, gripper]}
-    ee_pos:       {ee_name: arm_link5}
-    ee_ori:       {ee_name: arm_link5}
-    ee_vel:       {ee_name: arm_link5}
+    ee_pos:       {ee_name: "${task.ee_name}"}
+    ee_ori:       {ee_name: "${task.ee_name}"}
+    ee_vel:       {ee_name: "${task.ee_name}"}
     feet_pos_b:   {feet_names: .*foot}
     feet_height_map: {}
     contact_indicator: {body_names: [".*_foot"], timing: true}
     # cum_error:    {}
     # rewards:      {}
   aux_target_:
-    ee_vel:       {ee_name: arm_link5}
+    ee_vel:       {ee_name: "${task.ee_name}"}
 
 reward:
   loco:
@@ -116,8 +119,8 @@ reward:
   manip:
     survival:           {weight: 1.0, enabled: true}
     arm_base_control:   {weight: 1.0, enabled: true, body_name: arm_link1}
-    ee_pos_condition:   {weight: 2.0, enabled: true, body_name: arm_link5}
-    ee_ori_condition:   {weight: 2.0, enabled: true, body_name: arm_link5}
+    ee_pos_condition:   {weight: 2.0, enabled: true, body_name: "${task.ee_name}"}
+    ee_ori_condition:   {weight: 2.0, enabled: true, body_name: "${task.ee_name}"}
     # manipulation
     # ee_pos_exp_linear: {weight: 1.0, enabled: true, l: 0.25}
     # ee_orn_exp_linear: {weight: 1.0, enabled: true, l: 0.25}
@@ -138,8 +141,8 @@ reward:
     # ee_orn_sigma_umi: {weight: 1.0, enabled: false}
 
     # # regularizations
-    ee_acc_penalty:     {weight: 1e-4, enabled: true, ee_name: arm_link5}
-    ee_angvel_penalty:  {weight: 0.01, enabled: true, ee_name: arm_link5}
+    ee_acc_penalty:     {weight: 1e-4, enabled: true, ee_name: "${task.ee_name}"}
+    ee_angvel_penalty:  {weight: 0.01, enabled: true, ee_name: "${task.ee_name}"}
     # ee_acc_l2:          {weight: 1.0, enabled: false, ee_name: arm_link5}
 
     joint_vel_penalty: {weight: 0.01, enabled: true, joint_name: joint1}
