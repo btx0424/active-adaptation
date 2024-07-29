@@ -312,12 +312,6 @@ class Env(EnvBase):
         self.episode_length_buf.add_(1)
         self.time_stamp += 1
 
-        if self.sim.has_gui() and hasattr(self, "debug_draw"):
-            self.debug_draw.clear()
-            for callback in self._debug_draw_callbacks:
-                callback()
-            self.debug_vis()
-
     def _step(self, tensordict: TensorDictBase) -> TensorDictBase:
         # start = time.perf_counter()
         for substep in range(self.cfg.decimation):
@@ -342,6 +336,13 @@ class Env(EnvBase):
         tensordict.set("terminated", terminated)
         tensordict.set("truncated", truncated)
         tensordict.set("done", terminated | truncated)
+
+        if self.sim.has_gui() and hasattr(self, "debug_draw"):
+            self.debug_draw.clear()
+            for callback in self._debug_draw_callbacks:
+                callback()
+            self.debug_vis()
+            
         return tensordict
     
     def _set_seed(self, seed: int = -1):

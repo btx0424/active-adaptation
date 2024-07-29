@@ -1097,7 +1097,7 @@ class CommandEEPose_UMI(Command):
         speed = linvel.norm(dim=-1, keepdim=True)
         stand = speed < 0.3
         speed = speed * (~stand)
-        self.command_lin_vel[env_ids, :2] = linvel
+        self.command_lin_vel[env_ids, :2] = linvel * (~stand)
         self._command_speed[env_ids] = speed
         self.is_standing_env[env_ids] = stand
 

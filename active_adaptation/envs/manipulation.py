@@ -1,3 +1,4 @@
+from math import inf
 import torch
 import logging
 
@@ -656,6 +657,62 @@ class QuadrupedManip(LocomotionEnv):
 
         def compute(self) -> torch.Tensor:
             return self.asset.data.projected_gravity_b[:, 2].square().unsqueeze(1)
+
+    class arm_base_control(Reward):
+        """
+        Manually command arm base rotation to point to the target pos.
+
+        Note that the `arm_base` here actually refers to the first arm instead of the fixed base.
+
+        """
+        def __init__(self, env, body_name: str, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+            self.asset: Articulation = self.env.scene["robot"]
+            self.command_manager = self.env.command_manager
+            self.body_id = self.asset.find_bodies(body_name)[0][0]
+            self.fwd = torch.tensor([1., 0., 0.], device=self.device).expand(self.num_envs, 3)
+            self.asset.data.arm_base_control = torch.zeros(self.num_envs, 1, device=self.device)
+
+        def compute(self) -> torch.Tensor:
+            xy = torch.tensor([1., 1., 0.], device=self.device)
+            arm_base_quat = self.asset.data.body_quat_w[:, self.body_id]
+            root_quat = self.asset.data.root_quat_w
+            self.current_base_fwd = quat_rotate_inverse(root_quat, quat_rotate(arm_base_quat, self.fwd))
+            self.command_base_fwd = noarmalize(self.command_manager.command_ee_pos_b[:, 0] * xy)
+            r = (self.current_base_fwd * self.command_base_fwd).sum(1, True)
+            r = 0.5 * (r + r.square() * r.sign())
+            self.asset.data.arm_base_control[:] = r
+            return r
+
+        def debug_draw(self):
+            root_quat = self.asset.data.root_quat_w
+            arm_base_quat = self.asset.data.body_quat_w[:, self.body_id]
+            arm_base_pos = self.asset.data.body_pos_w[:, self.body_id]
+
+            self.env.debug_draw.vector(
+                arm_base_pos,
+                quat_rotate(arm_base_quat, self.fwd),
+                color=(0., 1., 0., 1.)
+            )
+            self.env.debug_draw.vector(
+                arm_base_pos,
+                quat_rotate(root_quat, self.command_base_fwd),
+                color=(0., 1., 1., 1.)
+            )
+    
+    
+    class ee_pos_condition(Reward):
+        def __init__(self, env, body_name: str, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+            self.asset: Articulation = self.env.scene["robot"]
+            self.ee_id = self.asset.find_bodies(body_name)[0][0]
+            self.l = 0.25
+
+        def compute(self) -> torch.Tensor:
+            ee_pos_error = self.env.command_manager.ee_pos_error
+            r = 0.5 * (1 - ee_pos_error + torch.exp(- ee_pos_error / self.l))
+            r = r * self.asset.data.arm_base_control.clamp(0.)
+            return r
 
 
 def random_scale(x: torch.Tensor, low: float, high: float):

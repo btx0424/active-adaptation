@@ -18,7 +18,7 @@ action:
   gripper_joints: null # end(left|right)
   action_scaling:
     .*_joint: 0.5
-    joint[1-6]: 0.25
+    joint[1-6]: 0.5
   max_delay: 1
   alpha: 0.8
 
@@ -114,32 +114,35 @@ reward:
   
   manip:
     survival:           {weight: 1.0, enabled: true}
+    arm_base_control:   {weight: 1.0, enabled: true, body_name: arm_link1}
+    ee_pos_condition:   {weight: 2.0, enabled: true, body_name: arm_link5}
+
     # manipulation
     # ee_pos_exp_linear: {weight: 1.0, enabled: true, l: 0.25}
     # ee_orn_exp_linear: {weight: 1.0, enabled: true, l: 0.25}
     # ee_pos_umi:    {weight: 1.0, enabled: false}
     # ee_orn_umi:    {weight: 1.0, enabled: false}
-    ee_pos_exp_linear: {weight: 1.0, enabled: true, l: 0.25}
-    ee_orn_exp_linear: {weight: 1.0, enabled: false, l: 0.25}
-    ee_pos_umi:    {weight: 1.0, enabled: true}
-    ee_orn_umi:    {weight: 1.0, enabled: true}
-    ee_pose_umi:    {weight: 4.0, enabled: false}
+    # ee_pos_exp_linear: {weight: 1.0, enabled: true, l: 0.25}
+    # ee_orn_exp_linear: {weight: 1.0, enabled: false, l: 0.25}
+    # ee_pos_umi:    {weight: 1.0, enabled: true}
+    # ee_orn_umi:    {weight: 1.0, enabled: true}
+    # ee_pose_umi:    {weight: 4.0, enabled: false}
 
     ee_pos_error_umi:    {weight: 1.0, enabled: false}
     ee_orn_error_umi: {weight: 1.0, enabled: false}
-    ee_past_pos_error_umi:    {weight: 1.0, enabled: false}
-    ee_past_orn_error_umi: {weight: 1.0, enabled: false}
+    # ee_past_pos_error_umi:    {weight: 1.0, enabled: false}
+    # ee_past_orn_error_umi: {weight: 1.0, enabled: false}
 
-    ee_pos_sigma_umi: {weight: 1.0, enabled: false}
-    ee_orn_sigma_umi: {weight: 1.0, enabled: false}
+    # ee_pos_sigma_umi: {weight: 1.0, enabled: false}
+    # ee_orn_sigma_umi: {weight: 1.0, enabled: false}
 
-    # regularizations
-    ee_acc_penalty:     {weight: 2e-6, enabled: false, ee_name: arm_link5}
-    ee_angvel_penalty:  {weight: 0.01, enabled: true, ee_name: arm_link5}
-    ee_acc_l2:          {weight: 1.0, enabled: false, ee_name: arm_link5}
+    # # regularizations
+    # ee_acc_penalty:     {weight: 2e-6, enabled: false, ee_name: arm_link5}
+    # ee_angvel_penalty:  {weight: 0.01, enabled: true, ee_name: arm_link5}
+    # ee_acc_l2:          {weight: 1.0, enabled: false, ee_name: arm_link5}
 
-    joint_vel_penalty: {weight: 0.02, enabled: true, joint_name: joint1}
-    joint_acc_penalty: {weight: 1e-6, enabled: false, joint_name: joint1}
+    # joint_vel_penalty: {weight: 0.02, enabled: true, joint_name: joint1}
+    # joint_acc_penalty: {weight: 1e-6, enabled: false, joint_name: joint1}
 
     # base_joint_ang_vel_pd_exp: {weight: 2.0, enabled: true, base_joint_name: joint1, kp: 1.0, kd: 0.2, l: 0.1}
     # arm_joint_acc_penalty: {weight: 2e-4, enabled: true}
