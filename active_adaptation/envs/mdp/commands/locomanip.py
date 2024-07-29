@@ -869,6 +869,7 @@ class CommandEEPose_UMI(Command):
         yaw_range: tuple = (-torch.pi, torch.pi),
         pitch_range: tuple = (-torch.pi / 3, 0.),
         radius_range: tuple = (0.4, 0.8),
+        arm_command_prob: float = 1.0
     ) -> None:
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
@@ -894,6 +895,7 @@ class CommandEEPose_UMI(Command):
         self.pos_obs_scale = pos_obs_scale
         self.orn_obs_scale = orn_obs_scale
         self.smoothing_dt_multiplier = smoothing_dt_multiplier
+        self.arm_command_prob = arm_command_prob
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 2 + 1 + 3 * future_targets + 3 * future_targets)
@@ -905,6 +907,7 @@ class CommandEEPose_UMI(Command):
             self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
 
             # Manipulation
+            self.has_arm_command = torch.zeros(self.num_envs, 1, dtype=bool)
             self.target_steps = (torch.tensor(target_times) / self.env.step_dt).round().long()
             self.command_ee_pos_b_traj = torch.zeros(self.num_envs, episode_length + 1, 3)
             self.command_ee_fwd_b_traj = torch.zeros(self.num_envs, episode_length + 1, 3)
@@ -922,6 +925,7 @@ class CommandEEPose_UMI(Command):
             self.ee_orn_error = torch.zeros(self.num_envs, 1)
             self.ee_pos_rew = torch.zeros(self.num_envs, 1)
             self.ee_orn_rew = torch.zeros(self.num_envs, 1)
+            self.ee_orn_dot = torch.zeros(self.num_envs, 1)
 
             self.past_pos_error = torch.zeros(self.num_envs, 1)
             self.past_orn_error = torch.zeros(self.num_envs, 1)
@@ -1025,6 +1029,7 @@ class CommandEEPose_UMI(Command):
         self.command[env_ids] = 0.
         self.debug_draw_dict = {}
         self.debug_draw_count = 0
+        self.has_arm_command[env_ids] = torch.rand(len(env_ids), 1, device=self.device) < self.arm_command_prob
     
     def get_targets_at_steps(self):
         # get the index of the closest time
@@ -1061,7 +1066,8 @@ class CommandEEPose_UMI(Command):
 
         ee_quat_w = self.asset.data.body_quat_w[:, self.ee_id]
         ee_fwd_w = quat_rotate(ee_quat_w, self._fwd_vec)
-        self.ee_orn_error[:] = 1 - (ee_fwd_w * current_command_ee_fwd_w).sum(dim=-1, keepdim=True) # 1 - cos(theta)
+        self.ee_orn_dot[:] = (ee_fwd_w * current_command_ee_fwd_w).sum(dim=-1, keepdim=True)
+        self.ee_orn_error[:] = 1 - self.ee_orn_dot # 1 - cos(theta)
         self.ee_orn_rew[:] = torch.exp(-self.ee_orn_error / self.orn_err_sigma)
 
         # moving average of the error
@@ -1080,6 +1086,9 @@ class CommandEEPose_UMI(Command):
         self.command[:, 2] = self.command_ang_vel
         self.command[:, 3:3+3*self.future_targets] = self.command_ee_pos_b.view(self.num_envs, -1) * self.pos_obs_scale
         self.command[:, 3+3*self.future_targets:] = self.command_ee_fwd_b.view(self.num_envs, -1) * self.orn_obs_scale
+
+        if self.arm_command_prob < 1.0:
+            self.command[(~self.has_arm_command).nonzero().squeeze(-1), 3:] = 0.
 
         # compute commanded ee position and orientation in world frame
         self._command_ee_pos_w[:] = quat_rotate(

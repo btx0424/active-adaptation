@@ -680,7 +680,7 @@ class QuadrupedManip(LocomotionEnv):
             self.current_base_fwd = quat_rotate_inverse(root_quat, quat_rotate(arm_base_quat, self.fwd))
             self.command_base_fwd = noarmalize(self.command_manager.command_ee_pos_b[:, 0] * xy)
             r = (self.current_base_fwd * self.command_base_fwd).sum(1, True)
-            r = 0.5 * (r + r.square() * r.sign())
+            r = 0.5 * (r + r.square() * r.sign()) * (self.command_manager.has_arm_command).float()
             self.asset.data.arm_base_control[:] = r
             return r
 
@@ -711,6 +711,18 @@ class QuadrupedManip(LocomotionEnv):
         def compute(self) -> torch.Tensor:
             ee_pos_error = self.env.command_manager.ee_pos_error
             r = 0.5 * (1 - ee_pos_error + torch.exp(- ee_pos_error / self.l))
+            r = r * self.asset.data.arm_base_control.clamp(0.)
+            return r
+
+    class ee_ori_condition(Reward):
+        def __init__(self, env, body_name: str, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+            self.asset: Articulation = self.env.scene["robot"]
+            self.ee_id = self.asset.find_bodies(body_name)[0][0]
+
+        def compute(self) -> torch.Tensor:
+            r = self.env.command_manager.ee_orn_dot
+            r = 0.5 * (r + r.square() * r.sign())
             r = r * self.asset.data.arm_base_control.clamp(0.)
             return r
 
