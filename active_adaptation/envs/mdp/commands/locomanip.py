@@ -851,12 +851,8 @@ class CommandEEPose_UMI(Command):
         orn_obs_scale: float = 1.5,
         pos_err_sigma: float = 0.5,
         orn_err_sigma: float = 1.5,
-        pos_sigma_curriculum: Optional[
-            Dict[float, float]
-        ] = None,  # maps from error to sigma
-        orn_sigma_curriculum: Optional[
-            Dict[float, float]
-        ] = None,  # maps from error to sigma
+        pos_sigma_curriculum: Optional[Dict[float, float]] = None,  # maps from error to sigma
+        orn_sigma_curriculum: Optional[Dict[float, float]] = None,  # maps from error to sigma
         smoothing_dt_multiplier: float = 4.0,
         episode_length: int = 300,
         target_times: list = [0.02, 0.04, 0.06, 1.0],
@@ -871,6 +867,13 @@ class CommandEEPose_UMI(Command):
         radius_range: tuple = (0.4, 0.8),
         arm_command_prob: float = 1.0,
         fwd_vec = (1.0, 0.0, 0.0), # for special assets
+        # force randomization
+        force_resample_prob: float = 0.02,
+        force_application_prob: float = 0.5,
+        const_force_scale: float = 4.0,
+        linear_drag_coeff_range: tuple = (0.5, 2.0),
+        angular_drag_coeff_range: tuple = (0.1, 1.0),
+        spring_stiffness_range: tuple = (4.0, 8.0),
     ) -> None:
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
@@ -934,7 +937,37 @@ class CommandEEPose_UMI(Command):
             # asset states
             self.ee_pos_b = self.asset.data.ee_pos_b = torch.zeros(self.num_envs, 3, device=self.device)
             self.command_ee_pos_b_yaw = self.asset.data.command_ee_pos_b_yaw = torch.zeros(self.num_envs)
-        
+
+            # external wrench on EE
+            self.force_resample_prob = force_resample_prob
+            self.force_resample_min_interval = 20
+            self.force_application_prob = force_application_prob
+
+            self.ee_force_b = torch.zeros(self.num_envs, 3)
+            self.apply_force = torch.zeros(self.num_envs, 1, dtype=bool)
+            self.force_application_time = torch.zeros(self.num_envs, 1)
+            self.torque_b = torch.zeros(self.num_envs, 3)
+
+            # const force
+            self.const_force_scale = const_force_scale
+            self.const_force = torch.zeros(self.num_envs, 3)
+
+            # drag force
+            self.linear_drag_coeff_range = linear_drag_coeff_range
+            self.angular_drag_coeff_range = angular_drag_coeff_range
+            self.linear_drag_coeff = torch.zeros(self.num_envs, 1)
+            self.angular_drag_coeff = torch.zeros(self.num_envs, 1)
+            
+            # spring force
+            self.spring_stiffness_range = spring_stiffness_range
+            self.spring_setpoint_b = torch.zeros(self.num_envs, 3)
+            self.spring_setpoint_w = torch.zeros(self.num_envs, 3)
+            self.spring_stiffness = torch.zeros(self.num_envs, 1)
+
+            self.force_type_mask = torch.zeros(self.num_envs, 3, dtype=int) # 0: const, 1: drag, 2: spring
+            self.drag_force = torch.zeros(self.num_envs, 3)
+            self.spring_force = torch.zeros(self.num_envs, 3)
+
         # stats for curriculum
         self.pos_err_sigma = pos_err_sigma
         self.orn_err_sigma = orn_err_sigma
@@ -981,6 +1014,47 @@ class CommandEEPose_UMI(Command):
         self.debug_draw_dict = {}
         self.debug_draw_count = 0
 
+    def _body2world(self, pos_b: torch.Tensor):
+        bshape = pos_b.shape[:-1]
+        quat = yaw_quat(self.asset.data.root_quat_w)
+        root_pos_w = self.asset.data.root_pos_w
+        if len(bshape) > 1:
+            quat = quat.unsqueeze(1).expand(bshape + (4,))
+            root_pos_w = root_pos_w.unsqueeze(1).expand(bshape + (3,))
+        return quat_rotate(quat, pos_b) + root_pos_w
+    
+    def _world2body(self, pos_w: torch.Tensor):
+        bshape = pos_w.shape[:-1]
+        quat = yaw_quat(self.asset.data.root_quat_w)
+        root_pos_w = self.asset.data.root_pos_w
+        if len(bshape) > 1:
+            quat = quat.unsqueeze(1).expand(bshape + (4,))
+            root_pos_w = root_pos_w.unsqueeze(1).expand(bshape + (3,))
+        return quat_rotate_inverse(quat, pos_w - root_pos_w)
+
+    def step(self, substep: int):
+        force_b = self.asset._external_force_b.clone()
+        torque_b = self.asset._external_torque_b.clone()
+        
+        ee_quat = self.asset.data.body_quat_w[:, self.ee_id]
+        ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id]
+        ee_vel_w = self.asset.data.body_lin_vel_w[:, self.ee_id]
+
+        self.drag_force[:] = quat_rotate_inverse(ee_quat, - ee_vel_w * self.linear_drag_coeff)
+        self.spring_setpoint_w[:] = self._body2world(self.spring_setpoint_b)
+        self.spring_force[:] = quat_rotate_inverse(ee_quat, self.spring_stiffness * (self.spring_setpoint_w - ee_pos_w))
+        const_force = quat_rotate_inverse(ee_quat, self.const_force)
+
+        self.ee_force_b.zero_()
+        self.ee_force_b.add_(const_force * self.force_type_mask[:, 0].unsqueeze(-1))
+        self.ee_force_b.add_(self.drag_force * self.force_type_mask[:, 1].unsqueeze(-1))
+        self.ee_force_b.add_(self.spring_force * self.force_type_mask[:, 2].unsqueeze(-1))
+        self.ee_force_b = torch.where(self.apply_force, self.ee_force_b / self.force_type_mask.sum(1, True), 0.)
+
+        force_b[:, self.ee_id] = self.ee_force_b
+        
+        self.asset.set_external_force_and_torque(force_b, torque_b)
+
     def reset(self, env_ids: torch.Tensor):
         # TODO: check reset logic
         self.sample_loco(env_ids=env_ids)
@@ -993,8 +1067,13 @@ class CommandEEPose_UMI(Command):
         # print(f"Sampling trajectories for {env_ids}...")
         ee_pos_trajs, ee_forward_trajs = generate_random_trajectories(
             len(env_ids), 
-            self.yaw_range, self.pitch_range, self.radius_range, self.ee_lin_vel_range, 
-            self.episode_length + 1, self.env.step_dt, self.device
+            self.yaw_range, 
+            self.pitch_range, 
+            self.radius_range, 
+            self.ee_lin_vel_range, 
+            self.episode_length + 1, 
+            self.env.step_dt, 
+            self.device
         )
         # torch.cuda.synchronize()
         # print("Sampling time:", time.time() - st)
@@ -1041,6 +1120,7 @@ class CommandEEPose_UMI(Command):
         return command_ee_pos_b, command_ee_fwd_b
 
     def update(self):
+        self._maybe_sample_force()
         # update asset states
         root_quat_yaw = yaw_quat(self.asset.data.root_quat_w)
         arm_base_pos_w = self.asset.data.body_pos_w[:, self.ee_base_id]
@@ -1116,23 +1196,34 @@ class CommandEEPose_UMI(Command):
         still = self.command_ang_vel[env_ids] < 0.1
         self.command_ang_vel[env_ids[still]] = 0.
 
+    def _maybe_sample_force(self):
+        resample_mask = (
+            (torch.rand(self.num_envs, 1, device=self.device) < self.force_resample_prob)
+            & (self.force_application_time > self.force_resample_min_interval)
+        )
+        force_type_mask = torch.rand_like(self.force_type_mask, dtype=float) < 0.5
+        apply_force = (
+            (torch.rand_like(self.apply_force, dtype=float) < self.force_application_prob)
+            & (force_type_mask.any(1, True))
+        )
+        
+        const_force = torch.randn_like(self.const_force).clip(-3., 3.) * self.const_force_scale
+        linear_drag_coeff = torch.empty_like(self.linear_drag_coeff).uniform_(*self.linear_drag_coeff_range)
+        angular_drag_coeff = torch.empty_like(self.angular_drag_coeff).uniform_(*self.angular_drag_coeff_range)
+        spring_stiffness = torch.empty_like(self.spring_stiffness).uniform_(*self.spring_stiffness_range)
+        spring_setpoint_b = self.ee_pos_b + torch.randn_like(self.ee_pos_b).clip(-3., 3.) * 0.4
 
-    def debug_draw(self):
-        # append to self.debug_draw_dict
-        # which will contain the keys: commmand_ee_pos_w, command_ee_forward_w, command_ee_upward_w
-        # if len(self.debug_draw_dict) == 0:
-        #     self.debug_draw_dict = {
-        #         "command_ee_pos_w": torch.empty(self.num_envs, 0, 3, device=self.device),
-        #         "command_ee_forward_w": torch.empty(self.num_envs, 0, 3, device=self.device),
-        #         "command_ee_upward_w": torch.empty(self.num_envs, 0, 3, device=self.device)
-        #     }
-        
-        # if self.debug_draw_count % 2 == 1:
-        # # if True:
-        #     self.debug_draw_dict["command_ee_pos_w"] = torch.cat([self.debug_draw_dict["command_ee_pos_w"], self.command_ee_pos_w.unsqueeze(1)], dim=1)
-        #     self.debug_draw_dict["command_ee_forward_w"] = torch.cat([self.debug_draw_dict["command_ee_forward_w"], self.command_ee_forward_w.unsqueeze(1)], dim=1)
-        #     self.debug_draw_dict["command_ee_upward_w"] = torch.cat([self.debug_draw_dict["command_ee_upward_w"], self.command_ee_upward_w.unsqueeze(1)], dim=1)
-        
+        self.apply_force = torch.where(resample_mask, apply_force, self.apply_force)
+        self.force_application_time = torch.where(resample_mask, 0., self.force_application_time + 1.)
+        self.force_type_mask = torch.where(resample_mask, force_type_mask, self.force_type_mask)
+        self.const_force = torch.where(resample_mask, const_force, self.const_force)
+        self.linear_drag_coeff = torch.where(resample_mask, linear_drag_coeff, self.linear_drag_coeff)
+        self.angular_drag_coeff = torch.where(resample_mask, angular_drag_coeff, self.angular_drag_coeff)
+        self.spring_stiffness = torch.where(resample_mask, spring_stiffness, self.spring_stiffness)
+        self.spring_setpoint_b = torch.where(resample_mask, spring_setpoint_b, self.spring_setpoint_b)
+
+
+    def debug_draw(self):        
         self.debug_draw_count += 1
         
         ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id].unsqueeze(1)
@@ -1154,6 +1245,12 @@ class CommandEEPose_UMI(Command):
             ee_pos_w.squeeze(1),
             ee_fwd.reshape(-1, 3) * 0.2,
             color=(1., 1., 0.1, 1.)
+        )
+
+        self.env.debug_draw.vector(
+            ee_pos_w.squeeze(1),
+            quat_rotate(ee_quat, self.ee_force_b) / 9.81,
+            color=(1., 0., 1., 1.)
         )
         
         

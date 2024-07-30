@@ -56,8 +56,9 @@ class LocomotionEnv(Env):
         self.stats[env_ids] = 0.
 
         self.scene.reset(env_ids)
-        self.command_manager.reset(env_ids=env_ids)
-        self.action_manager.reset(env_ids=env_ids)
+        # in `self._reset_callbacks`
+        # self.command_manager.reset(env_ids=env_ids)
+        # self.action_manager.reset(env_ids=env_ids)
     
     def _update(self):
         super()._update()

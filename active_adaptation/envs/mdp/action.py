@@ -1,5 +1,5 @@
 import torch
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Union
 from tensordict import TensorDictBase
 from omni.isaac.lab.assets import Articulation
 import omni.isaac.lab.utils.string as string_utils
@@ -167,18 +167,20 @@ class QuadrupedAndArm(ActionManager):
         self, 
         env,
         regular_joints: str,
-        arm_joints: str,
-        gripper_joints: str,
         action_scaling: Dict[str, float],
+        arm_joints: Union[str, None]=None,
+        gripper_joints: Union[str, None]=None,
         max_delay: int = 1,
         alpha: float = 0.8,      
     ):
         super().__init__(env)
         
         self.regular_joint_ids = self.asset.find_joints(regular_joints)[0]
+        self.action_dim = len(self.regular_joint_ids)
         
         if arm_joints is not None:
             self.arm_joint_ids = self.asset.find_joints(arm_joints)[0]
+            self.action_dim += len(self.arm_joint_ids)
         else:
             self.arm_joint_ids = None
 
@@ -195,7 +197,6 @@ class QuadrupedAndArm(ActionManager):
             device=self.device
         )
         
-        self.action_dim = len(self.regular_joint_ids) + len(self.arm_joint_ids)
         assert len(self.action_scaling) == self.action_dim
 
         with torch.device(self.device):
