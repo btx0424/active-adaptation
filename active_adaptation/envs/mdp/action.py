@@ -167,6 +167,7 @@ class QuadrupedAndArm(ActionManager):
         self, 
         env,
         regular_joints: str,
+        arm_joints: str,
         gripper_joints: str,
         action_scaling: Dict[str, float],
         max_delay: int = 1,
@@ -175,6 +176,12 @@ class QuadrupedAndArm(ActionManager):
         super().__init__(env)
         
         self.regular_joint_ids = self.asset.find_joints(regular_joints)[0]
+        
+        if arm_joints is not None:
+            self.arm_joint_ids = self.asset.find_joints(arm_joints)[0]
+        else:
+            self.arm_joint_ids = None
+
         if gripper_joints is not None:
             self.gripper_joint_ids = self.asset.find_joints(gripper_joints)[0]
         else:
@@ -187,9 +194,9 @@ class QuadrupedAndArm(ActionManager):
             )[2],
             device=self.device
         )
-        assert len(self.action_scaling) == len(self.regular_joint_ids)
         
-        self.action_dim = len(self.regular_joint_ids)
+        self.action_dim = len(self.regular_joint_ids) + len(self.arm_joint_ids)
+        assert len(self.action_scaling) == self.action_dim
 
         with torch.device(self.device):
             self.action_buf = torch.zeros(self.num_envs, self.action_dim, 4)
@@ -199,10 +206,12 @@ class QuadrupedAndArm(ActionManager):
             
         self.jpos_default = self.asset.data.default_joint_pos.clone()
         self.jpos_targets = self.asset.data.default_joint_pos.clone()
+        self.jpos_limit = self.asset.data.default_joint_limits.clone().unbind(-1)
 
     def reset(self, env_ids: torch.Tensor):
         self.action_buf[env_ids] = 0.
         self.applied_action[env_ids] = 0.
+        self.jpos_targets[env_ids] = 0.
 
     def __call__(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
@@ -212,14 +221,22 @@ class QuadrupedAndArm(ActionManager):
             action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
             self.applied_action.lerp_(action.squeeze(-1), self.alpha)
 
+            action_scaled = self.action_scaling * self.applied_action
             self.jpos_targets[:, self.regular_joint_ids] = (
-                self.action_scaling * self.applied_action + self.jpos_default[:, self.regular_joint_ids]
+                action_scaled[:, self.regular_joint_ids] 
+                + self.jpos_default[:, self.regular_joint_ids]
             )
+
+            if self.arm_joint_ids is not None:
+                self.jpos_targets[:, self.arm_joint_ids] = (
+                    action_scaled[:, self.arm_joint_ids]
+                    + self.jpos_targets[:, self.arm_joint_ids]
+                )
             
             if self.gripper_joint_ids is not None:
                 self.jpos_targets[:, self.gripper_joint_ids] = self.jpos_default[:, self.gripper_joint_ids]
             
-            self.jpos_targets.clamp_(-torch.pi, torch.pi)
+            self.jpos_targets.clamp_(*self.jpos_limit)
             self.asset.set_joint_position_target(self.jpos_targets)
         
         self.asset.write_data_to_sim()

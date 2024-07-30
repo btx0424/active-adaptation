@@ -16,11 +16,12 @@ ee_name: gripper_base
 
 action:
   _target_: active_adaptation.envs.mdp.action.QuadrupedAndArm
-  regular_joints: ^(?!(endleft|endright)$).*
+  regular_joints: .*_joint # ^(?!(endleft|endright)$).*
+  arm_joints: joint.*
   gripper_joints: end(left|right)
   action_scaling:
     .*_joint: 0.5
-    joint[1-6]: 0.5
+    joint[1-6]: 0.25
   max_delay: 1
   alpha: 0.8
 
