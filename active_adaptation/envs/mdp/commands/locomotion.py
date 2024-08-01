@@ -26,6 +26,12 @@ class Command:
     def device(self):
         return self.env.device
     
+    def step(self, substep: int):
+        pass
+
+    def reset(self, env_ids: torch.Tensor):
+        pass
+
     def debug_draw(self):
         pass
     
@@ -553,6 +559,114 @@ class CommandPosVel(Command2):
             self.target_pos_w - self.asset.data.root_pos_w,
             color=(1., 1., 1., 1.)
         )
+
+
+class Impedance(Command):
+    def __init__(
+        self, 
+        env,
+        linvel_x_range=(-1.0, 1.0),
+        linvel_y_range=(-1.0, 1.0),
+    ) -> None:
+        super().__init__(env)
+        self.robot: Articulation = env.scene["robot"]
+        self.linvel_x_range = linvel_x_range
+        self.linvel_y_range = linvel_y_range
+
+        with torch.device(self.device):
+            self.command = torch.zeros(self.num_envs, 6)
+            
+            self.command_linvel = torch.zeros(self.num_envs, 3)
+            self.command_speed = torch.zeros(self.num_envs, 1)
+
+            self.command_linacc_w = torch.zeros(self.num_envs, 3)
+            self.command_linvel_w = torch.zeros(self.num_envs, 3)
+            self.command_pos_w = torch.zeros(self.num_envs, 3)
+            self.next_command_linvel_w = torch.zeros(self.num_envs, 3)
+            self.next_command_pos_w = torch.zeros(self.num_envs, 3)
+            
+            self.command_angvel = torch.zeros(self.num_envs)
+            self.command_setpoint_w = torch.zeros(self.num_envs, 3)
+            self.kp = torch.zeros(self.num_envs, 1)
+            self.kd = torch.zeros(self.num_envs, 1)
+            
+            self._cum_error = torch.zeros(self.num_envs, 2)
+
+            self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
+            self.xy = torch.tensor([1., 1., 0.], device=self.device)
+    
+    def reset(self, env_ids: torch.Tensor):
+        command_setpoint_w = torch.zeros(len(env_ids), 3, device=self.device)
+        command_setpoint_w[:, 0].uniform_(2., 3.)
+        command_setpoint_w[:, 1].uniform_(-1., 1.)
+        command_setpoint_w.add_(self.asset.data.root_pos_w[env_ids])
+        
+        kp = torch.empty(len(env_ids), 1, device=self.device).uniform_(1.0, 2.0)
+        kd = torch.empty(len(env_ids), 1, device=self.device).uniform_(1.0, 1.0)
+
+        self.command_setpoint_w[env_ids] = command_setpoint_w
+        self.kp[env_ids] = kp
+        self.kd[env_ids] = kd
+
+        self.command_linvel_w[env_ids] = self.asset.data.root_lin_vel_b[env_ids] * self.xy
+        self.command_pos_w[env_ids] = self.asset.data.root_pos_w[env_ids]
+        self._cum_error[env_ids] = 0.
+
+    def step(self, substep: int):
+        if substep == 0:
+            self.command_linvel_w[:] = self.asset.data.root_lin_vel_b * self.xy
+            self.command_pos_w[:] = self.asset.data.root_pos_w * self.xy
+        self._integrate()
+    
+    def _integrate(self):
+        command_acc_w = (
+            self.kp * (self.command_setpoint_w - self.command_pos_w) 
+            + self.kd * (0. - self.command_linvel_w)
+        )
+        self.command_linacc_w[:] = command_acc_w * self.xy
+        self.command_linvel_w.add_(self.command_linacc_w * self.env.step_dt)
+        self.command_pos_w.add_(self.command_linvel_w * self.env.step_dt)
+
+    def update(self):
+        linvel_error = (self.command_linvel_w - self.asset.data.root_lin_vel_w).norm(dim=-1)
+        pos_error = (self.command_pos_w - self.asset.data.root_pos_w).norm(dim=-1)
+        self._cum_error[:, 0].add_(linvel_error * self.env.step_dt).mul_(0.99)
+        self._cum_error[:, 1].add_(pos_error * self.env.step_dt).mul_(0.99)
+
+        command_linvel_w = self.command_linvel_w.lerp(self.next_command_linvel_w, 0.5)
+        command_pos_w = self.command_pos_w.lerp(self.next_command_pos_w, 0.5)
+        command_pos_b = quat_rotate_inverse(self.asset.data.root_quat_w, command_pos_w - self.asset.data.root_pos_w)
+        command_setpoint_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_setpoint_w - self.asset.data.root_pos_w)
+        
+        self.command_linvel[:] = quat_rotate_inverse(self.asset.data.root_quat_w, command_linvel_w)
+        self.command_speed[:] = self.command_linvel.norm(dim=-1, keepdim=True)
+        self.command[:, :2] = self.command_linvel[:, :2]
+        self.command[:, 2:4] = command_pos_b[:, :2]
+        self.command[:, 4:6] = command_setpoint_b[:, :2]
+
+        for i in range(4):
+            self._integrate()
+        self.next_command_linvel_w[:] = self.command_linvel_w
+        self.next_command_pos_w[:] = self.command_pos_w
+    
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
+            self.command_linvel_w,
+            color=(1., 1., 1., 1.)
+        )
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            self.command_setpoint_w - self.asset.data.root_pos_w,
+            color=(1., 0., 0., 1.)
+        )
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            self.command_pos_w - self.asset.data.root_pos_w,
+            color=(0., 1., 0., 1.),
+            size=2.0
+        )
+
 
 def sample_uniform(size, low: float, high: float, device: torch.device = "cpu"):
     return torch.rand(size, device=device) * (high - low) + low

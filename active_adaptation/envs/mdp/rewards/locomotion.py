@@ -6,6 +6,7 @@ from omni.isaac.lab.sensors import ContactSensor
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.utils.math import yaw_quat
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
+from ..commands import *
 
 
 class Reward:
@@ -78,11 +79,15 @@ class linvel_z_l2(Reward):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.command_manager = self.env.command_manager
+        if isinstance(self.command_manager, Command2):
+            self.coeff = self.command_manager.command[:, 3].unsqueeze(1)
+        else:
+            self.coeff = 1.
 
     def compute(self) -> torch.Tensor:
         # command_speed = self.command_manager.command_linvel[:, 2].norm(dim=-1, keepdim=True)
         linvel_z = self.asset.data.root_lin_vel_b[:, 2].unsqueeze(1)
-        return - linvel_z.square() * self.command_manager.command[:, 3].unsqueeze(1)
+        return - linvel_z.square() * self.coeff
 
 
 @reward_func
@@ -651,6 +656,30 @@ class joint_vel_l2(Reward):
     
     def compute(self) -> torch.Tensor:
         return - self.asset.data.joint_vel[:, self.joint_ids].square().sum(1, True)
+
+
+class impedance_pos(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.command_manager: Impedance = self.env.command_manager
+
+    def compute(self) -> torch.Tensor:
+        diff = (self.command_manager.command_pos_w - self.asset.data.root_pos_w)
+        r = torch.exp(- diff.norm(dim=-1, keepdim=True) / 0.25)
+        return r
+    
+
+class impedance_vel(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.command_manager: Impedance = self.env.command_manager
+    
+    def compute(self) -> torch.Tensor:
+        diff = (self.command_manager.command_linvel_w - self.asset.data.root_lin_vel_w)
+        r = torch.exp(- diff.norm(dim=-1, keepdim=True) / 0.25)
+        return r
 
 
 def normalize(x: torch.Tensor):
