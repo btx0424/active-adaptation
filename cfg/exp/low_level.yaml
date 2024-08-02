@@ -1,0 +1,8 @@
+# @package _global_
+
+defaults:
+  - override /task: Go2M_gait
+  - override /algo: ppo_hier
+
+task:
+  scene: locomotion

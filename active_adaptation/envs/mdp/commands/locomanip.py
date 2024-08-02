@@ -1,6 +1,7 @@
 import torch
 import einops
 
+from torchrl.data import UnboundedContinuousTensorSpec
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.utils.math import yaw_quat, wrap_to_pi, quat_from_euler_xyz, quat_mul, quat_inv, euler_xyz_from_quat, normalize
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
@@ -933,6 +934,14 @@ class CommandEEPose_UMI(Command):
 
             self.past_pos_error = torch.zeros(self.num_envs, 1)
             self.past_orn_error = torch.zeros(self.num_envs, 1)
+
+            # running stats
+            self.pos_error_sum = torch.tensor(0.)
+            self.orn_error_sum = torch.tensor(0.)
+            self.count = torch.tensor(0.)
+            self.pos_error_avg = torch.tensor(0.)
+            self.orn_error_avg = torch.tensor(0.)
+            self.stats_decay = 0.99
             
             # asset states
             self.ee_pos_b = self.asset.data.ee_pos_b = torch.zeros(self.num_envs, 3, device=self.device)
@@ -1013,6 +1022,9 @@ class CommandEEPose_UMI(Command):
             ])
         self.debug_draw_dict = {}
         self.debug_draw_count = 0
+
+        self.env.reward_spec["stats", "ee_pos_error_avg"] = UnboundedContinuousTensorSpec([self.num_envs, 1], device=self.device)
+        self.env.reward_spec["stats", "ee_orn_error_avg"] = UnboundedContinuousTensorSpec([self.num_envs, 1], device=self.device)
 
     def _body2world(self, pos_b: torch.Tensor):
         bshape = pos_b.shape[:-1]
@@ -1157,6 +1169,14 @@ class CommandEEPose_UMI(Command):
         self.past_pos_error.mul_(1 - smoothing * valid).add_(smoothing * self.ee_pos_error * valid)
         self.past_orn_error.mul_(1 - smoothing * valid).add_(smoothing * self.ee_orn_error * valid)
         
+        self.pos_error_sum.mul_(self.stats_decay).add_((self.ee_pos_error * valid).sum())
+        self.orn_error_sum.mul_(self.stats_decay).add_((self.ee_orn_error * valid).sum())
+        self.count.mul_(self.stats_decay).add_(self.num_envs)
+        self.pos_error_avg = self.pos_error_sum / self.count
+        self.orn_error_avg = self.orn_error_sum / self.count
+        self.env.stats["ee_pos_error_avg"].fill_(self.pos_error_avg)
+        self.env.stats["ee_orn_error_avg"].fill_(self.orn_error_avg)
+
         # get new command ee pos from the trajectory
         command_ee_pos_b, command_ee_fwd_b = self.get_targets_at_steps()
         self.command_ee_pos_b[:] = command_ee_pos_b

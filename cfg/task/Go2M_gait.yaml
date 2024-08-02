@@ -7,6 +7,8 @@ defaults:
   - override action: null
   - _self_
 
+scene: locomanip
+
 terrain: plane
 payload: false
 homogeneous: false
@@ -78,9 +80,9 @@ command:
   arm_command_prob: 0.8
 
 observation:
-  policy:
+  command:
     command:
-    # root_quat_w:
+  policy:
     root_angvel_b: {noise_std: 0.05}
     projected_gravity_b: {noise_std: 0.05}
     joint_pos:    {noise_std: 0.05}

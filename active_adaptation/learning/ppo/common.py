@@ -37,6 +37,7 @@ ACTION_KEY = "action" # ("agents", "action")
 REWARD_KEY = ("next", "reward") # ("agents", "reward")
 # DONE_KEY = ("next", "done")
 DONE_KEY = ("next", "terminated")
+CMD_KEY = "command"
 
 
 def make_mlp(num_units, activation=nn.Mish, norm="before", dropout=0.):

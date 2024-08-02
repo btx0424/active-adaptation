@@ -60,7 +60,7 @@ def make_env_policy(cfg: DictConfig):
     from active_adaptation.envs import TASKS
     from active_adaptation.utils.torchrl import StackFrames
     from configs.rough import LocomotionEnvCfg
-    from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker, CatFrames, VecNorm
+    from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker, CatFrames, VecNorm, StepCounter
 
     checkpoint_path = cfg.checkpoint_path
     if checkpoint_path is not None:
@@ -82,7 +82,7 @@ def make_env_policy(cfg: DictConfig):
         key for key, spec in base_env.observation_spec.items(True, True) 
         if not (spec.dtype == bool or key.endswith("_"))
     ]
-    transform = Compose(InitTracker())
+    transform = Compose(InitTracker(), StepCounter())
 
     assert cfg.vecnorm in ("train", "eval", None)
     print(colored(f"[Info]: create VecNorm for keys: {obs_keys}", "green"))

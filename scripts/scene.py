@@ -1,3 +1,4 @@
+from typing import Sequence
 import torch
 
 from omni.isaac.lab.app import AppLauncher
@@ -11,8 +12,8 @@ def main():
     from omni.isaac.lab.sim import SimulationContext, SimulationCfg
     from omni.isaac.lab.scene import InteractiveScene, InteractiveSceneCfg
     from omni.isaac.lab.terrains import TerrainImporterCfg
-    from omni.isaac.lab.assets import ArticulationCfg, AssetBaseCfg, Articulation
-    from omni.isaac.lab.actuators import IdealPDActuatorCfg, ImplicitActuatorCfg
+    from omni.isaac.lab.assets import ArticulationCfg, AssetBaseCfg, Articulation, RigidObjectCfg, RigidObject
+    from omni.isaac.lab.actuators import IdealPDActuatorCfg, ImplicitActuatorCfg, DCMotorCfg
     from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
     from omni.isaac.lab.utils.math import (
         quat_rotate_inverse, 
@@ -24,6 +25,7 @@ def main():
         quat_from_euler_xyz,
     )
 
+    from active_adaptation.assets.scene import DoorArticulation, DOOR_CFG
 
     class SceneCfg(InteractiveSceneCfg):
         terrain = TerrainImporterCfg(
@@ -32,13 +34,13 @@ def main():
             collision_group=-1,
         )
         # lights
-        sky_light = AssetBaseCfg(
-            prim_path="/World/skyLight",
-            spawn=sim_utils.DomeLightCfg(
-                intensity=750.0,
-                texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
-            ),
-        )
+        # sky_light = AssetBaseCfg(
+        #     prim_path="/World/skyLight",
+        #     spawn=sim_utils.DomeLightCfg(
+        #         intensity=750.0,
+        #         texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
+        #     ),
+        # )
 
         light_0: AssetBaseCfg = AssetBaseCfg(
             prim_path="/World/light_0",
@@ -75,27 +77,7 @@ def main():
             )
         )
         
-        door = ArticulationCfg(
-            prim_path="{ENV_REGEX_NS}/Door",
-            spawn=sim_utils.UsdFileCfg(
-                usd_path="/home/btx0424/isaac_lab/active-adaptation/active_adaptation/assets/Doors/DoorC_Flattened.usd",
-                articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                    solver_position_iteration_count=4,
-                    solver_velocity_iteration_count=0,
-                    enabled_self_collisions=False
-                )
-            ),
-            init_state=ArticulationCfg.InitialStateCfg(
-                pos=(0.5, 0.0, 0.0),
-            ),
-            actuators={
-                "door_joints": ImplicitActuatorCfg(
-                    joint_names_expr=".*",
-                    stiffness=0.2, 
-                    damping=0.05
-                )
-            },
-        )
+        door = DOOR_CFG
 
         gripper = ArticulationCfg(
             prim_path="{ENV_REGEX_NS}/Gripper",
@@ -111,7 +93,7 @@ def main():
             actuators={
                 "gripper": ImplicitActuatorCfg(
                     joint_names_expr=".*",
-                    stiffness=2.0,
+                    stiffness=5.0,
                     damping=0.2
                 )
             },
@@ -123,7 +105,7 @@ def main():
     for _ in range(4):
         sim.step(render=True)
 
-    door: Articulation = scene["door"]
+    door: DoorArticulation = scene["door"]
     handle_id = door.find_bodies("Handle")[0][0]
 
     gripper: Articulation = scene["gripper"]
@@ -180,8 +162,9 @@ def main():
         offset = quat_rotate(handle_quat, offset)
         target_pos = target_pos + offset
 
-        angle = torch.tensor([torch.pi/2], device="cuda").expand(axis.shape[0])
+        angle = torch.tensor([torch.pi], device="cuda").expand(axis.shape[0])
         target_quat = quat_from_angle_axis(angle, axis)
+        target_quat = quat_mul(target_quat, handle_quat)
         return target_pos, target_quat
     
     state = torch.zeros(scene.num_envs, dtype=int, device="cuda")
@@ -219,7 +202,9 @@ def main():
         state[success] = 1
 
         if i % 20 == 0:
-            print(success)
+            # print(success)
+            # print(door.data.applied_torque)
+            print(box.data.body_pos_w)
 
         if i % 1000 == 0:
             reset(torch.arange(4, device="cuda"))

@@ -18,6 +18,7 @@ from omni.isaac.lab.actuators import ImplicitActuatorCfg, DCMotorCfg
 from .spawn import clone
 from .quadruped import *
 from .humanoid import *
+from .scene import *
 
 
 ASSET_PATH = os.path.dirname(__file__)

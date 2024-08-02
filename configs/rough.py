@@ -1,9 +1,4 @@
-from active_adaptation.assets import (
-    ArticulationCfg,
-    ROBOTS,
-    spawn_with_payload
-)
-from active_adaptation.utils.orbit import RayCaster
+from active_adaptation.assets import *
 from omni.isaac.lab.scene import InteractiveSceneCfg
 from omni.isaac.lab.utils import configclass
 from omni.isaac.lab.terrains import TerrainImporterCfg
@@ -57,7 +52,7 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
             angle=20,
         ),
         init_state=ArticulationCfg.InitialStateCfg(
-            rot=(7.07106781e-01, 5.55111512e-17, 6.12372436e-01, 3.53553391e-01)
+            rot=(-0.87330464,  0.        ,  0.48717451,  0.        )
         )
     )
 
@@ -84,6 +79,14 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
         height=96,
     )
 
+@configclass
+class LocoManipSceneCfg(LocomotionSceneCfg):
+    
+    env_spacing: float = 5.0
+    
+    door = DOOR_CFG
+    door.init_state.pos = (2.0, 0.0, 0.0)
+    
 
 @configclass
 class EnvCfg:
@@ -131,10 +134,15 @@ def LocomotionEnvCfg(task_cfg):
     scale_range = randomizations.pop("random_scale", (1.0, 1.0))
     robot_cfg.spawn.scale_range = scale_range
 
+    scene_cfg_class = {
+        "locomotion": LocomotionSceneCfg,
+        "locomanip": LocoManipSceneCfg
+    }[task_cfg.scene]
+
     env_cfg = EnvCfg(
         max_episode_length=task_cfg.max_episode_length,
         payload=task_cfg.payload,
-        scene = LocomotionSceneCfg(
+        scene = scene_cfg_class(
             num_envs=task_cfg.num_envs,                                                                                                                                                         
             robot=robot_cfg.replace(prim_path="{ENV_REGEX_NS}/Robot"),
             terrain=terrain_cfg,

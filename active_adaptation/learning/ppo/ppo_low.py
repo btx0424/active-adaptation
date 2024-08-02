@@ -35,8 +35,8 @@ from tensordict import TensorDict
 from tensordict.nn import TensorDictModuleBase, TensorDictModule, TensorDictSequential
 
 from hydra.core.config_store import ConfigStore
-from dataclasses import dataclass
-from typing import Union
+from dataclasses import dataclass, field
+from typing import Union, List
 from collections import OrderedDict
 
 from active_adaptation.learning.ppo.common import *
@@ -58,7 +58,7 @@ class PPOConfig:
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
-    checkpoint_path: Union[str, None] = None
+    in_keys: Union[List, None] = field(default_factory=lambda: [CMD_KEY, OBS_KEY])
 
 cs = ConfigStore.instance()
 cs.store("ppo_low", node=PPOConfig, group="algo")
@@ -73,15 +73,10 @@ class LowPolicy(TensorDictModuleBase):
         action_spec: CompositeSpec, 
         reward_spec: TensorSpec,
         device,
-        in_keys: list=("command", "obs", "camera"),
-        action_key: str = ACTION_KEY
     ):
         super().__init__()
         self.cfg = cfg
         self.device = device
-
-        self.in_keys = in_keys
-        self.action_key = action_key
 
         self.entropy_coef = self.cfg.entropy_coef
         self.max_grad_norm = 1.0
@@ -89,17 +84,6 @@ class LowPolicy(TensorDictModuleBase):
         self.critic_loss_fn = nn.MSELoss(reduction="none")
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(0.99, 0.95)
-
-        mlp_keys = []
-        cnn_keys = []
-        for in_key in in_keys:
-            spec = observation_spec[in_key]
-            if spec.ndim == 2:
-                mlp_keys.append(in_key)
-            else:
-                cnn_keys.append(in_key)
-        if len(cnn_keys) > 1:
-            raise ValueError("Only one cnn key is supported. Found: ", cnn_keys)
 
         if cfg.value_norm:
             value_norm_cls = ValueNorm1
@@ -109,33 +93,12 @@ class LowPolicy(TensorDictModuleBase):
 
         fake_input = observation_spec.zero()
         
-        def make_cnn():
-            cnn = nn.Sequential(
-                nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1),
-                nn.LeakyReLU(),
-                nn.LazyConv2d(16, kernel_size=3, stride=2, padding=1),
-                nn.LeakyReLU(),
-                nn.LazyConv2d(16, kernel_size=3, stride=2, padding=1),
-                nn.LeakyReLU(),
-                nn.Flatten(),
-                nn.LazyLinear(96),
-                nn.LayerNorm(96),
-            )
-            return cnn
-        
-        self.preprocess = CatTensors(mlp_keys, "_obs_low", del_keys=False)
+        self.preprocess = CatTensors([CMD_KEY, OBS_KEY], "_obs_low", del_keys=False)
 
         def make_encoder(out_key: str):
-            if len(cnn_keys) > 0:
-                modules = [
-                    TensorDictModule(make_cnn(), [cnn_keys[0]], ["_cnn"]),
-                    TensorDictModule(make_mlp([256]), ["_obs_low"], ["_mlp"]),
-                    CatTensors(["_cnn", "_mlp"], out_key),
-                ]
-            else:
-                modules = [
-                    TensorDictModule(make_mlp([256]), ["_obs_low"], [out_key])
-                ]
+            modules = [
+                TensorDictModule(make_mlp([256]), ["_obs_low"], [out_key])
+            ]
             return modules
 
         _actor = nn.Sequential(make_mlp([256, 128]), Actor(self.action_dim))
@@ -218,7 +181,7 @@ class LowPolicy(TensorDictModuleBase):
         values = tensordict["state_value"]
         next_values = tensordict["next", "state_value"]
 
-        rewards = tensordict[REWARD_KEY]
+        rewards = tensordict[REWARD_KEY].sum(-1, True)
         dones = tensordict[DONE_KEY]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)

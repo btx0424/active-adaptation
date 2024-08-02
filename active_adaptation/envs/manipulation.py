@@ -23,6 +23,7 @@ class QuadrupedManip(LocomotionEnv):
         super().__init__(cfg)
         self.base_legs_indices = self.robot.actuators["base_legs"].joint_indices
         self.arm_indices = self.robot.actuators["arm"].joint_indices
+        self.door = self.scene.articulations.get("door", None)
 
     class ee_pos(Observation):
         def __init__(self, env, ee_name: str):

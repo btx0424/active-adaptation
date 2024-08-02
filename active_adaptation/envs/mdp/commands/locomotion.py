@@ -2,7 +2,7 @@ from math import pi
 import torch
 import torch.distributions as D
 import math
-from typing import Sequence
+from typing import Sequence, TYPE_CHECKING
 
 from omni.isaac.lab.assets import Articulation
 import omni.isaac.lab.utils.math as math_utils
@@ -10,9 +10,12 @@ from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse, Multi
 from omni.isaac.lab.utils.math import quat_apply_yaw, yaw_quat
 from tensordict import TensorDict
 
+if TYPE_CHECKING:
+    from active_adaptation.envs.base import Env
+
 class Command:
     def __init__(self, env) -> None:
-        self.env = env
+        self.env: Env = env
         self.asset: Articulation = env.scene["robot"]
         self.init_root_state = self.asset.data.default_root_state.clone()
         self.init_joint_pos = self.asset.data.default_joint_pos.clone()
@@ -562,6 +565,9 @@ class CommandPosVel(Command2):
 
 
 class Impedance(Command):
+    
+    future: int = 3
+    
     def __init__(
         self, 
         env,
@@ -572,7 +578,7 @@ class Impedance(Command):
         self.robot: Articulation = env.scene["robot"]
         self.linvel_x_range = linvel_x_range
         self.linvel_y_range = linvel_y_range
-        self.resample_prob = 0.02
+        self.resample_prob = 0.01
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 6)
@@ -580,11 +586,12 @@ class Impedance(Command):
             self.command_linvel = torch.zeros(self.num_envs, 3)
             self.command_speed = torch.zeros(self.num_envs, 1)
 
-            self.command_linacc_w = torch.zeros(self.num_envs, 3)
-            self.command_linvel_w = torch.zeros(self.num_envs, 3)
             self.command_pos_w = torch.zeros(self.num_envs, 3)
-            self.next_command_linvel_w = torch.zeros(self.num_envs, 3)
-            self.next_command_pos_w = torch.zeros(self.num_envs, 3)
+            self.command_linvel_w = torch.zeros(self.num_envs, 3)
+
+            self.desired_linacc_w = torch.zeros(self.num_envs, self.future, 3)
+            self.desired_linvel_w = torch.zeros(self.num_envs, self.future, 3)
+            self.desired_pos_w = torch.zeros(self.num_envs, self.future, 3)
             
             self.command_angvel = torch.zeros(self.num_envs)
             self.command_setpoint_w = torch.zeros(self.num_envs, 3)
@@ -599,34 +606,39 @@ class Impedance(Command):
     def reset(self, env_ids: torch.Tensor):
         self._sample_command(env_ids)
         self._cum_error[env_ids] = 0.
-
-    def step(self, substep: int):
-        if substep == 0:
-            self.command_linvel_w[:] = self.asset.data.root_lin_vel_b * self.xy
-            self.command_pos_w[:] = self.asset.data.root_pos_w * self.xy
-        self._integrate()
     
     def _integrate(self):
-        command_acc_w = (
-            self.kp * (self.command_setpoint_w - self.command_pos_w) 
-            + self.kd * (0. - self.command_linvel_w)
+        desired_acc_w = (
+            self.kp.unsqueeze(1) * (self.command_setpoint_w.unsqueeze(1) - self.desired_pos_w) 
+            + self.kd.unsqueeze(1) * (0. - self.desired_linvel_w)
         )
-        self.command_linacc_w[:] = command_acc_w * self.xy
-        self.command_linvel_w.add_(self.command_linacc_w * self.env.step_dt)
-        self.command_pos_w.add_(self.command_linvel_w * self.env.step_dt)
+        self.desired_linacc_w[:] = desired_acc_w * self.xy
+        self.desired_linvel_w.add_(self.desired_linacc_w * self.env.physics_dt)
+        self.desired_pos_w.add_(self.desired_linvel_w * self.env.physics_dt)
 
     def update(self):
+        self.desired_linacc_w.roll(1, dims=1)
+        self.desired_linvel_w.roll(1, dims=1)
+        self.desired_pos_w.roll(1, dims=1)
+        
+        self.desired_linvel_w[:, 0] = self.asset.data.root_lin_vel_w
+        self.desired_pos_w[:, 0] = self.asset.data.root_pos_w
+        
+        for _ in range(4):
+            self._integrate()
+
+        self.command_linvel_w = self.desired_linvel_w.mean(1)
+        self.command_pos_w = self.desired_pos_w.mean(1)
+
         linvel_error = (self.command_linvel_w - self.asset.data.root_lin_vel_w).norm(dim=-1)
         pos_error = (self.command_pos_w - self.asset.data.root_pos_w).norm(dim=-1)
         self._cum_error[:, 0].add_(linvel_error * self.env.step_dt).mul_(0.99)
         self._cum_error[:, 1].add_(pos_error * self.env.step_dt).mul_(0.99)
 
-        command_linvel_w = self.command_linvel_w.lerp(self.next_command_linvel_w, 0.5)
-        command_pos_w = self.command_pos_w.lerp(self.next_command_pos_w, 0.5)
-        command_pos_b = quat_rotate_inverse(self.asset.data.root_quat_w, command_pos_w - self.asset.data.root_pos_w)
+        command_pos_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_pos_w - self.asset.data.root_pos_w)
         command_setpoint_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_setpoint_w - self.asset.data.root_pos_w)
         
-        self.command_linvel[:] = quat_rotate_inverse(self.asset.data.root_quat_w, command_linvel_w)
+        self.command_linvel[:] = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_linvel_w)
         self.command_speed[:] = self.command_linvel.norm(dim=-1, keepdim=True)
         self.command[:, :2] = self.command_linvel[:, :2]
         self.command[:, 2:4] = command_pos_b[:, :2]
@@ -634,11 +646,6 @@ class Impedance(Command):
 
         _ = torch.rand(self.num_envs, device=self.device) < self.resample_prob
         self._sample_command(_.nonzero().squeeze(-1))
-
-        for i in range(4):
-            self._integrate()
-        self.next_command_linvel_w[:] = self.command_linvel_w
-        self.next_command_pos_w[:] = self.command_pos_w
     
     def _sample_command(self, env_ids: torch.Tensor):
         command_setpoint_w = torch.zeros(len(env_ids), 3, device=self.device)
@@ -646,15 +653,16 @@ class Impedance(Command):
         command_setpoint_w[:, 1].uniform_(-1, 1)
         command_setpoint_w.add_(self.asset.data.root_pos_w[env_ids])
         
-        kp = torch.empty(len(env_ids), 1, device=self.device).uniform_(2.0, 4.0)
+        kp = torch.empty(len(env_ids), 1, device=self.device).uniform_(2.0, 3.0)
         kd = 2.0 * kp.sqrt()    # to make the system critically damped
 
         self.command_setpoint_w[env_ids] = command_setpoint_w
         self.kp[env_ids] = kp
         self.kd[env_ids] = kd
 
-        self.command_linvel_w[env_ids] = self.asset.data.root_lin_vel_b[env_ids] * self.xy
-        self.command_pos_w[env_ids] = self.asset.data.root_pos_w[env_ids]
+        self.desired_linacc_w[env_ids] = 0.
+        self.desired_linvel_w[env_ids] = self.asset.data.root_lin_vel_w[env_ids].unsqueeze(1)
+        self.desired_pos_w[env_ids] = self.asset.data.root_pos_w[env_ids].unsqueeze(1)
 
     def debug_draw(self):
         self.env.debug_draw.vector(
@@ -663,16 +671,21 @@ class Impedance(Command):
             color=(1., 1., 1., 1.)
         )
         self.env.debug_draw.vector(
+            self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
+            self.desired_linvel_w[:, 0],
+            color=(0., 0., 1., 1.)
+        )
+        self.env.debug_draw.vector(
             self.asset.data.root_pos_w,
             self.command_setpoint_w - self.asset.data.root_pos_w,
             color=(1., 0., 0., 1.)
         )
-        self.env.debug_draw.vector(
-            self.asset.data.root_pos_w,
-            self.command_pos_w - self.asset.data.root_pos_w,
-            color=(0., 1., 0., 1.),
-            size=2.0
-        )
+        # self.env.debug_draw.vector(
+        #     self.asset.data.root_pos_w,
+        #     self.desired_pos_w - self.asset.data.root_pos_w,
+        #     color=(0., 1., 0., 1.),
+        #     size=2.0
+        # )
 
 
 def sample_uniform(size, low: float, high: float, device: torch.device = "cpu"):

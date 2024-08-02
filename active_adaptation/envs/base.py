@@ -94,6 +94,16 @@ class Env(EnvBase):
             .to(self.device)
         )
 
+        self.reward_spec = CompositeSpec(
+            {
+                "stats": {
+                    "episode_len": UnboundedContinuousTensorSpec([self.num_envs, 1]),
+                    "success": UnboundedContinuousTensorSpec([self.num_envs, 1]),
+                },
+            },
+            shape=[self.num_envs]
+        ).to(self.device)
+
         import inspect
         members = dict(inspect.getmembers(self.__class__, inspect.isclass))
 
@@ -113,10 +123,13 @@ class Env(EnvBase):
         self._reset_callbacks = []
         self._debug_draw_callbacks = []
         self._step_callbacks = []
+
         self.command_manager: mdp.Command = hydra.utils.instantiate(self.cfg.command, env=self)
-        self.action_manager: mdp.ActionManager = hydra.utils.instantiate(self.cfg.action, env=self)
         self._step_callbacks.append(self.command_manager.step)
         self._reset_callbacks.append(self.command_manager.reset)
+        self._debug_draw_callbacks.append(self.command_manager.debug_draw)
+        
+        self.action_manager: mdp.ActionManager = hydra.utils.instantiate(self.cfg.action, env=self)
         self._reset_callbacks.append(self.action_manager.reset)
         
         self.action_spec = CompositeSpec(
@@ -126,7 +139,6 @@ class Env(EnvBase):
             shape=[self.num_envs]
         ).to(self.device)
 
-        self._debug_draw_callbacks.append(self.command_manager.debug_draw)
 
         for key, params in self.cfg.randomization.items():
             rand = RAND_FUNCS[key](self, **params if params is not None else {})
@@ -147,16 +159,9 @@ class Env(EnvBase):
                 self._debug_draw_callbacks.append(obs.debug_draw)
         
         for callback in self._startup_callbacks:
-            callback()
-        
-        # self.sim.physics_sim_view.flush()
-        
-        reward_spec = CompositeSpec({
-            "stats": {
-                "episode_len": UnboundedContinuousTensorSpec(1),
-                "success": UnboundedContinuousTensorSpec(1),
-            }
-        })
+            callback()        
+       
+        reward_spec = CompositeSpec({})
 
         # parse rewards
         self.reward_groups = OrderedDict()
@@ -178,7 +183,7 @@ class Env(EnvBase):
 
         reward_spec["reward"] = UnboundedContinuousTensorSpec(len(self.reward_groups), device=self.device)
 
-        self.reward_spec = reward_spec.expand(self.num_envs).to(self.device)
+        self.reward_spec.update(reward_spec.expand(self.num_envs).to(self.device))
         self.stats = self.reward_spec["stats"].zero()
 
         observation_spec = {}
