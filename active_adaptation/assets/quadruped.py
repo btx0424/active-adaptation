@@ -67,6 +67,28 @@ UNITREE_GO2ABP_CFG.init_state.joint_pos["joint3"] = 0.3
 # UNITREE_GO2ABP_CFG.init_state.joint_pos["endleft"] = 0.02
 # UNITREE_GO2ABP_CFG.init_state.joint_pos["endright"] = -0.02
 
+
+UNITREE_GO2ARX_CFG = copy.deepcopy(UNITREE_GO2_CFG)
+UNITREE_GO2ARX_CFG.spawn.usd_path = f"{ASSET_PATH}/Go2/go2arxg.usd"
+UNITREE_GO2ARX_CFG.actuators["arm"] = DCMotorCfg(
+    joint_names_expr=["(joint.*)"],
+    effort_limit=200.,
+    saturation_effort=200.,
+    velocity_limit=5.0,
+    stiffness={
+        "joint[1-3]": 20.0,
+        "joint[4-6]": 15.0,
+    },
+    damping={
+        "joint[1-3]": 1.0,
+        "joint[4-6]": 0.5,
+    },
+    friction=0.001,
+)
+# UNITREE_GO2ABP_CFG.init_state.joint_pos["joint2"] = -0.3
+# UNITREE_GO2ABP_CFG.init_state.joint_pos["joint3"] = 0.3
+
+
 CYBERDOG_CFG = copy.deepcopy(UNITREE_A1_CFG)
 CYBERDOG_CFG.spawn.usd_path = f"{ASSET_PATH}/cyberdog2_v3.usd"
 CYBERDOG_CFG.actuators["base_legs"].stiffness = 20.
