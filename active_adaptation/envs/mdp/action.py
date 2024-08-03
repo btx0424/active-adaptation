@@ -117,7 +117,7 @@ class QuadrupedWithArm(JointPosition):
             self.arm_joint_pos.clamp_(self.arm_joint_limits[..., 0], self.arm_joint_limits[..., 1])
             pos_target[:, self.arm_joint_ids] = self.arm_joint_pos
             self.asset.set_joint_position_target(pos_target)
-        self.asset.write_data_to_sim()
+        # self.asset.write_data_to_sim()
 
 class HumanoidWithArm(ActionManager):
 

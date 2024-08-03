@@ -137,7 +137,7 @@ def LocomotionEnvCfg(task_cfg):
     scene_cfg_class = {
         "locomotion": LocomotionSceneCfg,
         "locomanip": LocoManipSceneCfg
-    }[task_cfg.scene]
+    }[task_cfg.get("scene", "locomotion")]
 
     env_cfg = EnvCfg(
         max_episode_length=task_cfg.max_episode_length,
