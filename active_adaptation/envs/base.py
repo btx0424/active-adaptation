@@ -322,12 +322,17 @@ class Env(EnvBase):
     def _step(self, tensordict: TensorDictBase) -> TensorDictBase:
         # start = time.perf_counter()
         for substep in range(self.cfg.decimation):
+            for asset in self.scene.articulations.values():
+                if asset.has_external_wrench:
+                    asset._external_force_b.zero_()
+                    asset._external_torque_b.zero_()
+                    asset.has_external_wrench = False
             self.apply_action(tensordict, substep)
-            # self.scene.write_data_to_sim()
-            self.sim.step(render=False)
-            self.scene.update(self.physics_dt)
             for callback in self._step_callbacks:
                 callback(substep)
+            self.scene.write_data_to_sim()
+            self.sim.step(render=False)
+            self.scene.update(self.physics_dt)
         # end = time.perf_counter()
         # print(end - start, self.cfg.decimation)
         self._update()

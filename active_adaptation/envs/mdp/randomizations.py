@@ -392,13 +392,15 @@ class stumble(Randomization):
         stumble_prob = ((self.stumble_height - self.feet_height) / self.stumble_height).clamp(0., 1.)
         self.forces_w = - self.friction_coef * feet_lin_vel_w / self.env.physics_dt
         self.forces_w[..., 2] = 0.
-        forces = torch.where(
+        friction_forces = torch.where(
             (torch.rand_like(self.feet_height) < stumble_prob).unsqueeze(-1),
             quat_rotate_inverse(feet_quat_w, self.forces_w),
             torch.zeros(self.num_envs, self.num_feet, 3, device=self.env.device)
         )
-        torques = torch.zeros_like(forces)
-        self.asset.set_external_force_and_torque(forces, torques, body_ids=self.body_ids)
+        forces_b = self.asset._external_force_b.clone()
+        torques_b = self.asset._external_torque_b.clone()
+        forces_b[:, self.body_ids] += friction_forces
+        self.asset.set_external_force_and_torque(forces_b, torques_b)
 
     def debug_draw(self):
         self.env.debug_draw.vector(

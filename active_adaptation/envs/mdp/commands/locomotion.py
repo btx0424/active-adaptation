@@ -597,6 +597,8 @@ class Impedance(Command):
             self.command_setpoint_w = torch.zeros(self.num_envs, 3)
             self.kp = torch.zeros(self.num_envs, 1)
             self.kd = torch.zeros(self.num_envs, 1)
+            self.virtual_mass = self.asset.root_physx_view.get_masses().sum(1, True).to(self.device)
+            self.force_ext_w = torch.zeros(self.num_envs, 3)
             
             self._cum_error = torch.zeros(self.num_envs, 2)
 
@@ -607,11 +609,18 @@ class Impedance(Command):
         self._sample_command(env_ids)
         self._cum_error[env_ids] = 0.
     
+    def step(self, substep: int):
+        forces_b = self.asset._external_force_b.clone()
+        forces_b[:, 0] += quat_rotate_inverse(self.asset.data.root_quat_w, self.force_ext_w)
+        torques_b = self.asset._external_torque_b.clone()
+        self.asset.set_external_force_and_torque(forces_b, torques_b)
+
     def _integrate(self):
         desired_acc_w = (
             self.kp.unsqueeze(1) * (self.command_setpoint_w.unsqueeze(1) - self.desired_pos_w) 
             + self.kd.unsqueeze(1) * (0. - self.desired_linvel_w)
-        )
+            + (self.force_ext_w / self.virtual_mass).unsqueeze(1)
+        ) # [n, t, 3]
         self.desired_linacc_w[:] = desired_acc_w * self.xy
         self.desired_linvel_w.add_(self.desired_linacc_w * self.env.physics_dt)
         self.desired_pos_w.add_(self.desired_linvel_w * self.env.physics_dt)
@@ -664,6 +673,12 @@ class Impedance(Command):
         self.desired_linvel_w[env_ids] = self.asset.data.root_lin_vel_w[env_ids].unsqueeze(1)
         self.desired_pos_w[env_ids] = self.asset.data.root_pos_w[env_ids].unsqueeze(1)
 
+        force_ext_w = torch.zeros(len(env_ids), 3, device=self.device)
+        force_ext_w[:, 0].uniform_(-40, 40)
+        force_ext_w[:, 1].uniform_(-40, 40)
+        force_ext_w[:, 2].uniform_(-10, 10)
+        self.force_ext_w[env_ids] = force_ext_w
+
     def debug_draw(self):
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
@@ -671,21 +686,16 @@ class Impedance(Command):
             color=(1., 1., 1., 1.)
         )
         self.env.debug_draw.vector(
-            self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
-            self.desired_linvel_w[:, 0],
-            color=(0., 0., 1., 1.)
-        )
-        self.env.debug_draw.vector(
             self.asset.data.root_pos_w,
             self.command_setpoint_w - self.asset.data.root_pos_w,
             color=(1., 0., 0., 1.)
         )
-        # self.env.debug_draw.vector(
-        #     self.asset.data.root_pos_w,
-        #     self.desired_pos_w - self.asset.data.root_pos_w,
-        #     color=(0., 1., 0., 1.),
-        #     size=2.0
-        # )
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            self.force_ext_w / self.virtual_mass,
+            color=(0., 1., 0., 1.),
+            size=2.0
+        )
 
 
 def sample_uniform(size, low: float, high: float, device: torch.device = "cpu"):
