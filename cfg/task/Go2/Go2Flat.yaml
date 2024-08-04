@@ -5,12 +5,20 @@ task: Quadruped
 defaults:
   # see https://hydra.cc/docs/advanced/overriding_packages/
   - /task/Velocity@_here_
+  - override action: null
   - _self_
 
 robot: go2
 terrain: plane
 payload: false
 homogeneous: false
+
+action:
+  _target_: active_adaptation.envs.mdp.action.JointPosition
+  joint_names: .*_joint
+  action_scaling: {.*_joint: 0.5}
+  max_delay: 2
+  alpha: [0.5, 1.0]
 
 command:
   _target_: active_adaptation.envs.mdp.Command2
@@ -19,7 +27,7 @@ command:
   angvel_range:   [-1.5, 1.5]
   yaw_stiffness_range: [0.5, 0.7]
   use_stiffness_ratio: 1.0
-  base_height_range: [0.25, 0.35]
+  aux_input_range: [1., 1.]
   resample_prob: 0.5
   stand_prob: 0.05
   target_yaw_range: 
@@ -33,8 +41,8 @@ observation:
     command:
     # root_angvel_b: {noise_std: 0.05}
     projected_gravity_b: {noise_std: 0.05}
-    joint_pos:    {noise_std: 0.05}
-    joint_vel:    {noise_std: 0.2}
+    joint_pos:    {noise_std: 0.05, joint_names: .*_joint}
+    joint_vel:    {noise_std: 0.2, joint_names: .*_joint}
     prev_actions: {steps: 2}
     # motor_params: {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     # body_materials: {body_names: .*foot, homogeneous: "${task.homogeneous}"}
@@ -51,7 +59,7 @@ observation:
     feet_vel_b:
     feet_height_map:  {feet_names: .*foot }
     applied_torques:  {actuator_name: base_legs}
-    joint_forces:     {}
+    joint_forces:     {joint_names: .*_joint}
     # motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     # body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
     # motor_failure:    {actuator_name: base_legs}
@@ -90,6 +98,8 @@ reward:
     linvel_z_l2:        {weight: 2.0, enabled: true}
     base_height_l1:     {weight: 0.5, enabled: true, target_height: 0.3}
     energy_l1:          {weight: 0.0002, enabled: true}
+    energy_dist_lr:     {weight: 0.0002, enabled: true}
+    energy_dist_fb:     {weight: 0.0002, enabled: false}
     joint_acc_l2:       {weight: 2.5e-7, enabled: true}
     joint_torques_l2:   {weight: 2.0e-4, enabled: true}
     quadruped_stand:    {weight: 0.5}

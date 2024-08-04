@@ -43,8 +43,7 @@ from collections import OrderedDict
 
 from ..utils.valuenorm import ValueNorm1, ValueNormFake, Normalizer
 from ..modules.distributions import IndependentNormal
-from ..modules.ensemble import EnsembleModule
-from ..modules.evidential import DenseNormalGamma, evidential_regression
+from ..modules.temporal import TConv
 from .common import *
 
 @dataclass
@@ -59,33 +58,29 @@ class PPOConfig:
     entropy_coef: float = 0.002
     vecnorm: Union[str, None] = None
     gae_gamma: float = 0.99
-    opt: str = "adam"
 
     actor_predict_std: bool = False
     orthogonal_init: bool = True
     layer_norm: bool = True
     value_norm: bool = False
 
-    aux_reward: float = 0.
-    aux_epochs: int = -1 # auxiliary epochs as described in Phasic Policy Gradients
-
     train_adapt: bool = True
     context_dim: int = 128
     reg_alpha: float = 0. # regularziation as decribed in Deep Whole Body Control 
+    
+    adapt_module_arch: str = "rnn"
     adapt_module: str = "mse"
-    ensemble: bool = False
-    adapt_reward: bool = False
-    tune_alpha: bool = True
-    target_kl: float = 1.0
+
     unbiased_critic: bool = True # whether use critic_adapt or critic_expert during finetuning
 
     phase: str = "train"
-    checkpoint_path: Union[str, None] = None
+
 
 cs = ConfigStore.instance()
 cs.store("ppo_adapt_train", node=PPOConfig(phase="train", vecnorm="train"), group="algo")
 cs.store("ppo_adapt_adapt", node=PPOConfig(phase="adapt", vecnorm="eval"), group="algo")
 cs.store("ppo_adapt_finetune", node=PPOConfig(phase="finetune", vecnorm="eval"), group="algo")
+
 
 class GRU(nn.Module):
     def __init__(
@@ -160,22 +155,6 @@ class GRUModuleStoch(nn.Module):
         return x_loc, x_scale, hx.contiguous()
 
 
-class GRUModuleEvidential(nn.Module):
-    def __init__(self, dim: int):
-        super().__init__()
-        self.mlp = make_mlp([128, 128])
-        self.gru = GRU(128, hidden_size=128, allow_none=False)
-        self.out = DenseNormalGamma(dim)
-    
-    def forward(self, x, is_init, hx):
-        x = self.mlp(x)
-        x, hx = self.gru(x, is_init, hx)
-        evi = self.out(x)
-        mu, v, alpha, beta = evi.chunk(4, dim=-1)
-        var = beta / (v * (alpha - 1))
-        return mu, var.sqrt(), evi, hx.contiguous()
-
-
 class PPOAdaptPolicy(TensorDictModuleBase):
     
     def __init__(
@@ -245,7 +224,13 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         
         self.encoder_priv(fake_input)
         
-        def make_adapt_module(mode: str="deter"):
+        def make_adapt_module(arch: str="rnn", mode: str="deter") -> TensorDictModule:
+            if arch == "cnn":
+                module = TensorDictModule(
+                    TConv(self.cfg.context_dim),
+                    [OBS_HIST_KEY], ["context_adapt"],
+                ).to(self.device)
+                return module
             if mode == "deter":
                 module = TensorDictModule(
                     GRUModule(self.context_dim), 
@@ -258,18 +243,12 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                     [OBS_KEY, "is_init", "context_adapt_hx"], 
                     ["context_adapt", "context_adapt_std", ("next", "context_adapt_hx")]
                 ).to(self.device)
-            elif mode == "evi":
-                module = TensorDictModule(
-                    GRUModuleEvidential(self.context_dim),
-                    [OBS_KEY, "is_init", "context_adapt_hx"],
-                    ["context_adapt", "context_adapt_std", "evidential", ("next", "context_adapt_hx")]
-                ).to(self.device)
             return module
         
-        self.adapt_module_a = make_adapt_module()
+        self.adapt_module_a = make_adapt_module(self.cfg.get("adapt_module", "rnn"))
         self.adapt_module_a(fake_input)
 
-        self.adapt_module_b = make_adapt_module()
+        self.adapt_module_b = make_adapt_module(self.cfg.get("adapt_module", "rnn"))
         self.adapt_module_b(fake_input)
         self.adapt_modules = {
             "mse": self.adapt_module_a,
@@ -306,10 +285,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
 
         # expert critic with privileged information
         critic_priv_keys = [OBS_KEY, OBS_PRIV_KEY]
-        if "params" in observation_spec.keys(True, True):
-            critic_priv_keys.append("params")
-        if "height_scan" in observation_spec.keys(True, True):
-            critic_priv_keys.append("cnn")
         
         self._critic_obs = TensorDictModule(make_critic(), [OBS_KEY], ["value_obs"]).to(self.device)
         self._critic_priv = TensorDictSequential(
@@ -650,13 +625,6 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         if reduce:
             nll = nll.mean()
         return nll
-    
-    def _evi(self, tensordict: TensorDictBase, adapt_module: TensorDictModule, reduce: bool=True):
-        adapt_module(tensordict)
-        loss = evidential_regression(tensordict["context_expert"], tensordict["evidential"], coeff=0.01).mean(-1, True)
-        if reduce:
-            loss = loss.mean()
-        return loss
 
     def _action_kl(self, tensordict: TensorDictBase, adapt_module: TensorDictModule, reduce: bool=True):
         with torch.no_grad():
