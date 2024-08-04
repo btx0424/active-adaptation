@@ -101,7 +101,7 @@ reward:
 termination:
   crash: {body_names_expr: [Head.*, "base"], t_thres: 0.5, z_thres: 0.}
   # joint_acc_exceeds: {thres: 5000}
-  cum_error: {thres: 0.5}
+  cum_error: {thres: 0.6}
 
 randomization:
   random_scale: [1.0, 1.2]

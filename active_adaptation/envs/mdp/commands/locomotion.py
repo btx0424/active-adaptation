@@ -606,7 +606,7 @@ class Impedance(Command):
             self.virtual_mass = self.asset.root_physx_view.get_masses().sum(1, True).to(self.device)
             self.force_ext_w = torch.zeros(self.num_envs, 3)
             
-            self._cum_error = torch.zeros(self.num_envs, 2)
+            self._cum_error = torch.zeros(self.num_envs, 3)
 
             self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
             self.xy = torch.tensor([1., 1., 0.], device=self.device)
@@ -647,8 +647,10 @@ class Impedance(Command):
 
         linvel_error = (self.command_linvel_w - self.asset.data.root_lin_vel_w).norm(dim=-1)
         pos_error = (self.command_pos_w - self.asset.data.root_pos_w).norm(dim=-1)
+        angvel_error = (self.command_angvel - self.asset.data.root_ang_vel_w[:, 2]).abs()
         self._cum_error[:, 0].add_(linvel_error * self.env.step_dt).mul_(0.99)
         self._cum_error[:, 1].add_(pos_error * self.env.step_dt).mul_(0.99)
+        self._cum_error[:, 2].add_(angvel_error * self.env.step_dt).mul_(0.99)
 
         command_pos_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_pos_w - self.asset.data.root_pos_w)
         command_setpoint_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_setpoint_w - self.asset.data.root_pos_w)
