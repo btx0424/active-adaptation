@@ -258,23 +258,25 @@ class root_linvel_b(Observation):
     
 
 class joint_pos(Observation):
-    def __init__(self, env, noise_std: float=0.0):
+    def __init__(self, env, joint_names: str=".*", noise_std: float=0.0):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids = self.asset.find_joints(joint_names)[0]
         self.noise_std = noise_std
 
     def compute(self) -> torch.Tensor:
-        return random_noise(self.asset.data.joint_pos, self.noise_std)
+        return random_noise(self.asset.data.joint_pos[:, self.joint_ids], self.noise_std)
 
 
 class joint_vel(Observation):
-    def __init__(self, env, noise_std: float=0.0):
+    def __init__(self, env, joint_names: str=".*", noise_std: float=0.0):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids = self.asset.find_joints(joint_names)[0]
         self.noise_std = noise_std
     
     def compute(self) -> torch.Tensor:
-        return random_noise(self.asset.data.joint_vel, self.noise_std)
+        return random_noise(self.asset.data.joint_vel[:, self.joint_ids], self.noise_std)
 
 class joint_acc(Observation):
     
@@ -794,13 +796,14 @@ class incoming_wrench(Observation):
 
 
 class joint_forces(Observation):
-    def __init__(self, env):
+    def __init__(self, env, joint_names: str=".*"):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids = self.asset.find_joints(joint_names)[0]
 
     def compute(self) -> torch.Tensor:
         measured_forces = self.asset.root_physx_view.get_dof_projected_joint_forces()
-        return measured_forces
+        return measured_forces[:, self.joint_ids]
 
 
 class jacobians(Observation):

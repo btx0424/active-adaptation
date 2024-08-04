@@ -9,6 +9,7 @@ defaults:
 num_envs: 4096
 max_episode_length: 1000
 
+scene: locomotion
 robot: a1
 terrain: plane
 
