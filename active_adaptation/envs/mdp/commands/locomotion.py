@@ -573,11 +573,15 @@ class Impedance(Command):
         env,
         linvel_x_range=(-1.0, 1.0),
         linvel_y_range=(-1.0, 1.0),
+        angvel_range=(-2.0, 2.0),
+        yaw_stiffness_range=(0.5, 0.5),
     ) -> None:
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
         self.linvel_x_range = linvel_x_range
         self.linvel_y_range = linvel_y_range
+        self.angvel_range = angvel_range
+        self.yaw_stiffness_range = yaw_stiffness_range
         self.resample_prob = 0.01
 
         with torch.device(self.device):
@@ -593,6 +597,8 @@ class Impedance(Command):
             self.desired_linvel_w = torch.zeros(self.num_envs, self.future, 3)
             self.desired_pos_w = torch.zeros(self.num_envs, self.future, 3)
             
+            self.desired_yaw = torch.zeros(self.num_envs)
+            self.yaw_stiffness = torch.zeros(self.num_envs)
             self.command_angvel = torch.zeros(self.num_envs)
             self.command_setpoint_w = torch.zeros(self.num_envs, 3)
             self.kp = torch.zeros(self.num_envs, 1)
@@ -646,10 +652,17 @@ class Impedance(Command):
 
         command_pos_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_pos_w - self.asset.data.root_pos_w)
         command_setpoint_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_setpoint_w - self.asset.data.root_pos_w)
-        
+
+        yaw_diff = math_utils.wrap_to_pi(self.desired_yaw - self.asset.data.heading_w)
+        self.command_angvel[:] = torch.clamp(
+            self.yaw_stiffness * yaw_diff,
+            min=self.angvel_range[0], max=self.angvel_range[1]
+        )
+
         self.command_linvel[:] = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_linvel_w)
         self.command_speed[:] = self.command_linvel.norm(dim=-1, keepdim=True)
         self.command[:, :2] = self.command_linvel[:, :2]
+        self.command[:, 2] = self.command_angvel
         self.command[:, 2:4] = command_pos_b[:, :2]
         self.command[:, 4:6] = command_setpoint_b[:, :2]
 
@@ -678,6 +691,9 @@ class Impedance(Command):
         force_ext_w[:, 1].uniform_(-40, 40)
         force_ext_w[:, 2].uniform_(-10, 10)
         self.force_ext_w[env_ids] = force_ext_w
+
+        self.desired_yaw[env_ids] = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
+        self.yaw_stiffness[env_ids] = torch.empty(len(env_ids), device=self.device).uniform_(*self.yaw_stiffness_range)
 
     def debug_draw(self):
         self.env.debug_draw.vector(
