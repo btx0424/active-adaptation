@@ -101,6 +101,6 @@ class impact_exceeds(Termination):
         self.body_ids = self.contact_sensor.find_bodies(body_names)[0]
     
     def __call__(self) -> torch.Tensor:
-        impact_force = self.contact_sensor.data.net_forces_w[:, self.body_ids]
-        return (impact_force.norm(dim=-1) > self.thres).any(1, True)
+        impact_force = self.contact_sensor.data.net_forces_w_history[:, :, self.body_ids]
+        return (impact_force.norm(dim=-1).mean(1) > self.thres).any(1, True)
 

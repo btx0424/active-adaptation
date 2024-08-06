@@ -169,10 +169,6 @@ reward:
     # arm_joint_acc_penalty: {weight: 2e-4, enabled: true}
     # arm_joint_acc_l1: {weight: 1.0, enabled: false}
 
-termination:
-  crash: {body_names_expr: [Head.*, "base", "(arm_link.*|gripper.*)"], t_thres: 0.1, z_thres: 0.}
-  # joint_acc_exceeds: {thres: 5000}
-  # ee_cum_error: {thres: [8.0, 8.0]}
 
 randomization:
 #   random_scale: [1.0, 1.2]

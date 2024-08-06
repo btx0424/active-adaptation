@@ -9,3 +9,7 @@ algo:
 
 task:
   scene: locomotion
+
+  termination:
+    crash: {body_names_expr: [Head.*, "base", "(arm_link.*|gripper.*)"], t_thres: 0.1, z_thres: 0.}
+  

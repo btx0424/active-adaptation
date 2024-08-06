@@ -16,3 +16,5 @@ task:
     high:
       door_handle:  {weight: 1.0, enabled: true}
       door_rotate:  {weight: 1.0, enabled: true}
+  termination:
+    impact_exceeds: {body_names: [Head.*, "base", ".*_thigh"], thres: 200}
