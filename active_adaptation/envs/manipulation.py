@@ -764,11 +764,12 @@ class QuadrupedManip(LocomotionEnv):
             self.door: DoorArticulation = self.env.scene["door"]
             
             self.door_jpos_last = self.door.data.joint_pos[:, self.door.door_joint_id].clone()
+            self.door_jpos = self.door_jpos_last.clone()
 
         def update(self):
-            door_jpos = self.door.data.joint_pos[:, self.door.door_joint_id]
-            self.progress = self.door_jpos_last.abs() - door_jpos.abs()
-            self.door_jpos_last = door_jpos
+            self.door_jpos_last[:] = self.door_jpos
+            self.door_jpos[:] = self.door.data.joint_pos[:, self.door.door_joint_id]
+            self.progress = self.door_jpos.abs() - self.door_jpos_last.abs()
 
         def compute(self) -> torch.Tensor:
             return (self.progress * (self.env.episode_length_buf > 0)).unsqueeze(1)
