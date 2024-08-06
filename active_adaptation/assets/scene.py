@@ -1,8 +1,12 @@
 import torch
+import os
 
 from omni.isaac.lab.assets import Articulation, ArticulationCfg
 from omni.isaac.lab.actuators import IdealPDActuatorCfg, ImplicitActuatorCfg, DCMotorCfg
 import omni.isaac.lab.sim as sim_utils
+
+
+ASSET_PATH = os.path.dirname(__file__)
 
 
 class DoorArticulation(Articulation):
@@ -42,7 +46,7 @@ DOOR_CFG = ArticulationCfg(
     class_type=DoorArticulation,
     prim_path="{ENV_REGEX_NS}/Door",
     spawn=sim_utils.UsdFileCfg(
-        usd_path="/home/btx0424/isaac_lab/active-adaptation/active_adaptation/assets/Doors/DoorC_Flattened.usd",
+        usd_path=f"{ASSET_PATH}/Doors/DoorC_Flattened.usd",
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
             solver_position_iteration_count=4,
             solver_velocity_iteration_count=0,
