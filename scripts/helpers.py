@@ -53,7 +53,39 @@ class EpisodeStats:
     def __len__(self):
         return len(self._stats)
 
+def parse_checkpoint_path(path: str):
+    if path is None:
+        return None
+    
+    if path.startswith("run:"):
+        api = wandb.Api()
+        run = api.run(path[4:])
+        root = os.path.join(os.path.dirname(__file__), "wandb", run.name)
+        os.makedirs(root, exist_ok=True)
+        
+        checkpoints = []
+        for file in run.files():
+            print(file.name)
+            if "checkpoint" in file.name:
+                checkpoints.append(file)
+            elif file.name == "files/cfg.yaml":
+                file.download(root, replace=True)
+        
+        def sort_by_time(file):
+            number_str = file.name[:-3].split("_")[-1]
+            if number_str == "final":
+                return 100000
+            else:
+                return int(number_str)
 
+        checkpoints.sort(key=sort_by_time)
+        checkpoint = checkpoints[-1]
+        path = os.path.join(root, checkpoint.name)
+        print(f"Downloading checkpoint to {path}")
+        checkpoint.download(root, replace=True)
+    return path
+
+    
 def make_env_policy(cfg: DictConfig):
     OmegaConf.set_struct(cfg, False)
 
@@ -62,7 +94,7 @@ def make_env_policy(cfg: DictConfig):
     from configs.rough import LocomotionEnvCfg
     from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker, CatFrames, VecNorm, StepCounter
 
-    checkpoint_path = cfg.checkpoint_path
+    checkpoint_path = parse_checkpoint_path(cfg.checkpoint_path)
     if checkpoint_path is not None:
         state_dict = torch.load(checkpoint_path)
     else:

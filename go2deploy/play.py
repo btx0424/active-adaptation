@@ -6,6 +6,8 @@ import numpy as np
 import math
 import torch
 import itertools
+import h5py
+import argparse
 
 from scipy.spatial.transform import Rotation as R
 from tensordict import TensorDict
@@ -37,8 +39,10 @@ class Robot:
     smoothing_length: int = 5
     smoothing_ratio: float = 0.4
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, log_file: h5py.File=None):
         self.cfg = cfg
+        self.log_file = log_file
+
         self._robot = go2py.RobotIface()
         self._robot.start_control()
         self.default_joint_pos = np.array(
@@ -51,6 +55,7 @@ class Robot:
         
         self.dt = 0.02
         self.latency = 0.0
+        self.rpy = np.zeros(3)
         self.angvel_history = np.zeros((3, self.smoothing_length))
         self.projected_gravity_history = np.zeros((3, self.smoothing_length))
         self.angvel = np.zeros(3)
@@ -60,12 +65,26 @@ class Robot:
         self.rxy = 0.
         self.action_buf_steps = 2
         self.last_action = np.zeros(12)
+        self.start_t = time.perf_counter()
         self.timestamp = time.perf_counter()
+
+        self.update()
+        _obs = self._compute_obs()
+        self.obs_dim = _obs.shape[0]
+        if self.log_file is not None:
+            default_len = 50 * 60
+            self.log_file.attrs["cursor"] = 0
+            log_file.create_dataset("observation", (default_len, self.obs_dim), maxshape=(None, self.obs_dim))
+            log_file.create_dataset("action", (default_len, 12), maxshape=(None, 12))
+
+            log_file.create_dataset("jpos", (default_len, 12), maxshape=(None, 12))
+            log_file.create_dataset("jvel", (default_len, 12), maxshape=(None, 12))
+            log_file.create_dataset("quat", (default_len, 4), maxshape=(None, 4))
+            log_file.create_dataset("linvel", (default_len, 3), maxshape=(None, 3))
+            log_file.create_dataset("angvel", (default_len, 3), maxshape=(None, 3))
     
     def reset(self):
         self.start_t = time.perf_counter()
-        self.prev_actions = np.zeros((12,))
-        self.rpy = self._robot.get_rpy()
         self.update()
         return self._compute_obs()
     
@@ -85,6 +104,9 @@ class Robot:
             self.rpy, angvel
         ) = np.split(self._robot.get_full_state(), [12, 24, 36, 39])
         
+        self.jpos_sim = self.sdk_to_orbit(self.jpos_sdk)
+        self.jvel_sim = self.sdk_to_orbit(self.jvel_sdk)
+
         dt = time.perf_counter() - self.timestamp
         
         # angvel = ((self.rpy - self.prev_rpy) / dt).clip(-3, 3)
@@ -112,6 +134,7 @@ class Robot:
         # heading = np.array([1., 0.])
         # self.command[2:4] = heading
         self.timestamp = time.perf_counter()
+        self.step_count = 0
     
     def step(self, action=None):
         if action is not None:
@@ -124,6 +147,8 @@ class Robot:
             jpos_target = jpos_target.clip(-np.pi, np.pi)
             self._robot.set_command(self.orbit_to_sdk(jpos_target))
         self.update()
+        self._maybe_log()
+        self.step_count += 1
         return self._compute_obs()
 
     def _compute_obs(self):
@@ -133,10 +158,10 @@ class Robot:
         
         obs = [
             self.command,
-            angvel,
+            # angvel,
             self.projected_gravity,
-            self.sdk_to_orbit(self.jpos_sdk),
-            self.sdk_to_orbit(self.jvel_sdk),
+            self.jpos_sim,
+            self.jvel_sim,
             self.action_buf[:, :self.action_buf_steps].reshape(-1),
         ]
         # obs = [
@@ -151,6 +176,22 @@ class Robot:
         # ]
         return np.concatenate(obs, dtype=np.float32)
     
+    def _maybe_log(self):
+        if self.log_file is None:
+            return
+        self.log_file["action"][self.step_count] = self.action_buf[:, 0]
+        self.log_file["angvel"][self.step_count] = self.angvel
+        self.log_file["linvel"][self.step_count] = self._robot.get_velocity()
+        self.log_file["jpos"][self.step_count] = self.jpos_sim
+        self.log_file["jvel"][self.step_count] = self.jvel_sim
+        self.log_file.attrs["cursor"] = self.step_count
+
+        if self.step_count == self.log_file["jpos"].len() - 1:
+            new_len = self.step_count + 1 + 3000
+            print(f"Extend log size to {new_len}.")
+            for key, value in self.log_file.items():
+                value.resize((new_len, value.shape[1]))
+
     @staticmethod
     def orbit_to_sdk(joints: np.ndarray):
         return np.flip(joints.reshape(3, 2, 2), axis=2).transpose(1, 2, 0).reshape(-1)
@@ -172,9 +213,11 @@ def mix(a, b, alpha):
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 
 def main():
-    # import yaml
-    # with open("cfg.yaml", "r") as f:
-    #     cfg = yaml.safe_load(f)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-l", "--log", action="store_true", default=False)
+    args = parser.parse_args()
+
+    timestr = datetime.datetime.now().strftime("%m-%d_%H-%M-%S")
     setproctitle("play_go2")
 
     go2py.init_channel("enp3s0")
@@ -185,12 +228,18 @@ def main():
         0.0, 0.9, -1.8, 
         0.0, 0.9, -1.8
     ])
-    robot = Robot({})
+
+    if args.log:
+        log_file = h5py.File(f"log_{timestr}.h5py", "a")
+    else:
+        log_file = None
+
+    robot = Robot({}, log_file)
     
     robot._robot.set_kp(20.)
     robot._robot.set_kd(0.5)
 
-    path = "policy.pt"
+    path = "policy_noangvel.pt"
     policy = torch.load(path)
     policy.module[0].set_missing_tolerance(True)
     # policy = lambda td: torch.zeros(12)
@@ -202,10 +251,7 @@ def main():
     print(policy)
     # policy.module.pop(0)
 
-    timestr = datetime.datetime.now().strftime("%m-%d_%H-%M-%S")
     try:
-        f = open(f"{timestr}.log", "w")
-
         td = TensorDict({
             "policy": torch.as_tensor(obs),
             "is_init": torch.tensor(1, dtype=bool),
@@ -235,13 +281,9 @@ def main():
 
                 td = td["next"]
                 time.sleep(max(0, 0.02 - (time.perf_counter() - start)))
-                # if i % 2 == 0:
-                #     f.write(str(robot.projected_gravity)+"\n")
 
     except KeyboardInterrupt:
-        pass
-    finally:
-        f.close()
+        print("End")
         
 if __name__ == "__main__":
     main()

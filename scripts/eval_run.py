@@ -33,7 +33,9 @@ def main():
     run = api.run(args.run_path)
     print(f"Loading run {run.name}")
 
-    root = os.path.dirname(__file__)
+    root = os.path.join(os.path.dirname(__file__), "wandb", run.name)
+    os.makedirs(root, exist_ok=True)
+
     checkpoints = []
     for file in run.files():
         print(file.name)
@@ -54,7 +56,7 @@ def main():
     checkpoints.sort(key=sort_by_time)
     checkpoint = checkpoints[-1]
     print(f"Downloading {checkpoint.name}")
-    checkpoint.download(replace=True)
+    checkpoint.download(root, replace=True)
 
     # `run.config` does not preserve order of the keys
     # so we need to manually load the config file :(
@@ -66,7 +68,7 @@ def main():
     cfg = OmegaConf.load(os.path.join(root, "files", "cfg.yaml"))
     OmegaConf.set_struct(cfg, False)
 
-    cfg["checkpoint_path"] = os.path.join(os.path.dirname(__file__), checkpoint.name)
+    cfg["checkpoint_path"] = os.path.join(root, checkpoint.name)
     cfg["vecnorm"] = "eval"
     cfg["algo"]["phase"] = "adapt"
     # cfg['algo']["phase"] = "finetune"
