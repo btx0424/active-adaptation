@@ -104,6 +104,7 @@ observation:
     ee_vel:       {ee_name: "${task.ee_name}"}
 
 reward:
+  _clip_: false
   loco:
     survival:           {weight: 2.0, enabled: true}
     base_height_l1:     {weight: 1.0, enabled: true, target_height: 0.3}

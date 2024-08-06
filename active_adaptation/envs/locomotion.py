@@ -59,10 +59,6 @@ class LocomotionEnv(Env):
         # in `self._reset_callbacks`
         # self.command_manager.reset(env_ids=env_ids)
         # self.action_manager.reset(env_ids=env_ids)
-    
-    def _update(self):
-        super()._update()
-        self.command_manager.update()
 
     def render(self, mode: str = "human"):
         robot_pos = self.robot.data.root_pos_w[self.lookat_env_i].cpu()

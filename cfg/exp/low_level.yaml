@@ -4,5 +4,8 @@ defaults:
   - override /task: Go2M_gait
   - override /algo: ppo_hier
 
+algo:
+  mode: low
+
 task:
   scene: locomotion

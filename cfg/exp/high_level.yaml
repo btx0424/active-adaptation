@@ -1,0 +1,18 @@
+# @package _global_
+
+defaults:
+  - override /task: Go2M_gait
+  - override /algo: ppo_hier
+
+algo:
+  mode: high
+
+task:
+  scene: locomanip
+  observation:
+    planner:
+      door_state:   {}
+  reward:
+    high:
+      door_handle:  {weight: 1.0, enabled: true}
+      door_rotate:  {weight: 1.0, enabled: true}

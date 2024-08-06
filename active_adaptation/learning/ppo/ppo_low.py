@@ -57,8 +57,10 @@ class PPOConfig:
     entropy_coef: float = 0.002
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
+    clip_rewards: bool = False
 
     in_keys: Union[List, None] = field(default_factory=lambda: [CMD_KEY, OBS_KEY])
+    action_key: str = ACTION_KEY
 
 cs = ConfigStore.instance()
 cs.store("ppo_low", node=PPOConfig, group="algo")
@@ -82,7 +84,10 @@ class LowPolicy(TensorDictModuleBase):
         self.max_grad_norm = 1.0
         self.clip_param = self.cfg.clip_param
         self.critic_loss_fn = nn.MSELoss(reduction="none")
+        self.action_key = self.cfg.action_key
         self.action_dim = action_spec.shape[-1]
+        self.log_prob_key = f"log_prob_{self.cfg.action_key}"
+
         self.gae = GAE(0.99, 0.95)
 
         if cfg.value_norm:
@@ -93,7 +98,7 @@ class LowPolicy(TensorDictModuleBase):
 
         fake_input = observation_spec.zero()
         
-        self.preprocess = CatTensors([CMD_KEY, OBS_KEY], "_obs_low", del_keys=False)
+        self.preprocess = CatTensors(self.cfg.in_keys, "_obs_low", del_keys=False)
 
         def make_encoder(out_key: str):
             modules = [
@@ -109,9 +114,10 @@ class LowPolicy(TensorDictModuleBase):
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=actor_module,
             in_keys=["loc", "scale"],
-            out_keys=[ACTION_KEY],
+            out_keys=[self.action_key],
             distribution_class=IndependentNormal,
-            return_log_prob=True
+            return_log_prob=True,
+            log_prob_key=self.log_prob_key
         ).to(self.device)
         
         _critic = nn.Sequential(make_mlp([256, 128]), nn.Linear(128, 1))
@@ -151,6 +157,12 @@ class LowPolicy(TensorDictModuleBase):
     def train_op(self, tensordict: TensorDict):
         tensordict = tensordict.copy()
         infos = []
+        
+        if self.cfg.clip_rewards:
+            neg_rew = tensordict[REWARD_KEY] < 0.
+            tensordict[REWARD_KEY] = tensordict[REWARD_KEY].clamp(0.)
+            infos["reward_clip_ratio"] = neg_rew.sum().item() / tensordict.numel()
+        
         self._compute_advantage(tensordict, self.critic, "adv", "ret", update_value_norm=True)
         tensordict["adv"] = normalize(tensordict["adv"], subtract_mean=True)
 
@@ -160,7 +172,7 @@ class LowPolicy(TensorDictModuleBase):
                 infos.append(TensorDict(self._update(minibatch), []))
         
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
-        infos["value_mean"] = tensordict["ret"].mean().item()
+        infos["critic/value_mean"] = tensordict["ret"].mean().item()
         return infos
 
     @torch.no_grad()
@@ -198,11 +210,11 @@ class LowPolicy(TensorDictModuleBase):
     # @torch.compile
     def _update(self, tensordict: TensorDict):
         dist = self.actor.get_dist(tensordict)
-        log_probs = dist.log_prob(tensordict[ACTION_KEY])
+        log_probs = dist.log_prob(tensordict[self.action_key])
         entropy = dist.entropy().mean()
 
         adv = tensordict["adv"]
-        ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
+        ratio = torch.exp(log_probs - tensordict[self.log_prob_key]).unsqueeze(-1)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
         policy_loss = - torch.mean(torch.min(surr1, surr2))
@@ -221,13 +233,13 @@ class LowPolicy(TensorDictModuleBase):
         self.opt.step()
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
         return {
-            "policy_loss": policy_loss,
-            "value_loss": value_loss,
-            "entropy": entropy,
-            "noise_std": tensordict["scale"].mean(),
-            "actor_grad_norm": actor_grad_norm,
-            "critic_grad_norm": critic_grad_norm,
-            "explained_var": explained_var,
+            "actor/policy_loss": policy_loss,
+            "actor/entropy": entropy,
+            "actor/noise_std": tensordict["scale"].mean(),
+            "actor/grad_norm": actor_grad_norm,
+            "critic/value_loss": value_loss,
+            "critic/explained_var": explained_var,
+            "critic/grad_norm": critic_grad_norm,
         }
 
     def state_dict(self):

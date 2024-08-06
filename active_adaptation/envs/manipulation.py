@@ -6,6 +6,7 @@ from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.utils.math import yaw_quat, quat_from_euler_xyz, wrap_to_pi, quat_inv, quat_mul
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
+from active_adaptation.assets import DoorArticulation
 
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
@@ -726,6 +727,70 @@ class QuadrupedManip(LocomotionEnv):
             r = 0.5 * (r + r.square() * r.sign())
             r = r * self.asset.data.arm_base_control.clamp(0.)
             return r
+
+    class door_handle(Reward):
+        def __init__(self, env, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+            self.asset: Articulation = self.env.scene["robot"]
+            self.door: DoorArticulation = self.env.scene["door"]
+            self.ee_id = self.asset.find_bodies("grip_point")[0][0]
+            
+            with torch.device(self.device):
+                self.diff = torch.zeros(self.num_envs, 3)
+                self.distance = torch.zeros(self.num_envs, 1)
+                self.distance_last = torch.zeros(self.num_envs, 1)
+            
+            self.handle_pos_w: torch.Tensor
+            self.ee_pos_w: torch.Tensor
+
+        def update(self):
+            self.handle_pos_w = self.door.data.body_pos_w[:, self.door.handle_body_id]
+            self.ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id]
+            self.distance_last[:] = self.distance
+            self.diff[:] = self.handle_pos_w - self.ee_pos_w
+            self.distance[:] = self.diff.norm(dim=-1, keepdim=True)
+        
+        def compute(self) -> torch.Tensor:
+            valid = (self.env.episode_length_buf > 0).unsqueeze(1)
+            return (self.distance_last - self.distance) * valid
+        
+        def debug_draw(self):
+            self.env.debug_draw.vector(self.ee_pos_w, self.diff, color=(1., 0.1, 0.1, 1.))
+
+    class door_rotate(Reward):
+        def __init__(self, env, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+            self.asset: Articulation = self.env.scene["robot"]
+            self.door: DoorArticulation = self.env.scene["door"]
+            
+            self.door_jpos_last = self.door.data.joint_pos[:, self.door.door_joint_id].clone()
+
+        def update(self):
+            door_jpos = self.door.data.joint_pos[:, self.door.door_joint_id]
+            self.progress = self.door_jpos_last.abs() - door_jpos.abs()
+            self.door_jpos_last = door_jpos
+
+        def compute(self) -> torch.Tensor:
+            return (self.progress * (self.env.episode_length_buf > 0)).unsqueeze(1)
+
+    class door_state(Observation):
+        def __init__(self, env, mask_ratio: float = 0):
+            super().__init__(env, mask_ratio)
+            self.asset: Articulation = self.env.scene["robot"]
+            self.door: DoorArticulation = self.env.scene["door"]
+
+        def compute(self) -> torch.Tensor:
+            door_pos = quat_rotate_inverse(
+                self.asset.data.root_quat_w,
+                self.door.data.root_pos_w - self.asset.data.root_pos_w
+            )
+            handle_pos = quat_rotate_inverse(
+                self.asset.data.root_quat_w,
+                self.door.data.body_pos_w[:, self.door.handle_body_id] - self.asset.data.root_pos_w
+            )
+            jpos = self.door.data.joint_pos
+            jvel = self.door.data.joint_vel
+            return torch.cat([door_pos, handle_pos, jpos, jvel], dim=1)
 
 
 def random_scale(x: torch.Tensor, low: float, high: float):

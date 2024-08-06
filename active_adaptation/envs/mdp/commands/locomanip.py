@@ -1045,8 +1045,8 @@ class CommandEEPose_UMI(Command):
         return quat_rotate_inverse(quat, pos_w - root_pos_w)
 
     def step(self, substep: int):
-        force_b = self.asset._external_force_b.clone()
-        torque_b = self.asset._external_torque_b.clone()
+        forces_b = self.asset._external_force_b.clone()
+        torques_b = self.asset._external_torque_b.clone()
         
         ee_quat = self.asset.data.body_quat_w[:, self.ee_id]
         ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id]
@@ -1063,9 +1063,9 @@ class CommandEEPose_UMI(Command):
         self.ee_force_b.add_(self.spring_force * self.force_type_mask[:, 2].unsqueeze(-1))
         self.ee_force_b = torch.where(self.apply_force, self.ee_force_b / self.force_type_mask.sum(1, True), 0.)
 
-        force_b[:, self.ee_id] = self.ee_force_b
+        forces_b[:, self.ee_id] += self.ee_force_b
         
-        self.asset.set_external_force_and_torque(force_b, torque_b)
+        self.asset.set_external_force_and_torque(forces_b, torques_b)
 
     def reset(self, env_ids: torch.Tensor):
         # TODO: check reset logic

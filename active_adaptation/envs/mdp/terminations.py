@@ -91,3 +91,16 @@ class joint_acc_exceeds(Termination):
             (self.asset.data.joint_acc.abs() > self.thres).any(1, True)
         )
 
+class impact_exceeds(Termination):
+    def __init__(self, env, body_names: str, thres: float):
+        super().__init__(env)
+        self.thres = thres
+        self.asset: Articulation = self.env.scene["robot"]
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+
+        self.body_ids = self.contact_sensor.find_bodies(body_names)[0]
+    
+    def __call__(self) -> torch.Tensor:
+        impact_force = self.contact_sensor.data.net_forces_w[:, self.body_ids]
+        return (impact_force.norm(dim=-1) > self.thres).any(1, True)
+

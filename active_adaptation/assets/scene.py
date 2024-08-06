@@ -22,11 +22,15 @@ class DoorArticulation(Articulation):
             self.unlock_pos = torch.zeros(self.num_instances, device=self.device)
             self.stiffness = torch.zeros(self.num_instances, device=self.device)
             self.damping = torch.zeros(self.num_instances, device=self.device)
+            
+            self.default_jpos = torch.zeros_like(self.data.joint_pos[0])
+            self.default_jvel = torch.zeros_like(self.data.joint_vel[0])
 
         def reset(self, env_ids: torch.Tensor):
             super().reset(env_ids)
             self.unlock_pos[env_ids] = (torch.pi / 6)
             self.stiffness[env_ids] = 100.
+            self.write_joint_state_to_sim(self.default_jpos, self.default_jvel, env_ids=env_ids)
 
         def update(self, dt: float):
             super().update(dt)

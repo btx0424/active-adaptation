@@ -126,6 +126,7 @@ class Env(EnvBase):
 
         self.command_manager: mdp.Command = hydra.utils.instantiate(self.cfg.command, env=self)
         self._step_callbacks.append(self.command_manager.step)
+        self._update_callbacks.append(self.command_manager.update)
         self._reset_callbacks.append(self.command_manager.reset)
         self._debug_draw_callbacks.append(self.command_manager.debug_draw)
         
@@ -164,6 +165,7 @@ class Env(EnvBase):
         reward_spec = CompositeSpec({})
 
         # parse rewards
+        self.clip_rewards = self.cfg.reward.pop("_clip_", True)
         self.reward_groups = OrderedDict()
         for group_name, func_specs in self.cfg.reward.items():
             print(f"Reward group: {group_name}")
@@ -301,7 +303,8 @@ class Env(EnvBase):
             self.stats[group, "reward_clip_ratio"].add_(neg_rewar.float())
 
         rewards = torch.cat(rewards, 1)
-        rewards = rewards.clamp(min=0.)
+        if self.clip_rewards:
+            rewards = rewards.clamp(min=0.)
 
         self.stats["episode_len"][:] = self.episode_length_buf.unsqueeze(1)
         self.stats["success"][:] = (self.episode_length_buf >= self.max_episode_length * 0.9).unsqueeze(1).float()

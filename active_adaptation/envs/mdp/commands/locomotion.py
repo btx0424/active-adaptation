@@ -32,6 +32,9 @@ class Command:
     def step(self, substep: int):
         pass
 
+    def update(self):
+        pass
+    
     def reset(self, env_ids: torch.Tensor):
         pass
 

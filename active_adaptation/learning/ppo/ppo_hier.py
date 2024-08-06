@@ -51,7 +51,10 @@ class Config:
     mode: str = "high"
     train_every: int = 32
 
-    in_keys: Union[List, None] = field(default_factory=lambda: [OBS_KEY, CMD_KEY])
+    ppo_epochs: int = 5
+    num_minibatches: int = 8
+
+    in_keys: Union[List, None] = field(default_factory=lambda: [OBS_KEY, CMD_KEY, "planner"])
 
 cs = ConfigStore.instance()
 cs.store("ppo_hier", node=Config, group="algo")
@@ -96,12 +99,18 @@ class HierarchicalPolicy(TensorDictModuleBase):
         self.observation_spec = observation_spec
         self.action_spec = action_spec
         self.reward_spec = reward_spec
-
+        self.command_dim = self.observation_spec["command"].shape[-1]
+        
         self._make_low_level_policy()
+        self._make_high_level_policy()
         
     def _make_low_level_policy(self):
         from .ppo_low import LowPolicy, PPOConfig
-        cfg = PPOConfig()
+        cfg = PPOConfig(
+            in_keys=[OBS_KEY, CMD_KEY],
+            action_key=ACTION_KEY, 
+            clip_rewards=True
+        )
         policy = LowPolicy(
             cfg, 
             self.observation_spec, 
@@ -111,21 +120,54 @@ class HierarchicalPolicy(TensorDictModuleBase):
         )
         self.policy_low = policy
     
+    def _make_high_level_policy(self):
+        if self.cfg.mode != "high":
+            return
+        from .ppo_low import LowPolicy, PPOConfig
+        cfg = PPOConfig(
+            in_keys=[OBS_KEY, "planner"],
+            action_key="action_high", 
+            clip_rewards=False
+        )
+        policy = LowPolicy(
+            cfg, 
+            self.observation_spec, 
+            self.observation_spec["command"], 
+            self.reward_spec, 
+            device=self.device
+        )
+        self.policy_high = policy
+    
     def get_rollout_policy(self, mode: str="train"):
         if self.cfg.mode == "low":
             policy = self.policy_low.get_rollout_policy(mode)
         elif self.cfg.mode == "high":
             policy = TensorDictSequential(
-                TensorDictModule(lambda x: x.clone(), ["command"], ["action_high"]),
+                self.policy_high.get_rollout_policy(mode),
                 Interface(horizon=1),
                 self.policy_low.get_rollout_policy(mode)
             )
         return policy
 
     def train_op(self, tensordict: TensorDictBase):
-        info = self.policy_low.train_op(tensordict.copy())
-        return info
+        
+        info = {}
+        if self.cfg.mode == "low":
+            tensordict_low = tensordict.copy()
+            tensordict_low[REWARD_KEY] = tensordict[REWARD_KEY][..., :-1]
+            info_low = self.policy_low.train_op(tensordict_low)
+            for k, v in info_low.items():
+                info[f"low/{k}"] = v
 
+        if self.cfg.mode == "high":
+            tensordict_high = tensordict.copy()
+            tensordict_high[REWARD_KEY] = tensordict[REWARD_KEY][..., [-1]]
+            info_high = (self.policy_high.train_op(tensordict_high))
+            for k, v in info_high.items():
+                info[f"high/{k}"] = v
+        
+        return info
+    
     def state_dict(self):
         state_dict = OrderedDict()
         for name, module in self.named_children():
@@ -143,7 +185,9 @@ class HierarchicalPolicy(TensorDictModuleBase):
             except Exception as e:
                 warnings.warn(f"Failed to load state dict for {name}: {str(e)}")
                 failed_keys.append(name)
-        print(f"Successfully loaded {succeed_keys}.")
+        
+        msg = f"[{self}]: Successfully loaded {succeed_keys}."
+        print(termcolor.colored(msg, "green"))
         return failed_keys
 
 
