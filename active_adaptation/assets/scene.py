@@ -33,13 +33,22 @@ class DoorArticulation(Articulation):
         def reset(self, env_ids: torch.Tensor):
             super().reset(env_ids)
             self.unlock_pos[env_ids] = (torch.pi / 6)
-            self.stiffness[env_ids] = 100.
+            self.stiffness[env_ids] = 10000.
+            self.damping[env_ids] = 100.
             self.write_joint_state_to_sim(self.default_jpos, self.default_jvel, env_ids=env_ids)
 
         def update(self, dt: float):
             super().update(dt)
-            self.locked[:] = self.data.joint_pos[:, self.handle_joint_id] > self.unlock_pos
+            self.locked[:] = (
+                (self.data.joint_pos[:, self.door_joint_id].abs() < 0.05)
+                & (self.data.joint_pos[:, self.handle_joint_id].abs() < self.unlock_pos)
+            )
             self.actuators["door_joints"].stiffness[:, self.door_joint_id] = torch.where(self.locked, self.stiffness, 0.)
+            self.actuators["door_joints"].damping[:, self.door_joint_id] = torch.where(self.locked, self.damping, 0.02)
+
+        def write_data_to_sim(self):
+            self.set_joint_position_target(torch.zeros_like(self.data.joint_pos))
+            super().write_data_to_sim()
 
 
 DOOR_CFG = ArticulationCfg(
@@ -57,13 +66,13 @@ DOOR_CFG = ArticulationCfg(
         pos=(0.5, 0.0, 0.0),
     ),
     actuators={
-        "door_joints": DCMotorCfg(
+        "door_joints": IdealPDActuatorCfg(
             joint_names_expr=".*",
             stiffness=0.5, 
             damping=0.02,
             friction=0.01,
-            saturation_effort=20,
-            velocity_limit=5,
+            effort_limit=50000,
+            velocity_limit=10,
         )
     },
 )

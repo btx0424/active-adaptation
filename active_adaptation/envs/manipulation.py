@@ -757,6 +757,23 @@ class QuadrupedManip(LocomotionEnv):
         def debug_draw(self):
             self.env.debug_draw.vector(self.ee_pos_w, self.diff, color=(1., 0.1, 0.1, 1.))
 
+    class door_unlock(Reward):
+        def __init__(self, env, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+            self.asset: Articulation = self.env.scene["robot"]
+            self.door: DoorArticulation = self.env.scene["door"]
+
+            self.handle_rotate = torch.zeros(self.num_envs, device=self.device)
+            self.handle_rotate_last = torch.zeros(self.num_envs, device=self.device)
+        
+        def update(self):
+            self.handle_rotate_last[:] = self.handle_rotate
+            self.handle_rotate[:] = self.door.data.joint_pos[:, self.door.handle_joint_id]
+
+        def compute(self) -> torch.Tensor:
+            progress = self.handle_rotate.abs() - self.handle_rotate_last.abs()
+            return  (progress / self.door.unlock_pos).unsqueeze(1)
+
     class door_rotate(Reward):
         def __init__(self, env, weight: float, enabled: bool = True):
             super().__init__(env, weight, enabled)
