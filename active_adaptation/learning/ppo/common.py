@@ -36,7 +36,8 @@ OBS_HIST_KEY = "policy_h"
 ACTION_KEY = "action" # ("agents", "action")
 REWARD_KEY = ("next", "reward") # ("agents", "reward")
 # DONE_KEY = ("next", "done")
-DONE_KEY = ("next", "terminated")
+TERM_KEY = ("next", "terminated")
+DONE_KEY = ("next", "done")
 CMD_KEY = "command"
 
 
@@ -161,21 +162,23 @@ class GAE(nn.Module):
     def forward(
         self, 
         reward: torch.Tensor, 
-        terminated: torch.Tensor, 
+        terminated: torch.Tensor,
+        done: torch.Tensor, 
         value: torch.Tensor, 
         next_value: torch.Tensor
     ):
         num_steps = terminated.shape[1]
         advantages = torch.zeros_like(reward)
-        not_done = 1 - terminated.float()
+        nonterm = 1 - terminated.float() # whether to backup value
+        nondone = 1 - done.float()       # whether to backup reward
         gae = 0
         for step in reversed(range(num_steps)):
             if self.fake_bootstrap:
                 next_value_t = torch.where(terminated[:, step], value[:, step], next_value[:, step])
             else:
-                next_value_t = next_value[:, step] * not_done[:, step]
+                next_value_t = next_value[:, step] * nonterm[:, step]
             delta = reward[:, step] + self.gamma * next_value_t - value[:, step]
-            advantages[:, step] = gae = delta + (self.gamma * self.lmbda * not_done[:, step] * gae)
+            advantages[:, step] = gae = delta + (self.gamma * self.lmbda * nondone[:, step] * gae)
         returns = advantages + value
         return advantages, returns
 

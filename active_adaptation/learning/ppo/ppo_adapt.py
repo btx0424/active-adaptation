@@ -525,7 +525,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
                 losses["critic/value_loss_adapt"] = self._value_loss(
                     minibatch, self._critic_adapt, "value_adapt", "ret_adapt").mean()
                 loss = sum(v for k, v in losses.items() if "loss" in k)
-                
+
                 self.opt_expert.zero_grad(set_to_none=True)
                 self.opt_target.zero_grad(set_to_none=True)
                 loss.backward()
@@ -583,12 +583,13 @@ class PPOAdaptPolicy(TensorDictModuleBase):
         next_values = critic(tensordict["next"])[value_key]
 
         rewards = tensordict[rew_key]
+        terms = tensordict[TERM_KEY]
         dones = tensordict[DONE_KEY]
         if value_norm is not None:
             values = value_norm.denormalize(values)
             next_values = value_norm.denormalize(next_values)
 
-        adv, ret = self.gae(rewards, dones, values, next_values)
+        adv, ret = self.gae(rewards, terms, dones, values, next_values)
         # adv = normalize(adv, subtract_mean=True)
 
         if value_norm is not None:
