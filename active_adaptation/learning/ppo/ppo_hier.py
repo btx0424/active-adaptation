@@ -51,9 +51,6 @@ class Config:
     mode: str = "high"
     train_every: int = 32
 
-    ppo_epochs: int = 5
-    num_minibatches: int = 8
-
     in_keys: Union[List, None] = field(default_factory=lambda: [OBS_KEY, CMD_KEY, "planner"])
 
 cs = ConfigStore.instance()
@@ -154,14 +151,14 @@ class HierarchicalPolicy(TensorDictModuleBase):
         info = {}
         if self.cfg.mode == "low":
             tensordict_low = tensordict.copy()
-            tensordict_low[REWARD_KEY] = tensordict[REWARD_KEY][..., :-1]
+            tensordict_low[REWARD_KEY] = tensordict[REWARD_KEY]
             info_low = self.policy_low.train_op(tensordict_low)
             for k, v in info_low.items():
                 info[f"low/{k}"] = v
 
         if self.cfg.mode == "high":
             tensordict_high = tensordict.copy()
-            tensordict_high[REWARD_KEY] = tensordict[REWARD_KEY][..., [-1]]
+            tensordict_high[REWARD_KEY] = tensordict[REWARD_KEY][..., -1].unsqueeze(-1)
             info_high = (self.policy_high.train_op(tensordict_high))
             for k, v in info_high.items():
                 info[f"high/{k}"] = v
