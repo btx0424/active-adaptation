@@ -35,8 +35,8 @@ from tensordict import TensorDict
 from tensordict.nn import TensorDictModuleBase, TensorDictModule, TensorDictSequential
 
 from hydra.core.config_store import ConfigStore
-from dataclasses import dataclass
-from typing import Union
+from dataclasses import dataclass, field
+from typing import Union, List
 from collections import OrderedDict
 
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
@@ -62,6 +62,8 @@ class PPOConfig:
     num_prototypes: int = 32
     temperature: float = 3.0
     checkpoint_path: Union[str, None] = None
+
+    in_keys: List[str] = field(default_factory=lambda: [OBS_KEY, OBS_PRIV_KEY, "aux_target_"])
 
 cs = ConfigStore.instance()
 cs.store("ppo_him", node=PPOConfig, group="algo")
