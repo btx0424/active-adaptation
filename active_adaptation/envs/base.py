@@ -250,10 +250,9 @@ class Env(EnvBase):
             env_mask = torch.ones(self.num_envs, dtype=bool, device=self.device)
         env_ids = env_mask.nonzero().squeeze(-1)
         self._reset_idx(env_ids)
+        self.episode_length_buf[env_ids] = 0
         for callback in self._reset_callbacks:
             callback(env_ids)
-        # self.sim._physics_sim_view.flush()
-        self.episode_length_buf[env_ids] = 0
         self.scene.update(self.step_dt)
         tensordict = TensorDict(
             self._compute_observation(), 

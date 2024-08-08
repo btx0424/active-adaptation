@@ -743,6 +743,9 @@ class QuadrupedManip(LocomotionEnv):
             self.handle_pos_w: torch.Tensor
             self.ee_pos_w: torch.Tensor
 
+        def reset(self, env_ids):
+            self.distance[env_ids] = 0.
+
         def update(self):
             self.handle_pos_w = self.door.data.body_pos_w[:, self.door.handle_body_id]
             self.ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id]
@@ -751,7 +754,7 @@ class QuadrupedManip(LocomotionEnv):
             self.distance[:] = self.diff.norm(dim=-1, keepdim=True)
         
         def compute(self) -> torch.Tensor:
-            valid = (self.env.episode_length_buf > 0).unsqueeze(1)
+            valid = (self.env.episode_length_buf > 1).unsqueeze(1)
             return (self.distance_last - self.distance) * valid
         
         def debug_draw(self):
@@ -766,13 +769,16 @@ class QuadrupedManip(LocomotionEnv):
             self.handle_rotate = torch.zeros(self.num_envs, device=self.device)
             self.handle_rotate_last = torch.zeros(self.num_envs, device=self.device)
         
+        def reset(self, env_ids):
+            self.handle_rotate[env_ids] = 0.
+
         def update(self):
             self.handle_rotate_last[:] = self.handle_rotate
             self.handle_rotate[:] = self.door.data.joint_pos[:, self.door.handle_joint_id]
 
         def compute(self) -> torch.Tensor:
-            progress = self.handle_rotate.abs() - self.handle_rotate_last.abs()
-            return  (progress / self.door.unlock_pos).unsqueeze(1)
+            progress = (self.handle_rotate.abs() - self.handle_rotate_last.abs()) / self.door.unlock_pos
+            return  (progress * (self.env.episode_length_buf > 1)).unsqueeze(1)
 
     class door_rotate(Reward):
         def __init__(self, env, weight: float, enabled: bool = True):
@@ -783,19 +789,23 @@ class QuadrupedManip(LocomotionEnv):
             self.door_jpos_last = self.door.data.joint_pos[:, self.door.door_joint_id].clone()
             self.door_jpos = self.door_jpos_last.clone()
 
+        def reset(self, env_ids):
+            self.door_jpos[env_ids] = 0.
+
         def update(self):
             self.door_jpos_last[:] = self.door_jpos
             self.door_jpos[:] = self.door.data.joint_pos[:, self.door.door_joint_id]
             self.progress = self.door_jpos.abs() - self.door_jpos_last.abs()
 
         def compute(self) -> torch.Tensor:
-            return (self.progress * (self.env.episode_length_buf > 0)).unsqueeze(1)
+            return (self.progress * (self.env.episode_length_buf > 1)).unsqueeze(1)
 
     class door_state(Observation):
         def __init__(self, env, mask_ratio: float = 0):
             super().__init__(env, mask_ratio)
             self.asset: Articulation = self.env.scene["robot"]
             self.door: DoorArticulation = self.env.scene["door"]
+            self.handle_axis = torch.tensor([-1., 0., 0.], device=self.device).expand(self.num_envs, 3)
 
         def compute(self) -> torch.Tensor:
             door_pos = quat_rotate_inverse(
@@ -806,9 +816,34 @@ class QuadrupedManip(LocomotionEnv):
                 self.asset.data.root_quat_w,
                 self.door.data.body_pos_w[:, self.door.handle_body_id] - self.asset.data.root_pos_w
             )
+            handle_axis = quat_rotate_inverse(
+                self.asset.data.root_quat_w,
+                quat_rotate(self.door.data.body_quat_w[:, self.door.handle_body_id], self.handle_axis)
+            )
             jpos = self.door.data.joint_pos
             jvel = self.door.data.joint_vel
-            return torch.cat([door_pos, handle_pos, jpos, jvel], dim=1)
+            return torch.cat([door_pos, handle_pos, handle_axis, jpos, jvel], dim=1)
+
+    class pass_through(Reward):
+        def __init__(self, env, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+            self.asset:  Articulation = self.env.scene["robot"]
+            self.door: DoorArticulation = self.env.scene["door"]
+            
+            self.pos = self.asset.data.root_pos_w.clone()
+            self.pos_last = self.asset.data.root_pos_w.clone()
+
+        def reset(self, env_ids: torch.Tensor):
+            self.pos[env_ids] = self.asset.data.root_pos_w[env_ids] - self.door.data.root_pos_w[env_ids]
+        
+        def update(self):
+            self.pos_last[:] = self.pos
+            self.pos[:] = self.asset.data.root_pos_w - self.door.data.root_pos_w
+
+        def compute(self) -> torch.Tensor:
+            last = self.pos_last[:, 0] + self.pos_last[:, 1].abs()
+            this = self.pos[:, 0] + self.pos[:, 1].abs()
+            return ((last - this) * (self.env.episode_length_buf > 1)).unsqueeze(1)
 
 
 def random_scale(x: torch.Tensor, low: float, high: float):

@@ -45,7 +45,8 @@ class DoorArticulation(Articulation):
             )
             self.actuators["door_joints"].stiffness[:, self.door_joint_id] = torch.where(self.locked, self.stiffness, 0.)
             self.actuators["door_joints"].damping[:, self.door_joint_id] = torch.where(self.locked, self.damping, 0.02)
-
+            self.actuators["door_joints"].stiffness[:, self.handle_joint_id] = 2.0
+            
         def write_data_to_sim(self):
             self.set_joint_position_target(torch.zeros_like(self.data.joint_pos))
             super().write_data_to_sim()

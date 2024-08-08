@@ -8,6 +8,7 @@ algo:
   mode: high
 
 task:
+  name: LocoManipHigh
   scene: locomanip
   observation:
     planner:
@@ -17,5 +18,6 @@ task:
       door_handle:  {weight: 1.0, enabled: true}
       door_rotate:  {weight: 1.0, enabled: true}
       door_unlock:  {weight: 1.0, enabled: true}
+      pass_through: {weight: 1.0, enabled: true}
   termination:
     impact_exceeds: {body_names: [Head.*, "base", ".*_thigh"], thres: 200}

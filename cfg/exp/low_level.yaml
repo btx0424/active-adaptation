@@ -8,6 +8,7 @@ algo:
   mode: low
 
 task:
+  name: LocoManipLow
   scene: locomotion
 
   termination:
