@@ -15,6 +15,7 @@ task:
       door_state:   {}
   reward:
     high:
+      survival: {weight: 0.01, enabled: true}
       door_handle:  {weight: 1.0, enabled: true}
       door_rotate:  {weight: 1.0, enabled: true}
       door_unlock:  {weight: 1.0, enabled: true}
