@@ -161,7 +161,9 @@ class LowPolicy(TensorDictModuleBase):
         if self.cfg.clip_rewards:
             neg_rew = tensordict[REWARD_KEY] < 0.
             tensordict[REWARD_KEY] = tensordict[REWARD_KEY].clamp(0.)
-            infos["reward_clip_ratio"] = neg_rew.sum().item() / tensordict.numel()
+            reward_clip_ratio = neg_rew.sum().item() / tensordict.numel()
+        else:
+            reward_clip_ratio = 0.
         
         self._compute_advantage(tensordict, self.critic, "adv", "ret", update_value_norm=True)
         tensordict["adv"] = normalize(tensordict["adv"], subtract_mean=True)
@@ -173,6 +175,7 @@ class LowPolicy(TensorDictModuleBase):
         
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         infos["critic/value_mean"] = tensordict["ret"].mean().item()
+        infos["reward_clip_ratio"] = reward_clip_ratio
         return infos
 
     @torch.no_grad()
