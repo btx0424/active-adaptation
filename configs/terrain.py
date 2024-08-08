@@ -67,7 +67,7 @@ FLAT = TerrainGeneratorCfg(
         ),
         "random_rough_easy": HfRandomUniformTerrainCfg(
             proportion=0.5,
-            noise_range=(0.0, 0.05),
+            noise_range=(0.0, 0.06),
             noise_step=0.02,
             border_width=0.5
         ),
@@ -90,7 +90,7 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
         ),
         "random_rough_easy": HfRandomUniformTerrainCfg(
             proportion=0.2,
-            noise_range=(0.0, 0.05),
+            noise_range=(0.0, 0.06),
             noise_step=0.02,
             border_width=0.5
         ),
@@ -162,7 +162,7 @@ ROUGH_EASY = TerrainGeneratorCfg(
         ),
         "random_rough_easy": HfRandomUniformTerrainCfg(
             proportion=0.30,
-            noise_range=(0.0, 0.05),
+            noise_range=(0.0, 0.06),
             noise_step=0.01,
             border_width=0.5
         ),
@@ -227,7 +227,7 @@ STAIRS = TerrainGeneratorCfg(
         ),
         "random_rough_easy": HfRandomUniformTerrainCfg(
             proportion=0.20,
-            noise_range=(0.0, 0.05),
+            noise_range=(0.0, 0.06),
             noise_step=0.02,
             border_width=0.5
         ),

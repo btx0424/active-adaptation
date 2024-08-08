@@ -6,8 +6,10 @@ from omni.isaac.lab.sensors import ContactSensor
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.utils.math import yaw_quat
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
+from active_adaptation.utils.helpers import batchify
 from ..commands import *
 
+quat_rotate_inverse = batchify(quat_rotate_inverse)
 
 class Reward:
     def __init__(self, env, weight: float, enabled: bool=True, clip_range=(-torch.inf, +torch.inf)):
@@ -680,6 +682,29 @@ class impedance_vel(Reward):
         diff = (self.command_manager.command_linvel_w - self.asset.data.root_lin_vel_w)
         r = torch.exp(- diff.norm(dim=-1, keepdim=True) / 0.25)
         return r
+
+
+class feet_swing_height(Reward):
+    def __init__(self, env, target_height: float, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.target_height = target_height
+        self.feet_ids = self.asset.find_bodies(".*foot.*")[0]
+
+    def update(self):
+        self.feet_pos_b = quat_rotate_inverse(
+            self.asset.data.root_quat_w.unsqueeze(1),
+            self.asset.data.body_pos_w[:, self.feet_ids] - self.asset.data.root_pos_w.unsqueeze(1)
+        )
+        self.feet_vel_b = quat_rotate_inverse(
+            self.asset.data.root_quat_w.unsqueeze(1),
+            self.asset.data.body_lin_vel_w[:, self.feet_ids]
+        )
+
+    def compute(self) -> torch.Tensor:
+        hight_error = (self.feet_pos_b[:, :, 2] - self.target_height).square()
+        lateral_speed = self.feet_vel_b[:, :, :2].norm(dim=-1)
+        return - (hight_error * lateral_speed).sum(1, keepdim=True)
 
 
 def normalize(x: torch.Tensor):
