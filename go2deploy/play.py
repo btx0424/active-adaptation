@@ -71,6 +71,8 @@ class Robot:
         self.update()
         _obs = self._compute_obs()
         self.obs_dim = _obs.shape[0]
+        self.obs_buf = np.zeros((self.obs_dim * 6))
+        
         if self.log_file is not None:
             default_len = 50 * 60
             self.log_file.attrs["cursor"] = 0
@@ -149,7 +151,12 @@ class Robot:
         self.update()
         self._maybe_log()
         self.step_count += 1
-        return self._compute_obs()
+        obs = self._compute_obs()
+
+        self.obs_buf = np.roll(self.obs_buf, -self.obs_dim)
+        self.obs_buf[-self.obs_dim:] = obs
+        
+        return obs
 
     def _compute_obs(self):
         # self.rot = R.from_euler("xyz", self.rpy)
@@ -174,7 +181,8 @@ class Robot:
         #     self.action_buf[:, :self.action_buf_steps].reshape(-1),
         #     self.linvel
         # ]
-        return np.concatenate(obs, dtype=np.float32)
+        obs = np.concatenate(obs, dtype=np.float32)
+        return obs
     
     def _maybe_log(self):
         if self.log_file is None:
