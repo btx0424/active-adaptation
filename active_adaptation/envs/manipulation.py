@@ -754,8 +754,8 @@ class QuadrupedManip(LocomotionEnv):
             self.distance[:] = self.diff.norm(dim=-1, keepdim=True)
         
         def compute(self) -> torch.Tensor:
-            valid = (self.env.episode_length_buf > 1).unsqueeze(1)
-            return (self.distance_last - self.distance) * valid
+            valid = (self.env.episode_length_buf > 1) & self.door.locked
+            return (self.distance_last - self.distance) * valid.unsqueeze(1)
         
         def debug_draw(self):
             self.env.debug_draw.vector(self.ee_pos_w, self.diff, color=(1., 0.1, 0.1, 1.))
@@ -778,7 +778,8 @@ class QuadrupedManip(LocomotionEnv):
 
         def compute(self) -> torch.Tensor:
             progress = (self.handle_rotate.abs() - self.handle_rotate_last.abs()) / self.door.unlock_pos
-            return  (progress * (self.env.episode_length_buf > 1)).unsqueeze(1)
+            valid = (self.env.episode_length_buf > 1) & self.door.locked
+            return  (progress * valid).unsqueeze(1)
 
     class door_rotate(Reward):
         def __init__(self, env, weight: float, enabled: bool = True):
@@ -798,7 +799,8 @@ class QuadrupedManip(LocomotionEnv):
             self.progress = self.door_jpos.abs() - self.door_jpos_last.abs()
 
         def compute(self) -> torch.Tensor:
-            return (self.progress * (self.env.episode_length_buf > 1)).unsqueeze(1)
+            valid = (self.env.episode_length_buf > 1) & ((self.asset.data.root_pos_w - self.door.data.root_pos_w)[:, 0] < 0)
+            return (self.progress * valid).unsqueeze(1)
 
     class door_state(Observation):
         def __init__(self, env, mask_ratio: float = 0):
@@ -841,9 +843,12 @@ class QuadrupedManip(LocomotionEnv):
             self.pos[:] = self.asset.data.root_pos_w - self.door.data.root_pos_w
 
         def compute(self) -> torch.Tensor:
-            last = self.pos_last[:, 0] + self.pos_last[:, 1].abs()
-            this = self.pos[:, 0] + self.pos[:, 1].abs()
-            return ((last - this) * (self.env.episode_length_buf > 1)).unsqueeze(1)
+            x = - self.pos_last[:, 0] + self.pos[:, 0]
+            y = self.pos_last[:, 1].abs() - self.pos[:, 1].abs()
+            fwd = ((self.pos_last[:, 0] < 0) & (self.pos[:, 0] > 0)).float()
+            bwd = ((self.pos_last[:, 0] > 0) & (self.pos[:, 0] < 0)).float()
+            valid = (self.env.episode_length_buf > 1)
+            return ((x + y + fwd + bwd) * valid).unsqueeze(1)
 
 
 def random_scale(x: torch.Tensor, low: float, high: float):

@@ -23,8 +23,14 @@ class DoorArticulation(Articulation):
 
             self.type = torch.zeros(self.num_instances, dtype=torch.int, device=self.device)
             self.locked = torch.zeros(self.num_instances, dtype=torch.bool, device=self.device)
+            self.locked_last = torch.zeros(self.num_instances, dtype=torch.bool, device=self.device)
+            self.unlocking = torch.zeros(self.num_instances, dtype=torch.bool, device=self.device)
+            self.locking = torch.zeros(self.num_instances, dtype=torch.bool, device=self.device)
             self.unlock_pos = torch.zeros(self.num_instances, device=self.device)
-            self.stiffness = torch.zeros(self.num_instances, device=self.device)
+
+            self.stiffness_locked = torch.zeros(self.num_instances, device=self.device)
+            self.stiffness_unlocked = torch.zeros(self.num_instances, device=self.device)
+            
             self.damping = torch.zeros(self.num_instances, device=self.device)
             
             self.default_jpos = torch.zeros_like(self.data.joint_pos[0])
@@ -33,19 +39,26 @@ class DoorArticulation(Articulation):
         def reset(self, env_ids: torch.Tensor):
             super().reset(env_ids)
             self.unlock_pos[env_ids] = (torch.pi / 6)
-            self.stiffness[env_ids] = 10000.
+
+            self.stiffness_locked[env_ids] = 10000.
+            self.stiffness_unlocked[env_ids] = 0.0
+
             self.damping[env_ids] = 100.
+            self.locked[env_ids] = True
             self.write_joint_state_to_sim(self.default_jpos, self.default_jvel, env_ids=env_ids)
 
         def update(self, dt: float):
             super().update(dt)
+            self.locked_last[:] = self.locked
             self.locked[:] = (
                 (self.data.joint_pos[:, self.door_joint_id].abs() < 0.05)
                 & (self.data.joint_pos[:, self.handle_joint_id].abs() < self.unlock_pos)
             )
-            self.actuators["door_joints"].stiffness[:, self.door_joint_id] = torch.where(self.locked, self.stiffness, 0.)
+            self.unlocking[:] = self.locked_last & ~self.locked
+            self.locking[:] = ~self.locked_last & self.locked
+            self.actuators["door_joints"].stiffness[:, self.door_joint_id] = torch.where(self.locked, self.stiffness_locked, self.stiffness_unlocked)
             self.actuators["door_joints"].damping[:, self.door_joint_id] = torch.where(self.locked, self.damping, 0.02)
-            self.actuators["door_joints"].stiffness[:, self.handle_joint_id] = 2.0
+            self.actuators["door_joints"].stiffness[:, self.handle_joint_id] = 4.0
             
         def write_data_to_sim(self):
             self.set_joint_position_target(torch.zeros_like(self.data.joint_pos))
