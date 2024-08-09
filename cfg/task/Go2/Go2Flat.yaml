@@ -27,7 +27,7 @@ command:
   angvel_range:   [-2.0, 2.0]
   yaw_stiffness_range: [0.5, 0.7]
   use_stiffness_ratio: 0.5
-  aux_input_range: [1., 1.]
+  aux_input_range: [.5, 1.]
   resample_prob: 0.5
   stand_prob: 0.05
   target_yaw_range: 
@@ -35,6 +35,7 @@ command:
     - [ 1.1781,  1.9635]
     - [ 2.7489,  3.5343]
     - [ 4.3197,  5.1051]
+  adaptive: true
 
 observation:
   policy:
@@ -94,8 +95,8 @@ reward:
     linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
     angvel_xy_l2:       {weight: 0.02, enabled: true}
     linvel_z_l2:        {weight: 2.0, enabled: true}
-    base_height_l1:     {weight: 0.5, enabled: true, target_height: 0.3}
-    energy_l1:          {weight: 0.0002, enabled: true}
+    base_height_l1:     {weight: 0.5, enabled: false, target_height: 0.3}
+    energy_l1:          {weight: 0.0002, enabled: true, a: {F.*_joint: 1.5, R.*_joint: 1.0}}
     energy_dist_lr:     {weight: 0.0002, enabled: false}
     energy_dist_fb:     {weight: 0.0002, enabled: false}
     joint_acc_l2:       {weight: 2.5e-7, enabled: true}

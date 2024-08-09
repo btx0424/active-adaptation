@@ -164,6 +164,7 @@ class Command2(Command):
         resample_prob: float = 0.75, 
         stand_prob=0.2,
         target_yaw_range=(0, torch.pi * 2),
+        adaptive: bool = False
     ):
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
@@ -176,6 +177,10 @@ class Command2(Command):
         self.resample_interval = resample_interval
         self.resample_prob = resample_prob
         self.stand_prob = stand_prob
+        self.adaptive = adaptive
+
+        if self.adaptive:
+            self.ground_mesh = _initialize_warp_meshes("/World/ground", "cuda")
 
         with torch.device(self.device):
             if all(isinstance(r, Sequence) for r in target_yaw_range):
@@ -230,9 +235,21 @@ class Command2(Command):
         linvel_error = (self.robot.data.root_lin_vel_b[:, :2] - self.command[:, :2]).square().sum(-1, True)
         angvel_error = (self.command_angvel - self.robot.data.root_ang_vel_w[:, 2]).square().unsqueeze(1)
         
-        self._cum_linvel_error[:] = self._cum_linvel_error * 0.98 + linvel_error * self.env.step_dt
-        self._cum_angvel_error[:] = self._cum_angvel_error * 0.98 + angvel_error * self.env.step_dt
-        self.command_linvel[:] = self.command_linvel + clamp_norm((self._target_linvel - self.command_linvel) * 0.1, max=0.1)
+        if self.adaptive:
+            self.ray_start_w = self.robot.data.root_pos_w + torch.tensor([0., 0., -0.2], device=self.device)
+            ray_direction = quat_rotate(self.asset.data.root_quat_w, self._target_direction)
+            ray_direction[:, 2] = 0.
+            self.ray_hit_w = raycast_mesh(self.ray_start_w, ray_direction, max_dist=2, mesh=self.ground_mesh)[0]
+            distance_to_obstacle = (self.ray_hit_w - self.ray_start_w).norm(dim=-1, keepdim=True).nan_to_num(2.0)
+            self.close_to_obstacle = distance_to_obstacle < 0.75
+            fast = self.command_speed > 1.0
+            target_linvel = torch.where((self.close_to_obstacle & fast), self._target_linvel / 2, self._target_linvel)
+        else:
+            target_linvel = self._target_linvel
+
+        self._cum_linvel_error.mul_(0.98).add_(linvel_error * self.env.step_dt)
+        self._cum_angvel_error.mul_(0.98).add_(angvel_error * self.env.step_dt)
+        self.command_linvel[:] = self.command_linvel + clamp_norm((target_linvel - self.command_linvel) * 0.1, max=0.1)
 
         self.command[:, :2] = self.command_linvel[:, :2]
         self.command[:, 2] = self.command_angvel
@@ -287,6 +304,13 @@ class Command2(Command):
             torch.stack([zeros, zeros, self._cum_angvel_error], 1),
             color=(1., .2, .2, 2.)
         )
+        if self.adaptive:
+            self.env.debug_draw.vector(
+                self.ray_start_w[self.close_to_obstacle.squeeze(1)],
+                (self.ray_hit_w - self.ray_start_w)[self.close_to_obstacle.squeeze(1)],
+                # self._target_direction,
+                color=(1., 1., 0., 1.)
+            )
 
 
 from ..observations import _initialize_warp_meshes, raycast_mesh

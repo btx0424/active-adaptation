@@ -5,6 +5,7 @@ import abc
 from omni.isaac.lab.sensors import ContactSensor
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.utils.math import yaw_quat
+import omni.isaac.lab.utils.string as string_utils
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from active_adaptation.utils.helpers import batchify
 from ..commands import *
@@ -110,11 +111,12 @@ class energy_l1(Reward):
     
     decay: float = 0.99
 
-    def __init__(self, env, weight: float, enabled: bool = True, joint_names=".*"):
+    def __init__(self, env, weight: float, enabled: bool = True, a={".*": 1.0}):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.joint_ids =  self.asset.find_joints(joint_names)[0]
+        self.joint_ids, _, self.a = string_utils.resolve_matching_names_values(dict(a), self.asset.joint_names)
         self.joint_ids = torch.tensor(self.joint_ids, device=self.device)
+        self.a = torch.tensor(self.a, device=self.device)
         
         self.power = torch.zeros(self.num_envs, len(self.joint_ids), device=self.device)
         self.energy = torch.zeros(self.num_envs, len(self.joint_ids), device=self.device)
@@ -135,7 +137,7 @@ class energy_l1(Reward):
         self.asset.data.energy_ema[:] = self.energy / self.count
 
     def compute(self) -> torch.Tensor:
-        return - self.power.sum(1, keepdim=True)
+        return - (self.power * self.a).sum(1, keepdim=True)
 
 
 class energy_dist_lr(Reward):
