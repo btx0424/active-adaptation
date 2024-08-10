@@ -76,10 +76,6 @@ class LocomotionEnv(Env):
     def prev_command(self):
         return self.command_manager.command_prev
     
-    @mdp.observation_func
-    def applied_action(self):
-        return self.action_manager.applied_action
-    
     # @mdp.reward_func
     # def heading(self):
     #     root_quat = self.scene["robot"].data.root_quat_w
@@ -115,6 +111,10 @@ class LocomotionEnv(Env):
                 feet_names = env.feet_name_expr
             super().__init__(env, feet_names, yaw_only)
             self.asset.data.feet_pos_b = self.body_pos_b
+        
+        def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
+            obs = obs.reshape(self.num_envs, 4, 3)[:, [1, 0, 3, 2]] * torch.tensor([1., -1., 1.])
+            return obs.reshape(self.num_envs, -1)
     
     class feet_vel_b(mdp.body_vel):
         def __init__(self, env: "LocomotionEnv", feet_names=None, yaw_only: bool=False):
@@ -122,6 +122,10 @@ class LocomotionEnv(Env):
                 feet_names = env.feet_name_expr
             super().__init__(env, feet_names, yaw_only)
             self.asset.data.feet_vel_b = self.body_vel_b
+        
+        def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
+            obs = obs.reshape(self.num_envs, 4, 3)[:, [1, 0, 3, 2]] * torch.tensor([1., -1., 1.])
+            return obs.reshape(self.num_envs, -1)
     
     class base_height_l2(mdp.Reward):
         def __init__(self, env, target_height: float, weight: float, enabled: bool = True):

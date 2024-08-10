@@ -608,7 +608,7 @@ class base_height_l1(Reward):
 
     def compute(self) -> torch.Tensor:
         target_height = self.target_height * self.scale
-        height = self.asset.data.feet_pos_b[:, :, 2].min(1, keepdim=True)[0].abs()
+        height = (self.asset.data.feet_height - self.asset.data.feet_pos_b[:, :, 2]).max(1, keepdim=True)[0]
         height_errot = (height - target_height) / target_height
         return - height_errot.abs()
 
@@ -704,8 +704,11 @@ class feet_swing_height(Reward):
         )
 
     def compute(self) -> torch.Tensor:
-        hight_error = (self.feet_pos_b[:, :, 2] - self.target_height).abs()
-        lateral_speed = self.feet_vel_b[:, :, :2].square().sum(-1)
+        hight_error = (self.asset.data.feet_height - self.target_height).abs()
+        lateral_speed = (
+            self.feet_vel_b[:, :, :2].square().sum(-1)
+            + self.asset.data.body_ang_vel_w[:, self.feet_ids, 2].square()
+        )
         return - (hight_error * lateral_speed).sum(1, keepdim=True)
 
 

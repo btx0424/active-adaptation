@@ -96,7 +96,7 @@ reward:
     linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
     angvel_xy_l2:       {weight: 0.02, enabled: true}
     linvel_z_l2:        {weight: 2.0, enabled: true}
-    base_height_l1:     {weight: 0.5, enabled: false, target_height: 0.3}
+    base_height_l1:     {weight: 0.5, enabled: true, target_height: 0.3}
     energy_l1:          {weight: 0.0002, enabled: true, a: {F.*_joint: 1.5, R.*_joint: 1.0}}
     energy_dist_lr:     {weight: 0.0002, enabled: false}
     energy_dist_fb:     {weight: 0.0002, enabled: false}
@@ -110,7 +110,7 @@ reward:
     feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
     undesired_contact:  {body_names: [.*_calf, .*thigh, Head.*], weight: 0.25, enabled: true}
-    feet_swing_height:  {weight: 0.1, enabled: false, target_height: -0.2}
+    feet_swing_height:  {weight: 0.1, enabled: false, target_height: 0.1}
 
 termination:
   crash: {body_names_expr: [Head.*, "base"], t_thres: 0.5, z_thres: 0.}
@@ -145,9 +145,10 @@ randomization:
   # stumble: {body_names: .*_foot}
   random_joint_offset:
     .*hip_joint: [-0.1, 0.1]
-    .*thigh_joint: [-0.1, 0.1]
+    F[L,R]_thigh_joint: [-0.1, 0.0]
+    R[L,R]_thigh_joint: [-0.1, 0.1]
     .*calf_joint: [-0.1, 0.1]
   random_pull: 
     force_xy_range: [-40., 40.]
     force_z_range:  [-10., 30.]
-    prob: 0.01
+    prob: 0.005
