@@ -33,6 +33,9 @@ class Randomization:
     def step(self, substep):
         pass
 
+    def update(self):
+        pass
+
     def debug_draw(self):
         pass
 
@@ -485,9 +488,48 @@ class random_joint_offset(Randomization):
         self.action_manager = self.env.action_manager
 
     def reset(self, env_ids: torch.Tensor):
-        offset = torch.rand(len(env_ids), len(self.joint_ids), device=self.device)
-        offset = offset * (self.offset_range[:, 1] - self.offset_range[:, 1]) + self.offset_range[:, 0]
+        offset = uniform(self.offset_range[:, 0], self.offset_range[:, 1])
         self.action_manager.offset[env_ids.unsqueeze(1), self.joint_ids] = offset
+
+
+class random_pull(Randomization):
+    def __init__(self, env, force_xy_range, force_z_range, prob=0.01):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.force_xy_range = force_xy_range
+        self.force_z_range = force_z_range
+        self.prob = prob
+        self.mass_total = self.asset.root_physx_view.get_masses()[0].sum().to(self.device)
+
+        self.force_w = torch.zeros(self.num_envs, 3, device=self.device)
+        self.time_remaining = torch.zeros(self.num_envs, 1, device=self.device)
+
+    def step(self, substep):
+        force_b = self.asset._external_force_b.clone()
+        torques_b = self.asset._external_torque_b.clone()
+        force_b[:, 0] += quat_rotate_inverse(
+            self.asset.data.root_quat_w,  
+            self.force_w * (self.time_remaining > 0)
+        )
+        self.asset.set_external_force_and_torque(force_b, torques_b)
+    
+    def update(self):
+        sample_force = (torch.rand(self.num_envs, device=self.device) < self.prob).nonzero().squeeze(-1)
+        if len(sample_force) > 0:
+            force_w = torch.zeros(len(sample_force), 3, device=self.device)
+            force_w[:, 0].uniform_(*self.force_xy_range)
+            force_w[:, 1].uniform_(*self.force_xy_range)
+            force_w[:, 2].uniform_(*self.force_z_range) 
+            self.force_w[sample_force] = force_w
+            self.time_remaining[sample_force] = 120
+        self.time_remaining -= 1
+
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w, 
+            (self.force_w / self.mass_total) * (self.time_remaining > 0), 
+            color=(0.6, 0.8, 0.6, 1.)
+        )
 
 
 def random_scale(x: torch.Tensor, low: float, high: float, homogeneous: bool=False):

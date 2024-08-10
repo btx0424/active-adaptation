@@ -144,6 +144,7 @@ class Env(EnvBase):
             self._reset_callbacks.append(rand.reset)
             self._debug_draw_callbacks.append(rand.debug_draw)
             self._step_callbacks.append(rand.step)
+            self._update_callbacks.append(rand.update)
 
         for group, funcs in self.cfg.observation.items():
             self.observation_funcs[group] = OrderedDict()

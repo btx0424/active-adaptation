@@ -704,8 +704,8 @@ class feet_swing_height(Reward):
         )
 
     def compute(self) -> torch.Tensor:
-        hight_error = (self.feet_pos_b[:, :, 2] - self.target_height).square()
-        lateral_speed = self.feet_vel_b[:, :, :2].norm(dim=-1)
+        hight_error = (self.feet_pos_b[:, :, 2] - self.target_height).abs()
+        lateral_speed = self.feet_vel_b[:, :, :2].square().sum(-1)
         return - (hight_error * lateral_speed).sum(1, keepdim=True)
 
 
