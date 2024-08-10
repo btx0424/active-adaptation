@@ -61,6 +61,7 @@ observation:
     feet_height_map:  {feet_names: .*foot }
     applied_torques:  {actuator_name: base_legs}
     joint_forces:     {joint_names: .*_joint}
+    external_forces:  {body_names: ["base"]}
     # motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     # body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
     # motor_failure:    {actuator_name: base_legs}
