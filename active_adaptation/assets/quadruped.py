@@ -10,6 +10,8 @@ ASSET_PATH = os.path.dirname(__file__)
 UNITREE_GO2_CFG = copy.deepcopy(UNITREE_GO2_CFG)
 UNITREE_GO2_CFG.spawn.usd_path = f"{ASSET_PATH}/Go2/go2.usd"
 UNITREE_GO2_CFG.init_state.pos = (0., 0., 0.35)
+UNITREE_GO2_CFG.init_state.joint_pos["F[L,R]_thigh_joint"] = 0.78
+UNITREE_GO2_CFG.init_state.joint_pos["R[L,R]_thigh_joint"] = 0.78
 UNITREE_GO2_CFG.actuators["base_legs"].effort_limit = {
     "(?!.*_calf_joint).*": 23.5,
     ".*_calf_joint": 35.5,
