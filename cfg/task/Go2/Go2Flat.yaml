@@ -142,3 +142,7 @@ randomization:
       .*: [0.8, 1.2]
   # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
   # stumble: {body_names: .*_foot}
+  random_joint_offset:
+    .*hip_joint: [-0.1, 0.1]
+    .*thigh_joint: [-0.5, 0.5]
+    .*calf_joint: [-0.1, 0.1]

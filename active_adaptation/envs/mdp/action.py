@@ -56,6 +56,7 @@ class JointPosition(ActionManager):
             self.applied_action = torch.zeros(self.num_envs, self.action_dim)
             self.alpha = torch.ones(self.num_envs, 1)
             self.delay = torch.zeros(self.num_envs, 1, dtype=int)
+            self.offset = torch.zeros(self.num_envs, self.action_dim)
         
         self.default_joint_pos = self.asset.data.default_joint_pos.clone()
 
@@ -75,7 +76,7 @@ class JointPosition(ActionManager):
             action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
             self.applied_action.lerp_(action.squeeze(-1), self.alpha)
 
-            pos_target = self.default_joint_pos.clone()
+            pos_target = self.default_joint_pos + self.offset
             pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
             pos_target.clamp_(-torch.pi, torch.pi)
             self.asset.set_joint_position_target(pos_target)

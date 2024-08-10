@@ -473,6 +473,23 @@ class pull(Randomization):
         )
 
 
+class random_joint_offset(Randomization):
+    def __init__(self, env, **offset_range: Tuple[float, float]):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids, _, self.offset_range = string_utils.resolve_matching_names_values(dict(offset_range), self.asset.joint_names)
+        
+        self.joint_ids = torch.tensor(self.joint_ids, device=self.device)
+        self.offset_range = torch.tensor(self.offset_range, device=self.device)
+
+        self.action_manager = self.env.action_manager
+
+    def reset(self, env_ids: torch.Tensor):
+        offset = torch.rand(len(env_ids), len(self.joint_ids), device=self.device)
+        offset = offset * (self.offset_range[:, 1] - self.offset_range[:, 1]) + self.offset_range[:, 0]
+        self.action_manager.offset[env_ids.unsqueeze(1), self.joint_ids] = offset
+
+
 def random_scale(x: torch.Tensor, low: float, high: float, homogeneous: bool=False):
     if homogeneous:
         u = torch.rand(*x.shape[:1], 1, device=x.device)
