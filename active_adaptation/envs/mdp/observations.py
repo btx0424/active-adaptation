@@ -57,7 +57,10 @@ class Observation:
     @abc.abstractmethod
     def compute(self) -> torch.Tensor:
         raise NotImplementedError
-        
+    
+    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError
+    
     def __call__(self) ->  Tuple[torch.Tensor, torch.Tensor]:
         tensor = self.compute()
         if self.mask_ratio > 0.:
@@ -193,6 +196,8 @@ class root_angvel_b(Observation):
         else:
             return ang_vel_b
 
+    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
+        return -obs
 
 class projected_gravity_b(Observation):
     def __init__(self, env, noise_std: float=0.):
@@ -206,6 +211,8 @@ class projected_gravity_b(Observation):
         projected_gravity_b += noise
         return projected_gravity_b / projected_gravity_b.norm(dim=-1, keepdim=True)
 
+    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
+        return obs * torch.tensor([1., -1., 1.], device=self.device)
 
 class root_linvel_b(Observation):
     def __init__(self, env, body_names: str=None, yaw_only: bool=False, mask_ratio: float=0):
@@ -244,6 +251,9 @@ class root_linvel_b(Observation):
     
     def compute(self) -> torch.Tensor:
         return self.linvel
+    
+    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
+        return obs * torch.tensor([1., -1., 1.], device=self.device)
 
     def debug_draw(self):
         if self.body_ids is None:
@@ -256,8 +266,13 @@ class root_linvel_b(Observation):
             color=(0.8, 0.1, 0.1, 1.)
         )
     
+class _JointObs(Observation):
 
-class joint_pos(Observation):
+    def fliplr(self, obs: torch.Tensor):
+        return obs.reshape(self.num_envs, 3, 2, 2).flip(dims=-1).reshape(self.num_envs, -1)
+
+
+class joint_pos(_JointObs):
     def __init__(self, env, joint_names: str=".*", noise_std: float=0.0):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
@@ -268,7 +283,7 @@ class joint_pos(Observation):
         return random_noise(self.asset.data.joint_pos[:, self.joint_ids], self.noise_std)
 
 
-class joint_vel(Observation):
+class joint_vel(_JointObs):
     def __init__(self, env, joint_names: str=".*", noise_std: float=0.0):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
@@ -307,7 +322,7 @@ class joint_acc(Observation):
         return joint_acc
 
 
-class applied_torques(Observation):
+class applied_torques(_JointObs):
     def __init__(self, env, actuator_name: str, noise_std: float=0.):
         super().__init__(env, mask_ratio=0.)
         self.asset: Articulation = self.env.scene["robot"]
@@ -585,6 +600,11 @@ class feet_height_map(Observation):
     def compute(self):
         return self.feet_height_map.reshape(self.num_envs, -1) / self.nominal_height
     
+    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
+        obs = obs.reshape(self.num_envs, self.num_feet, 5)[:, [1, 0, 3, 2]]
+        obs = obs[:, :, [0, 2, 1, 4, 3]]
+        return obs.reshape(self.num_envs, -1)
+    
     def debug_draw(self):
         x = self.ray_hits_w.clone()
         x[..., 2] = self.feet_pos_w.unsqueeze(-2)[..., 2]
@@ -714,6 +734,9 @@ class prev_actions(Observation):
     def compute(self):
         return self.env.action_manager.action_buf[:, :, :self.steps].reshape(self.num_envs, -1)
 
+    def fliplr(self, obs: torch.Tensor):
+        return obs.reshape(self.num_envs, 3, 2, 2, self.steps).flip(dims=-1).reshape(self.num_envs, -1)
+
 
 class last_contact(Observation):
     def __init__(self, env, body_names: str):
@@ -795,7 +818,13 @@ class incoming_wrench(Observation):
         return (self.forces / self.default_mass_total).reshape(self.num_envs, -1)
 
 
-class joint_forces(Observation):
+class applied_action(_JointObs):
+
+    def compute(self) -> torch.Tensor:
+        return self.env.action_manager.applied_action
+
+
+class joint_forces(_JointObs):
     def __init__(self, env, joint_names: str=".*"):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
