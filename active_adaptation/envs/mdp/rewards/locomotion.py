@@ -609,8 +609,8 @@ class base_height_l1(Reward):
     def compute(self) -> torch.Tensor:
         target_height = self.target_height * self.scale
         height = (self.asset.data.feet_height - self.asset.data.feet_pos_b[:, :, 2]).max(1, keepdim=True)[0]
-        height_errot = (height - target_height) / target_height
-        return - height_errot.abs()
+        return (height - target_height).clamp_max(0.)
+
 
 class quadruped_stand(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf)):
