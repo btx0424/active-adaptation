@@ -712,6 +712,17 @@ class feet_swing_height(Reward):
         return - (hight_error * lateral_speed).sum(1, keepdim=True)
 
 
+class head_clearance(Reward):
+    def __init__(self, env, target_height: float, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.target_height = target_height
+        self.asset: Articulation = self.env.scene["robot"]
+        self.head_height: torch.Tensor = self.asset.data.head_height
+
+    def compute(self) -> torch.Tensor:
+        return (self.head_height - self.target_height).clamp_min(0.)
+
+
 def normalize(x: torch.Tensor):
     return x / x.norm(dim=-1, keepdim=True).clamp_min(1e-6)
 

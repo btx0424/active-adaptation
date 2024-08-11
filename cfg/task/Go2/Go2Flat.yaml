@@ -29,7 +29,7 @@ command:
   use_stiffness_ratio: 0.99
   aux_input_range: [.5, 1.]
   resample_prob: 0.5
-  stand_prob: 0.05
+  stand_prob: 0.02
   target_yaw_range: 
     - [-0.3927,  0.3927]
     - [ 1.1781,  1.9635]
@@ -69,7 +69,8 @@ observation:
     # body_mass:        {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # body_momentum:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
     # rewards:          {}
-    contact_indicator: {body_names: [".*_foot"], timing: true}
+    contact_indicator:  {body_names: [".*_foot", ".*_calf"], timing: true}
+    head_height:        {}
     cum_error:
   params:
     motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
@@ -111,6 +112,7 @@ reward:
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
     undesired_contact:  {body_names: [.*_calf, .*thigh, Head.*], weight: 0.25, enabled: true}
     feet_swing_height:  {weight: 0.1, enabled: false, target_height: 0.1}
+    head_clearance:     {weight: 1.0, enabled: true, target_height: 0.12}
 
 termination:
   crash: {body_names_expr: [Head.*, "base"], t_thres: 0.5, z_thres: 0.}
@@ -144,10 +146,10 @@ randomization:
   # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
   # stumble: {body_names: .*_foot}
   random_joint_offset:
-    .*hip_joint: [-0.1, 0.1]
-    F[L,R]_thigh_joint: [-0.1, 0.0]
-    R[L,R]_thigh_joint: [-0.1, 0.1]
-    .*calf_joint: [-0.1, 0.1]
+    .*hip_joint: [-0.05, 0.05]
+    F[L,R]_thigh_joint: [-0.05, 0.05]
+    R[L,R]_thigh_joint: [-0.05, 0.05]
+    .*calf_joint: [-0.05, 0.05]
   random_pull: 
     force_xy_range: [-40., 40.]
     force_z_range:  [-10., 30.]

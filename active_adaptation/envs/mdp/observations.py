@@ -612,6 +612,34 @@ class feet_height_map(Observation):
         self.env.debug_draw.vector(x, d)
 
 
+class head_height(Observation):
+    def __init__(self, env, mask_ratio: float = 0):
+        super().__init__(env, mask_ratio)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.head_id = self.asset.find_bodies("Head_lower")[0][0]
+        
+        self.head_height = torch.zeros(self.num_envs, 1, device=self.device)
+        self.asset.data.head_height = self.head_height
+        self.mesh = _initialize_warp_meshes("/World/ground", "cuda")
+        self.ray_direction = torch.tensor([0., 0., -1.], device=self.device).expand(self.num_envs, 3)
+
+    def update(self):
+        self.ray_start_w = self.asset.data.body_pos_w[:, self.head_id]
+        self.ray_hit_w = raycast_mesh(
+            self.ray_start_w,
+            self.ray_direction,
+            max_dist=100.,
+            mesh=self.mesh,
+        )[0]
+        self.head_height[:] = (self.ray_start_w[:, 2] - self.ray_hit_w[:, 2]).nan_to_num(nan=0., posinf=0., neginf=0.).unsqueeze(1)
+
+    def compute(self):
+        return self.head_height.reshape(self.num_envs, -1)
+
+    def debug_draw(self):
+        self.env.debug_draw.vector(self.ray_start_w, self.ray_hit_w - self.ray_start_w, color=(1., 0., 1., 1.))
+
+
 class path_integrator(Observation):
     
     decimation: int = 3
