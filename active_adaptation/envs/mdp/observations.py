@@ -595,7 +595,7 @@ class feet_height_map(Observation):
             mesh=RayCaster.meshes["/World/ground"],
         )[0]
 
-        self.feet_height_map[:] = self.feet_pos_w.unsqueeze(-2)[..., 2] - self.ray_hits_w[..., 2]
+        self.feet_height_map[:] = (self.feet_pos_w.unsqueeze(-2)[..., 2] - self.ray_hits_w[..., 2]).nan_to_num(nan=0., posinf=0., neginf=0.)
 
     def compute(self):
         return self.feet_height_map.reshape(self.num_envs, -1) / self.nominal_height

@@ -96,7 +96,7 @@ reward:
     linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
     angvel_xy_l2:       {weight: 0.02, enabled: true}
     linvel_z_l2:        {weight: 2.0, enabled: true}
-    base_height_l1:     {weight: 0.5, enabled: true, target_height: 0.33}
+    base_height_l1:     {weight: 0.5, enabled: true, target_height: 0.35}
     energy_l1:          {weight: 0.0002, enabled: true, a: {F.*_joint: 1.5, R.*_joint: 1.0}}
     energy_dist_lr:     {weight: 0.0002, enabled: false}
     energy_dist_fb:     {weight: 0.0002, enabled: false}
@@ -152,3 +152,4 @@ randomization:
     force_xy_range: [-40., 40.]
     force_z_range:  [-10., 30.]
     prob: 0.005
+    duration: 50

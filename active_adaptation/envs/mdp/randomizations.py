@@ -493,12 +493,13 @@ class random_joint_offset(Randomization):
 
 
 class random_pull(Randomization):
-    def __init__(self, env, force_xy_range, force_z_range, prob=0.01):
+    def __init__(self, env, force_xy_range, force_z_range, prob=0.01, duration=50):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.force_xy_range = force_xy_range
         self.force_z_range = force_z_range
         self.prob = prob
+        self.duration = duration
         self.mass_total = self.asset.root_physx_view.get_masses()[0].sum().to(self.device)
 
         self.force_w = torch.zeros(self.num_envs, 3, device=self.device)
@@ -521,7 +522,7 @@ class random_pull(Randomization):
             force_w[:, 1].uniform_(*self.force_xy_range)
             force_w[:, 2].uniform_(*self.force_z_range) 
             self.force_w[sample_force] = force_w
-            self.time_remaining[sample_force] = 120
+            self.time_remaining[sample_force] = self.duration
         self.time_remaining -= 1
 
     def debug_draw(self):
