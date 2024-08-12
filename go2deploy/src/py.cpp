@@ -149,7 +149,7 @@ public:
 
     py::array_t<float> GetFullState() {
         std::lock_guard<std::mutex> lock(state_mutex);
-        std::array<float, 12 + 12 + 12 + 3 + 3> state;
+        std::array<float, 12 + 12 + 12 + 3 + 3 + 4> state;
         std::copy(
             robot_interface.jpos.begin(), 
             robot_interface.jpos.begin() + robot_interface.jpos.size(), 
@@ -174,6 +174,11 @@ public:
             robot_interface.gyro.begin(),
             robot_interface.gyro.begin() + 3,
             state.begin() + 39
+        );
+        std::copy(
+            low_state.foot_force().begin(),
+            low_state.foot_force().begin() + 4,
+            state.begin() + 42
         );
         return py::array_t<float>(state.size(), state.data());
     }
@@ -244,7 +249,7 @@ private:
             robot_interface.SetCommand(cmd);
             lowcmd_publisher->Write(cmd);
 
-            if (robot_interface.projected_gravity.at(2) > -0.3) {
+            if (robot_interface.projected_gravity.at(2) > -0.1) {
                 std::cout << "Falling detected, damping" << std::endl;
                 Damping();
             }
@@ -254,7 +259,7 @@ private:
     void Damping() {
         robot_interface.jvel_des.fill(0.);
         robot_interface.kp.fill(0.);
-        robot_interface.kd.fill(2.5);
+        robot_interface.kd.fill(2.0);
         robot_interface.tau_ff.fill(0.);
     }
 
