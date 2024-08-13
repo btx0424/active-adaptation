@@ -720,7 +720,7 @@ class head_clearance(Reward):
         self.head_height: torch.Tensor = self.asset.data.head_height
 
     def compute(self) -> torch.Tensor:
-        return (self.head_height - self.target_height).clamp_min(0.)
+        return (self.head_height - self.target_height).clamp_max(0.)
 
 
 def normalize(x: torch.Tensor):
