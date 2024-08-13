@@ -48,7 +48,7 @@ class Robot:
         self.default_joint_pos = np.array(
             [
                 0.1, -0.1,  0.1, -0.1,  
-                0.8,  0.8,  1.0,  1.0, 
+                0.78,  0.78,  0.75,  0.75, 
                 -1.5, -1.5, -1.5, -1.5
             ], 
         )
@@ -63,10 +63,11 @@ class Robot:
         self.command = np.zeros(4) # linvel_xy, angvel_z, base_height
         self.lxy = 0.
         self.rxy = 0.
-        self.action_buf_steps = 2
+        self.action_buf_steps = 3
         self.last_action = np.zeros(12)
         self.start_t = time.perf_counter()
         self.timestamp = time.perf_counter()
+        self.step_count = 0
 
         self.update()
         _obs = self._compute_obs()
@@ -103,8 +104,8 @@ class Robot:
         # self.rpy = self._robot.get_rpy()
         (
             self.jpos_sdk, self.jvel_sdk, self.tau_sdk,
-            self.rpy, angvel
-        ) = np.split(self._robot.get_full_state(), [12, 24, 36, 39])
+            self.rpy, angvel, self.feet_force
+        ) = np.split(self._robot.get_full_state(), [12, 24, 36, 39, 42])
         
         self.jpos_sim = self.sdk_to_orbit(self.jpos_sdk)
         self.jvel_sim = self.sdk_to_orbit(self.jvel_sdk)
@@ -136,7 +137,6 @@ class Robot:
         # heading = np.array([1., 0.])
         # self.command[2:4] = heading
         self.timestamp = time.perf_counter()
-        self.step_count = 0
     
     def step(self, action=None):
         if action is not None:
