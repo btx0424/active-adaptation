@@ -232,8 +232,8 @@ class Command2(Command):
         self.command_angvel[:] = torch.where(self.use_stiffness, command_yaw_speed, self.fixed_yaw_speed)
 
         # this is used for terminating episodes where the robot is inactive due to whatever reason
-        linvel_error = (self.robot.data.root_lin_vel_b[:, :2] - self.command[:, :2]).square().sum(-1, True)
-        angvel_error = (self.command_angvel - self.robot.data.root_ang_vel_w[:, 2]).square().unsqueeze(1)
+        linvel_error = (self.robot.data.root_lin_vel_b[:, :2] - self.command[:, :2]).norm(dim=-1, keepdim=True)
+        angvel_error = (self.command_angvel - self.robot.data.root_ang_vel_w[:, 2]).abs().unsqueeze(1)
         
         if self.adaptive:
             self.ray_start_w = self.robot.data.root_pos_w + torch.tensor([0., 0., -0.2], device=self.device)

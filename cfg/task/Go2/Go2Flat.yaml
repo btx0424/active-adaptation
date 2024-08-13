@@ -23,7 +23,7 @@ action:
 command:
   _target_: active_adaptation.envs.mdp.Command2
   linvel_x_range: [-1.0, 2.0]
-  linvel_y_range: [-0.5, 0.5]
+  linvel_y_range: [-0.7, 0.7]
   angvel_range:   [-2.0, 2.0]
   yaw_stiffness_range: [0.5, 0.7]
   use_stiffness_ratio: 0.99
@@ -118,14 +118,14 @@ reward:
 termination:
   crash: {body_names_expr: [Head.*, "base"], t_thres: 0.5, z_thres: 0.}
   # joint_acc_exceeds: {thres: 5000}
-  cum_error: {thres: 0.9}
+  cum_error: {thres: 1.0}
 
 randomization:
   random_scale: [1.0, 1.2]
   perturb_body_mass:
     (?!(payload|base|Head.*)).*: [0.8, 1.2]
     base: [0.8, 1.4]
-    Head.*: [25.0, 250.0]
+    # Head.*: [25.0, 250.0]
   perturb_body_materials:
     body_names: ".*_foot"
     static_friction_range:  [0.5, 4.0]

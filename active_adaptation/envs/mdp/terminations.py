@@ -58,7 +58,7 @@ class cum_error(Termination):
     def __init__(self, env, thres: float = 0.85):
         super().__init__(env)
         from .commands import Command2
-        self.thres = thres
+        self.thres = torch.tensor(thres, device=self.env.device)
         self.command_manager: Command2 = self.env.command_manager
     
     def __call__(self) -> torch.Tensor:
