@@ -612,7 +612,7 @@ class Impedance(Command):
         self.resample_prob = 0.01
 
         with torch.device(self.device):
-            self.command = torch.zeros(self.num_envs, 6)
+            self.command = torch.zeros(self.num_envs, 7)
             
             self.command_linvel = torch.zeros(self.num_envs, 3)
             self.command_speed = torch.zeros(self.num_envs, 1)
@@ -692,8 +692,8 @@ class Impedance(Command):
         self.command_speed[:] = self.command_linvel.norm(dim=-1, keepdim=True)
         self.command[:, :2] = self.command_linvel[:, :2]
         self.command[:, 2] = self.command_angvel
-        self.command[:, 2:4] = command_pos_b[:, :2]
-        self.command[:, 4:6] = command_setpoint_b[:, :2]
+        self.command[:, 3:5] = command_pos_b[:, :2]
+        self.command[:, 5:7] = command_setpoint_b[:, :2]
 
         _ = torch.rand(self.num_envs, device=self.device) < self.resample_prob
         self._sample_command(_.nonzero().squeeze(-1))
@@ -719,7 +719,7 @@ class Impedance(Command):
         force_ext_w[:, 0].uniform_(-40, 40)
         force_ext_w[:, 1].uniform_(-40, 40)
         force_ext_w[:, 2].uniform_(-10, 10)
-        self.force_ext_w[env_ids] = force_ext_w
+        self.force_ext_w[env_ids] = force_ext_w * (torch.rand(len(env_ids), 1, device=self.device) < 0.5)
 
         self.desired_yaw[env_ids] = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
         self.yaw_stiffness[env_ids] = torch.empty(len(env_ids), device=self.device).uniform_(*self.yaw_stiffness_range)
