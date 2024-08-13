@@ -242,7 +242,7 @@ class Command2(Command):
             self.ray_hit_w = raycast_mesh(self.ray_start_w, ray_direction, max_dist=2, mesh=self.ground_mesh)[0]
             distance_to_obstacle = (self.ray_hit_w - self.ray_start_w).norm(dim=-1, keepdim=True).nan_to_num(2.0)
             self.close_to_obstacle = distance_to_obstacle < 0.75
-            fast = self.command_speed > 1.0
+            fast = self.command_speed > 1.4
             target_linvel = torch.where((self.close_to_obstacle & fast), self._target_linvel / 2, self._target_linvel)
         else:
             target_linvel = self._target_linvel
