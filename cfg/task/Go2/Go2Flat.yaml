@@ -113,6 +113,7 @@ reward:
     undesired_contact:  {body_names: [.*_calf, .*thigh, Head.*], weight: 0.25, enabled: true}
     feet_swing_height:  {weight: 0.1, enabled: false, target_height: 0.1}
     head_clearance:     {weight: 1.0, enabled: true, target_height: 0.12}
+    com_support:        {weight: 1.0, enabled: true}
 
 termination:
   crash: {body_names_expr: [Head.*, "base"], t_thres: 0.5, z_thres: 0.}
@@ -120,6 +121,7 @@ termination:
   cum_error: {thres: 0.9}
 
 randomization:
+  random_scale: [1.0, 1.2]
   perturb_body_mass:
     (?!(payload|base|Head.*)).*: [0.8, 1.2]
     base: [0.8, 1.4]

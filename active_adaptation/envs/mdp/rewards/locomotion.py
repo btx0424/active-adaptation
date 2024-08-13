@@ -723,6 +723,18 @@ class head_clearance(Reward):
         return (self.head_height - self.target_height).clamp_max(0.)
 
 
+class com_support(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.feet_ids = self.asset.find_bodies(".*foot")[0]
+
+    def compute(self) -> torch.Tensor:
+        feet_center = self.asset.data.body_pos_w[:, self.feet_ids].mean(1)
+        error = (self.asset.data.root_pos_w[:, :2] - feet_center[:, :2]).square().sum(1, keepdim=True)
+        return torch.exp(- error / 0.2)
+
+
 def normalize(x: torch.Tensor):
     return x / x.norm(dim=-1, keepdim=True).clamp_min(1e-6)
 
