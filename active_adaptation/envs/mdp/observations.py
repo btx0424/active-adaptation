@@ -182,6 +182,27 @@ def root_quat_w(self):
     return self.scene["robot"].data.root_quat_w
 
 
+class command(Observation):
+    def __init__(self, env, mask_ratio: float = 0):
+        super().__init__(env, mask_ratio)
+        self.command_manager = self.env.command_manager
+
+    def compute(self):
+        return self.command_manager.command
+    
+    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
+        return self.command_manager.fliplr(obs)
+
+
+class command_hidden(Observation):
+    def __init__(self, env, mask_ratio: float = 0):
+        super().__init__(env, mask_ratio)
+        self.command_manager = self.env.command_manager
+    
+    def compute(self):
+        return self.command_manager.command_hidden
+
+
 class root_angvel_b(Observation):
     def __init__(self, env, noise_std: float=0., yaw_only: bool=False, mask_ratio: float=0.):
         super().__init__(env, mask_ratio=mask_ratio)
@@ -269,7 +290,7 @@ class root_linvel_b(Observation):
 class _JointObs(Observation):
 
     def fliplr(self, obs: torch.Tensor):
-        return obs.reshape(self.num_envs, 3, 2, 2).flip(dims=-1).reshape(self.num_envs, -1)
+        return obs.reshape(self.num_envs, 3, 2, 2).flip(dims=(-1,)).reshape(self.num_envs, -1)
 
 
 class joint_pos(_JointObs):
@@ -366,6 +387,13 @@ class contact_indicator(Observation):
         else:
             return forces.reshape(self.num_envs, -1).clip(-5., 5.)
 
+    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
+        if self.timing:
+            obs = obs.reshape(self.num_envs, len(self.body_ids), 5)[:, [1, 0, 3, 2]] * torch.tensor([1., 1., 1., -1., 1.], device=obs.device)
+        else:
+            obs = obs.reshape(self.num_envs, len(self.body_ids), 2)[:, [1, 0, 3, 2]] * torch.tensor([1., 1.], device=obs.device)
+        return obs.reshape(self.num_envs, -1)
+
     def debug_draw(self):
         self.env.debug_draw.vector(
             self.asset.data.body_pos_w[:, self.artc_ids],
@@ -447,6 +475,9 @@ class external_forces(Observation):
     def compute(self) -> torch.Tensor:
         forces_b = self.asset._external_force_b[:, self.body_indices]
         return (forces_b / self.default_mass_total).reshape(self.env.num_envs, -1)
+
+    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
+        return obs * torch.tensor([1., -1., 1.], device=self.device)
 
 
 class body_materials(Observation):
@@ -763,7 +794,7 @@ class prev_actions(Observation):
         return self.env.action_manager.action_buf[:, :, :self.steps].reshape(self.num_envs, -1)
 
     def fliplr(self, obs: torch.Tensor):
-        return obs.reshape(self.num_envs, 3, 2, 2, self.steps).flip(dims=-1).reshape(self.num_envs, -1)
+        return obs.reshape(self.num_envs, 3, 2, 2, self.steps).flip(dims=(-1,)).reshape(self.num_envs, -1)
 
 
 class last_contact(Observation):

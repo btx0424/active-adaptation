@@ -602,6 +602,7 @@ class Impedance(Command):
         linvel_y_range=(-1.0, 1.0),
         angvel_range=(-2.0, 2.0),
         yaw_stiffness_range=(0.5, 0.5),
+        virtual_mass_range=(0.5, 1.0),
         compliant_ratio: float = 0.2,
     ) -> None:
         super().__init__(env)
@@ -610,11 +611,13 @@ class Impedance(Command):
         self.linvel_y_range = linvel_y_range
         self.angvel_range = angvel_range
         self.yaw_stiffness_range = yaw_stiffness_range
+        self.virtual_mass_range = virtual_mass_range
         self.resample_prob = 0.01
         self.compliant_ratio = compliant_ratio # kp=0 for compliant mode
 
         with torch.device(self.device):
-            self.command = torch.zeros(self.num_envs, 9)
+            self.command = torch.zeros(self.num_envs, 6)
+            self.command_hidden = torch.zeros(self.num_envs, 6)
             
             self.command_linvel = torch.zeros(self.num_envs, 3)
             self.command_speed = torch.zeros(self.num_envs, 1)
@@ -694,12 +697,14 @@ class Impedance(Command):
         self.command_linvel[:] = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_linvel_w)
         self.command_speed[:] = self.command_linvel.norm(dim=-1, keepdim=True)
         
-        self.command[:, :2] = self.command_linvel[:, :2]
+        self.command[:, :2] = command_setpoint_b[:, :2]
         self.command[:, 2] = self.command_angvel
         self.command[:, 3:4] = self.kp
         self.command[:, 4:5] = self.kd
-        self.command[:, 5:7] = command_pos_b[:, :2]
-        self.command[:, 7:9] = command_setpoint_b[:, :2]
+        self.command[:, 5:6] = self.virtual_mass
+
+        self.command_hidden[:, 0:3] = command_pos_b
+        self.command_hidden[:, 3:6] = self.command_linvel
 
         _ = torch.rand(self.num_envs, device=self.device) < self.resample_prob
         self._sample_command(_.nonzero().squeeze(-1))
@@ -714,7 +719,8 @@ class Impedance(Command):
         
         kp = torch.empty(len(env_ids), 1, device=self.device).uniform_(2.0, 3.0)
         kd = 2.0 * kp.sqrt()    # to make the system critically damped
-        kp *= torch.rand(len(env_ids), 1, device=self.device) < self.compliant_ratio
+        compliant = torch.rand(len(env_ids), device=self.device) < self.compliant_ratio
+        kp *= (~compliant).unsqueeze(1)
 
         self.command_setpoint_w[env_ids] = command_setpoint_w
         self.kp[env_ids] = kp
@@ -727,7 +733,8 @@ class Impedance(Command):
         self.desired_yaw[env_ids] = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
         self.yaw_stiffness[env_ids] = torch.empty(len(env_ids), device=self.device).uniform_(*self.yaw_stiffness_range)
 
-        self.virtual_mass[env_ids] = self.default_mass[env_ids] * sample_uniform((len(env_ids), 1), 0.5, 1.0, self.device)
+        virtual_mass = torch.empty(len(env_ids), 1, device=self.device).uniform_(*self.virtual_mass_range)
+        self.virtual_mass[env_ids] = self.default_mass[env_ids] * virtual_mass
 
     def _sample_force(self, env_ids: torch.Tensor):
         force_ext_w = torch.zeros(len(env_ids), 3, device=self.device)
