@@ -200,6 +200,7 @@ class Command2(Command):
             self._target_direction = torch.zeros(self.num_envs, 3)
             self._target_linvel = torch.zeros(self.num_envs, 3)
             self.command_linvel = torch.zeros(self.num_envs, 3)
+            self.command_linvel_w = torch.zeros(self.num_envs, 3)
             self.command_angvel = torch.zeros(self.num_envs)
 
             self.aux_input = torch.zeros(self.num_envs, 1)
@@ -251,6 +252,7 @@ class Command2(Command):
         self._cum_angvel_error.mul_(0.98).add_(angvel_error * self.env.step_dt)
         self.command_linvel[:] = self.command_linvel + clamp_norm((target_linvel - self.command_linvel) * 0.1, max=0.1)
 
+        self.command_linvel_w[:] = quat_apply_yaw(self.robot.data.root_quat_w, self.command_linvel)
         self.command[:, :2] = self.command_linvel[:, :2]
         self.command[:, 2] = self.command_angvel
         self.command[:, 3] = self.aux_input.squeeze(1)
@@ -285,7 +287,7 @@ class Command2(Command):
     def debug_draw(self):
         self.env.debug_draw.vector(
             self.robot.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
-            quat_apply_yaw(self.robot.data.root_quat_w, self.command_linvel),
+            self.command_linvel_w,
             color=(1., 1., 1., 1.)
         )
         self.env.debug_draw.vector(
@@ -741,6 +743,7 @@ class Impedance(Command):
         force_ext_w[:, 0].uniform_(-40, 40)
         force_ext_w[:, 1].uniform_(-40, 40)
         force_ext_w[:, 2].uniform_(-10, 10)
+        force_ext_w = clamp_norm(force_ext_w, max=self.virtual_mass[env_ids] * 8.)
         self.force_ext_w[env_ids] = force_ext_w * (torch.rand(len(env_ids), 1, device=self.device) < 0.5)
 
     def debug_draw(self):
@@ -785,7 +788,9 @@ def quat_from_yaw(yaw: torch.Tensor):
     ], dim=-1)
 
 
-def clamp_norm(x: torch.Tensor, min: float=0, max: float=torch.inf):
+def clamp_norm(x: torch.Tensor, min: float=0., max: float=torch.inf):
     x_norm = x.norm(dim=-1, keepdim=True).clamp(1e-6)
-    return x / x_norm * x_norm.clamp(min, max)
+    x = torch.where(x_norm < min, x / x_norm * min, x)
+    x = torch.where(x_norm > max, x / x_norm * max, x)
+    return x
 

@@ -599,6 +599,34 @@ class step_up_needed(Reward):
         return cnt  * (~is_standing)
 
 
+from ..observations import _initialize_warp_meshes, raycast_mesh
+
+class step_lift(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.mesh = _initialize_warp_meshes("/World/ground", "cuda")
+        self.command_manager: Command2 = self.env.command_manager
+        self.feet_ids = self.asset.find_bodies(".*foot")[0]
+
+    def compute(self) -> torch.Tensor:
+        ray_dir = self.command_manager.command_linvel_w
+        ray_start_w = self.asset.data.body_pos_w[:, self.feet_ids]
+        _, distance, normal, _ = raycast_mesh(
+            ray_start_w,
+            ray_dir,
+            max_dist=0.2,
+            mesh=self.mesh,
+            return_distance=True,
+            return_normal=True
+        )
+        distance = distance.nan_to_num(nan=1.0, posinf=1.0)
+        hit_stair = (distance < 0.05) & (normal[:, :, 2].abs() < 0.05)
+        feet_vel_z = self.asset.data.body_lin_vel_w[:, self.feet_ids, 2]
+        r = hit_stair * feet_vel_z.clamp_min(0.0)
+        return r.max(1, True).values
+
+
 class base_height_l1(Reward):
     def __init__(self, env, target_height: float, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
