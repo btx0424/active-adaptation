@@ -69,7 +69,8 @@ def main(cfg: DictConfig):
     policy = agent.get_rollout_policy("eval")
     td_ = env.reset()
     
-    try:
+    
+    with torch.inference_mode():
         while True:
             policy(td_)
             td, td_ = env.step_and_maybe_reset(td_)
@@ -82,9 +83,8 @@ def main(cfg: DictConfig):
                 
                 print(info)
    
-    except KeyboardInterrupt:    
-        env.close()
-        simulation_app.close()
+    env.close()
+    simulation_app.close()
 
 
 if __name__ == "__main__":

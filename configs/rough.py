@@ -1,9 +1,4 @@
-from active_adaptation.assets import (
-    ArticulationCfg,
-    ROBOTS,
-    spawn_with_payload
-)
-from active_adaptation.utils.orbit import RayCaster
+from active_adaptation.assets import *
 from omni.isaac.lab.scene import InteractiveSceneCfg
 from omni.isaac.lab.utils import configclass
 from omni.isaac.lab.terrains import TerrainImporterCfg
@@ -57,7 +52,7 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
             angle=20,
         ),
         init_state=ArticulationCfg.InitialStateCfg(
-            rot=(7.07106781e-01, 5.55111512e-17, 6.12372436e-01, 3.53553391e-01)
+            rot=(-0.87330464,  0.        ,  0.48717451,  0.        )
         )
     )
 
@@ -73,13 +68,31 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
         history_length=1
     )
 
+    camera = TiledCameraCfg(
+        prim_path="{ENV_REGEX_NS}/camera_tpv",
+        offset=TiledCameraCfg.OffsetCfg(pos=(-3., 0., 2.), rot=[0.96592583, 0.        , 0.25881905, 0.        ], convention="world"),
+        data_types=["depth"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=20.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
+        ),
+        width=128,
+        height=96,
+    )
+
+@configclass
+class LocoManipSceneCfg(LocomotionSceneCfg):
+    
+    env_spacing: float = 5.0
+    
+    door = DOOR_CFG
+    door.init_state.pos = (2.0, 0.0, 0.0)
+    
 
 @configclass
 class EnvCfg:
 
     max_episode_length: int = 1000
     payload: bool = False
-    action_scaling: float = 0.5
 
     history_length: int = 32
 
@@ -94,6 +107,7 @@ class EnvCfg:
     decimation: int  = 4
     sim = sim_utils.SimulationCfg(dt=0.005, disable_contact_processing=True)
     
+    action: Dict = MISSING
     command: Dict = MISSING
     reward: Dict[str, float] = MISSING
     observation: Dict[str, List] = MISSING
@@ -120,16 +134,21 @@ def LocomotionEnvCfg(task_cfg):
     scale_range = randomizations.pop("random_scale", (1.0, 1.0))
     robot_cfg.spawn.scale_range = scale_range
 
+    scene_cfg_class = {
+        "locomotion": LocomotionSceneCfg,
+        "locomanip": LocoManipSceneCfg
+    }[task_cfg.get("scene", "locomotion")]
+
     env_cfg = EnvCfg(
         max_episode_length=task_cfg.max_episode_length,
-        action_scaling=task_cfg.action_scaling,
         payload=task_cfg.payload,
-        scene = LocomotionSceneCfg(
+        scene = scene_cfg_class(
             num_envs=task_cfg.num_envs,                                                                                                                                                         
             robot=robot_cfg.replace(prim_path="{ENV_REGEX_NS}/Robot"),
             terrain=terrain_cfg,
             replicate_physics=False,
         ),
+        action = task_cfg.action,
         command = task_cfg.command,
         reward = task_cfg.reward,
         observation = task_cfg.observation,
@@ -145,6 +164,15 @@ def LocomotionEnvCfg(task_cfg):
             use_height_scan = True
     if not use_height_scan:
         env_cfg.scene.height_scanner = None
+    
+    use_camera = False
+    for group in task_cfg.observation.values():
+        if "camera" in group.keys():
+            use_camera = True
+            env_cfg.scene.camera.update_period = env_cfg.decimation * env_cfg.sim.dt
+            env_cfg.scene.camera.history_length = 0
+    if not use_camera:
+        env_cfg.scene.camera = None
     
     # slightly reduces GPU memory usage
     # env_cfg.sim.physx.gpu_max_rigid_contact_count = 2**21

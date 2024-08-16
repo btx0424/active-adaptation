@@ -1,0 +1,16 @@
+# @package _global_
+
+defaults:
+  - override /task: Go2M_gait
+  - override /algo: ppo_hier
+
+algo:
+  mode: low
+
+task:
+  name: LocoManipLow
+  scene: locomotion
+
+  termination:
+    crash: {body_names_expr: [Head.*, "base", "(arm_link.*|gripper.*)"], t_thres: 0.1, z_thres: 0.}
+  

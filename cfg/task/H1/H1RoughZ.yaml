@@ -1,0 +1,22 @@
+name: H1RoughZ
+task: Humanoid
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/H1/H1Flat@_here_
+  - _self_
+
+terrain: stairs_easy
+
+observation:
+  priv:
+    applied_action:
+    root_linvel_b:
+    feet_pos_b:
+    feet_vel_b:
+    feet_height_map:  {feet_names: .*ankle_link }
+    body_scale:       {}
+    # dynamics states
+    motor_params:     {actuator_name: base_legs}
+    body_materials:   {body_names: ".*ankle_link"}
+    body_mass:        {body_names: ["pelvis", "torso_link", ".*_hip.*", ".*shoulder.*"]}

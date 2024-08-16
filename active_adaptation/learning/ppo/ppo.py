@@ -35,8 +35,8 @@ from tensordict import TensorDict
 from tensordict.nn import TensorDictModuleBase, TensorDictModule, TensorDictSequential
 
 from hydra.core.config_store import ConfigStore
-from dataclasses import dataclass
-from typing import Union
+from dataclasses import dataclass, field
+from typing import Union, List
 from collections import OrderedDict
 
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
@@ -47,17 +47,19 @@ torch.set_float32_matmul_precision('high')
 
 @dataclass
 class PPOConfig:
+    _target_: str = "active_adaptation.learning.ppo.ppo.PPOPolicy"
     name: str = "ppo"
     train_every: int = 32
     ppo_epochs: int = 5
     num_minibatches: int = 8
     lr: float = 5e-4
     clip_param: float = 0.2
-    entropy_coef: float = 0.002
+    entropy_coef: float = 0.001
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
     checkpoint_path: Union[str, None] = None
+    in_keys: List[str] = field(default_factory=lambda: [OBS_KEY])
 
 cs = ConfigStore.instance()
 cs.store("ppo", node=PPOConfig, group="algo")
@@ -92,24 +94,15 @@ class PPOPolicy(TensorDictModuleBase):
 
         fake_input = observation_spec.zero()
         
-        def make_cnn():
-            cnn = nn.Sequential(
-                nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1),
-                nn.LeakyReLU(),
-                nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1),
-                nn.LeakyReLU(),
-                nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1),
-                nn.LeakyReLU(),
-                nn.Flatten(),
-                nn.LazyLinear(64),
-                nn.LayerNorm(64),
-            )
-            return cnn
-        
         def make_encoder(out_key: str):
             if "height_scan" in observation_spec.keys(True, True):
+                cnn = nn.Sequential(
+                    make_conv(num_channels=[8, 8, 8]),
+                    nn.LazyLinear(64),
+                    nn.LayerNorm(64),
+                )
                 modules = [
-                    TensorDictModule(make_cnn(), ["height_scan"], ["_cnn"]),
+                    TensorDictModule(cnn, ["height_scan"], ["_cnn"]),
                     TensorDictModule(make_mlp([256]), [OBS_KEY], ["_mlp"]),
                     CatTensors(["_cnn", "_mlp"], out_key),
                 ]
@@ -176,7 +169,7 @@ class PPOPolicy(TensorDictModuleBase):
                 infos.append(TensorDict(self._update(minibatch), []))
         
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
-        infos["value_mean"] = tensordict["ret"].mean().item()
+        infos["critic/value_mean"] = tensordict["ret"].mean().item()
         return infos
 
     @torch.no_grad()
@@ -195,14 +188,15 @@ class PPOPolicy(TensorDictModuleBase):
         values = tensordict["state_value"]
         next_values = tensordict["next", "state_value"]
 
-        rewards = tensordict[REWARD_KEY]
+        rewards = tensordict[REWARD_KEY].sum(-1, keepdim=True)
         # dones = tensordict["next", "done"]
         # rewards = torch.where(dones, rewards + values * self.gae.gamma, rewards)
+        terms = tensordict[TERM_KEY]
         dones = tensordict[DONE_KEY]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
 
-        adv, ret = self.gae(rewards, dones, values, next_values)
+        adv, ret = self.gae(rewards, terms, dones, values, next_values)
         if update_value_norm:
             self.value_norm.update(ret)
         ret = self.value_norm.normalize(ret)
@@ -218,10 +212,11 @@ class PPOPolicy(TensorDictModuleBase):
         entropy = dist.entropy().mean()
 
         adv = tensordict["adv"]
-        ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
+        log_ratio = (log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
+        ratio = torch.exp(log_ratio)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
-        policy_loss = - torch.mean(torch.min(surr1, surr2))
+        policy_loss = - torch.mean(torch.min(surr1, surr2) * (~tensordict["is_init"]))
         entropy_loss = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
@@ -237,13 +232,14 @@ class PPOPolicy(TensorDictModuleBase):
         self.opt.step()
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
         return {
-            "policy_loss": policy_loss,
-            "value_loss": value_loss,
-            "entropy": entropy,
-            "noise_std": tensordict["scale"].mean(),
-            "actor_grad_norm": actor_grad_norm,
-            "critic_grad_norm": critic_grad_norm,
-            "explained_var": explained_var,
+            "actor/policy_loss": policy_loss,
+            "actor/entropy": entropy,
+            "actor/noise_std": tensordict["scale"].mean(),
+            "actor/grad_norm": actor_grad_norm,
+            'actor/approx_kl': ((ratio - 1) - log_ratio).mean(),
+            "critic/value_loss": value_loss,
+            "critic/grad_norm": critic_grad_norm,
+            "critic/explained_var": explained_var,
         }
 
     def state_dict(self):

@@ -20,18 +20,11 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import os
+import importlib
 
-from .ppo import PPOPolicy
-from .ppo_adapt import PPOAdaptPolicy
-from .ppo_stoch import PPOStochPolicy
-from .ppo_asy import PPOAsyPolicy
-from .ppo_ji import PPOPolicy as PPOJi
-# from .ppo_rma import PPORMAPolicy
-from .ppo_rnn import PPORNNPolicy
-from .ppo_dual import PPODualPolicy
-from .ppo_roa import PPOROAPolicy
-from .ppo_guided import PPOGuidedPolicy
-from .ppo_mask import PPOMaskPolicy
-from .ppg import PPGPolicy
-from .ppo_him import PPOHIMPolicy
-from .ppo_priv import PPOPrivPolicy
+dir_path = os.path.dirname(os.path.realpath(__file__))
+for file in os.listdir(dir_path):
+    if file.endswith(".py") and file != "__init__.py":
+        importlib.import_module(f".{file[:-3]}", __package__)
+

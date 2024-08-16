@@ -38,12 +38,8 @@ class crash(Termination):
     
     def __call__(self):
         fall_over = self.asset.data.projected_gravity_b[:, 2] >= self.z_thres
-        contact_force = self.contact_sensor.data.net_forces_w[:, self.body_indices]
         contact_times = self.contact_sensor.data.current_contact_time[:, self.body_indices]
-        undesired_contact = (
-            (contact_force.norm(dim=-1) > 1.)
-            | (contact_times > self.t_thres)
-        ).any(dim=1)
+        undesired_contact = (contact_times > self.t_thres).any(dim=-1)
         terminated = (fall_over | undesired_contact).unsqueeze(1)
         return terminated
 
@@ -62,11 +58,24 @@ class cum_error(Termination):
     def __init__(self, env, thres: float = 0.85):
         super().__init__(env)
         from .commands import Command2
-        self.thres = thres
+        self.thres = torch.tensor(thres, device=self.env.device)
         self.command_manager: Command2 = self.env.command_manager
     
     def __call__(self) -> torch.Tensor:
         return (self.command_manager._cum_error > self.thres).any(-1, True)
+
+class ee_cum_error(Termination):
+    def __init__(self, env, thres: float = 1.0, min_steps: int = 50):
+        super().__init__(env)
+        from .commands import CommandEEPose_Cont
+        self.thres = torch.as_tensor(thres, device=self.env.device)
+        self.min_steps = min_steps
+        self.command_manager: CommandEEPose_Cont = self.env.command_manager
+    
+    def __call__(self) -> torch.Tensor:
+        a = (self.command_manager._cum_error > self.thres).any(-1)
+        b = self.env.episode_length_buf > self.min_steps
+        return (a & b).reshape(-1, 1)
 
 
 class joint_acc_exceeds(Termination):
@@ -81,4 +90,17 @@ class joint_acc_exceeds(Termination):
             valid & 
             (self.asset.data.joint_acc.abs() > self.thres).any(1, True)
         )
+
+class impact_exceeds(Termination):
+    def __init__(self, env, body_names: str, thres: float):
+        super().__init__(env)
+        self.thres = thres
+        self.asset: Articulation = self.env.scene["robot"]
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+
+        self.body_ids = self.contact_sensor.find_bodies(body_names)[0]
+    
+    def __call__(self) -> torch.Tensor:
+        impact_force = self.contact_sensor.data.net_forces_w_history[:, :, self.body_ids]
+        return (impact_force.norm(dim=-1).mean(1) > self.thres).any(1, True)
 

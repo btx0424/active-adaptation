@@ -20,7 +20,7 @@ from active_adaptation.learning import BCPolicy, ALGOS
 from scripts.helpers import make_env_policy, EpisodeStats, Every
 
 
-@hydra.main(config_path="../cfg", config_name="train")
+@hydra.main(config_path="../cfg", config_name="imitate")
 def main(cfg):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
@@ -38,7 +38,7 @@ def main(cfg):
     env, teacher, vecnorm = make_env_policy(cfg)
 
     policy = BCPolicy(
-        {},
+        cfg.imitate,
         env.observation_spec, 
         env.action_spec, 
         env.reward_spec,

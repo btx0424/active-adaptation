@@ -18,18 +18,9 @@ class LocomotionEnv(Env):
 
     def __init__(self, cfg):
         super().__init__(cfg)
-        self.action_scaling = self.cfg.action_scaling
 
         self.robot = self.scene.articulations["robot"]
         self.action_split = [act.num_joints for act in self.robot.actuators.values()]
-        self.controlled_joint_ids = []
-        for act in self.robot.actuators.values():
-            ids = act.joint_indices
-            if isinstance(ids, slice):
-                ids = torch.arange(self.robot.num_joints)[ids].tolist()
-            self.controlled_joint_ids.extend(ids)
-        if len(self.controlled_joint_ids) == self.robot.num_joints:
-            self.controlled_joint_ids = slice(None)
 
         self.contact_sensor: ContactSensor = self.scene.sensors.get("contact_forces", None)
         self.height_scanner: RayCaster = self.scene.sensors.get("height_scanner", None)
@@ -38,7 +29,7 @@ class LocomotionEnv(Env):
         self.init_joint_pos = self.robot.data.default_joint_pos.clone()
         self.init_joint_vel = self.robot.data.default_joint_vel.clone()
         
-        self.default_joint_pos = self.init_joint_pos.clone()[:, self.controlled_joint_ids]
+        self.default_joint_pos = self.init_joint_pos.clone()
         
         try:
             from active_adaptation.utils.debug import DebugDraw
@@ -52,39 +43,22 @@ class LocomotionEnv(Env):
             - torch.tensor(self.cfg.viewer.lookat)
         ).norm(dim=-1).argmin()
 
-        with torch.device(self.device):
-            # self.action_scale = torch.ones(self.num_envs, 1)
-            self.action_alpha = torch.ones(self.num_envs, 1) * 0.8
-            self.action_buf = torch.zeros(self.num_envs, self.action_dim, 4)
-            self.last_action = torch.zeros(self.num_envs, self.action_dim)
-            self.delay = torch.zeros(self.num_envs, 1, dtype=int)
-
-    @property
-    def action_dim(self):
-        return sum(actuator.num_joints for actuator in self.robot.actuators.values())
+        self.action_buf: torch.Tensor = self.action_manager.action_buf
+        self.last_action: torch.Tensor = self.action_manager.applied_action
 
     def _reset_idx(self, env_ids: torch.Tensor):
-        init_root_state = self.init_root_state[env_ids]
-        origins = self.scene.env_origins[torch.randint(0, self.scene.num_envs, (len(env_ids),), device=self.device)]
-        init_root_state[:, :3] += origins
-        init_root_state[:, 3:7] = sample_quat(len(env_ids), device=self.device)
+        init_root_state = self.command_manager.sample_init(env_ids)
         
         self.robot.write_root_state_to_sim(
             init_root_state, 
             env_ids=env_ids
         )
         self.stats[env_ids] = 0.
-        self.action_buf[env_ids] = 0.
-        self.last_action[env_ids] = 0.
-        self.delay[env_ids] = torch.randint(0, 4, (len(env_ids), 1), device=self.device)
 
         self.scene.reset(env_ids)
-        self.scene.update(dt=self.physics_dt)
-        self.command_manager.reset(env_ids=env_ids)
-    
-    def _update(self):
-        super()._update()
-        self.command_manager.update()
+        # in `self._reset_callbacks`
+        # self.command_manager.reset(env_ids=env_ids)
+        # self.action_manager.reset(env_ids=env_ids)
 
     def render(self, mode: str = "human"):
         robot_pos = self.robot.data.root_pos_w[self.lookat_env_i].cpu()
@@ -93,19 +67,6 @@ class LocomotionEnv(Env):
             lookat = torch.tensor(self.cfg.viewer.lookat) + robot_pos
             self.sim.set_camera_view(eye, lookat)
         return super().render(mode)
-
-    def apply_action(self, tensordict: TensorDictBase, substep: int):
-        if substep == 0:
-            # random packet loss: repeat previous actions
-            self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
-            self.action_buf[:, :, 0] = tensordict["action"].clamp(-10, 10)
-            action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
-            self.last_action.lerp_(action.squeeze(-1), self.action_alpha)
-
-            pos_target = self.last_action * self.action_scaling + self.default_joint_pos
-            pos_target = pos_target.clamp(-torch.pi, torch.pi)
-            self.robot.set_joint_position_target(pos_target, self.controlled_joint_ids)
-        self.robot.write_data_to_sim()
     
     @mdp.observation_func
     def command(self):
@@ -115,28 +76,11 @@ class LocomotionEnv(Env):
     def prev_command(self):
         return self.command_manager.command_prev
     
-    @mdp.observation_func
-    def applied_action(self):
-        if not hasattr(self, "last_action"):
-            return torch.zeros(self.num_envs, self.action_dim, device=self.device)
-        return self.last_action
-    
-    @mdp.reward_func
-    def linvel_projection(self):
-        linvel_b = self.scene["robot"].data.root_lin_vel_b[:, :2]
-        command_linvel_b = self.command_manager._command_linvel[:, :2]
-        projection = (linvel_b * command_linvel_b).sum(dim=-1, keepdim=True) 
-        return projection.clamp_max(self.command_manager._command_speed)
-    
     # @mdp.reward_func
     # def heading(self):
     #     root_quat = self.scene["robot"].data.root_quat_w
     #     heading_b_x = quat_rotate_inverse(root_quat, self.command_manager._command_heading)[:, [0]]
     #     return 0.5 * (heading_b_x + heading_b_x.sign() * heading_b_x.square())
-    
-    @mdp.reward_func
-    def joint_torques_l2(self):
-        return - self.scene["robot"].data.applied_torque.square().sum(dim=-1, keepdim=True)
 
     @mdp.reward_func
     def action_rate_l2(self):
@@ -167,6 +111,10 @@ class LocomotionEnv(Env):
                 feet_names = env.feet_name_expr
             super().__init__(env, feet_names, yaw_only)
             self.asset.data.feet_pos_b = self.body_pos_b
+        
+        def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
+            obs = obs.reshape(self.num_envs, 4, 3)[:, [1, 0, 3, 2]] * torch.tensor([1., -1., 1.])
+            return obs.reshape(self.num_envs, -1)
     
     class feet_vel_b(mdp.body_vel):
         def __init__(self, env: "LocomotionEnv", feet_names=None, yaw_only: bool=False):
@@ -174,6 +122,10 @@ class LocomotionEnv(Env):
                 feet_names = env.feet_name_expr
             super().__init__(env, feet_names, yaw_only)
             self.asset.data.feet_vel_b = self.body_vel_b
+        
+        def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
+            obs = obs.reshape(self.num_envs, 4, 3)[:, [1, 0, 3, 2]] * torch.tensor([1., -1., 1.])
+            return obs.reshape(self.num_envs, -1)
     
     class base_height_l2(mdp.Reward):
         def __init__(self, env, target_height: float, weight: float, enabled: bool = True):
@@ -236,8 +188,8 @@ def flip_lr(joints: torch.Tensor):
 def flip_fb(joints: torch.Tensor):
     return joints.reshape(-1, 3, 2, 2).flip(-2).reshape(-1, 12)
 
-def sample_quat(size, device: torch.device = "cpu"):
-    yaw = torch.rand(size, device=device) * 2 * torch.pi
+def sample_quat(size, yaw_range = (0, torch.pi * 2), device: torch.device = "cpu"):
+    yaw = torch.rand(size, device=device).uniform_(*yaw_range)
     # in (w x y z)
     quat = torch.cat([
         torch.cos(yaw / 2).unsqueeze(-1),

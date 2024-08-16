@@ -44,12 +44,13 @@ from .common import *
 
 @dataclass
 class PPOConfig:
+    _target_: str = "active_adaptation.learning.ppo.ppo_ji.PPOPolicy"
     name: str = "ppo_ji"
     train_every: int = 32
     ppo_epochs: int = 4
     num_minibatches: int = 16
     lr: float = 5e-4
-    clip_param: float = 0.1
+    clip_param: float = 0.2
     entropy_coef: float = 0.002
 
     orthogonal_init: bool = True
@@ -223,11 +224,12 @@ class PPOPolicy(TensorDictModuleBase):
         next_values = critic(tensordict["next"])["state_value"]
 
         rewards = tensordict[REWARD_KEY]
+        terms = tensordict[TERM_KEY]
         dones = tensordict[DONE_KEY]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
 
-        adv, ret = self.gae(rewards, dones, values, next_values)
+        adv, ret = self.gae(rewards, terms, dones, values, next_values)
         if update_value_norm:
             self.value_norm.update(ret)
         ret = self.value_norm.normalize(ret)
@@ -253,25 +255,25 @@ class PPOPolicy(TensorDictModuleBase):
         ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
-        losses["policy_loss"] = - torch.mean(torch.min(surr1, surr2))
-        losses["entropy_loss"] = - self.entropy_coef * entropy
+        losses["actor/policy_loss"] = - torch.mean(torch.min(surr1, surr2))
+        losses["actor/entropy_loss"] = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["state_value"]
         value_loss = self.critic_loss_fn(b_returns, values)
-        losses["value_loss/value_loss_priv"] = (value_loss * (~tensordict["is_init"])).mean()
+        losses["critic/value_loss_priv"] = (value_loss * (~tensordict["is_init"])).mean()
         
         loss = sum(losses.values())
         self.opt.zero_grad()
         loss.backward()
         losses["state_est_grad_norm"] = nn.utils.clip_grad_norm_(self.state_estimator.parameters(), 5.)
-        losses["actor_grad_norm"] = nn.utils.clip_grad_norm_(self.actor.parameters(), 2.)
-        losses["critic_grad_norm"] = nn.utils.clip_grad_norm_(self.critic.parameters(), 2.)
+        losses["actor/grad_norm"] = nn.utils.clip_grad_norm_(self.actor.parameters(), 2.)
+        losses["critic/grad_norm"] = nn.utils.clip_grad_norm_(self.critic.parameters(), 2.)
         self.opt.step()
         
-        losses["value_loss/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-        losses["noise_std"] = tensordict["scale"].mean()
-        losses["entropy"] = entropy
+        losses["critic/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
+        losses["actor/noise_std"] = tensordict["scale"].mean()
+        losses["actor/entropy"] = entropy
         return losses
 
     def state_dict(self):

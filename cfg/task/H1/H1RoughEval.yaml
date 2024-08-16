@@ -1,0 +1,29 @@
+name: H1RoughEval
+task: Humanoid
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/H1/H1RoughS@_here_
+  - randomization: []
+  - _self_
+
+terrain: stairs_easy
+
+randomization:
+  push:     {body_names: ["pelvis", ".*shoulder_pitch_link"], force_range: [0.2, 0.3]}
+  perturb_body_mass:
+    (?!(pelvis|torso_link)).*: [0.7, 1.4]
+    pelvis: [0.7, 2.0]
+  perturb_body_materials:
+    body_names: ".*ankle_link"
+    static_friction_range: [0.3, 2.0]
+    dynamic_friction_range: [0.3, 2.0]
+  motor_params:
+    actuator_name:    base_legs
+    stiffness_range:  [0.7, 1.5]
+    damping_range:    [0.7, 1.5]
+    strength_range:   [0.8, 1.2]
+  reset_joint_states_uniform:
+    pos_ranges:
+      .*: [-0.4, 0.4]
+    rel: true

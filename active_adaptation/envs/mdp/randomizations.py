@@ -33,6 +33,9 @@ class Randomization:
     def step(self, substep):
         pass
 
+    def update(self):
+        pass
+
     def debug_draw(self):
         pass
 
@@ -45,6 +48,7 @@ class motor_params(Randomization):
         stiffness_range = (1.0, 1.0),
         damping_range = (1.0, 1.0),
         strength_range = (1.0, 1.0),
+        armature_range = (0.0, 0.1),
         homogeneous: bool = False,
     ):
         super().__init__(env)
@@ -53,18 +57,28 @@ class motor_params(Randomization):
         self.stiffness_range = stiffness_range
         self.damping_range = damping_range
         self.strength_range = strength_range
+        self.armature_range = armature_range
+
         self.homogeneous = homogeneous
         self.motors: Union[DCMotor, ImplicitActuator] = self.asset.actuators[self.actuator_name]
+        self.num_joints = self.motors.num_joints
         
         self.default_stiffness = self.motors.default_stiffness = self.motors.stiffness.clone()
         self.default_damping = self.motors.default_damping = self.motors.damping.clone()
         self.default_strength = torch.ones_like(self.default_stiffness)
+        self.default_armature = self.motors.armature.clone()
+        
         if isinstance(self.motors, DCMotor):
             if isinstance(self.motors._saturation_effort, float):
                 self.default_strength.fill_(self.motors._saturation_effort)
                 self.motors._saturation_effort = self.default_strength.clone()
         elif isinstance(self.motors, ImplicitActuator):
             self.default_strength[:] = self.motors.effort_limit
+        
+        armature = self.default_armature.clone().uniform_(*self.armature_range)
+        if self.homogeneous:
+            armature[:] = armature.mean(-1, keepdim=True)
+        self.asset.write_joint_armature_to_sim(armature, joint_ids=self.motors.joint_indices)
         
     def reset(self, env_ids: torch.Tensor=slice(None)):
         stiffness, _ = random_scale(
@@ -319,6 +333,34 @@ class push(Randomization):
             color=(1., 0.8, .4, 1.)
         )
 
+class drag(Randomization):
+    def __init__(self, env, body_names, drag_range=(0.0, 0.1)):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_indices, self.body_names = self.asset.find_bodies(body_names)
+        self.num_bodies = len(self.body_indices)
+        self.drag_coeffs = sample_uniform((self.num_envs, self.num_bodies, 1), *drag_range, self.device).expand(self.num_envs, self.num_bodies, 3)
+        self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum() * 9.81
+
+        with torch.device(self.env.device):
+            self.forces = torch.zeros(self.env.num_envs, len(self.body_indices), 3)
+            self.torques = torch.zeros(self.env.num_envs, len(self.body_indices), 3)
+
+    def reset(self, env_ids: torch.Tensor):
+        self.forces[env_ids] = 0.
+
+    def step(self, substep):
+        lin_vel = self.asset.data.body_lin_vel_w[:, self.body_indices]
+        drag_forces = - lin_vel * self.drag_coeffs
+        self.forces = drag_forces * self.default_mass_total
+        self.asset.set_external_force_and_torque(self.forces, self.torques, body_ids=self.body_indices)
+
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.asset.data.body_pos_w[:, self.body_indices],
+            self.forces / self.default_mass_total * 100,
+            color=(0.6, 0.8, 0.6, 1.)
+        )
 
 class stumble(Randomization):
     def __init__(
@@ -342,7 +384,9 @@ class stumble(Randomization):
         self.feet_height: torch.Tensor = self.asset.data.feet_height
 
     def reset(self, env_ids: torch.Tensor):
-        self.friction_coef[env_ids] = sample_uniform((len(env_ids), 1, 1), 0.0, 0.2, self.device)
+        friction = torch.empty(len(env_ids), 1, 1, device=self.device)
+        friction.uniform_(*self.friction_range)
+        self.friction_coef[env_ids] = friction
 
     def step(self, substep):
         # feet_height = self.asset.data.feet_height_map.mean(-1).reshape(-1)
@@ -351,13 +395,15 @@ class stumble(Randomization):
         stumble_prob = ((self.stumble_height - self.feet_height) / self.stumble_height).clamp(0., 1.)
         self.forces_w = - self.friction_coef * feet_lin_vel_w / self.env.physics_dt
         self.forces_w[..., 2] = 0.
-        forces = torch.where(
+        friction_forces = torch.where(
             (torch.rand_like(self.feet_height) < stumble_prob).unsqueeze(-1),
             quat_rotate_inverse(feet_quat_w, self.forces_w),
             torch.zeros(self.num_envs, self.num_feet, 3, device=self.env.device)
         )
-        torques = torch.zeros_like(forces)
-        self.asset.set_external_force_and_torque(forces, torques, body_ids=self.body_ids)
+        forces_b = self.asset._external_force_b.clone()
+        torques_b = self.asset._external_torque_b.clone()
+        forces_b[:, self.body_ids] += friction_forces
+        self.asset.set_external_force_and_torque(forces_b, torques_b)
 
     def debug_draw(self):
         self.env.debug_draw.vector(
@@ -379,6 +425,112 @@ class random_joint_friction(Randomization):
         friction = torch.zeros_like(self.joints.friction)
         friction.uniform_(*self.friction_range)
         self.asset.write_joint_friction_to_sim(friction, joint_ids=self.joints.joint_indices)
+
+
+class pull(Randomization):
+    def __init__(
+        self, 
+        env,
+        drag_prob: float = 0.2,
+        drag_range=(0.0, 0.2)
+    ):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.drag_prob = drag_prob
+        self.drag_range = drag_range
+        self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum().to(self.device) * 9.81
+        
+        with torch.device(self.device):
+            self.forces = torch.zeros(self.num_envs, 3)
+            self.axis = torch.zeros(self.num_envs, 3)
+            self.apply_drag = torch.zeros(self.num_envs, 1, dtype=bool)
+            self.drag_magnitude = torch.zeros(self.num_envs, 1)
+
+    def reset(self, env_ids: torch.Tensor):
+        self.forces[env_ids] = 0.
+        
+        # pull direction
+        a = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
+        axis = torch.stack([torch.cos(a), torch.sin(a), torch.zeros_like(a)], -1)
+        self.axis[env_ids] = axis
+
+        drag_magnitude = torch.empty(len(env_ids), 1, device=self.device).uniform_(*self.drag_range)
+        self.drag_magnitude[env_ids] = drag_magnitude * self.default_mass_total
+        self.apply_drag[env_ids] = (torch.rand(len(env_ids), 1, device=self.device) < self.drag_prob)
+    
+    def update(self):
+        pass
+
+    def step(self, substep):
+        force =  self.axis * self.drag_magnitude
+        self.forces[:] = torch.where(self.apply_drag, force, torch.zeros_like(self.forces))
+        self.asset.set_external_force_and_torque(
+            quat_rotate_inverse(self.asset.data.root_quat_w, self.forces).unsqueeze(1), 
+            torch.zeros_like(force).unsqueeze(1), [0])
+
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w, 
+            self.forces / self.default_mass_total, 
+            color=(0.6, 0.8, 0.6, 1.)
+        )
+
+
+class random_joint_offset(Randomization):
+    def __init__(self, env, **offset_range: Tuple[float, float]):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids, _, self.offset_range = string_utils.resolve_matching_names_values(dict(offset_range), self.asset.joint_names)
+        
+        self.joint_ids = torch.tensor(self.joint_ids, device=self.device)
+        self.offset_range = torch.tensor(self.offset_range, device=self.device)
+
+        self.action_manager = self.env.action_manager
+
+    def reset(self, env_ids: torch.Tensor):
+        offset = uniform(self.offset_range[:, 0], self.offset_range[:, 1])
+        self.action_manager.offset[env_ids.unsqueeze(1), self.joint_ids] = offset
+
+
+class random_pull(Randomization):
+    def __init__(self, env, force_xy_range, force_z_range, prob=0.01, duration=50):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.force_xy_range = force_xy_range
+        self.force_z_range = force_z_range
+        self.prob = prob
+        self.duration = duration
+        self.mass_total = self.asset.root_physx_view.get_masses()[0].sum().to(self.device)
+
+        self.force_w = torch.zeros(self.num_envs, 3, device=self.device)
+        self.time_remaining = torch.zeros(self.num_envs, 1, device=self.device)
+
+    def step(self, substep):
+        force_b = self.asset._external_force_b.clone()
+        torques_b = self.asset._external_torque_b.clone()
+        force_b[:, 0] += quat_rotate_inverse(
+            self.asset.data.root_quat_w,  
+            self.force_w * (self.time_remaining > 0)
+        )
+        self.asset.set_external_force_and_torque(force_b, torques_b)
+    
+    def update(self):
+        sample_force = (torch.rand(self.num_envs, device=self.device) < self.prob).nonzero().squeeze(-1)
+        if len(sample_force) > 0:
+            force_w = torch.zeros(len(sample_force), 3, device=self.device)
+            force_w[:, 0].uniform_(*self.force_xy_range)
+            force_w[:, 1].uniform_(*self.force_xy_range)
+            force_w[:, 2].uniform_(*self.force_z_range) 
+            self.force_w[sample_force] = force_w
+            self.time_remaining[sample_force] = self.duration
+        self.time_remaining -= 1
+
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w, 
+            (self.force_w / self.mass_total) * (self.time_remaining > 0), 
+            color=(0.6, 0.8, 0.6, 1.)
+        )
 
 
 def random_scale(x: torch.Tensor, low: float, high: float, homogeneous: bool=False):

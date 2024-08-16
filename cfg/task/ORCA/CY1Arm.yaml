@@ -1,0 +1,113 @@
+# @package task
+
+name: OrcaArm
+task: Humanoid
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/Velocity@_here_
+  - override action: null
+  - _self_
+
+robot: cy1
+terrain: easy
+payload: false
+
+command:
+  _target_: active_adaptation.envs.mdp.Command2
+  linvel_x_range: [0., 1.25]
+  linvel_y_range: [-0.1, 0.1]
+  angvel_range: [-1.5, 1.5]
+  yaw_stiffness_range: [0.5, 0.7]
+  use_stiffness_ratio: 1.0
+  stand_prob: 0.05
+
+action:
+  _target_: active_adaptation.envs.mdp.action.HumanoidWithArm
+  action_scaling: 0.5
+
+observation:
+  policy:
+    command:
+    command_arm_linvel:
+    # root_quat_w:
+    root_angvel_b:  {noise_std: 0.05}
+    projected_gravity_b: {noise_std: 0.01}
+    joint_pos: {noise_std: 0.05}
+    joint_vel: {noise_std: 0.2}
+    prev_actions:   {steps: 2}
+    phase: {cycle_range: [1.0, 1.2]}
+  priv:
+    applied_action:   {}
+    root_linvel_b:    {yaw_only: true}
+    body_pos:         {body_names: [.*leg_link6, .*arm_link5], yaw_only: true}
+    body_vel:         {body_names: [.*leg_link6, .*arm_link5], yaw_only: true}
+    feet_height_map:  {feet_names: .*leg_link6 }
+    applied_torques:  {actuator_name: base_legs}
+    contact_indicator: {body_names: [".*leg_link6"], timing: false}
+    # incoming_wrench:  {}
+    joint_forces:     {}
+  #   motor_params:     {actuator_name: "base_legs"}
+  #   body_materials:   {body_names: ".*ankle_link"}
+  #   body_mass:        {body_names: ["torso_link", "pelvis"]}
+    cum_error:        {}
+    rewards:     {}
+  aux_target_:
+    root_linvel_b:    {yaw_only: true}
+    root_angvel_b:    {yaw_only: true}
+    rewards:          {}
+  arm_velocity_:
+    body_vel:         {body_names: .*arm_link5}
+
+reward:
+  loco:
+    linvel_exp:         {weight: 1.5, enabled: true, dim: 3, yaw_only: true}
+    linacc_z_l2:        {weight: 0.005, enabled: false}
+    linvel_projection:  {weight: 1.0, enabled: true, yaw_only: true}
+    angvel_z_exp:       {weight: 1.5, enabled: true, world_frame: true}
+    angvel_z_exp_shaped: {weight: 1.0, enabled: false}
+    linvel_z_l2:        {weight: 0.5, enabled: true}
+    angvel_xy_l2:       {weight: 0.05, enabled: true}
+    energy_l1:          {weight: 5.0e-4, enabled: true}
+    joint_acc_l2:       {weight: 1.0e-8, enabled: true}
+    joint_torques_l2:   {weight: 5.0e-7, enabled: false}
+    # stand: 0.5
+    root_orientation:   {weight: 0.5, enabled: true}
+    survival:           {weight: 1.0, enabled: true}
+    action_rate_l2:     {weight: 0.01, enabled: true}
+    feet_air_time:      {weight: 1.0, enabled: true, body_names: .*leg_link6, thres: 0.4}
+    feet_slip:          {weight: 0.5, enabled: true, body_names: .*leg_link6}
+    feet_contact_count: {weight: 1.0, enabled: false, body_names: .*leg_link6}
+    feet_swing:         {weight: 1.1, enabled: true, feet_names: .*leg_link6}
+    feet_orientation:   {weight: 0.2, enabled: true, feet_names: .*leg_link6}
+    feet_step:          {weight: 1.0, enabled: true, feet_names: .*leg_link6}
+    feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}
+  arm:
+    joint_pos_default:  {weight: 0.1, enabled: true}
+    joint_vel_l2:       {weight: 0.002, enabled: true, joint_names: .*arm_joint.*}
+    arm_velocity_exp:   {weight: 2.0, enabled: true, arm_names: .*arm_link5}
+
+randomization:
+  push:     {body_names: ["base_link", "waist_yaw_link"], force_range: [0.0, 0.1]}
+  perturb_body_mass:
+    .*: [0.9, 1.1]
+  perturb_body_materials:
+    body_names: ".*leg_link6"
+    static_friction_range: [0.6, 2.0]
+    dynamic_friction_range: [0.6, 2.0]
+    restitution_range: [0.0, 0.2]
+  motor_params:
+    actuator_name:    base_legs
+    stiffness_range:  [0.7, 1.0]
+    damping_range:    [0.7, 1.0]
+  reset_joint_states_uniform:
+    pos_ranges:
+      .*: [-0.3, 0.3]
+    rel: true
+  # stumble:  {body_names: ".*leg_link6", stumble_height: 0.045, friction_range: [0.4, 1.8]}
+
+termination:
+  crash: 
+    body_names_expr: ["base_link", "[l,r]arm_link4"]
+    z_thres: -0.3
+  cum_error: {thres: 0.9}

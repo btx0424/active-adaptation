@@ -1,0 +1,118 @@
+# @package task
+name: Go2M
+task: QuadrupedManip
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/Velocity@_here_
+  - _self_
+
+robot: go2m
+terrain: plane
+payload: false
+homogeneous: false
+
+command:
+  _target_: active_adaptation.envs.mdp.CommandEEPose_Loco
+  ee_name: arm_link06
+  lin_vel_x_range: [-1.0, 1.4]
+  lin_vel_y_range: [-0.5, 0.5]
+  ang_vel_range: [-1., 1.]
+  yaw_range: [-2.5, 2.5]
+  pitch_range: [-1.5, 0.5]
+  radius_range: [0.4, 0.8]
+
+observation:
+  policy:
+    command:
+    # root_quat_w:
+    root_angvel_b: {noise_std: 0.05}
+    projected_gravity_b: {noise_std: 0.05}
+    joint_pos:    {noise_std: 0.05}
+    joint_vel:    {noise_std: 0.2}
+    prev_actions: {steps: 2}
+    ee_pos:       {ee_name: arm_link06}
+    # motor_params: {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
+    # body_materials: {body_names: .*foot, homogeneous: "${task.homogeneous}"}
+    # root_linvel_b:
+    # # feet_pos_b:
+    # feet_height_map: {feet_names: .*foot }
+    # applied_torques: {actuator_name: base_legs}
+    # height_scan: {prim_path: base, flatten: true}
+    ee_vel:      {ee_name: arm_link06}
+    # ee_vel_hist:    {ee_name: arm_link06, hist_len: 1}
+    # ee_vel_hist:    {ee_name: arm_link06, hist_len: 2}
+    # ee_vel_hist:    {ee_name: arm_link06, hist_len: 4}
+    # ee_vel_hist:    {ee_name: arm_link06, hist_len: 8}
+  priv:
+    feet_pos_b:   {feet_names: .*foot}
+  aux_target_:
+    ee_vel:       {ee_name: arm_link06}
+
+reward:
+  survival:           {weight: 1.0, enabled: true}
+  # regularizations
+  orientation:        {weight: 1.0, enabled: true}
+  quadruped_stand:    {weight: 0.5, enabled: true}
+  energy_l1:          {weight: 0.0002, enabled: true}
+  action_rate_l2:     {weight: 0.01, enabled: true}
+  action_rate2_l2:    {weight: 0.005, enabled: true}
+
+  # locomotion
+  base_lin_vel_exp: {weight: 1.5, enabled: true}
+  base_lin_vel_projection: {weight: 0.5, enabled: true}
+  base_ang_vel_exp: {weight: 0.5, enabled: true}
+  # regularizations
+  linvel_z_l2:        {weight: 2.0, enabled: true}
+  angvel_xy_l2:       {weight: 0.1, enabled: true, clip_range: [-1.0, 0.0]}
+  joint_acc_l2:       {weight: 2.5e-7, enabled: true, clip_range: [-1., 0.]}
+  feet_air_time:      {weight: 0.4, enabled: true, body_names: .*_foot, thres: 0.4}
+
+  # manipulation
+  ee_pos_tracking:    {weight: 4.0, enabled: true, ee_name: arm_link06}
+  ee_ori_tracking:    {weight: 1.0, enabled: true, ee_name: arm_link06, use_exp: false}
+  # ee_forward_tracking: {weight: 2.0, enabled: true, ee_name: arm_link06}
+
+  ee_pos_error_l1:    {weight: 1.0, enabled: false, ee_name: arm_link06}
+  ee_ori_forward_error_l2: {weight: 1.0, enabled: false, ee_name: arm_link06}
+  ee_ori_upward_error_l2: {weight: 1.0, enabled: false, ee_name: arm_link06}
+  # regularizations
+  ee_acc_penalty:     {weight: 0.05, enabled: true, ee_name: arm_link06}
+  ee_acc_l2:          {weight: 1.0, enabled: false, ee_name: arm_link06}
+  # base_joint_heading: {weight: 0.5, enabled: true, base_joint_name: joint1}
+  base_joint_ang_vel_pd_exp: {weight: 1.0, enabled: true, base_joint_name: joint1, kp: 1.0, kd: 0.2}
+
+
+termination:
+  crash: {body_names_expr: [Head.*, "base", "arm_link.*"], t_thres: 0.4, z_thres: 0.}
+  # joint_acc_exceeds: {thres: 5000}
+  # cum_error: {thres: 0.85}
+
+randomization:
+#   random_scale: [1.0, 1.2]
+#   perturb_body_mass:
+#     (?!(payload|base|Head.*)).*: [0.8, 1.2]
+#     base: [0.8, 1.2]
+#     Head.*: [25.0, 250.0]
+#   perturb_body_materials:
+#     body_names: ".*_foot"
+#     static_friction_range:  [0.6, 2.0]
+#     dynamic_friction_range: [0.6, 2.0]
+#     restitution_range:      [0.0, 0.2]
+#     homogeneous: true # ${task.homogeneous}
+#   motor_params:
+#     actuator_name: base_legs
+#     stiffness_range:  [0.8, 1.2]
+#     damping_range:    [0.8, 1.2]
+#     homogeneous: ${task.homogeneous}
+#   # random_motor_failure:
+#   #   actuator_name: base_legs
+#   #   joint_names: .*_calf_joint
+#   #   failure_prob: 0.0
+  drag: {body_names: arm_link06, drag_range: [0.01, 0.02]}
+  reset_joint_states_uniform:
+    pos_ranges:
+      joint.*: [0., 0.4]
+    rel: true
+  # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
+  # stumble: {body_names: .*_foot}

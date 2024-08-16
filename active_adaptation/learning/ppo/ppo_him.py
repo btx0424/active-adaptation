@@ -35,8 +35,8 @@ from tensordict import TensorDict
 from tensordict.nn import TensorDictModuleBase, TensorDictModule, TensorDictSequential
 
 from hydra.core.config_store import ConfigStore
-from dataclasses import dataclass
-from typing import Union
+from dataclasses import dataclass, field
+from typing import Union, List
 from collections import OrderedDict
 
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
@@ -47,6 +47,7 @@ torch.set_float32_matmul_precision('high')
 
 @dataclass
 class PPOConfig:
+    _target_: str = "active_adaptation.learning.ppo.ppo_him.PPOHIMPolicy"
     name: str = "ppo_him"
     train_every: int = 32
     ppo_epochs: int = 5
@@ -61,6 +62,8 @@ class PPOConfig:
     num_prototypes: int = 32
     temperature: float = 3.0
     checkpoint_path: Union[str, None] = None
+
+    in_keys: List[str] = field(default_factory=lambda: [OBS_KEY, OBS_PRIV_KEY, "aux_target_"])
 
 cs = ConfigStore.instance()
 cs.store("ppo_him", node=PPOConfig, group="algo")
@@ -197,7 +200,7 @@ class PPOHIMPolicy(TensorDictModuleBase):
                 }, []))
         
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
-        infos["value_mean"] = tensordict["ret"].mean().item()
+        infos["critic/value_mean"] = tensordict["ret"].mean().item()
         return infos
 
     @torch.no_grad()
@@ -213,11 +216,12 @@ class PPOHIMPolicy(TensorDictModuleBase):
         next_values = critic(tensordict["next"])["state_value"]
 
         rewards = tensordict[REWARD_KEY]
+        terms = tensordict[TERM_KEY]
         dones = tensordict[DONE_KEY]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
 
-        adv, ret = self.gae(rewards, dones, values, next_values)
+        adv, ret = self.gae(rewards, terms, dones, values, next_values)
         if update_value_norm:
             self.value_norm.update(ret)
         ret = self.value_norm.normalize(ret)
@@ -237,7 +241,7 @@ class PPOHIMPolicy(TensorDictModuleBase):
         ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
-        policy_loss = - torch.mean(torch.min(surr1, surr2))
+        policy_loss = - torch.mean(torch.min(surr1, surr2) * (~tensordict["is_init"]))
         entropy_loss = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
@@ -253,13 +257,13 @@ class PPOHIMPolicy(TensorDictModuleBase):
         self.opt.step()
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
         return {
-            "policy_loss": policy_loss,
-            "value_loss": value_loss,
-            "entropy": entropy,
-            "noise_std": tensordict["scale"].mean(),
-            "actor_grad_norm": actor_grad_norm,
-            "critic_grad_norm": critic_grad_norm,
-            "explained_var": explained_var,
+            "actor/policy_loss": policy_loss,
+            "actor/entropy": entropy,
+            "actor/noise_std": tensordict["scale"].mean(),
+            "actor/grad_norm": actor_grad_norm,
+            "critic/value_loss": value_loss,
+            "critic/grad_norm": critic_grad_norm,
+            "critic/explained_var": explained_var,
         }
     
     def _update_estimation(self, tensordict: TensorDictBase):
@@ -290,7 +294,7 @@ class PPOHIMPolicy(TensorDictModuleBase):
         loss.backward()
         self.opt_him.step()
         
-        return {"estimation_loss": estimation_loss, "swap_loss": swap_loss}
+        return {"adapt/estimation_loss": estimation_loss, "adapt/swap_loss": swap_loss}
 
     def state_dict(self):
         state_dict = OrderedDict()

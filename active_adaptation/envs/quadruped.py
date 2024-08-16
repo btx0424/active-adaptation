@@ -17,15 +17,11 @@ class Quadruped(LocomotionEnv):
 
     feet_name_expr = ".*_foot"
     
-    @property
-    def action_dim(self):
-        return 12
-    
     @mdp.observation_func
     def linvel_error(self):
         if not hasattr(self, "robot"):
             return torch.zeros(self.num_envs, 2, device=self.device)
-        linvel_diff = self.command_manager._command_linvel[:, :2] - self.robot.data.root_lin_vel_b[:, :2]
+        linvel_diff = self.command_manager.command_linvel[:, :2] - self.robot.data.root_lin_vel_b[:, :2]
         return linvel_diff
 
 

@@ -6,8 +6,8 @@ import itertools
 from omegaconf import OmegaConf
 
 from omni.isaac.lab.app import AppLauncher
-from omni_drones.utils.wandb import init_wandb
-from omni_drones.utils.torchrl import SyncDataCollector
+# from omni_drones.utils.wandb import init_wandb
+# from omni_drones.utils.torchrl import SyncDataCollector
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from tensordict.nn import TensorDictSequential
@@ -78,7 +78,7 @@ def main(cfg):
             # td_.update(td["next"])
             episode_stats.add(td)
 
-            if len(episode_stats) > env.num_envs:
+            if len(episode_stats) > 1:
                 print("Step", i)
                 for k, v in sorted(episode_stats.pop().items(True, True)):
                     print(k, torch.mean(v).item())

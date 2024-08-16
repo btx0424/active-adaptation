@@ -27,6 +27,7 @@ import torch.nn.functional as F
 from tensordict import TensorDict, TensorDictBase
 from tensordict.nn import TensorDictModuleBase
 from torchrl.modules import ProbabilisticActor
+from torchrl.data import CompositeSpec
 
 
 OBS_KEY = "policy" # ("agents", "observation")
@@ -35,7 +36,9 @@ OBS_HIST_KEY = "policy_h"
 ACTION_KEY = "action" # ("agents", "action")
 REWARD_KEY = ("next", "reward") # ("agents", "reward")
 # DONE_KEY = ("next", "done")
-DONE_KEY = ("next", "terminated")
+TERM_KEY = ("next", "terminated")
+DONE_KEY = ("next", "done")
+CMD_KEY = "command"
 
 
 def make_mlp(num_units, activation=nn.Mish, norm="before", dropout=0.):
@@ -159,21 +162,23 @@ class GAE(nn.Module):
     def forward(
         self, 
         reward: torch.Tensor, 
-        terminated: torch.Tensor, 
+        terminated: torch.Tensor,
+        done: torch.Tensor, 
         value: torch.Tensor, 
         next_value: torch.Tensor
     ):
         num_steps = terminated.shape[1]
         advantages = torch.zeros_like(reward)
-        not_done = 1 - terminated.float()
+        nonterm = 1 - terminated.float() # whether to backup value
+        nondone = 1 - done.float()       # whether to backup reward
         gae = 0
         for step in reversed(range(num_steps)):
             if self.fake_bootstrap:
                 next_value_t = torch.where(terminated[:, step], value[:, step], next_value[:, step])
             else:
-                next_value_t = next_value[:, step] * not_done[:, step]
+                next_value_t = next_value[:, step] * nonterm[:, step]
             delta = reward[:, step] + self.gamma * next_value_t - value[:, step]
-            advantages[:, step] = gae = delta + (self.gamma * self.lmbda * not_done[:, step] * gae)
+            advantages[:, step] = gae = delta + (self.gamma * self.lmbda * nondone[:, step] * gae)
         returns = advantages + value
         return advantages, returns
 
@@ -320,4 +325,27 @@ def normalize(x: torch.Tensor, subtract_mean: bool=False):
         return (x - x.mean()) / x.std().clamp(1e-7)
     else:
         return x  / x.std().clamp(1e-7)
+
+
+def parse_keys(spec: CompositeSpec, keys: list[str]):
+    """
+    Parse the keys into `mlp_keys`, `cnn_keys`, and `aux_keys`.
+    Keys ending with "_" are considered auxiliary keys.
+
+    """
+    mlp_keys = []
+    cnn_keys = []
+    aux_keys = []
+    
+    for key in keys:
+        if key in spec.keys(True, True):
+            _spec = spec[key]
+        if key.endswith("_"):
+            aux_keys.append(key)
+            continue
+        if _spec.ndim == 2:
+            mlp_keys.append(key)
+        else:
+            cnn_keys.append(key)
+    return mlp_keys, cnn_keys, aux_keys
 

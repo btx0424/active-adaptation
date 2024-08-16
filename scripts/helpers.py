@@ -1,4 +1,5 @@
 import torch
+import hydra
 import numpy as np
 import time
 import wandb
@@ -11,8 +12,8 @@ from tensordict import TensorDictBase
 from termcolor import colored
 from collections import OrderedDict
 from torchvision.io import write_video
-
-from active_adaptation.learning import ALGOS
+from omegaconf import OmegaConf, DictConfig
+import active_adaptation.learning
 
 
 class Every:
@@ -45,27 +46,67 @@ class EpisodeStats:
         return len(self)
     
     def pop(self):
-        stats: TensorDictBase = torch.stack(self._stats).to_tensordict()
+        stats: TensorDictBase = torch.stack(self._stats)
         self._stats.clear()
         return stats
 
     def __len__(self):
         return len(self._stats)
 
+def parse_checkpoint_path(path: str):
+    if path is None:
+        return None
+    
+    if path.startswith("run:"):
+        api = wandb.Api()
+        run = api.run(path[4:])
+        root = os.path.join(os.path.dirname(__file__), "wandb", run.name)
+        os.makedirs(root, exist_ok=True)
+        
+        checkpoints = []
+        for file in run.files():
+            print(file.name)
+            if "checkpoint" in file.name:
+                checkpoints.append(file)
+            elif file.name == "files/cfg.yaml":
+                file.download(root, replace=True)
+        
+        def sort_by_time(file):
+            number_str = file.name[:-3].split("_")[-1]
+            if number_str == "final":
+                return 100000
+            else:
+                return int(number_str)
 
-def make_env_policy(cfg):
+        checkpoints.sort(key=sort_by_time)
+        checkpoint = checkpoints[-1]
+        path = os.path.join(root, checkpoint.name)
+        print(f"Downloading checkpoint to {path}")
+        checkpoint.download(root, replace=True)
+    return path
+
+    
+def make_env_policy(cfg: DictConfig):
+    OmegaConf.set_struct(cfg, False)
 
     from active_adaptation.envs import TASKS
     from active_adaptation.utils.torchrl import StackFrames
     from configs.rough import LocomotionEnvCfg
-    from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker, CatFrames, VecNorm
+    from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker, CatFrames, VecNorm, StepCounter
 
-    checkpoint_path = cfg.checkpoint_path
+    checkpoint_path = parse_checkpoint_path(cfg.checkpoint_path)
     if checkpoint_path is not None:
         state_dict = torch.load(checkpoint_path)
     else:
         state_dict = {}
+    
+    policy_in_keys = cfg.algo.get("in_keys", ["policy", "priv"])
 
+    for obs_group_key in list(cfg.task.observation.keys()):
+        if obs_group_key not in policy_in_keys:
+            cfg.task.observation.pop(obs_group_key)
+            print(colored(f"Discard obs group {obs_group_key} as it is not used.", "yellow"))
+    
     env_cfg = LocomotionEnvCfg(cfg.task)
 
     base_env = TASKS[cfg.task.task](env_cfg)
@@ -73,11 +114,12 @@ def make_env_policy(cfg):
         key for key, spec in base_env.observation_spec.items(True, True) 
         if not (spec.dtype == bool or key.endswith("_"))
     ]
-    transform = Compose(InitTracker())
+    transform = Compose(InitTracker(), StepCounter())
 
     assert cfg.vecnorm in ("train", "eval", None)
     print(colored(f"[Info]: create VecNorm for keys: {obs_keys}", "green"))
     vecnorm = VecNorm(obs_keys, decay=0.9999)
+    vecnorm(base_env.fake_tensordict())
 
     if "vecnorm" in state_dict.keys():
         print(colored("[Info]: Load VecNorm from checkpoint.", "green"))
@@ -104,7 +146,8 @@ def make_env_policy(cfg):
     env.set_seed(cfg.seed)
     
     # setup policy
-    policy = ALGOS[cfg.algo.name](
+    policy_cls = hydra.utils.get_class(cfg.algo._target_)
+    policy = policy_cls(
         cfg.algo,
         env.observation_spec, 
         env.action_spec, 
@@ -175,12 +218,15 @@ def evaluate(
         return torch.take_along_dim(tensor, indices, dim=1).reshape(-1)
     
     info = {}
+    stats = {}
     compute_std_for = ["return", "survival"]
-    for k, v in sorted(trajs["next", "stats"].items()):
+    for k, v in trajs["next", "stats"].items(True, True):
         v = take_first_episode(v)
-        info["eval/stats." + k] = torch.mean(v.float()).item()
+        key = "eval/" + ("/".join(k) if isinstance(k, tuple) else k)
+        stats[key] = v
+        info[key] = torch.mean(v.float()).item()
         if k in compute_std_for:
-            info["eval/stats." + k + "_std"] = torch.std(v.float()).item()
+            info[key + "_std"] = torch.std(v.float()).item()
 
     # log video
     if len(frames):
@@ -191,4 +237,4 @@ def evaluate(
         write_video(video_path, video_array, fps=1 / env.step_dt)
 
     info["episode_cnt"] = episode_cnt
-    return info, trajs
+    return dict(sorted(info.items())), trajs, stats

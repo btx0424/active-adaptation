@@ -54,7 +54,7 @@ class HfRandomGridTerrainCfg(HfTerrainBaseCfg):
 FLAT = TerrainGeneratorCfg(
     seed=0,
     size=(8.0, 8.0),
-    border_width=40.0,
+    border_width=65.0,
     num_rows=10,
     num_cols=10,
     horizontal_scale=0.1,
@@ -67,7 +67,7 @@ FLAT = TerrainGeneratorCfg(
         ),
         "random_rough_easy": HfRandomUniformTerrainCfg(
             proportion=0.5,
-            noise_range=(0.0, 0.05),
+            noise_range=(0.0, 0.06),
             noise_step=0.02,
             border_width=0.5
         ),
@@ -77,7 +77,7 @@ FLAT = TerrainGeneratorCfg(
 ROUGH_MEDIUM = TerrainGeneratorCfg(
     seed=0,
     size=(8.0, 8.0),
-    border_width=40.0,
+    border_width=65.0,
     num_rows=10,
     num_cols=20,
     horizontal_scale=0.1,
@@ -90,7 +90,7 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
         ),
         "random_rough_easy": HfRandomUniformTerrainCfg(
             proportion=0.2,
-            noise_range=(0.0, 0.05),
+            noise_range=(0.0, 0.06),
             noise_step=0.02,
             border_width=0.5
         ),
@@ -149,7 +149,7 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
 ROUGH_EASY = TerrainGeneratorCfg(
     seed=0,
     size=(8.0, 8.0),
-    border_width=40.0,
+    border_width=65.0,
     num_rows=10,
     num_cols=10,
     horizontal_scale=0.1,
@@ -162,7 +162,7 @@ ROUGH_EASY = TerrainGeneratorCfg(
         ),
         "random_rough_easy": HfRandomUniformTerrainCfg(
             proportion=0.30,
-            noise_range=(0.0, 0.05),
+            noise_range=(0.0, 0.06),
             noise_step=0.01,
             border_width=0.5
         ),
@@ -214,7 +214,7 @@ ROUGH_TERRAIN_CFG = TerrainImporterCfg(
 STAIRS = TerrainGeneratorCfg(
     seed=0,
     size=(8.0, 8.0),
-    border_width=40.0,
+    border_width=65.0,
     num_rows=10,
     num_cols=20,
     horizontal_scale=0.1,
@@ -227,7 +227,7 @@ STAIRS = TerrainGeneratorCfg(
         ),
         "random_rough_easy": HfRandomUniformTerrainCfg(
             proportion=0.20,
-            noise_range=(0.0, 0.05),
+            noise_range=(0.0, 0.06),
             noise_step=0.02,
             border_width=0.5
         ),
@@ -258,6 +258,111 @@ STAIRS = TerrainGeneratorCfg(
     },
 )
 
+STAIRS_TEST = TerrainGeneratorCfg(
+    seed=0,
+    size=(8.0, 8.0),
+    border_width=65.0,
+    num_rows=10,
+    num_cols=5,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    use_cache=False,
+    sub_terrains={
+        "pyramid_stairs_inv_a": MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.20,
+            step_height_range=(0.10, 0.20),
+            step_width=0.35,
+            platform_width=3.5,
+            border_width=1.0,
+            holes=False,
+        ),
+        "pyramid_stairs_inv_b": MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.20,
+            step_height_range=(0.10, 0.20),
+            step_width=0.50,
+            platform_width=3.5,
+            border_width=1.0,
+            holes=False,
+        ),
+    },
+)
+
+
+SLOPES_AND_CURBS = TerrainGeneratorCfg(
+    seed=0,
+    size=(8.0, 8.0),
+    border_width=65.0,
+    num_rows=10,
+    num_cols=20,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    use_cache=False,
+    sub_terrains={
+        "flat": MeshPlaneTerrainCfg(
+            proportion=0.25,
+        ),
+        "pyramid_stairs_inv": MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.25,
+            step_height_range=(0.05, 0.1),
+            step_width=0.40,
+            platform_width=3.5,
+            border_width=1.0,
+            holes=False,
+        ),
+        "boxes": MeshRandomGridTerrainCfg(
+            proportion=0.25, 
+            grid_width=0.60, 
+            grid_height_range=(0.02, 0.05), 
+            platform_width=2.0
+        ),
+        "pyramid_slope_inv": HfPyramidSlopedTerrainCfg(
+            proportion=0.25,
+            slope_range=(0.10, 0.20),
+            platform_width=1.0,
+            border_width=0.25
+        ),
+    },
+)
+
+STAIRS_EASY = TerrainGeneratorCfg(
+    seed=0,
+    size=(8.0, 8.0),
+    border_width=65.0,
+    num_rows=10,
+    num_cols=20,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    use_cache=False,
+    sub_terrains={
+        "flat": MeshPlaneTerrainCfg(
+            proportion=0.3,
+        ),
+        "random_rough_easy": HfRandomUniformTerrainCfg(
+            proportion=0.2,
+            noise_range=(0.0, 0.04),
+            noise_step=0.02,
+            border_width=0.5
+        ),
+        "pyramid_slope_inv": HfPyramidSlopedTerrainCfg(
+            proportion=0.25,
+            slope_range=(0.10, 0.20),
+            platform_width=1.0,
+            border_width=0.25
+        ),
+        "pyramid_stairs_inv_a": MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.25,
+            step_height_range=(0.05, 0.15),
+            step_width=0.40,
+            platform_width=3.5,
+            border_width=1.0,
+            holes=False,
+        ),
+    },
+)
+
 FLAT_TERRAIN_CFG = TerrainImporterCfg(
     prim_path="/World/ground",
     terrain_type="plane",
@@ -275,5 +380,8 @@ TERRAINS = {
     "easy": ROUGH_EASY,
     "hard": ROUGH_HARD,
     "flat": FLAT,
-    "stairs": STAIRS
+    "stairs": STAIRS,
+    "snc": SLOPES_AND_CURBS,
+    "stairs_test": STAIRS_TEST,
+    "stairs_easy": STAIRS_EASY,
 }

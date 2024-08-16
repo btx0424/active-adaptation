@@ -1,0 +1,40 @@
+# @package task
+
+name: OrcaStairs
+task: Humanoid
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/ORCA/CY1Flat@_here_
+  - _self_
+
+robot: cy1
+terrain: stairs_easy
+payload: false
+
+command:
+  _target_: active_adaptation.envs.mdp.Command2
+  linvel_x_range: [0., 1.25]
+  linvel_y_range: [-0.1, 0.1]
+  angvel_range: [-1.5, 1.5]
+  yaw_stiffness_range: [0.5, 0.7]
+  use_stiffness_ratio: 1.0
+  stand_prob: 0.05
+  target_yaw_range: 
+    - [-0.3927,  0.3927]
+    - [ 1.1781,  1.9635]
+    - [ 2.7489,  3.5343]
+    - [ 4.3197,  5.1051]
+
+observation:
+  height_scan:
+    height_scan:      {prim_path: base_link}
+
+randomization:
+  push:     {body_names: ["base_link", "waist_yaw_link"], force_range: [0.0, 0.1]}
+
+termination:
+  crash: 
+    body_names_expr: ["base_link", "[l,r]arm_link4"]
+  # feet_too_close: {feet_names: ".*leg_link6", thres: 0.11}
+  cum_error: {thres: 0.9}

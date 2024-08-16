@@ -1,0 +1,19 @@
+# @package task
+name: Go2Rough
+task: Quadruped
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/Go2/Go2Flat@_here_
+  - _self_
+
+terrain: medium # easy
+
+# observation:
+#   height_scan:
+#     height_scan:      {prim_path: base}
+
+reward:
+  loco:
+    linvel_exp:         {weight: 1.5, enabled: true, dim: 2, yaw_only: true}
+    feet_air_time:      {weight: 0.2, enabled: true, body_names: .*_foot, thres: 0.4}

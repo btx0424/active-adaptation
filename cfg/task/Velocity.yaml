@@ -3,12 +3,13 @@ name: Track
 defaults:
   # see https://hydra.cc/docs/advanced/overriding_packages/
   - /base/sim_base@_here_
+  - action: JointPosition
+  - _self_
 
 num_envs: 4096
 max_episode_length: 1000
 
+scene: locomotion
 robot: a1
 terrain: plane
 
-action_scaling: 0.5
-short_history: false

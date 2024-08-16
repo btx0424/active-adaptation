@@ -1,0 +1,13 @@
+name: CassieRough
+task: Biped
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/Cassie/CassieFlat@_here_
+  - _self_
+
+terrain: stairs_easy
+
+# observation:
+#   height_scan:
+#     height_scan:  {prim_path: pelvis}

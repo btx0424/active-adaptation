@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import hydra
+import cv2
 
 from tensordict.tensordict import TensorDictBase, TensorDict
 from torchrl.envs import EnvBase
@@ -59,10 +60,6 @@ class Env(EnvBase):
         print("[INFO]: Base environment:")
         print(f"\tEnvironment device    : {self.device}")
         print(f"\tPhysics step-size     : {self.physics_dt}")
-        # print(f"\tRendering step-size   : {self.physics_dt * self.cfg.sim.substeps}")
-        # print(f"\tEnvironment step-size : {self.step_dt}")
-        print(f"\tPhysics GPU pipeline  : {self.cfg.sim.use_gpu_pipeline}")
-        print(f"\tPhysics GPU simulation: {self.cfg.sim.physx.use_gpu}")
 
         # generate scene
         with Timer("[INFO]: Time taken for scene creation"):
@@ -87,14 +84,18 @@ class Env(EnvBase):
                     "done": BinaryDiscreteTensorSpec(1, dtype=bool),
                     "terminated": BinaryDiscreteTensorSpec(1, dtype=bool),
                     "truncated": BinaryDiscreteTensorSpec(1, dtype=bool),
-                }, 
+                },
             )
             .expand(self.num_envs)
             .to(self.device)
         )
-        self.action_spec = CompositeSpec(
+
+        self.reward_spec = CompositeSpec(
             {
-                "action": UnboundedContinuousTensorSpec((self.num_envs, self.action_dim))
+                "stats": {
+                    "episode_len": UnboundedContinuousTensorSpec([self.num_envs, 1]),
+                    "success": UnboundedContinuousTensorSpec([self.num_envs, 1]),
+                },
             },
             shape=[self.num_envs]
         ).to(self.device)
@@ -118,8 +119,23 @@ class Env(EnvBase):
         self._reset_callbacks = []
         self._debug_draw_callbacks = []
         self._step_callbacks = []
+
         self.command_manager: mdp.Command = hydra.utils.instantiate(self.cfg.command, env=self)
+        self._step_callbacks.append(self.command_manager.step)
+        self._update_callbacks.append(self.command_manager.update)
+        self._reset_callbacks.append(self.command_manager.reset)
         self._debug_draw_callbacks.append(self.command_manager.debug_draw)
+        
+        self.action_manager: mdp.ActionManager = hydra.utils.instantiate(self.cfg.action, env=self)
+        self._reset_callbacks.append(self.action_manager.reset)
+        
+        self.action_spec = CompositeSpec(
+            {
+                "action": UnboundedContinuousTensorSpec((self.num_envs, self.action_dim))
+            },
+            shape=[self.num_envs]
+        ).to(self.device)
+
 
         for key, params in self.cfg.randomization.items():
             rand = RAND_FUNCS[key](self, **params if params is not None else {})
@@ -128,11 +144,9 @@ class Env(EnvBase):
             self._reset_callbacks.append(rand.reset)
             self._debug_draw_callbacks.append(rand.debug_draw)
             self._step_callbacks.append(rand.step)
+            self._update_callbacks.append(rand.update)
 
-        self.mask_probs = {}
         for group, funcs in self.cfg.observation.items():
-            mask_prob = funcs.pop("_mask_", 0)
-            self.mask_probs[group] = mask_prob
             self.observation_funcs[group] = OrderedDict()
             for key, params in funcs.items():
                 obs = OBS_FUNCS[key](self, **(params if params is not None else {}))
@@ -143,50 +157,50 @@ class Env(EnvBase):
                 self._debug_draw_callbacks.append(obs.debug_draw)
         
         for callback in self._startup_callbacks:
-            callback()
-        
-        # self.sim.physics_sim_view.flush()
-        
-        reward_spec = CompositeSpec({
-            "reward": UnboundedContinuousTensorSpec(1),
-            "stats": {
-                "return": UnboundedContinuousTensorSpec(1),
-                "episode_len": UnboundedContinuousTensorSpec(1),
-                "success": UnboundedContinuousTensorSpec(1),
-                "reward_clip_ratio": UnboundedContinuousTensorSpec(1),
-            }
-        })
-        enabled_rewards = 0
-        for key, params in self.cfg.reward.items():
-            reward = REW_FUNCS[key](self, **params)
-            if reward.enabled:
-                enabled_rewards += 1
-            self.reward_funcs[key] = reward
-            self._update_callbacks.append(reward.update)
-            self._reset_callbacks.append(reward.reset)
-            self._debug_draw_callbacks.append(reward.debug_draw)
-            self._step_callbacks.append(reward.step)
-            reward_spec["stats", key] = UnboundedContinuousTensorSpec(1, device=self.device)
-        self._reward_buf = torch.zeros(self.num_envs, enabled_rewards, device=self.device)
-        self.reward_spec = reward_spec.expand(self.num_envs).to(self.device)
+            callback()        
+       
+        reward_spec = CompositeSpec({})
+
+        # parse rewards
+        self.clip_rewards = self.cfg.reward.pop("_clip_", True)
+        self.reward_groups = OrderedDict()
+        for group_name, func_specs in self.cfg.reward.items():
+            print(f"Reward group: {group_name}")
+            funcs = OrderedDict()
+            for key, params in func_specs.items():
+                reward: mdp.Reward = REW_FUNCS[key](self, **params)
+                funcs[key] = reward
+                reward_spec["stats", group_name, key] = UnboundedContinuousTensorSpec(1, device=self.device)
+                self._update_callbacks.append(reward.update)
+                self._reset_callbacks.append(reward.reset)
+                self._debug_draw_callbacks.append(reward.debug_draw)
+                self._step_callbacks.append(reward.step)
+                print(f"\t{key}: \t{reward.weight:.2f}, \t{reward.enabled}")
+            self.reward_groups[group_name] = RewardGroup(self, group_name, funcs)
+            reward_spec["stats", group_name, "return"] = UnboundedContinuousTensorSpec(1, device=self.device)
+            reward_spec["stats", group_name, "reward_clip_ratio"] = UnboundedContinuousTensorSpec(1, device=self.device)
+
+        reward_spec["reward"] = UnboundedContinuousTensorSpec(len(self.reward_groups), device=self.device)
+
+        self.reward_spec.update(reward_spec.expand(self.num_envs).to(self.device))
         self.stats = self.reward_spec["stats"].zero()
 
         observation_spec = {}
-        self.observation_masks = TensorDict({}, [self.num_envs])
-        self.observation_split = {}
         for group, funcs in self.observation_funcs.items():
+            print(f"Observation group: {group}")
             tensors = []
             for obs_name, func in funcs.items():
-                tensor = func()
+                tensor, mask = func()
                 tensors.append(tensor)
-                print(f"{obs_name}: shape {tensor.shape}")
-            split = [tensor.shape[-1] for tensor in tensors]
+                print(f"\t{obs_name}: \t{tensor.shape}, \tmask_ratio {func.mask_ratio:.2f}")
             tensor = torch.cat(tensors, -1)
             observation_spec[group] = UnboundedContinuousTensorSpec(tensor.shape, device=self.device)
-            if self.mask_probs[group] > 0:
-                observation_spec[group + "_mask"] = BinaryDiscreteTensorSpec(tensor.shape[-1], tensor.shape, device=self.device, dtype=bool)
-                self.observation_masks[group] = torch.zeros_like(tensor, dtype=bool)
-                self.observation_split[group] = split
+            observation_spec[group + "_mask_"] = BinaryDiscreteTensorSpec(
+                len(funcs), 
+                (self.num_envs, len(funcs)), 
+                device=self.device, dtype=bool
+            )
+            print("\t Split: ", [t.shape[-1] for t in tensors])
 
         self.observation_spec = CompositeSpec(
             observation_spec, 
@@ -204,6 +218,19 @@ class Env(EnvBase):
         
         self.time_stamp = 0
     
+        # Video recording variables
+        self.video_frames = []
+        self.complete_video_frames = None
+        self.record_now = False
+        self.render_decimation = 1
+        self.last_recording_it = 0
+
+        self.lookat_env_i = 0
+
+    @property
+    def action_dim(self) -> int:
+        return self.action_manager.action_dim
+
     @property
     def num_envs(self) -> int:
         """The number of instances of the environment that are running."""
@@ -220,58 +247,64 @@ class Env(EnvBase):
             env_mask = torch.ones(self.num_envs, dtype=bool, device=self.device)
         env_ids = env_mask.nonzero().squeeze(-1)
         self._reset_idx(env_ids)
-        self._reward_buf[env_ids] = 0.
+        self.episode_length_buf[env_ids] = 0
         for callback in self._reset_callbacks:
             callback(env_ids)
-        for group, mask_prob in self.mask_probs.items():
-            if not mask_prob > 0: continue
-            self.observation_masks[group][env_ids] = torch.where(
-                (torch.rand(env_ids.shape, device=self.device) < mask_prob).unsqueeze(1),
-                torch.zeros_like(self.observation_masks[group][env_ids]),
-                generate_mask(len(env_ids), self.observation_split[group], self.device)
-            )
-        # self.sim._physics_sim_view.flush()
-        self.episode_length_buf[env_ids] = 0
         self.scene.update(self.step_dt)
         tensordict = TensorDict(
             self._compute_observation(), 
             self.num_envs,
             device=self.device
         )
+        if self.record_now and env_mask[self.lookat_env_i]:
+            if self.complete_video_frames is None:
+                self.complete_video_frames = []
+            else:
+                self.complete_video_frames.extend(self.video_frames)
+            self.video_frames = []
         return tensordict
 
     @abstractmethod
     def _reset_idx(self, env_ids: torch.Tensor):
         raise NotImplementedError
     
-    @abstractmethod
     def apply_action(self, tensordict: TensorDictBase, substep: int):
-        raise NotImplementedError
+        self.action_manager(tensordict, substep)
 
     def _compute_observation(self) -> TensorDictBase:
         observation = TensorDict({}, [self.num_envs])
-        for group, funcs in self.observation_funcs.items():
-            observation[group] = torch.cat([func() for func in funcs.values()], dim=-1)
-        for group, mask in self.observation_masks.items():
-            observation[group + "_mask"] = mask
+        try:
+            for group, funcs in self.observation_funcs.items():
+                tensors = []
+                masks = []
+                for obs_name, func in funcs.items():
+                    tensor, mask = func()
+                    tensors.append(tensor)
+                    masks.append(mask)
+                observation[group] = torch.cat(tensors, dim=-1)
+                observation[group + "_mask_"] = torch.stack(masks, dim=-1)
+        except Exception as e:
+            print(f"Error in computing observation for {group}.{obs_name}: {e}")
+            raise e
         return observation
     
     def _compute_reward(self) -> TensorDictBase:
         rewards = []
-        for key, reward_func in self.reward_funcs.items():
-            reward = reward_func()
-            self.stats[key].add_(reward)
-            if reward_func.enabled:
-                rewards.append(reward)
-        self._reward_buf[:] = torch.cat(rewards, 1)
-        reward = self._reward_buf.sum(1, True)
-        neg_rewar = reward < 0.
-        reward = reward.clamp(min=0.)
-        self.stats["return"].add_(reward)
-        self.stats["reward_clip_ratio"].add_(neg_rewar.float())
+        for group, reward_group in self.reward_groups.items():
+            reward = reward_group.compute()
+            rewards.append(reward)
+            self.stats[group, "return"].add_(reward)
+
+            neg_rewar = reward < 0.
+            self.stats[group, "reward_clip_ratio"].add_(neg_rewar.float())
+
+        rewards = torch.cat(rewards, 1)
+        if self.clip_rewards:
+            rewards = rewards.clamp(min=0.)
+
         self.stats["episode_len"][:] = self.episode_length_buf.unsqueeze(1)
         self.stats["success"][:] = (self.episode_length_buf >= self.max_episode_length * 0.9).unsqueeze(1).float()
-        return {"reward": reward, "stats": self.stats.clone()}
+        return {"reward": rewards, "stats": self.stats.clone()}
     
     def _compute_termination(self) -> TensorDictBase:
         flags = torch.cat([func() for func in self.termination_funcs.values()], dim=-1)
@@ -285,24 +318,26 @@ class Env(EnvBase):
         self.episode_length_buf.add_(1)
         self.time_stamp += 1
 
-        if self.sim.has_gui() and hasattr(self, "debug_draw"):
-            self.debug_draw.clear()
-            for callback in self._debug_draw_callbacks:
-                callback()
-            self.debug_vis()
-
     def _step(self, tensordict: TensorDictBase) -> TensorDictBase:
         # start = time.perf_counter()
         for substep in range(self.cfg.decimation):
+            for asset in self.scene.articulations.values():
+                if asset.has_external_wrench:
+                    asset._external_force_b.zero_()
+                    asset._external_torque_b.zero_()
+                    asset.has_external_wrench = False
             self.apply_action(tensordict, substep)
-            # self.scene.write_data_to_sim()
-            self.sim.step(render=False)
-            self.scene.update(self.physics_dt)
             for callback in self._step_callbacks:
                 callback(substep)
+            self.scene.write_data_to_sim()
+            self.sim.step(render=False)
+            self.scene.update(self.physics_dt)
         # end = time.perf_counter()
         # print(end - start, self.cfg.decimation)
         self._update()
+        
+        if self.time_stamp % self.render_decimation == 0:
+            self._render_headless()
         
         tensordict = TensorDict({}, self.num_envs, device=self.device)
         tensordict.update(self._compute_observation())
@@ -312,6 +347,13 @@ class Env(EnvBase):
         tensordict.set("terminated", terminated)
         tensordict.set("truncated", truncated)
         tensordict.set("done", terminated | truncated)
+
+        if self.sim.has_gui() and hasattr(self, "debug_draw"):
+            self.debug_draw.clear()
+            for callback in self._debug_draw_callbacks:
+                callback()
+            self.debug_vis()
+            
         return tensordict
     
     def _set_seed(self, seed: int = -1):
@@ -319,7 +361,36 @@ class Env(EnvBase):
         # rep.set_global_seed(seed)
         torch.manual_seed(seed)
 
+    def start_recording(self, render_decimation: int = 1):
+        if not self.record_now:
+            self.complete_video_frames = None
+            self.render_decimation = render_decimation
+            self.record_now = True
+
+    def pause_recording(self):
+        self.complete_video_frames = self.video_frames[:]
+        self.video_frames = []
+        self.record_now = False
+
+    def get_complete_frames(self):
+        if self.complete_video_frames is None:
+            return []
+        return self.complete_video_frames
+
+    def _render_headless(self):
+        if self.record_now and self.complete_video_frames is not None and len(self.complete_video_frames) == 0:
+            frame = self.render(mode="rgb_array")
+            # font = cv2.FONT_HERSHEY_SIMPLEX
+            # cv2.putText(frame, f'Timestamp: {self.time_stamp}', (10, 30), font, 1, (255, 255, 255), 2, cv2.LINE_AA)
+            self.video_frames.append(frame)
+
     def render(self, mode: str = "human"):
+        if mode == "rgb_array":
+            robot_pos = self.robot.data.root_pos_w[self.lookat_env_i].cpu()
+            eye = torch.tensor(self.cfg.viewer.eye) + robot_pos
+            lookat = torch.tensor(self.cfg.viewer.lookat) + robot_pos
+            self.sim.set_camera_view(eye, lookat)
+
         self.sim.render()
         if mode == "human":
             return None
@@ -355,4 +426,23 @@ def generate_mask(size: int, split: torch.Tensor, device: str):
     masks = masks.scatter(-1, torch.randint(len(split), (*size, 1), device=device), 1)
     masks = torch.repeat_interleave(masks, repeats, -1)
     return masks
+
+
+class RewardGroup:
+    def __init__(self, env: Env, name: str, funcs: OrderedDict[str, mdp.Reward]):
+        self.env = env
+        self.name = name
+        self.funcs = funcs
+        self.enabled_rewards = sum([func.enabled for func in funcs.values()])
+        self.rew_buf = torch.zeros(env.num_envs, self.enabled_rewards, device=env.device)
+    
+    def compute(self) -> torch.Tensor:
+        rewards = []
+        for key, func in self.funcs.items():
+            reward = func()
+            self.env.stats[self.name, key].add_(reward)
+            if func.enabled:
+                rewards.append(reward)
+        self.rew_buf[:] = torch.cat(rewards, 1)
+        return self.rew_buf.sum(1, True)
 
