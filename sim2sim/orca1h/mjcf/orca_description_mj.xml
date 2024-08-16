@@ -1,0 +1,334 @@
+<mujoco model="orca_description">
+  <compiler angle="radian" meshdir="../meshes/" eulerseq="zyx" discardvisual="false"/>
+  <option timestep='0.001' iterations='50' solver='PGS' gravity='0 0 -9.81'>
+    <!-- <flag sensornoise="enable" frictionloss="enable"/> -->
+    </option>
+    <size njmax="500" nconmax="100" />
+
+    <visual>
+        <quality shadowsize='4096'/>
+        <map znear='0.05'/>
+    </visual>
+
+    <default>
+        <joint limited='true'/>
+        <motor ctrllimited='true'/>
+        <geom  condim='4' contype="1" conaffinity="15" solref='0.001 2' friction='0.9 0.2 0.2'/>
+        <equality solref='0.001 2'/>
+        <default class='visualgeom'>
+            <geom material='visualgeom' condim='1' contype='0' conaffinity='0'/>
+        </default>
+        <default class='visualgeom2'>
+            <geom material='visualgeom2' condim='1' contype='0' conaffinity='0'/>
+        </default>
+        <default class='obstacle'>
+            <geom material='obstacle' condim='3' contype='1' conaffinity='15'/>
+        </default>
+    </default>
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="512"/>
+    <texture name="texplane" type="2d" builtin="checker" rgb1=".2 .3 .4" rgb2=".1 0.15 0.2"
+        width="512" height="512" mark="cross" markrgb=".8 .8 .8"/>
+    <texture name="texplane2" type="2d" builtin="checker" rgb1="1 0.3137 0.1843" rgb2="0.0 0.30196 0.38039"
+        width="512" height="512" mark="cross" markrgb=".8 .8 .8"/>
+
+    <material name="matplane" reflectance="0." texture="texplane" texrepeat="1 1" texuniform="true"/>
+    <material name="matplane2" reflectance="0.1" texture="texplane2" texrepeat="1 1" texuniform="true"/>
+
+    <material name='obstacle'  rgba='0.9 0.6 0.2 1'/>
+    <material name='visualgeom'  rgba='0.5 0.9 0.2 1'/>
+    <material name='visualgeom2'  rgba='0.5 0.9 0.2 1'/>
+    <mesh name="base_link" file="base_link.STL"/>
+    <mesh name="waist_yaw_link" file="waist_yaw_link.STL"/>
+    <mesh name="larm_link1" file="larm_link1.STL"/>
+    <mesh name="larm_link2" file="larm_link2.STL"/>
+    <mesh name="larm_link3" file="larm_link3.STL"/>
+    <mesh name="larm_link4" file="larm_link4.STL"/>
+    <mesh name="larm_link5" file="larm_link5.STL"/>
+    <mesh name="larm_link6" file="larm_link6.STL"/>
+    <mesh name="rarm_link1" file="rarm_link1.STL"/>
+    <mesh name="rarm_link2" file="rarm_link2.STL"/>
+    <mesh name="rarm_link3" file="rarm_link3.STL"/>
+    <mesh name="rarm_link4" file="rarm_link4.STL"/>
+    <mesh name="rarm_link5" file="rarm_link5.STL"/>
+    <mesh name="rarm_link6" file="rarm_link6.STL"/>
+    <mesh name="lleg_link1" file="lleg_link1.STL"/>
+    <mesh name="lleg_link2" file="lleg_link2.STL"/>
+    <mesh name="lleg_link3" file="lleg_link3.STL"/>
+    <mesh name="lleg_link4" file="lleg_link4.STL"/>
+    <mesh name="lleg_link5" file="lleg_link5.STL"/>
+    <mesh name="lleg_link6" file="lleg_link6.STL"/>
+    <mesh name="rleg_link1" file="rleg_link1.STL"/>
+    <mesh name="rleg_link2" file="rleg_link2.STL"/>
+    <mesh name="rleg_link3" file="rleg_link3.STL"/>
+    <mesh name="rleg_link4" file="rleg_link4.STL"/>
+    <mesh name="rleg_link5" file="rleg_link5.STL"/>
+    <mesh name="rleg_link6" file="rleg_link6.STL"/>
+    <hfield name='hf0' nrow='200' ncol='200' size="10 5 0.2 .1"/>
+  </asset>
+  <worldbody>
+    <light directional="true" diffuse=".4 .4 .4" specular="0.1 0.1 0.1" pos="0 0 5.0" dir="0 0 -1" castshadow="false"/>
+    <light directional="true" diffuse=".6 .6 .6" specular="0.2 0.2 0.2" pos="0 0 4" dir="0 0 -1"/>
+    <geom name="ground" type="plane" size="0 0 1" pos="0.001 0 0" quat="1 0 0 0" material="matplane" condim="1" conaffinity='15'/>
+
+    <body name="base_link" pos="0.0 0.0 0.78">
+      <geom type="mesh" mesh="base_link" group="1" class="visualgeom"/>
+
+      <inertial pos="-8.0773E-05 8.4877E-05 -0.060481" mass="3.7733" diaginertia="0.013183 0.010725 0.012691" />
+      <joint type='slide' axis='1 0 0' limited='false' />
+      <joint type='slide' axis='0 1 0' limited='false' />
+      <joint type='slide' axis='0 0 1' limited='false' />
+      <joint type='ball' limited='false' />
+      <site name='imu' size='0.01' pos='0.0 0 0.0'/>
+
+      <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.69804 0.69804 0.69804 1" mesh="base_link"/>
+      <geom pos="0 0 0.02" type="mesh" rgba="0.69804 0.69804 0.69804 1" mesh="base_link"/>
+      <body name="waist_yaw_link" pos="0 0 0.078" quat="-3.67321e-06 1 0 0">
+        <inertial pos="0.0011841 1.5654e-05 -0.21907" quat="0.999945 7.22426e-05 -0.0104936 0.000161838" mass="11.901" diaginertia="0.273248 0.2473 0.0724125"/>
+        <joint name="waist_yaw_joint" pos="0 0 0" axis="0 0 1" range="-3.14 3.14" damping="0.2"/>
+        <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.69804 0.69804 0.69804 1" mesh="waist_yaw_link"/>
+        <body name="larm_link1" pos="0 -0.13495 -0.29591" quat="0.766033 -0.642802 0 0">
+          <inertial pos="0.000439855 7.90657e-06 -0.0358502" quat="0.705999 -0.028432 -0.0279929 0.707088" mass="0.576081" diaginertia="0.00059525 0.000527291 0.000441012"/>
+          <joint name="larm_joint1" pos="0 0 0" axis="0 0 1" range="-2.88 2.88" damping="0.2"/>
+          <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="larm_link1"/>
+          <body name="larm_link2" pos="-0.0015 0 -0.049999" quat="0.704417 -0.0616155 -0.704417 0.0616155">
+            <inertial pos="-0.0157168 -0.0256332 -0.000250761" quat="0.970749 -0.0869581 0.0148139 -0.223303" mass="0.235909" diaginertia="0.000523812 0.000383479 0.000280497"/>
+            <joint name="larm_joint2" pos="0 0 0" axis="0 0 -1" range="-0.17 2.62" damping="0.2"/>
+            <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="larm_link2"/>
+            <body name="larm_link3" pos="-0.020001 -0.0645 0" quat="0.707105 -0.707108 0 0">
+              <inertial pos="-0.00308625 0.000500133 -0.0897007" quat="0.706985 0.0306846 0.0311371 0.705876" mass="1.08737" diaginertia="0.00248891 0.00232032 0.000710521"/>
+              <joint name="larm_joint3" pos="0 0 0" axis="0 0 1" range="-2.79 2.79" damping="0.2"/>
+              <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="larm_link3"/>
+              <body name="larm_link4" pos="0 0 -0.1835" quat="0.499998 0.5 0.500002 0.5">
+                <inertial pos="0.00191171 -0.056078 -0.0101619" quat="0.775158 0.560181 0.189408 -0.222376" mass="0.63159" diaginertia="0.00143404 0.00142129 0.000920922"/>
+                <joint name="larm_joint4" pos="0 0 0" axis="0 0 1" range="-1.57 1.57" damping="0.2"/>
+                <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="larm_link4"/>
+                <body name="larm_link5" pos="0 -0.075 0" quat="-0.707108 -2.36627e-06 0.707105 -2.36626e-06">
+                  <inertial pos="-3.44271e-06 -0.0731591 -0.00618732" quat="0.823548 0.566579 -0.0156647 0.0226352" mass="0.451979" diaginertia="0.000579673 0.000574394 0.000224843"/>
+                  <joint name="larm_joint5" pos="0 0 0" axis="0 0 1" range="-0.35 1.57" damping="0.2"/>
+                  <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="larm_link5"/>
+                  <body name="larm_link6" pos="0 -0.105 0" quat="0.707105 -0.707108 0 0">
+                    <inertial pos="-0.000892339 -3.10527e-05 -0.105968" quat="0.999971 0.000235406 -0.00757261 0.000448484" mass="0.830189" diaginertia="0.0023087 0.00201411 0.000612016"/>
+                    <joint name="larm_joint6" pos="0 0 0" axis="0 0 1" range="-2.79 2.79" damping="0.2"/>
+                    <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="larm_link6"/>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+        <body name="rarm_link1" pos="0 0.13495 -0.29591" quat="0.642799 -0.766035 0 0">
+          <inertial pos="0.00043987 7.9304e-06 0.03585" quat="0.706 0.0284325 0.0279936 0.707087" mass="0.57608" diaginertia="0.00059525 0.000527288 0.000441011"/>
+          <joint name="rarm_joint1" pos="0 0 0" axis="0 0 1" range="-2.88 2.88"  damping="0.2"/>
+          <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.69804 0.69804 0.69804 1" mesh="rarm_link1"/>
+          <body name="rarm_link2" pos="-0.0015 0 0.049999" quat="0.704417 0.0616155 0.704417 0.0616155">
+            <inertial pos="-0.015721 -0.0256309 0.0002535" quat="0.970763 0.086941 -0.0147633 -0.223256" mass="0.235939" diaginertia="0.0005238 0.000383495 0.000280454"/>
+            <joint name="rarm_joint2" pos="0 0 0" axis="0 0 -1" range="-0.17 2.62"  damping="0.2"/>
+            <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="rarm_link2"/>
+            <body name="rarm_link3" pos="-0.020001 -0.0645 0" quat="0.707105 0.707108 0 0">
+              <inertial pos="-0.00308666 0.000500342 0.0897013" quat="0.706948 -0.0306783 -0.0311358 0.705914" mass="1.08737" diaginertia="0.00248889 0.00232032 0.000710539"/>
+              <joint name="rarm_joint3" pos="0 0 0" axis="0 0 1" range="-2.79 2.79" damping="0.2"/>
+              <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="rarm_link3"/>
+              <body name="rarm_link4" pos="0 0 0.1835" quat="0.499998 -0.5 -0.500002 0.5">
+                <inertial pos="0.00190835 -0.0560802 0.0101584" quat="0.560323 0.775333 -0.221763 0.188994" mass="0.63162" diaginertia="0.00143405 0.0014213 0.000920979"/>
+                <joint name="rarm_joint4" pos="0 0 0" axis="0 0 1" range="-1.57 1.57"  damping="0.2"/>
+                <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="rarm_link4"/>
+                <body name="rarm_link5" pos="0 -0.075 0" quat="0.707105 0 0.707108 0">
+                  <inertial pos="-3.59935e-06 -0.0731591 0.00618737" quat="0.566577 0.823544 0.022743 -0.0157398" mass="0.451978" diaginertia="0.000579673 0.000574398 0.00022484"/>
+                  <joint name="rarm_joint5" pos="0 0 0" axis="0 0 1" range="-0.35 1.57"  damping="0.2"/>
+                  <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="rarm_link5"/>
+                  <body name="rarm_link6" pos="0 -0.105 0" quat="0.707105 0.707108 0 0">
+                    <inertial pos="-0.000892336 -3.10494e-05 0.105968" quat="0.999971 -0.000235382 0.00757264 0.000448532" mass="0.830188" diaginertia="0.0023087 0.00201411 0.000612016"/>
+                    <joint name="rarm_joint6" pos="0 0 0" axis="0 0 1" range="-2.79 2.79"  damping="0.2"/>
+                    <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="rarm_link6"/>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="lleg_link1" pos="0 0.095 0" quat="0.707105 -0.707108 0 0">
+        <inertial pos="-0.04615 0.10138 -0.00057339" quat="0.188256 0.669842 -0.243785 0.675604" mass="1.7192" diaginertia="0.0116346 0.010204 0.00377219"/>
+        <joint name="lleg_joint1" pos="0 0 0" axis="0 0 1" range="-1.22 1.92"  damping="0.2"/>
+        <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.69804 0.69804 0.69804 1" mesh="lleg_link1"/>
+        <body name="lleg_link2" pos="0 0.1415 0" quat="0.499998 0.5 -0.500002 -0.5">
+          <inertial pos="-0.00695412 5.85644e-06 0.00602969" quat="0.999806 0.0119058 0.0156425 -0.00141854" mass="1.30043" diaginertia="0.00295588 0.00228715 0.00165544"/>
+          <joint name="lleg_joint2" pos="0 0 0" axis="0 0 1" range="-1.57 0.07"  damping="0.2"/>
+          <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="lleg_link2"/>
+          <body name="lleg_link3" pos="-0.0275 0 0" quat="-2.59734e-06 0.707105 -2.59735e-06 -0.707108">
+            <inertial pos="-0.00319346 -0.0116288 0.118677" quat="0.644887 0.0133407 0.102808 0.757214" mass="3.18617" diaginertia="0.0187932 0.0182038 0.00732765"/>
+            <joint name="lleg_joint3" pos="0 0 0" axis="0 0 1" range="-2.6 0.44"  damping="0.2"/>
+            <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="lleg_link3"/>
+            <body name="lleg_link4" pos="0 0 0.26772" quat="0.707105 -0.707108 0 0">
+              <inertial pos="0.00351609 -0.108165 0.00641438" quat="0.570499 0.567241 -0.425923 0.413955" mass="1.41173" diaginertia="0.0101633 0.0100957 0.00106518"/>
+              <joint name="lleg_joint4" pos="0 0 0" axis="0 0 1" range="-2.4 0.1" damping="0.2"/>
+              <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="lleg_link4"/>
+              <body name="lleg_link5" pos="0 -0.28 0.009">
+                <inertial pos="0.021822 -0.0148754 -4.91409e-06" quat="0.519214 0.518708 0.480708 0.479874" mass="0.561438" diaginertia="0.000845726 0.000806268 0.000283476"/>
+                <joint name="lleg_joint5" pos="0 0 0" axis="0 0 1" range="-0.56 0.45"  damping="0.2"/>
+                <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="lleg_link5"/>
+                <body name="lleg_link6" pos="0 -0.016 0" quat="0.499998 0.5 -0.500002 -0.5">
+                  <inertial pos="0.0312762 0.000346081 -0.0237648" quat="0.999862 0.0124807 -0.00155888 0.0108846" mass="0.34315" diaginertia="0.00131904 0.00118004 0.000346977"/>
+                  <joint name="lleg_joint6" pos="0 0 0" axis="0 0 1" range="-0.52 0.52"  damping="0.2"/>
+                  <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="lleg_link6"/>
+                  <geom type="mesh" rgba="0.698039 0.698039 0.698039 1" mesh="lleg_link6"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="rleg_link1" pos="0 -0.095 0" quat="0.707105 -0.707108 0 0">
+        <inertial pos="-0.04615 0.10138 0.00057345" quat="0.243769 0.675599 -0.188277 0.669847" mass="1.7192" diaginertia="0.0116356 0.0102041 0.00377225"/>
+        <joint name="rleg_joint1" pos="0 0 0" axis="0 0 1" range="-1.22 1.92"  damping="0.2"/>
+        <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.69804 0.69804 0.69804 1" mesh="rleg_link1"/>
+        <body name="rleg_link2" pos="0 0.1415 0" quat="0.499998 -0.5 0.500002 -0.5">
+          <inertial pos="-0.00695397 5.8635e-06 -0.00602975" quat="0.999806 -0.0118914 -0.0156415 -0.00142564" mass="1.30042" diaginertia="0.00295586 0.00228715 0.00165541"/>
+          <joint name="rleg_joint2" pos="0 0 0" axis="0 0 1" range="-1.57 0.07"  damping="0.2"/>
+          <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="rleg_link2"/>
+          <body name="rleg_link3" pos="-0.0275 0 0" quat="3.27579e-05 0.707108 -3.27581e-05 0.707105">
+            <inertial pos="-0.00319389 -0.0116297 -0.118678" quat="0.644922 -0.0133255 -0.102799 0.757186" mass="3.18629" diaginertia="0.0187938 0.0182042 0.00732793"/>
+            <joint name="rleg_joint3" pos="0 0 0" axis="0 0 1" range="-2.6 0.44"  damping="0.2"/>
+            <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="rleg_link3"/>
+            <body name="rleg_link4" pos="0 0 -0.26772" quat="0.707105 0.707108 0 0">
+              <inertial pos="0.0035161 -0.10817 -0.006414" quat="0.425991 0.414021 -0.570448 0.567192" mass="1.4117" diaginertia="0.0101632 0.0100956 0.00106521"/>
+              <joint name="rleg_joint4" pos="0 0 0" axis="0 0 1" range="-2.4 0.1"  damping="0.2"/>
+              <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.69804 0.69804 0.69804 1" mesh="rleg_link4"/>
+              <body name="rleg_link5" pos="0 -0.28 -0.009">
+                <inertial pos="0.0218219 -0.0148754 4.46409e-06" quat="0.518693 0.519228 0.47986 0.480723" mass="0.561441" diaginertia="0.000845715 0.000806256 0.00028348"/>
+                <joint name="rleg_joint5" pos="0 0 0" axis="0 0 1" range="-0.56 0.45"  damping="0.2"/>
+                <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.698039 0.698039 0.698039 1" mesh="rleg_link5"/>
+                <body name="rleg_link6" pos="0 -0.016 0" quat="0.499998 -0.5 0.500002 -0.5">
+                  <inertial pos="0.031273 0.00034824 0.023763" quat="0.999861 -0.0124828 0.00156755 0.0109672" mass="0.34317" diaginertia="0.00131898 0.00117995 0.000346911"/>
+                  <joint name="rleg_joint6" pos="0 0 0" axis="0 0 1" range="-0.52 0.52"  damping="0.2"/>
+                  <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.69804 0.69804 0.69804 1" mesh="rleg_link6"/>
+                  <geom type="mesh" rgba="0.69804 0.69804 0.69804 1" mesh="rleg_link6"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="lleg_joint1" joint="lleg_joint1" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="lleg_joint2" joint="lleg_joint2" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="lleg_joint3" joint="lleg_joint3" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="lleg_joint4" joint="lleg_joint4" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="lleg_joint5" joint="lleg_joint5" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="lleg_joint6" joint="lleg_joint6" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="rleg_joint1" joint="rleg_joint1" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="rleg_joint2" joint="rleg_joint2" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="rleg_joint3" joint="rleg_joint3" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="rleg_joint4" joint="rleg_joint4" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="rleg_joint5" joint="rleg_joint5" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="rleg_joint6" joint="rleg_joint6" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+
+    <motor name="waist_yaw_joint" joint="waist_yaw_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    
+    <motor name="larm_joint1" joint="larm_joint1" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="larm_joint2" joint="larm_joint2" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="larm_joint3" joint="larm_joint3" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="larm_joint4" joint="larm_joint4" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="larm_joint5" joint="larm_joint5" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="larm_joint6" joint="larm_joint6" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="rarm_joint1" joint="rarm_joint1" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="rarm_joint2" joint="rarm_joint2" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="rarm_joint3" joint="rarm_joint3" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="rarm_joint4" joint="rarm_joint4" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="rarm_joint5" joint="rarm_joint5" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="rarm_joint6" joint="rarm_joint6" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+  </actuator>
+
+  <sensor>
+        <actuatorpos name='lleg_joint1_p'  actuator='lleg_joint1' user='13'/>
+        <actuatorpos name='lleg_joint2_p'  actuator='lleg_joint1' user='13'/>
+        <actuatorpos name='lleg_joint3_p'  actuator='lleg_joint1' user='13'/>
+        <actuatorpos name='lleg_joint4_p'  actuator='lleg_joint1' user='13'/>
+        <actuatorpos name='lleg_joint5_p'  actuator='lleg_joint1' user='13'/>
+        <actuatorpos name='lleg_joint6_p'  actuator='lleg_joint1' user='13'/>
+        <actuatorpos name='rleg_joint1_p'  actuator='rleg_joint1' user='13'/>
+        <actuatorpos name='rleg_joint2_p'  actuator='rleg_joint2' user='13'/>
+        <actuatorpos name='rleg_joint3_p'  actuator='rleg_joint3' user='13'/>
+        <actuatorpos name='rleg_joint4_p'  actuator='rleg_joint4' user='13'/>
+        <actuatorpos name='rleg_joint5_p'  actuator='rleg_joint5' user='13'/>
+        <actuatorpos name='rleg_joint6_p'  actuator='rleg_joint6' user='13'/>
+
+        <actuatorpos name='waist_yaw_joint_p'  actuator='waist_yaw_joint' user='13'/>
+        <actuatorpos name='larm_joint1_p'  actuator='larm_joint1' user='13'/>
+        <actuatorpos name='larm_joint2_p'  actuator='larm_joint2' user='13'/>
+        <actuatorpos name='larm_joint3_p'  actuator='larm_joint3' user='13'/>
+        <actuatorpos name='larm_joint4_p'  actuator='larm_joint4' user='13'/>
+        <actuatorpos name='larm_joint5_p'  actuator='larm_joint5' user='13'/>
+        <actuatorpos name='larm_joint6_p'  actuator='larm_joint6' user='13'/>
+        <actuatorpos name='rarm_joint1_p'  actuator='rarm_joint1' user='13'/>
+        <actuatorpos name='rarm_joint2_p'  actuator='rarm_joint2' user='13'/>
+        <actuatorpos name='rarm_joint3_p'  actuator='rarm_joint3' user='13'/>
+        <actuatorpos name='rarm_joint4_p'  actuator='rarm_joint4' user='13'/>
+        <actuatorpos name='rarm_joint5_p'  actuator='rarm_joint5' user='13'/>
+        <actuatorpos name='rarm_joint6_p'  actuator='rarm_joint6' user='13'/>
+
+        <actuatorvel name='lleg_joint1_v'  actuator='lleg_joint1' user='13'/>
+        <actuatorvel name='lleg_joint2_v'  actuator='lleg_joint2' user='13'/>
+        <actuatorvel name='lleg_joint3_v'  actuator='lleg_joint3' user='13'/>
+        <actuatorvel name='lleg_joint4_v'  actuator='lleg_joint4' user='13'/>
+        <actuatorvel name='lleg_joint5_v'  actuator='lleg_joint5' user='13'/>
+        <actuatorvel name='lleg_joint6_v'  actuator='lleg_joint6' user='13'/>
+        <actuatorvel name='rleg_joint1_v'  actuator='rleg_joint1' user='13'/>
+        <actuatorvel name='rleg_joint2_v'  actuator='rleg_joint2' user='13'/>
+        <actuatorvel name='rleg_joint3_v'  actuator='rleg_joint3' user='13'/>
+        <actuatorvel name='rleg_joint4_v'  actuator='rleg_joint4' user='13'/>
+        <actuatorvel name='rleg_joint5_v'  actuator='rleg_joint5' user='13'/>
+        <actuatorvel name='rleg_joint6_v'  actuator='rleg_joint6' user='13'/>
+
+        <actuatorvel name='waist_yaw_joint_v'  actuator='waist_yaw_joint' user='13'/>
+        <actuatorvel name='larm_joint1_v'  actuator='larm_joint1' user='13'/>
+        <actuatorvel name='larm_joint2_v'  actuator='larm_joint2' user='13'/>
+        <actuatorvel name='larm_joint3_v'  actuator='larm_joint3' user='13'/>
+        <actuatorvel name='larm_joint4_v'  actuator='larm_joint4' user='13'/>
+        <actuatorvel name='larm_joint5_v'  actuator='larm_joint5' user='13'/>
+        <actuatorvel name='larm_joint6_v'  actuator='larm_joint6' user='13'/>
+        <actuatorvel name='rarm_joint1_v'  actuator='rarm_joint1' user='13'/>
+        <actuatorvel name='rarm_joint2_v'  actuator='rarm_joint2' user='13'/>
+        <actuatorvel name='rarm_joint3_v'  actuator='rarm_joint3' user='13'/>
+        <actuatorvel name='rarm_joint4_v'  actuator='rarm_joint4' user='13'/>
+        <actuatorvel name='rarm_joint5_v'  actuator='rarm_joint5' user='13'/>
+        <actuatorvel name='rarm_joint6_v'  actuator='rarm_joint6' user='13'/>
+
+        <!-- <actuatorfrc name='lleg_joint1_f'  actuator='lleg_joint1' user='13'/>
+        <actuatorfrc name='lleg_joint2_f'  actuator='lleg_joint2' user='13'/>
+        <actuatorfrc name='lleg_joint3_f'  actuator='lleg_joint3' user='13'/>
+        <actuatorfrc name='lleg_joint4_f'  actuator='lleg_joint4' user='13'/>
+        <actuatorfrc name='lleg_joint5_f'  actuator='lleg_joint5' user='13'/>
+        <actuatorfrc name='lleg_joint6_f'  actuator='lleg_joint6' user='13'/>
+        <actuatorfrc name='rleg_joint1_f'  actuator='rleg_joint1' user='13'/>
+        <actuatorfrc name='rleg_joint2_f'  actuator='rleg_joint2' user='13'/>
+        <actuatorfrc name='rleg_joint3_f'  actuator='rleg_joint3' user='13'/>
+        <actuatorfrc name='rleg_joint4_f'  actuator='rleg_joint4' user='13'/>
+        <actuatorfrc name='rleg_joint5_f'  actuator='rleg_joint5' user='13'/>
+        <actuatorfrc name='rleg_joint6_f'  actuator='rleg_joint6' user='13'/>
+
+        <actuatorfrc name='waist_yaw_joint_f'  actuator='waist_yaw_joint' user='13'/>
+        <actuatorfrc name='larm_joint1_f'  actuator='larm_joint1' user='13'/>
+        <actuatorfrc name='larm_joint2_f'  actuator='larm_joint2' user='13'/>
+        <actuatorfrc name='larm_joint3_f'  actuator='larm_joint3' user='13'/>
+        <actuatorfrc name='larm_joint4_f'  actuator='larm_joint4' user='13'/>
+        <actuatorfrc name='larm_joint5_f'  actuator='larm_joint5' user='13'/>
+        <actuatorfrc name='rarm_joint1_f'  actuator='rarm_joint1' user='13'/>
+        <actuatorfrc name='rarm_joint2_f'  actuator='rarm_joint2' user='13'/>
+        <actuatorfrc name='rarm_joint3_f'  actuator='rarm_joint3' user='13'/>
+        <actuatorfrc name='rarm_joint4_f'  actuator='rarm_joint4' user='13'/>
+        <actuatorfrc name='rarm_joint5_f'  actuator='rarm_joint5' user='13'/> -->
+
+        <framequat     name='orientation' objtype='site' objname='imu'/>
+        <framepos     name='position' objtype='site' objname='imu'/>
+        <gyro          name='angular-velocity'    site='imu' cutoff='34.9'/>
+        <velocimeter   name='linear-velocity'     site='imu' cutoff='30'/>
+        <accelerometer name='linear-acceleration' site='imu' cutoff='157'/>
+        <magnetometer  name='magnetometer'        site='imu'/>
+
+  </sensor>
+</mujoco>
+</mujoco>
