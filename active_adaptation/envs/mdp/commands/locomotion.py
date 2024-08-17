@@ -620,7 +620,7 @@ class Impedance(Command):
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 6)
-            self.command_hidden = torch.zeros(self.num_envs, 6)
+            self.command_hidden = torch.zeros(self.num_envs, 7)
             
             self.command_linvel = torch.zeros(self.num_envs, 3)
             self.command_speed = torch.zeros(self.num_envs, 1)
@@ -734,6 +734,7 @@ class Impedance(Command):
 
         self.command_hidden[:, 0:3] = command_pos_b
         self.command_hidden[:, 3:6] = self.command_linvel
+        self.command_hidden[:, 6] = self.command_angvel
 
         _ = torch.rand(self.num_envs, device=self.device) < self.resample_prob
         self._sample_command(_.nonzero().squeeze(-1))

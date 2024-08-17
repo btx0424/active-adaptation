@@ -480,6 +480,21 @@ class external_forces(Observation):
         return obs * torch.tensor([1., -1., 1.], device=self.device)
 
 
+class external_torques(Observation):
+    def __init__(self, env, body_names):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_indices, self.body_names = self.asset.find_bodies(body_names)
+        self.default_inertia = self.asset.root_physx_view.get_inertias()[0, 0, [0, 4, 8]].to(self.device)
+
+    def compute(self) -> torch.Tensor:
+        torques_b = self.asset._external_torque_b[:, self.body_indices]
+        return (torques_b / self.default_inertia).reshape(self.env.num_envs, -1)
+
+    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
+        return obs * torch.tensor([1., 1., -1.], device=self.device)
+
+
 class body_materials(Observation):
     def __init__(self, env, body_names, homogeneous: bool=False):
         super().__init__(env)
