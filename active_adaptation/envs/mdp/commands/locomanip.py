@@ -1272,5 +1272,503 @@ class CommandEEPose_UMI(Command):
             quat_rotate(ee_quat, self.ee_force_b) / 9.81,
             color=(1., 0., 1., 1.)
         )
-        
-        
+
+
+class BaseEEImpedance(Command):
+    """Model the Base And EEF as a two body spring-damper system. The base is connected to a setpoint in world frame and the EEF is connected to a setpoint in body frame. We model forces applied  onto these two bodies as external forces. We model xy for base and xyz for ee.
+    We also model a rotational spring-damper system and the corresponding torques in z direction for the base yaw.
+    """
+
+    future: int = 3
+
+    def __init__(
+        self,
+        env,
+        base_mass_factor: float = 1.0,
+        ee_mass_factor: float = 0.1,
+        base_inertia_factor: float = 10.0,
+        virtual_mass_range=(0.2, 1.0),
+        compliant_ratio: float = 0.2,
+        ext_force_ratio: float = 0.5,
+    ) -> None:
+        super().__init__(env)
+        self.robot: Articulation = env.scene["robot"]
+        self.base_body_id = self.asset.find_bodies("base")[0][0]
+        self.ee_body_id = self.asset.find_bodies("arm_link06")[0][0]
+        self.num_bodies = 2
+        self.body_ids = [self.base_body_id, self.ee_body_id]
+
+        self.virtual_mass_range = virtual_mass_range
+        self.resample_prob = 0.01
+        self.compliant_ratio = compliant_ratio  # kp=0 for compliant mode
+        self.ext_force_ratio = ext_force_ratio  # probability of applying external force
+
+        with torch.device(self.device):
+            self.command = torch.zeros(self.num_envs, 23)
+            self.command_hidden = torch.zeros(self.num_envs, 12)
+
+            # integration
+            self.desired_linacc_base_w = torch.zeros(self.num_envs, self.future, 3)
+            self.desired_linvel_base_w = torch.zeros(self.num_envs, self.future, 3)
+            self.desired_pos_base_w = torch.zeros(self.num_envs, self.future, 3)
+            self.desired_linacc_ee_w = torch.zeros(self.num_envs, self.future, 3)
+            self.desired_linvel_ee_w = torch.zeros(self.num_envs, self.future, 3)
+            self.desired_pos_ee_w = torch.zeros(self.num_envs, self.future, 3)
+
+            self.desired_yawacc_w = torch.zeros(self.num_envs, self.future, 1)
+            self.desired_yawvel_w = torch.zeros(self.num_envs, self.future, 1)
+            self.desired_yaw_w = torch.zeros(self.num_envs, self.future, 1)
+
+            # command setpoints in world/body frame
+            self.command_setpoint_pos_base_w = torch.zeros(self.num_envs, 3)
+            self.command_setpoint_pos_ee_b = torch.zeros(self.num_envs, 3)
+            self.command_setpoint_yaw_w = torch.zeros(self.num_envs, 1)
+            self.command_setpoint_pos_base_diff_b = torch.zeros(self.num_envs, 3)
+            self.command_setpoint_pos_ee_diff_b = torch.zeros(self.num_envs, 3)
+            self.command_setpoint_yaw_diff = torch.zeros(self.num_envs, 1)
+
+            # hidden command (privileged information) be provided to tell the agent the desired behavior at the **next time step**
+            # TODO: check **next time step**!!
+            self.command_pos_base_w = torch.zeros(self.num_envs, 3)
+            self.command_pos_ee_w = torch.zeros(self.num_envs, 3)
+            self.command_pos_base_diff_b = torch.zeros(self.num_envs, 3)
+            self.command_pos_ee_diff_b = torch.zeros(self.num_envs, 3)
+
+            self.command_linvel_base_w = torch.zeros(self.num_envs, 3)
+            self.command_linvel_ee_w = torch.zeros(self.num_envs, 3)
+            self.command_linvel_base_b = torch.zeros(self.num_envs, 3)
+            self.command_linvel_ee_b = torch.zeros(self.num_envs, 3)
+
+            self.command_yaw_w = torch.zeros(self.num_envs, 1)
+            self.command_yaw_diff = torch.zeros(self.num_envs, 1)
+            self.command_yawvel = torch.zeros(self.num_envs, 1)
+
+            # for reward computation
+            self.command_linvel = self.command_linvel_base_b
+            self.command_speed = torch.zeros(self.num_envs, 1)
+            self.command_angvel = self.command_yawvel[:, 0]
+
+            # spring-damper parameters
+            self.kp_base = torch.zeros(self.num_envs, 3)
+            self.kd_base = torch.zeros(self.num_envs, 3)
+            self.kp_ee = torch.zeros(self.num_envs, 3)
+            self.kd_ee = torch.zeros(self.num_envs, 3)
+            self.kp_yaw = torch.zeros(self.num_envs, 1)
+            self.kd_yaw = torch.zeros(self.num_envs, 1)
+
+            arm_body_ids, _ = self.asset.find_bodies("arm_link.*")
+            arm_body_mask = torch.zeros(self.asset.num_bodies, dtype=bool)
+            arm_body_mask[arm_body_ids] = True
+            mass_total = self.asset.root_physx_view.get_masses().to(self.device).sum(1, keepdim=True)
+            self.default_mass_base = mass_total * base_mass_factor
+            self.default_mass_ee = mass_total * ee_mass_factor
+            self.mass_ratio_ee2base = self.default_mass_ee / self.default_mass_base
+
+            self.default_inertia_z_base = self.asset.root_physx_view.get_inertias()[
+                :, 0, [8]
+            ].to(self.device).clone() * base_inertia_factor
+
+            self.virtual_mass_base = torch.zeros(self.num_envs, 1)
+            self.virtual_mass_ee = torch.zeros(self.num_envs, 1)
+            self.virtual_inertia_z_base = torch.zeros(self.num_envs, 1)
+
+            self.force_ext_w = torch.zeros(self.num_envs, self.num_bodies, 3)
+            self.force_offset_b = torch.zeros(self.num_envs, 3)
+
+            self._cum_error = torch.zeros(self.num_envs, 6)
+
+            self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
+            self.xy = torch.tensor([1.0, 1.0, 0.0])
+
+    def reset(self, env_ids: torch.Tensor):
+        self._sample_command(env_ids)
+        self._sample_force(env_ids)
+        self._cum_error[env_ids] = 0.0
+
+    def step(self, substep: int):
+        forces_b = self.asset._external_force_b[:, self.body_ids].clone()
+        forces_b.add_(
+            quat_rotate_inverse(
+                self.asset.data.root_quat_w[:, None, :], self.force_ext_w
+            )
+        )
+        torques_b = self.asset._external_torque_b[:, self.body_ids].clone()
+        torques_ext_b = torch.cross(self.force_offset_b, self.force_ext_w[:, 0], dim=-1)
+        torques_b[:, 0].add_(torques_ext_b)
+
+        self.asset.set_external_force_and_torque(forces_b, torques_b, self.body_ids)
+
+    def _integrate(self):
+        # fmt: off
+        # the acc of base caused by the spring damper connected between base and world
+        acc_base_b2w_w = self.kp_base[:, None, :] * (
+            self.command_setpoint_pos_base_w[:, None, :] - self.desired_pos_base_w
+        ) + self.kd_base[:, None, :] * (
+            0.0 - self.desired_linvel_base_w
+        )
+        # the acc of ee caused by the spring damper connected between ee and base
+        acc_ee_ee2base_w = self.kp_ee[:, None, :] * (
+            yaw_rotate(self.desired_yaw_w, self.command_setpoint_pos_ee_b[:, None, :])
+            - (self.desired_pos_ee_w - self.desired_pos_base_w)
+        ) + self.kd_ee[:, None, :] * (
+            0.0 - (self.desired_linvel_ee_w - self.desired_linvel_base_w)
+        )
+        desired_linacc_base_w = (
+            acc_base_b2w_w
+            - acc_ee_ee2base_w * self.mass_ratio_ee2base[:, None, :]
+            + (self.force_ext_w[:, 0] / self.virtual_mass_base)[:, None, :]
+        )
+        desired_linacc_ee_w = (
+            acc_ee_ee2base_w 
+            + (self.force_ext_w[:, 1] / self.virtual_mass_ee)[:, None, :]
+        )
+
+        self.desired_linacc_base_w[:] = desired_linacc_base_w * self.xy
+        self.desired_linvel_base_w.add_(self.desired_linacc_base_w * self.env.physics_dt)
+        self.desired_pos_base_w.add_(self.desired_linvel_base_w * self.env.physics_dt)
+
+        self.desired_linacc_ee_w[:] = desired_linacc_ee_w
+        self.desired_linvel_ee_w.add_(self.desired_linacc_ee_w * self.env.physics_dt)
+        self.desired_pos_ee_w.add_(self.desired_linvel_ee_w * self.env.physics_dt)
+
+        acc_yaw_base2w_w = self.kp_yaw[:, None, :] * (
+            self.command_setpoint_yaw_w[:, None, :] - self.desired_yaw_w
+        ) + self.kd_yaw[:, None, :] * (
+            0.0 - self.desired_yawvel_w
+        )
+        force_offset_w = yaw_rotate(
+            self.desired_yaw_w, self.force_offset_b.unsqueeze(1)
+        ) # [n, t, 3]
+        torque_ext_z = torch.cross(
+            force_offset_w, 
+            self.force_ext_w[:, 0, None, :], 
+            dim=-1
+        )[:, :, 2:3]
+        torque_int_z = torch.cross(
+            self.desired_pos_ee_w - self.desired_pos_base_w,
+            -self.virtual_mass_ee[:, None, :] * acc_ee_ee2base_w,
+            dim=-1
+        )[:, :, 2:3]
+        torque_z = torque_ext_z + torque_int_z
+        desired_yaw_acc_w = (
+            acc_yaw_base2w_w
+            + (torque_z / self.virtual_inertia_z_base[:, None, :])
+        )
+
+        self.desired_yawacc_w[:] = desired_yaw_acc_w
+        self.desired_yawvel_w.add_(self.desired_yawacc_w * self.env.physics_dt)
+        self.desired_yaw_w.add_(self.desired_yawvel_w * self.env.physics_dt)
+        # fmt: on
+
+    def _compute_error(self):
+        # compute error
+        linvel_base_error = (
+            self.command_linvel_base_w - self.asset.data.root_lin_vel_w
+        ).norm(dim=-1)
+        pos_base_error = (self.command_pos_base_w - self.asset.data.root_pos_w).norm(
+            dim=-1
+        )
+        linvel_ee_error = (
+            self.command_linvel_ee_w
+            - self.asset.data.body_lin_vel_w[:, self.ee_body_id]
+        ).norm(dim=-1)
+        pos_ee_error = (
+            self.command_pos_ee_w - self.asset.data.body_pos_w[:, self.ee_body_id]
+        )
+        angvel_error = (
+            self.command_yawvel.squeeze() - self.asset.data.root_ang_vel_w[:, 2]
+        ).abs()
+        yaw_error = wrap_to_pi(
+            self.command_yaw_w.squeeze() - self.asset.data.heading_w
+        ).abs()
+        self._cum_error[:, 0].add_(linvel_base_error * self.env.step_dt).mul_(0.99)
+        self._cum_error[:, 1].add_(pos_base_error * self.env.step_dt).mul_(0.99)
+        self._cum_error[:, 2].add_(linvel_ee_error * self.env.step_dt).mul_(0.99)
+        self._cum_error[:, 3].add_(pos_ee_error.norm(dim=-1) * self.env.step_dt).mul_(
+            0.99
+        )
+        self._cum_error[:, 4].add_(angvel_error * self.env.step_dt).mul_(0.99)
+        self._cum_error[:, 5].add_(yaw_error * self.env.step_dt).mul_(0.99)
+
+    def update(self):
+        # update desired state buffers
+        self.desired_linacc_base_w.roll(1, dims=1)
+        self.desired_linvel_base_w.roll(1, dims=1)
+        self.desired_pos_base_w.roll(1, dims=1)
+        self.desired_linvel_base_w[:, 0] = self.asset.data.root_lin_vel_w
+        self.desired_pos_base_w[:, 0] = self.asset.data.root_pos_w
+
+        self.desired_linacc_ee_w.roll(1, dims=1)
+        self.desired_linvel_ee_w.roll(1, dims=1)
+        self.desired_pos_ee_w.roll(1, dims=1)
+        self.desired_linvel_ee_w[:, 0] = self.asset.data.body_lin_vel_w[
+            :, self.ee_body_id
+        ]
+        self.desired_pos_ee_w[:, 0] = self.asset.data.body_pos_w[:, self.ee_body_id]
+
+        self.desired_yawacc_w.roll(1, dims=1)
+        self.desired_yawvel_w.roll(1, dims=1)
+        self.desired_yaw_w.roll(1, dims=1)
+        self.desired_yawvel_w[:, 0] = self.asset.data.root_ang_vel_w[:, 2:3]
+        self.desired_yaw_w[:, 0] = self.asset.data.heading_w.unsqueeze(1)
+
+        for _ in range(4):
+            self._integrate()
+
+        # transform command to body frame
+        self.command_setpoint_pos_base_diff_b[:] = yaw_rotate(
+            -self.asset.data.heading_w[:, None],
+            self.command_setpoint_pos_base_w - self.asset.data.root_pos_w,
+        )
+        self.command_setpoint_pos_ee_diff_b[:] = (
+            self.command_setpoint_pos_ee_b
+            - yaw_rotate(
+                -self.asset.data.heading_w[:, None],
+                self.asset.data.body_pos_w[:, self.ee_body_id]
+                - self.asset.data.root_pos_w,
+            )
+        )
+        self.command_setpoint_yaw_diff[:] = wrap_to_pi(
+            self.command_setpoint_yaw_w - self.asset.data.heading_w[:, None]
+        )
+
+        # compute smoothed hidden command
+        self.command_pos_base_w[:] = self.desired_pos_base_w.mean(1)
+        self.command_linvel_base_w[:] = self.desired_linvel_base_w.mean(1)
+        self.command_pos_ee_w[:] = self.desired_pos_ee_w.mean(1)
+        self.command_linvel_ee_w[:] = self.desired_linvel_ee_w.mean(1)
+        self.command_yaw_w[:] = self.desired_yaw_w.mean(1)
+        self.command_yawvel[:] = self.desired_yawvel_w.mean(1)
+
+        # transform hidden command to body frame
+        self.command_pos_base_diff_b[:] = yaw_rotate(
+            -self.asset.data.heading_w[:, None],
+            self.command_pos_base_w - self.asset.data.root_pos_w,
+        )
+        self.command_linvel_base_b[:] = yaw_rotate(
+            -self.asset.data.heading_w[:, None], self.command_linvel_base_w
+        )
+        self.command_pos_ee_diff_b[:] = yaw_rotate(
+            -self.asset.data.heading_w[:, None],
+            self.command_pos_ee_w - self.asset.data.body_pos_w[:, self.ee_body_id],
+        )
+        self.command_linvel_ee_b[:] = yaw_rotate(
+            -self.asset.data.heading_w[:, None], self.command_linvel_ee_w
+        )
+        # TODO: this is using the instantaneous rest frame, not sure if should use moving frame for the ee velocity
+        # self.command_pos_ee_diff_b[:] = yaw_rotate(
+        #     -self.asset.data.heading_w,
+        #     (self.command_pos_ee_w - self.command_pos_base_w)
+        #     - (
+        #         self.asset.data.body_pos_w[:, self.ee_body_id]
+        #         - self.asset.data.root_pos_w
+        #     ),
+        # )
+        # self.command_linvel_ee_b[:] = yaw_rotate(
+        #     -self.asset.data.heading_w, self.command_linvel_ee_w - self.command_linvel_base_w
+        # )
+
+        self.command_speed[:] = self.command_linvel_base_w.norm(dim=-1, keepdim=True)
+        self.command_yaw_diff[:] = wrap_to_pi(
+            self.command_yaw_w - self.asset.data.heading_w[:, None]
+        )
+
+        self.command[:, 0:2] = self.command_setpoint_pos_base_diff_b[:, :2]
+        self.command[:, 2:3] = self.command_setpoint_yaw_diff
+        self.command[:, 3:6] = self.command_setpoint_pos_ee_diff_b
+        self.command[:, 6:8] = self.kp_base[:, :2]
+        self.command[:, 8:10] = self.kd_base[:, :2]
+        self.command[:, 10:13] = self.kp_ee
+        self.command[:, 13:16] = self.kd_ee
+        self.command[:, 16:17] = self.kp_yaw
+        self.command[:, 17:18] = self.kd_yaw
+        self.command[:, 18:19] = self.virtual_mass_base
+        self.command[:, 19:20] = self.virtual_mass_ee
+        self.command[:, 20:21] = self.virtual_inertia_z_base
+
+        self.command_hidden[:, 0:2] = self.command_pos_base_diff_b[:, :2]
+        self.command_hidden[:, 2:3] = self.command_yaw_diff
+        self.command_hidden[:, 3:6] = self.command_pos_ee_diff_b
+        self.command_hidden[:, 6:8] = self.command_linvel_base_b[:, :2]
+        self.command_hidden[:, 8:9] = self.command_yawvel
+        self.command_hidden[:, 9:12] = self.command_linvel_ee_b
+
+        self._compute_error()
+
+        # resample command
+        _ = torch.rand(self.num_envs, device=self.device) < self.resample_prob
+        self._sample_command(_.nonzero().squeeze(-1))
+        _ = torch.rand(self.num_envs, device=self.device) < self.resample_prob
+        self._sample_force(_.nonzero().squeeze(-1))
+
+    def _sample_command(self, env_ids: torch.Tensor):
+        # TODO: check command sample range
+        self.command_setpoint_pos_base_w[env_ids, 0].uniform_(2.0, 3.0)
+        self.command_setpoint_pos_base_w[env_ids, 1].uniform_(-1, 1)
+        self.command_setpoint_pos_base_w[env_ids].add_(
+            self.asset.data.root_pos_w[env_ids]
+        )
+
+        ee_yaw = torch.empty(len(env_ids), 1, device=self.device).uniform_(
+            -torch.pi / 2, torch.pi / 2
+        )
+        ee_pitch = torch.empty(len(env_ids), 1, device=self.device).uniform_(
+            -torch.pi / 6, torch.pi / 2
+        )
+        ee_radius = torch.empty(len(env_ids), 1, device=self.device).uniform_(0.2, 0.8)
+        ee_xyz = torch.cat(
+            [
+                ee_radius * torch.cos(ee_yaw) * torch.cos(ee_pitch),
+                ee_radius * torch.sin(ee_yaw) * torch.cos(ee_pitch),
+                ee_radius * torch.sin(ee_pitch),
+            ],
+            dim=1,
+        )
+        self.command_setpoint_pos_ee_b[env_ids] = ee_xyz
+
+        self.command_setpoint_yaw_w[env_ids, 0].uniform_(-torch.pi, torch.pi)
+
+        self.kp_base[env_ids].uniform_(2.0, 3.0)
+        self.kd_base[env_ids] = 2.0 * self.kp_base[env_ids].sqrt()
+        self.kp_ee[env_ids].uniform_(2.0, 3.0)
+        self.kd_ee[env_ids] = 2.0 * self.kp_ee[env_ids].sqrt()
+        self.kp_yaw[env_ids].uniform_(2.0, 3.0)
+        self.kd_yaw[env_ids] = 2.0 * self.kp_yaw[env_ids].sqrt()
+        compliant_base = (
+            torch.rand(len(env_ids), device=self.device) < self.compliant_ratio
+        )
+        self.kp_base[env_ids] *= (~compliant_base).unsqueeze(1)
+        compliant_ee = (
+            torch.rand(len(env_ids), device=self.device) < self.compliant_ratio
+        )
+        self.kp_ee[env_ids] *= (~compliant_ee).unsqueeze(1)
+        compliant_yaw = (
+            torch.rand(len(env_ids), device=self.device) < self.compliant_ratio
+        )
+        self.kp_yaw[env_ids] *= (~compliant_yaw).unsqueeze(1)
+
+        self.desired_linacc_base_w[env_ids] = 0.0
+        self.desired_linvel_base_w[env_ids] = self.asset.data.root_lin_vel_w[
+            env_ids, None
+        ]
+        self.desired_pos_base_w[env_ids] = self.asset.data.root_pos_w[env_ids, None]
+        self.desired_linacc_ee_w[env_ids] = 0.0
+        self.desired_linvel_ee_w[env_ids] = self.asset.data.body_lin_vel_w[
+            env_ids, None, self.ee_body_id
+        ]
+        self.desired_pos_ee_w[env_ids] = self.asset.data.body_pos_w[
+            env_ids, None, self.ee_body_id
+        ]
+        self.desired_yawacc_w[env_ids] = 0.0
+        self.desired_yawvel_w[env_ids] = self.asset.data.root_ang_vel_w[
+            env_ids, None, 2:3
+        ]
+        self.desired_yaw_w[env_ids] = self.asset.data.heading_w[env_ids, None, None]
+
+        # TODO: I think there is no need to have different virtual mass ratio
+        virtual_mass = torch.empty(len(env_ids), 1, device=self.device).uniform_(
+            *self.virtual_mass_range
+        )
+        self.virtual_mass_base[env_ids] = self.default_mass_base[env_ids] * virtual_mass
+        self.virtual_mass_ee[env_ids] = self.default_mass_ee[env_ids] * virtual_mass
+        self.virtual_inertia_z_base[env_ids] = (
+            self.default_inertia_z_base[env_ids] * virtual_mass
+        )
+
+    def _sample_force(self, env_ids: torch.Tensor):
+        # TODO: check force sample range
+        # TODO: interaction model selection
+        # the current model assumes the force is static in the world frame and the offset is static in the body frame
+        # other model are also available, force static in world/body frame, offset/torque static in body frame
+        # which is most realistic (to reduce sim2real ood)?
+        # and now resample both, maybe should resample force more frequently than offset?
+        force_ext_w = torch.zeros(len(env_ids), self.num_bodies, 3, device=self.device)
+        force_ext_w[:, :, 0].uniform_(-40, 40)
+        force_ext_w[:, :, 1].uniform_(-40, 40)
+        force_ext_w[:, 0, 2].uniform_(-10, 10)
+        force_ext_w[:, 1, 2].uniform_(-40, 40)
+        force_ext_w[:, 0] = clamp_norm(
+            force_ext_w[:, 0], max=self.virtual_mass_base[env_ids] * 8.0
+        )
+        force_ext_w[:, 1] = clamp_norm(
+            force_ext_w[:, 1], max=self.virtual_mass_ee[env_ids] * 8.0
+        )
+        self.force_ext_w[env_ids] = force_ext_w * (
+            torch.rand(len(env_ids), self.num_bodies, 1, device=self.device)
+            < self.ext_force_ratio
+        )
+
+        force_offset_b = torch.zeros(len(env_ids), 3, device=self.device)
+        force_offset_b[:, 0].uniform_(-0.3, 0.3)
+        force_offset_b[:, 1].uniform_(-0.2, 0.2)
+        self.force_offset_b[env_ids] = force_offset_b
+
+    def debug_draw(self):
+        # command lin vel 
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w
+            + torch.tensor([0.0, 0.0, 0.2], device=self.device),
+            self.command_linvel_base_w,
+            color=(1.0, 1.0, 1.0, 1.0),
+        )
+        # base setpoint
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            self.command_setpoint_pos_base_w - self.asset.data.root_pos_w,
+            color=(1.0, 0.0, 0.0, 1.0),
+        )
+        # ee setpoint
+        self.env.debug_draw.vector(
+            self.asset.data.body_pos_w[:, self.ee_body_id],
+            yaw_rotate(
+                self.asset.data.heading_w,
+                self.command_setpoint_pos_ee_b,
+            ),
+            color=(0.0, 1.0, 0.0, 1.0),
+        )    
+        # yaw setpoint direction
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            yaw_rotate(
+                self.command_setpoint_yaw_w,
+                torch.tensor([[1.0, 0.0, 0.0]], device=self.device),
+            ),
+            color=(1.0, 0.0, 1.0, 1.0),
+        )
+        # force on base
+        force_acc_base = self.force_ext_w[:, 0] / self.virtual_mass_base
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w
+            + yaw_rotate(self.asset.data.heading_w.unsqueeze(1), self.force_offset_b)
+            - force_acc_base,
+            force_acc_base,
+            color=(0.0, 1.0, 0.0, 1.0),
+            size=2.0,
+        )
+        # force on ee
+        force_acc_ee = self.force_ext_w[:, 1] / self.virtual_mass_ee
+        self.env.debug_draw.vector(
+            self.asset.data.body_pos_w[:, self.ee_body_id],
+            force_acc_ee,
+            color=(0.0, 0.0, 1.0, 1.0),
+            size=2.0,
+        )
+        # self.env.debug_draw.vector(
+        #     self.asset.data.root_pos_w,
+        #     quat_rotate(self.asset.data.root_quat_w, self.asset._external_torque_b[:, 0]),
+        #     color=(1., 1., 1., 1.)
+        # )
+
+
+@batchify
+def yaw_rotate(yaw: torch.Tensor, vec: torch.Tensor):
+    yaw_cos = torch.cos(yaw).squeeze(-1)
+    yaw_sin = torch.sin(yaw).squeeze(-1)
+    return torch.stack(
+        [
+            yaw_cos * vec[:, 0] - yaw_sin * vec[:, 1],
+            yaw_sin * vec[:, 0] + yaw_cos * vec[:, 1],
+            vec[:, 2],
+        ],
+        1,
+    )

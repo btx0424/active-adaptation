@@ -601,22 +601,17 @@ class Impedance(Command):
     def __init__(
         self, 
         env,
-        linvel_x_range=(-1.0, 1.0),
-        linvel_y_range=(-1.0, 1.0),
-        angvel_range=(-2.0, 2.0),
-        yaw_stiffness_range=(0.5, 0.5),
         virtual_mass_range=(0.5, 1.0),
         compliant_ratio: float = 0.2,
+        ext_force_ratio: float = 0.5,
     ) -> None:
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
-        self.linvel_x_range = linvel_x_range
-        self.linvel_y_range = linvel_y_range
-        self.angvel_range = angvel_range
-        self.yaw_stiffness_range = yaw_stiffness_range
+        self.body_ids, body_names = self.asset.find_bodies(["base"])
         self.virtual_mass_range = virtual_mass_range
         self.resample_prob = 0.01
         self.compliant_ratio = compliant_ratio # kp=0 for compliant mode
+        self.ext_force_ratio = ext_force_ratio
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 6)
@@ -661,14 +656,15 @@ class Impedance(Command):
     
     def reset(self, env_ids: torch.Tensor):
         self._sample_command(env_ids)
+        self._sample_force(env_ids)
         self._cum_error[env_ids] = 0.
     
     def step(self, substep: int):
-        forces_b = self.asset._external_force_b.clone()
-        forces_b[:, 0] += quat_rotate_inverse(self.asset.data.root_quat_w, self.force_ext_w)
-        torques_b = self.asset._external_torque_b.clone()
-        torques_b[:, 0] += self.force_offset_b.cross(forces_b[:, 0], dim=-1)
-        self.asset.set_external_force_and_torque(forces_b, torques_b)
+        forces_b = self.asset._external_force_b[:, self.body_ids].clone()
+        forces_b.add_(quat_rotate_inverse(self.asset.data.root_quat_w, self.force_ext_w)[:, None, :])
+        torques_b = self.asset._external_torque_b[:, self.body_ids].clone()
+        torques_b.add_(self.force_offset_b.cross(forces_b[:, 0], dim=-1)[:, None, :])
+        self.asset.set_external_force_and_torque(forces_b, torques_b, self.body_ids)
 
     def _integrate(self):
         desired_acc_w = (
@@ -690,8 +686,8 @@ class Impedance(Command):
             + (torque / self.virtual_inertia.unsqueeze(1))[..., 2:3]
         )
         self.desired_yawacc_w[:] = desired_yaw_acc_w
-        self.desired_yawvel_w.add_(desired_yaw_acc_w * self.env.physics_dt)
-        self.desired_yaw_w.add_(desired_yaw_acc_w * self.env.physics_dt)
+        self.desired_yawvel_w.add_(self.desired_yawacc_w * self.env.physics_dt)
+        self.desired_yaw_w.add_(self.desired_yawvel_w * self.env.physics_dt)
 
     def update(self):
         self.desired_linacc_w.roll(1, dims=1)
@@ -709,6 +705,7 @@ class Impedance(Command):
         for _ in range(4):
             self._integrate()
 
+        # compute smoothed command
         self.command_linvel_w[:] = self.desired_linvel_w.mean(1)
         self.command_angvel[:] = self.desired_yawvel_w.mean(1).squeeze(-1)
         self.command_pos_w[:] = self.desired_pos_w.mean(1)
@@ -772,7 +769,7 @@ class Impedance(Command):
         force_ext_w[:, 1].uniform_(-40, 40)
         force_ext_w[:, 2].uniform_(-10, 10)
         force_ext_w = clamp_norm(force_ext_w, max=self.virtual_mass[env_ids] * 8.)
-        self.force_ext_w[env_ids] = force_ext_w * (torch.rand(len(env_ids), 1, device=self.device) < 0.5)
+        self.force_ext_w[env_ids] = force_ext_w * (torch.rand(len(env_ids), 1, device=self.device) < self.ext_force_ratio)
 
         force_offset_b = torch.zeros(len(env_ids), 3, device=self.device)
         force_offset_b[:, 0].uniform_(-0.3, 0.3)
