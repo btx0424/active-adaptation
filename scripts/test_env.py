@@ -49,8 +49,10 @@ def log_video(env, it, render_interval, render_decimation):
         
         wandb.log({"video": wandb.Video(video_path)}, step=it)
 
+FILE_PATH = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(FILE_PATH, "..", "cfg")
 
-@hydra.main(config_path="../cfg", config_name="train", version_base=None)
+@hydra.main(config_path=CONFIG_PATH, config_name="train", version_base=None)
 def main(cfg: DictConfig):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
