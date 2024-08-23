@@ -5,17 +5,31 @@ task: Quadruped
 defaults:
   # see https://hydra.cc/docs/advanced/overriding_packages/
   - /task/Velocity@_here_
+  - override action: null
   - _self_
 
-robot: go2
+robot: go2m
 terrain: plane
 payload: false
 homogeneous: false
 
+action:
+  _target_: active_adaptation.envs.mdp.action.QuadrupedWithArm
+  joint_names: ^(?!joint6$).*
+  action_scaling:
+    (?!joint).*: 0.5
+    joint[1-5]: 0.25
+  max_delay: 1
+  alpha: 0.8
+  arm_joint_names: ^joint[1-5]$
+       
 command:
-  _target_: active_adaptation.envs.mdp.Impedance
+  _target_: active_adaptation.envs.mdp.BaseEEImpedance
+  base_mass_factor: 1.0
+  ee_mass_factor: 0.1
+  base_inertia_factor: 10.0
   virtual_mass_range: [0.2, 1.0]
-  compliant_ratio: 0.25
+  compliant_ratio: 0.2
   ext_force_ratio: 0.5
 
 observation:
@@ -74,13 +88,18 @@ observation:
 
 reward:
   loco:
+    # common loco rewards just for sanity check
     linvel_exp:         {weight: 1.5, enabled: false, dim: 3, yaw_only: true}
-    angvel_z_exp:       {weight: 1.0, enabled: true}
-    impedance_pos:      {weight: 1.0, enabled: true}
-    impedance_vel:      {weight: 1.5, enabled: true}
-    # angvel_z_exp_shaped: {weight: 0.75, enabled: false}
     linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
-    # linacc_z_l2:        {weight: 0.005, enabled: false}
+    angvel_z_exp:       {weight: 1.0, enabled: false}
+    # impedance pos&vel tracking
+    impedance_base_pos:      {weight: 1.0, enabled: true}
+    impedance_base_vel:      {weight: 1.5, enabled: true}
+    impedance_ee_pos:      {weight: 1.0, enabled: true}
+    impedance_ee_vel:      {weight: 1.5, enabled: true}
+    impedance_yaw_pos:      {weight: 1.0, enabled: true}
+    impedance_yaw_vel:      {weight: 1.5, enabled: true}
+    # regularizarions
     angvel_xy_l2:       {weight: 0.02, enabled: true}
     # linvel_z_l2:        {weight: 2.0, enabled: true}
     base_height_l1:     {weight: 0.5, enabled: true, target_height: 0.35}
@@ -128,6 +147,16 @@ randomization:
   #   actuator_name: base_legs
   #   joint_names: .*_calf_joint
   #   failure_prob: 0.0
+  reset_joint_states_uniform:
+    pos_ranges:
+      joint1: [-2.5, 2.5]
+      joint2: [0.0, 1.0]
+      joint3: [-2.5, 0.0]
+      joint4: [-1.0, 1.0]
+      joint5: [-1.0, 1.0]
+      joint6: [-2.5, 2.5]
+      .*_joint: [-0.4, 0.4]
+      # .*: [-0.4, 0.4]
   reset_joint_states_scale:
     pos_scales:
       .*: [0.8, 1.2]
