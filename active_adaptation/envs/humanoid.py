@@ -218,3 +218,20 @@ class Humanoid(LocomotionEnv):
         def _mirror(self, tensor: torch.Tensor):
             return (tensor.fliplr() * self.fliplr)
 
+
+    class hand_pose(mdp.Reward):
+        def __init__(self, env, weight: float, enabled: bool = True):
+            super().__init__(env, weight, enabled)
+            self.asset: Articulation = self.env.scene["robot"]
+            self.hand_ids = self.asset.find_bodies(".*arm_link6")[0]
+            self.hand_pos_target = torch.tensor([0.3, 0.0, 0.1], device=self.device)
+        
+        def compute(self) -> torch.Tensor:
+            hand_pos = self.asset.data.body_pos_w[:, self.hand_ids]
+            hand_pos_target = (
+                self.asset.data.root_pos_w.unsqueeze(1) 
+                + quat_rotate(self.asset.data.root_quat_w.unsqueeze(1), self.hand_pos_target)
+            )
+            diff = hand_pos - hand_pos_target
+            return - diff.square().sum(dim=-1).sum(1, True)
+            
