@@ -1,5 +1,5 @@
 # @package task
-name: Go2Force
+name: Go2MForce
 task: Quadruped
 
 defaults:
