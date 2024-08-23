@@ -18,10 +18,10 @@ class impedance_base_pos(Reward):
     
     
 class impedance_ee_pos(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True):
+    def __init__(self, env, weight: float, ee_name: str = "arm_link06", enabled: bool = True):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.body_id = self.asset.find_bodies("arm_link06")[0][0]
+        self.body_id = self.asset.find_bodies(ee_name)[0][0]
         self.command_manager: BaseEEImpedance = self.env.command_manager
     
     def compute(self) -> torch.Tensor:
@@ -52,10 +52,10 @@ class impedance_base_vel(Reward):
         return r
     
 class impedance_ee_vel(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True):
+    def __init__(self, env, weight: float, ee_name: str = "arm_link06", enabled: bool = True):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.body_id = self.asset.find_bodies("arm_link06")[0][0]
+        self.body_id = self.asset.find_bodies(ee_name)[0][0]
         self.command_manager: BaseEEImpedance = self.env.command_manager
     
     def compute(self) -> torch.Tensor:
