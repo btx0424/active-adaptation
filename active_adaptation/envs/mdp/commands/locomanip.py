@@ -1291,6 +1291,7 @@ class BaseEEImpedance(Command):
         virtual_mass_range=(0.2, 1.0),
         compliant_ratio: float = 0.2,
         ext_force_ratio: float = 0.5,
+        smooth_desired_buf: bool = False,
     ) -> None:
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
@@ -1303,12 +1304,16 @@ class BaseEEImpedance(Command):
         self.resample_prob = 0.01
         self.compliant_ratio = compliant_ratio  # kp=0 for compliant mode
         self.ext_force_ratio = ext_force_ratio  # probability of applying external force
+        self.smooth_desired_buf = smooth_desired_buf
+        # TODO: need a better name, suggesting setting the buffer with real values.
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 15)
             self.command_hidden = torch.zeros(self.num_envs, 12)
 
             # integration
+            self.acc_spring_base_w = torch.zeros(self.num_envs, self.future, 3)
+            self.acc_spring_ee_w = torch.zeros(self.num_envs, self.future, 3)
             self.desired_linacc_base_w = torch.zeros(self.num_envs, self.future, 3)
             self.desired_linvel_base_w = torch.zeros(self.num_envs, self.future, 3)
             self.desired_pos_base_w = torch.zeros(self.num_envs, self.future, 3)
@@ -1316,6 +1321,7 @@ class BaseEEImpedance(Command):
             self.desired_linvel_ee_w = torch.zeros(self.num_envs, self.future, 3)
             self.desired_pos_ee_w = torch.zeros(self.num_envs, self.future, 3)
 
+            self.acc_spring_yaw_w = torch.zeros(self.num_envs, self.future, 1)
             self.desired_angvel_w = torch.zeros(self.num_envs, self.future, 3)
             self.desired_yawacc_w = torch.zeros(self.num_envs, self.future, 1)
             self.desired_yawvel_w = self.desired_angvel_w[:, :, 2:3]
@@ -1387,7 +1393,7 @@ class BaseEEImpedance(Command):
             origins = self.env.scene.env_origins[torch.randint(0, self.env.scene.num_envs, (len(env_ids),), device=self.device)]
         init_root_state[:, :3] += origins
         return init_root_state
-        
+
     def reset(self, env_ids: torch.Tensor):
         self._sample_command(env_ids)
         self._sample_force(env_ids)
@@ -1409,30 +1415,30 @@ class BaseEEImpedance(Command):
     def _integrate(self):
         # fmt: off
         # the acc of base caused by the spring damper connected between base and world
-        acc_base_b2w_w = self.kp_base[:, None, :] * (
+        self.acc_spring_base_w[:] = self.kp_base[:, None, :] * (
             self.command_setpoint_pos_base_w[:, None, :] - self.desired_pos_base_w
         ) + self.kd_base[:, None, :] * (
             0.0 - self.desired_linvel_base_w
         )
         # the acc of ee caused by the spring damper connected between ee and base
-        ee_setpoint_w = yaw_rotate(self.desired_yaw_w, self.command_setpoint_pos_ee_b[:, None, :])
+        ee_setpoint_to_base_w = yaw_rotate(self.desired_yaw_w, self.command_setpoint_pos_ee_b[:, None, :])
         ee_setpoint_vel_w = (
             self.desired_linvel_base_w
-            + torch.cross(self.desired_angvel_w, ee_setpoint_w, dim=-1)
+            + torch.cross(self.desired_angvel_w, ee_setpoint_to_base_w, dim=-1)
         )
-        acc_ee_ee2base_w = self.kp_ee[:, None, :] * (
-            ee_setpoint_w
+        self.acc_spring_ee_w[:] = self.kp_ee[:, None, :] * (
+            ee_setpoint_to_base_w
             - (self.desired_pos_ee_w - self.desired_pos_base_w)
         ) + self.kd_ee[:, None, :] * (
             ee_setpoint_vel_w - self.desired_linvel_ee_w
         )
         desired_linacc_base_w = (
-            acc_base_b2w_w
-            - acc_ee_ee2base_w * self.mass_ratio_ee2base[:, None, :]
+            self.acc_spring_base_w
+            - self.acc_spring_ee_w * self.mass_ratio_ee2base[:, None, :]
             + (self.force_ext_w[:, 0] / self.virtual_mass_base)[:, None, :]
         )
         desired_linacc_ee_w = (
-            acc_ee_ee2base_w 
+            self.acc_spring_ee_w 
             + (self.force_ext_w[:, 1] / self.virtual_mass_ee)[:, None, :]
         )
 
@@ -1444,7 +1450,7 @@ class BaseEEImpedance(Command):
         self.desired_linvel_ee_w.add_(self.desired_linacc_ee_w * self.env.physics_dt)
         self.desired_pos_ee_w.add_(self.desired_linvel_ee_w * self.env.physics_dt)
 
-        acc_yaw_base2w_w = self.kp_yaw[:, None, :] * wrap_to_pi(
+        self.acc_spring_yaw_w[:] = self.kp_yaw[:, None, :] * wrap_to_pi(
             self.command_setpoint_yaw_w[:, None, :] - self.desired_yaw_w
         ) + self.kd_yaw[:, None, :] * (
             0.0 - self.desired_yawvel_w
@@ -1458,13 +1464,13 @@ class BaseEEImpedance(Command):
             dim=-1
         )[:, :, 2:3]
         torque_int_z = torch.cross(
-            ee_setpoint_w,
-            -self.virtual_mass_ee[:, None, :] * acc_ee_ee2base_w,
+            ee_setpoint_to_base_w,
+            -self.virtual_mass_ee[:, None, :] * self.acc_spring_ee_w,
             dim=-1
         )[:, :, 2:3]
         torque_z = torque_ext_z + torque_int_z
         desired_yaw_acc_w = (
-            acc_yaw_base2w_w
+            self.acc_spring_yaw_w
             + (torque_z / self.virtual_inertia_z_base[:, None, :])
         )
 
@@ -1505,26 +1511,27 @@ class BaseEEImpedance(Command):
         # print(self._cum_error.mean(0))
 
     def update(self):
-        # update desired state buffers
-        self.desired_linacc_base_w.roll(1, dims=1)
-        self.desired_linvel_base_w.roll(1, dims=1)
-        self.desired_pos_base_w.roll(1, dims=1)
-        self.desired_linvel_base_w[:, 0] = self.asset.data.root_lin_vel_w
-        self.desired_pos_base_w[:, 0] = self.asset.data.root_pos_w
+        if self.smooth_desired_buf:
+            # update desired state buffers
+            self.desired_linacc_base_w.roll(1, dims=1)
+            self.desired_linvel_base_w.roll(1, dims=1)
+            self.desired_pos_base_w.roll(1, dims=1)
+            self.desired_linvel_base_w[:, 0] = self.asset.data.root_lin_vel_w
+            self.desired_pos_base_w[:, 0] = self.asset.data.root_pos_w
 
-        self.desired_linacc_ee_w.roll(1, dims=1)
-        self.desired_linvel_ee_w.roll(1, dims=1)
-        self.desired_pos_ee_w.roll(1, dims=1)
-        self.desired_linvel_ee_w[:, 0] = self.asset.data.body_lin_vel_w[
-            :, self.ee_body_id
-        ]
-        self.desired_pos_ee_w[:, 0] = self.asset.data.body_pos_w[:, self.ee_body_id]
+            self.desired_linacc_ee_w.roll(1, dims=1)
+            self.desired_linvel_ee_w.roll(1, dims=1)
+            self.desired_pos_ee_w.roll(1, dims=1)
+            self.desired_linvel_ee_w[:, 0] = self.asset.data.body_lin_vel_w[
+                :, self.ee_body_id
+            ]
+            self.desired_pos_ee_w[:, 0] = self.asset.data.body_pos_w[:, self.ee_body_id]
 
-        self.desired_yawacc_w.roll(1, dims=1)
-        self.desired_yawvel_w.roll(1, dims=1)
-        self.desired_yaw_w.roll(1, dims=1)
-        self.desired_yawvel_w[:, 0] = self.asset.data.root_ang_vel_w[:, 2:3]
-        self.desired_yaw_w[:, 0] = self.asset.data.heading_w.unsqueeze(1)
+            self.desired_yawacc_w.roll(1, dims=1)
+            self.desired_yawvel_w.roll(1, dims=1)
+            self.desired_yaw_w.roll(1, dims=1)
+            self.desired_yawvel_w[:, 0] = self.asset.data.root_ang_vel_w[:, 2:3]
+            self.desired_yaw_w[:, 0] = self.asset.data.heading_w.unsqueeze(1)
 
         for _ in range(4):
             self._integrate()
@@ -1623,26 +1630,29 @@ class BaseEEImpedance(Command):
         # self.command_setpoint_pos_base_w[env_ids] += self.asset.data.root_pos_w[env_ids]
         self.command_setpoint_pos_base_w[env_ids] = self.asset.data.root_pos_w[env_ids]
 
-        ee_yaw = torch.empty(len(env_ids), 1, device=self.device).uniform_(
-            -torch.pi / 2, torch.pi / 2
-        )
-        ee_pitch = torch.empty(len(env_ids), 1, device=self.device).uniform_(
-            torch.pi / 6, torch.pi / 2
-        )
-        ee_radius = torch.empty(len(env_ids), 1, device=self.device).uniform_(0.2, 0.6)
-        ee_xyz = torch.cat(
-            [
-                ee_radius * torch.cos(ee_yaw) * torch.cos(ee_pitch),
-                ee_radius * torch.sin(ee_yaw) * torch.cos(ee_pitch),
-                ee_radius * torch.sin(ee_pitch),
-            ],
-            dim=1,
-        )
+        # ee_yaw = torch.empty(len(env_ids), 1, device=self.device).uniform_(
+        #     -torch.pi / 2, torch.pi / 2
+        # )
+        # ee_pitch = torch.empty(len(env_ids), 1, device=self.device).uniform_(
+        #     torch.pi / 6, torch.pi / 2
+        # )
+        # ee_radius = torch.empty(len(env_ids), 1, device=self.device).uniform_(0.2, 0.6)
+        # ee_xyz = torch.cat(
+        #     [
+        #         ee_radius * torch.cos(ee_yaw) * torch.cos(ee_pitch),
+        #         ee_radius * torch.sin(ee_yaw) * torch.cos(ee_pitch),
+        #         ee_radius * torch.sin(ee_pitch),
+        #     ],
+        #     dim=1,
+        # )
+        ee_xyz = torch.empty(len(env_ids), 3, device=self.device)
+        ee_xyz[:, 0].uniform_(0.2, 0.4)
+        ee_xyz[:, 1].uniform_(-0.2, 0.2)
+        ee_xyz[:, 2].uniform_(0.1, 0.3)
         self.command_setpoint_pos_ee_b[env_ids] = ee_xyz
 
         # self.command_setpoint_yaw_w[env_ids, 0] = torch.empty(len(env_ids), device=self.device).uniform_(-torch.pi, torch.pi)
-        self.command_setpoint_yaw_w[env_ids] = 0.0
-
+        self.command_setpoint_yaw_w[env_ids] = self.asset.data.heading_w[env_ids, None]
 
         self.kp_base[env_ids] = torch.empty(len(env_ids), 1, device=self.device).uniform_(2.0, 6.0)
         self.kd_base[env_ids] = 2.0 * self.kp_base[env_ids].sqrt()
@@ -1666,7 +1676,7 @@ class BaseEEImpedance(Command):
         self.desired_linacc_base_w[env_ids] = 0.0
         self.desired_linvel_base_w[env_ids] = self.asset.data.root_lin_vel_w[
             env_ids, None
-        ]
+        ] * self.xy
         self.desired_pos_base_w[env_ids] = self.asset.data.root_pos_w[env_ids, None]
         self.desired_linacc_ee_w[env_ids] = 0.0
         self.desired_linvel_ee_w[env_ids] = self.asset.data.body_lin_vel_w[
@@ -1717,7 +1727,63 @@ class BaseEEImpedance(Command):
         force_offset_b[:, 1].uniform_(-0.2, 0.2)
         self.force_offset_b[env_ids] = force_offset_b
 
+    def _debug_draw_desired_to_setpoint(self):
+        command_setpoint_ee_w = self.command_pos_base_w + yaw_rotate(
+            self.command_yaw_w, self.command_setpoint_pos_ee_b
+        )
+        # draw vector from desired to setpoint for base, ee and setpoint direction for yaw (green)
+        self.env.debug_draw.vector(
+            self.command_pos_base_w,
+            self.command_setpoint_pos_base_w - self.command_pos_base_w,
+            color=(0.0, 1.0, 0.0, 1.0),
+        )
+        self.env.debug_draw.vector(
+            self.command_pos_ee_w,
+            command_setpoint_ee_w - self.command_pos_ee_w,
+            color=(0.0, 1.0, 0.0, 1.0),
+        )
+
+        # draw setpoints
+        self.env.debug_draw.point(
+            self.command_setpoint_pos_base_w, color=(1.0, 0.0, 0.0, 0.5), size=40.0
+        )
+        self.env.debug_draw.point(command_setpoint_ee_w, color=(1.0, 0.0, 0.0, 0.5), size=20.0)
+        self.env.debug_draw.vector(
+            self.command_pos_base_w,
+            yaw_rotate(
+                self.command_setpoint_yaw_w,
+                torch.tensor([1.0, 0.0, 0.0], device=self.device),
+            ),
+            color=(0.0, 1.0, 0.0, 0.5),
+        )
+
+    def _debug_draw_desired(self):
+        # draw desired pos for base, ee and direction for yaw (green)
+        self.env.debug_draw.point(
+            self.command_pos_base_w, color=(0.0, 1.0, 0.0, 1.0), size=40.0
+        )
+        self.env.debug_draw.point(
+            self.command_pos_ee_w, color=(0.0, 1.0, 0.0, 1.0), size=20.0
+        )
+        self.env.debug_draw.vector(
+            self.command_pos_base_w,
+            yaw_rotate(
+                self.command_yaw_w,
+                torch.tensor([1.0, 0.0, 0.0], device=self.device),
+            ),
+            color=(0.0, 1.0, 0.0, 1.0),
+        )
+        # draw a vector from base to ee (yellow)
+        self.env.debug_draw.vector(
+            self.command_pos_base_w,
+            self.command_pos_ee_w - self.command_pos_base_w,
+            color=(1.0, 1.0, 0.0, 1.0),
+        )
+
     def debug_draw(self):
+        self._debug_draw_desired()
+        self._debug_draw_desired_to_setpoint()
+        return
         # command lin vel (blue)
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w
@@ -1735,7 +1801,8 @@ class BaseEEImpedance(Command):
         self.env.debug_draw.vector(
             self.asset.data.body_pos_w[:, self.ee_body_id],
             self.asset.data.root_pos_w + yaw_rotate(
-                self.asset.data.heading_w[:, None],
+                # self.asset.data.heading_w[:, None],
+                self.command_yaw_w,
                 self.command_setpoint_pos_ee_b,
             ) - self.asset.data.body_pos_w[:, self.ee_body_id],
             color=(1.0, 0.0, 0.0, 1.0),
@@ -1766,6 +1833,13 @@ class BaseEEImpedance(Command):
             self.command_pos_ee_w,
             self.command_linvel_ee_w,
             color=(0.0, 1.0, 0.0, 1.0),
+        )
+        # ee spring acc (orange)
+        self.env.debug_draw.vector(
+            self.asset.data.body_pos_w[:, self.ee_body_id],
+            self.acc_spring_ee_w[:, 0],
+            color=(1.0, 0.8, 0.0, 1.0),
+            size=4.0,
         )
         # force on base (orange)
         force_acc_base = self.force_ext_w[:, 0] / self.virtual_mass_base

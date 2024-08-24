@@ -62,7 +62,7 @@ class JointPosition(ActionManager):
         self.default_joint_pos = self.asset.data.default_joint_pos.clone()
 
         with torch.device(self.device):
-            self.action_buf = torch.zeros(self.num_envs, self.action_dim, 4)
+            self.action_buf = torch.zeros(self.num_envs, self.action_dim, max(max_delay + 1, 3)) # at least 3 for action_rate_2_l2 reward
             self.applied_action = torch.zeros(self.num_envs, self.action_dim)
             self.alpha = torch.ones(self.num_envs, 1)
             self.delay = torch.zeros(self.num_envs, 1, dtype=int)
@@ -82,7 +82,7 @@ class JointPosition(ActionManager):
         return action_flipped.reshape(action.shape)
 
     def reset(self, env_ids: torch.Tensor):
-        self.delay[env_ids] = torch.randint(0, self.max_delay, (len(env_ids), 1), device=self.device)
+        self.delay[env_ids] = torch.randint(0, self.max_delay + 1, (len(env_ids), 1), device=self.device)
         self.action_buf[env_ids] = 0
         self.applied_action[env_ids] = 0
 
@@ -99,7 +99,7 @@ class JointPosition(ActionManager):
             action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
             self.applied_action.lerp_(action.squeeze(-1), self.alpha)
 
-            pos_target = self.default_joint_pos + self.offset
+            pos_target = self.default_joint_pos.clone()
             pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
             pos_target.clamp_(-torch.pi, torch.pi)
             self.asset.set_joint_position_target(pos_target)
