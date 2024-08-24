@@ -606,7 +606,8 @@ class Impedance(Command):
         virtual_mass_range=(0.5, 1.0),
         compliant_ratio: float = 0.2,
         ext_force_ratio: float = 0.5,
-        linear_kp_range = (1.0, 4.0)
+        linear_kp_range = (1.0, 4.0),
+        delta_vel_xy_range = (-3.0, 3.0),
     ) -> None:
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
@@ -617,6 +618,7 @@ class Impedance(Command):
         self.resample_prob = 0.01
         self.compliant_ratio = compliant_ratio # kp=0 for compliant mode
         self.linear_kp_range = linear_kp_range
+        self.delta_vel_xy_range = delta_vel_xy_range
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 6)
@@ -707,11 +709,11 @@ class Impedance(Command):
         self.desired_yaw_w.add_(desired_yaw_acc_w * self.env.physics_dt)
 
     def update(self):
-        self.desired_lin_vel_w = self.desired_lin_vel_w.roll(1, dims=1)
-        self.desired_pos_w = self.desired_pos_w.roll(1, dims=1)
+        # self.desired_lin_vel_w = self.desired_lin_vel_w.roll(1, dims=1)
+        # self.desired_pos_w = self.desired_pos_w.roll(1, dims=1)
         
-        self.desired_yaw_vel_w = self.desired_yaw_vel_w.roll(1, dims=1)
-        self.desired_yaw_w = self.desired_yaw_w.roll(1, dims=1)
+        # self.desired_yaw_vel_w = self.desired_yaw_vel_w.roll(1, dims=1)
+        # self.desired_yaw_w = self.desired_yaw_w.roll(1, dims=1)
         
         self.desired_lin_vel_w[:, 0] = self.asset.data.root_lin_vel_w
         self.desired_pos_w[:, 0] = self.asset.data.root_pos_w
@@ -802,9 +804,9 @@ class Impedance(Command):
         
         # instead of directly setting the force, we set the expected applied momentum
         delta_vel = torch.zeros(len(env_ids), 3, device=self.device)
-        delta_vel[:, 0].uniform_(-1.2, 1.2)
-        delta_vel[:, 1].uniform_(-1.2, 1.2)
-        delta_vel[:, 2].uniform_(-0.2, 0.2)
+        delta_vel[:, 0].uniform_(*self.delta_vel_xy_range)
+        delta_vel[:, 1].uniform_(*self.delta_vel_xy_range)
+        delta_vel[:, 2].uniform_(-0.4, 0.4)
         momentum = delta_vel * self.virtual_mass[env_ids]
         
         self.force_type[env_ids] = force_type
