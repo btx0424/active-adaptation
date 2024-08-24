@@ -15,6 +15,7 @@ from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from omni.isaac.lab.terrains.trimesh.utils import make_plane
 from omni.isaac.lab.utils.math import convert_quat, quat_apply, quat_apply_yaw, yaw_quat
 from omni.isaac.lab.utils.warp import convert_to_warp_mesh, raycast_mesh
+from omni.isaac.lab.utils.string import resolve_matching_names
 from pxr import UsdGeom, UsdPhysics
 
 quat_rotate = batchify(quat_rotate)
@@ -71,13 +72,16 @@ class Observation:
         pass
     
     def update(self):
+        """Called at each step **after** simulation"""
         pass
 
     def reset(self, env_ids: torch.Tensor):
+        """Called after episode termination"""
         if self.mask_ratio > 0.:
             self.mask[env_ids] = torch.rand(env_ids.shape[0], device=self.device) < self.mask_ratio
 
     def debug_draw(self):
+        """Called at each step **after** simulation, if GUI is enabled"""
         pass
 
 
@@ -218,7 +222,8 @@ class root_angvel_b(Observation):
             return ang_vel_b
 
     def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
-        return -obs
+        # assume the robot is symmetric left-right
+        return obs * torch.tensor([-1., 1., -1.], device=self.device)
 
 class projected_gravity_b(Observation):
     def __init__(self, env, noise_std: float=0.):
@@ -287,32 +292,66 @@ class root_linvel_b(Observation):
             color=(0.8, 0.1, 0.1, 1.)
         )
     
-class _JointObs(Observation):
+class JointObs(Observation):
+    def __init__(
+        self, 
+        env,
+        joint_names: str=".*", 
+        left_names = None,
+        right_names = None,
+        mask_ratio: float = 0
+    ):
+        super().__init__(env, mask_ratio)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids, self.joint_names = self.asset.find_joints(joint_names)
+        if left_names is not None:
+            self.left_joint_ids = resolve_matching_names(left_names, self.joint_names)[0]
+            self.right_joint_ids = resolve_matching_names(right_names, self.joint_names)[0]
+        else:
+            self.left_joint_ids = None
+            self.right_joint_ids = None
 
     def fliplr(self, obs: torch.Tensor):
-        return obs.reshape(self.num_envs, 3, 2, 2).flip(dims=(-1,)).reshape(self.num_envs, -1)
+        if self.left_joint_ids is not None:
+            obs_flipped = obs.clone()
+            obs_flipped[:, self.left_joint_ids] = obs[:, self.right_joint_ids]
+            obs_flipped[:, self.right_joint_ids] = obs[:, self.left_joint_ids]
+            return obs_flipped
+        else:
+            raise ValueError("No left and right joint names are provided.")
 
 
-class joint_pos(_JointObs):
-    def __init__(self, env, joint_names: str=".*", noise_std: float=0.0):
-        super().__init__(env)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.joint_ids = self.asset.find_joints(joint_names)[0]
+class joint_pos(JointObs):
+    def __init__(
+        self, 
+        env, 
+        joint_names: str=".*",
+        left_names = None,
+        right_names = None,
+        noise_std: float=0.0,
+    ):
+        super().__init__(env, joint_names, left_names, right_names)
         self.noise_std = noise_std
 
     def compute(self) -> torch.Tensor:
         return random_noise(self.asset.data.joint_pos[:, self.joint_ids], self.noise_std)
 
 
-class joint_vel(_JointObs):
-    def __init__(self, env, joint_names: str=".*", noise_std: float=0.0):
-        super().__init__(env)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.joint_ids = self.asset.find_joints(joint_names)[0]
+class joint_vel(JointObs):
+    def __init__(
+        self,
+        env,
+        joint_names: str=".*",
+        left_names = None,
+        right_names = None,
+        noise_std: float=0.0
+    ):
+        super().__init__(env, joint_names, left_names, right_names)
         self.noise_std = noise_std
     
     def compute(self) -> torch.Tensor:
         return random_noise(self.asset.data.joint_vel[:, self.joint_ids], self.noise_std)
+
 
 class joint_acc(Observation):
     
@@ -343,7 +382,7 @@ class joint_acc(Observation):
         return joint_acc
 
 
-class applied_torques(_JointObs):
+class applied_torques(JointObs):
     def __init__(self, env, actuator_name: str, noise_std: float=0.):
         super().__init__(env, mask_ratio=0.)
         self.asset: Articulation = self.env.scene["robot"]
@@ -809,7 +848,7 @@ class prev_actions(Observation):
         return self.env.action_manager.action_buf[:, :, :self.steps].reshape(self.num_envs, -1)
 
     def fliplr(self, obs: torch.Tensor):
-        return obs.reshape(self.num_envs, 3, 2, 2, self.steps).flip(dims=(-1,)).reshape(self.num_envs, -1)
+        return self.env.action_manager.fliplr(obs)
 
 
 class last_contact(Observation):
@@ -892,17 +931,13 @@ class incoming_wrench(Observation):
         return (self.forces / self.default_mass_total).reshape(self.num_envs, -1)
 
 
-class applied_action(_JointObs):
+class applied_action(JointObs):
 
     def compute(self) -> torch.Tensor:
         return self.env.action_manager.applied_action
 
 
-class joint_forces(_JointObs):
-    def __init__(self, env, joint_names: str=".*"):
-        super().__init__(env)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.joint_ids = self.asset.find_joints(joint_names)[0]
+class joint_forces(JointObs):
 
     def compute(self) -> torch.Tensor:
         measured_forces = self.asset.root_physx_view.get_dof_projected_joint_forces()
@@ -928,6 +963,9 @@ class cum_error(Observation):
     
     def compute(self) -> torch.Tensor:
         return self.command_manager._cum_error
+
+    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
+        return obs
 
 
 class clock(Observation):

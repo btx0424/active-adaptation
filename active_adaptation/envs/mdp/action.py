@@ -1,15 +1,18 @@
 import torch
-from typing import Dict, Tuple, Union
+from typing import Dict, Tuple, Union, TYPE_CHECKING
 from tensordict import TensorDictBase
 from omni.isaac.lab.assets import Articulation
 import omni.isaac.lab.utils.string as string_utils
+
+if TYPE_CHECKING:
+    from active_adaptation.envs.base import Env
 
 class ActionManager:
     
     action_dim: int
 
     def __init__(self, env):
-        self.env = env
+        self.env: Env = env
         self.asset: Articulation = self.env.scene["robot"]
     
     def reset(self, env_ids: torch.Tensor):
@@ -27,19 +30,24 @@ class ActionManager:
 class JointPosition(ActionManager):
     def __init__(
         self, 
-        env, 
-        joint_names: str, 
+        env,
+        joint_names: str = ".*",
         action_scaling: Dict[str, float] = 0.5,
+        left_names = None,
+        right_names = None,
         max_delay: int = 4,
-        alpha: Tuple[float, float] = (0.5, 1.0)
+        alpha: Tuple[float, float] = (0.5, 1.0),
     ):
         super().__init__(env)
-        self.joint_ids, self.joint_names = self.asset.find_joints(joint_names)
-        action_joint_ids, _, self.action_scaling = string_utils.resolve_matching_names_values(
+        self.joint_ids, self.joint_names, self.action_scaling = string_utils.resolve_matching_names_values(
             dict(action_scaling), self.asset.joint_names)
-        
-        if not self.joint_ids == action_joint_ids:
-            raise ValueError("`action_scaling` must match `joint_names`")
+        if left_names is not None:
+            self.left_joint_ids = string_utils.resolve_matching_names(left_names, self.joint_names)[0]
+            self.right_joint_ids = string_utils.resolve_matching_names(right_names, self.joint_names)[0]
+            assert len(self.left_joint_ids) == len(self.right_joint_ids), "Left and right joints must have the same length."
+        else:
+            self.left_joint_ids = None
+            self.right_joint_ids = None
         
         self.action_scaling = torch.tensor(self.action_scaling, device=self.device)
         self.max_delay = max_delay
@@ -51,14 +59,27 @@ class JointPosition(ActionManager):
 
         self.action_dim = len(self.joint_ids)
         
+        self.default_joint_pos = self.asset.data.default_joint_pos.clone()
+
         with torch.device(self.device):
             self.action_buf = torch.zeros(self.num_envs, self.action_dim, 4)
             self.applied_action = torch.zeros(self.num_envs, self.action_dim)
             self.alpha = torch.ones(self.num_envs, 1)
             self.delay = torch.zeros(self.num_envs, 1, dtype=int)
-            self.offset = torch.zeros(self.num_envs, self.action_dim)
-        
-        self.default_joint_pos = self.asset.data.default_joint_pos.clone()
+            self.offset = torch.zeros_like(self.default_joint_pos)
+    
+    def fliplr(self, action: torch.Tensor):
+        """
+        Used for flipping the `action` and `prev_action`.
+        """
+        if self.left_joint_ids is None:
+            raise ValueError("Left and right joint names must be provided to flip the action.")
+        action_flipped = action.reshape(self.num_envs, self.action_dim, -1).clone()
+        left = action_flipped[:, self.left_joint_ids]
+        right = action_flipped[:, self.right_joint_ids]
+        action_flipped[:, self.left_joint_ids] = left
+        action_flipped[:, self.right_joint_ids] = right
+        return action_flipped.reshape(action.shape)
 
     def reset(self, env_ids: torch.Tensor):
         self.delay[env_ids] = torch.randint(0, self.max_delay, (len(env_ids), 1), device=self.device)
@@ -71,6 +92,8 @@ class JointPosition(ActionManager):
     def __call__(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
             action = tensordict["action"].clamp(-10, 10)
+            if self.env.use_flipping:
+                action = torch.where(self.env.fliplr.unsqueeze(1), self.fliplr(action), action)
             self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
             self.action_buf[:, :, 0] = action
             action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)

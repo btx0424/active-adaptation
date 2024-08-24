@@ -314,6 +314,10 @@ class Command2(Command):
                 # self._target_direction,
                 color=(1., 1., 0., 1.)
             )
+    
+    def fliplr(self, command: torch.Tensor) -> torch.Tensor:
+        # flip y and yaw velocity
+        return command * torch.tensor([1., -1., -1., 1.], device=self.device)
 
 
 from ..observations import _initialize_warp_meshes, raycast_mesh

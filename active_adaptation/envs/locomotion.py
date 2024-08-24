@@ -68,14 +68,6 @@ class LocomotionEnv(Env):
             self.sim.set_camera_view(eye, lookat)
         return super().render(mode)
     
-    @mdp.observation_func
-    def command(self):
-        return self.command_manager.command
-    
-    @mdp.observation_func
-    def prev_command(self):
-        return self.command_manager.command_prev
-    
     # @mdp.reward_func
     # def heading(self):
     #     root_quat = self.scene["robot"].data.root_quat_w

@@ -227,6 +227,10 @@ class Env(EnvBase):
 
         self.lookat_env_i = 0
 
+        self.use_flipping = False
+        self.fliplr = torch.zeros(self.num_envs, dtype=bool, device=self.device)
+        # self.fliplr[:self.num_envs // 2] = True
+
     @property
     def action_dim(self) -> int:
         return self.action_manager.action_dim
@@ -279,6 +283,12 @@ class Env(EnvBase):
                 masks = []
                 for obs_name, func in funcs.items():
                     tensor, mask = func()
+                    if self.use_flipping:
+                        tensor = torch.where(
+                            self.fliplr.reshape((self.num_envs,) + (1,) * (tensor.ndim - 1)),
+                            func.fliplr(tensor),
+                            tensor
+                        )
                     tensors.append(tensor)
                     masks.append(mask)
                 observation[group] = torch.cat(tensors, dim=-1)
