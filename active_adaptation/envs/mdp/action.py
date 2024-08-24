@@ -52,16 +52,16 @@ class JointPosition(ActionManager):
         self.action_dim = len(self.joint_ids)
         
         with torch.device(self.device):
-            self.action_buf = torch.zeros(self.num_envs, self.action_dim, 4)
+            self.action_buf = torch.zeros(self.num_envs, self.action_dim, max(max_delay + 1, 3)) # at least 3 for action_rate_2_l2 reward
             self.applied_action = torch.zeros(self.num_envs, self.action_dim)
             self.alpha = torch.ones(self.num_envs, 1)
             self.delay = torch.zeros(self.num_envs, 1, dtype=int)
-            self.offset = torch.zeros(self.num_envs, self.action_dim)
+            self.offset = torch.zeros_like(self.asset.data.default_joint_pos)
         
-        self.default_joint_pos = self.asset.data.default_joint_pos.clone()
+        self.default_joint_pos = self.asset.data.default_joint_pos + self.offset
 
     def reset(self, env_ids: torch.Tensor):
-        self.delay[env_ids] = torch.randint(0, self.max_delay, (len(env_ids), 1), device=self.device)
+        self.delay[env_ids] = torch.randint(0, self.max_delay + 1, (len(env_ids), 1), device=self.device)
         self.action_buf[env_ids] = 0
         self.applied_action[env_ids] = 0
 
@@ -71,12 +71,12 @@ class JointPosition(ActionManager):
     def __call__(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
             action = tensordict["action"].clamp(-10, 10)
-            self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
+            self.action_buf.roll(1, dims=-1)
             self.action_buf[:, :, 0] = action
             action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
             self.applied_action.lerp_(action.squeeze(-1), self.alpha)
 
-            pos_target = self.default_joint_pos + self.offset
+            pos_target = self.default_joint_pos.clone()
             pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
             pos_target.clamp_(-torch.pi, torch.pi)
             self.asset.set_joint_position_target(pos_target)
