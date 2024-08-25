@@ -1513,11 +1513,12 @@ class BaseEEImpedance(Command):
     def update(self):
         if self.smooth_desired_buf:
             # update desired state buffers
-            self.desired_linvel_base_w.roll(1, dims=1)
-            self.desired_pos_base_w.roll(1, dims=1)
 
             self.desired_yawvel_w.roll(1, dims=1)
             self.desired_yaw_w.roll(1, dims=1)
+
+        self.desired_linvel_base_w = self.desired_linvel_base_w.roll(1, dims=1)
+        self.desired_pos_base_w = self.desired_pos_base_w.roll(1, dims=1)
 
         self.desired_lin_acc_ee_w = self.desired_lin_vel_ee_w.roll(1, dims=1)
         self.desired_pos_ee_w = self.desired_pos_ee_w.roll(1, dims=1)
@@ -1615,18 +1616,22 @@ class BaseEEImpedance(Command):
         self._compute_error()
 
         # resample command
-        _ = torch.rand(self.num_envs, device=self.device) < self.resample_prob
-        self._sample_command(_.nonzero().squeeze(-1))
-        _ = torch.rand(self.num_envs, device=self.device) < self.resample_prob
-        self._sample_force(_.nonzero().squeeze(-1))
+        sample_command = torch.rand(self.num_envs, device=self.device) < self.resample_prob
+        sample_command = sample_command.nonzero().squeeze(-1)
+        if len(sample_command):
+            self._sample_command(sample_command)
+        
+        sample_force = torch.rand(self.num_envs, device=self.device) < self.resample_prob
+        sample_force = sample_force.nonzero().squeeze(-1)
+        if len(sample_force):
+            self._sample_force(sample_force)
 
     def _sample_command(self, env_ids: torch.Tensor):
         # TODO: check command sample range
-        # self.command_setpoint_pos_base_w[env_ids, 0] = torch.empty(len(env_ids), device=self.device).uniform_(2.0, 3.0)
-        # self.command_setpoint_pos_base_w[env_ids, 1] = torch.empty(len(env_ids), device=self.device).uniform_(-1.0, 1.0)
-        # self.command_setpoint_pos_base_w[env_ids, 2] = 0.0
-        # self.command_setpoint_pos_base_w[env_ids] += self.asset.data.root_pos_w[env_ids]
-        self.command_setpoint_pos_base_w[env_ids] = self.asset.data.root_pos_w[env_ids]
+        command_setpoint_w = torch.zeros(len(env_ids), 3, device=self.device)
+        command_setpoint_w[:, 0].uniform_(2., 3.)
+        command_setpoint_w[:, 1].uniform_(-1, 1)
+        self.command_setpoint_pos_base_w[env_ids] = command_setpoint_w + self.asset.data.root_pos_w[env_ids]
 
         # ee_yaw = torch.empty(len(env_ids), 1, device=self.device).uniform_(
         #     -torch.pi / 2, torch.pi / 2
@@ -1644,9 +1649,9 @@ class BaseEEImpedance(Command):
         #     dim=1,
         # )
         ee_xyz = torch.empty(len(env_ids), 3, device=self.device)
-        ee_xyz[:, 0].uniform_(0.3, 0.5)
-        ee_xyz[:, 1].uniform_(-0.25, 0.25)
-        ee_xyz[:, 2].uniform_(0.1, 0.5)
+        ee_xyz[:, 0].uniform_(0.3, 0.6)
+        ee_xyz[:, 1].uniform_(-0.4, 0.4)
+        ee_xyz[:, 2].uniform_(0.1, 0.6)
         self.command_setpoint_pos_ee_b[env_ids] = ee_xyz
 
         # self.command_setpoint_yaw_w[env_ids, 0] = torch.empty(len(env_ids), device=self.device).uniform_(-torch.pi, torch.pi)
@@ -1777,6 +1782,12 @@ class BaseEEImpedance(Command):
                 torch.tensor([1.0, 0.0, 0.0], device=self.device),
             ),
             color=(0.0, 1.0, 0.0, 1.0),
+        )
+        # commanded lin vel (white)
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w + torch.tensor([0.0, 0.0, 0.2], device=self.device),
+            self.command_linvel_base_w,
+            color=(1.0, 1.0, 1.0, 1.0),
         )
         # # draw a vector from base to ee (yellow)
         # self.env.debug_draw.vector(

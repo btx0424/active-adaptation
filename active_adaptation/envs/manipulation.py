@@ -546,17 +546,6 @@ class QuadrupedManip(LocomotionEnv):
         def compute(self) -> torch.Tensor:
             joint_vel = self.asset.data.joint_vel[:, self.joint_id]
             return - joint_vel.square().unsqueeze_(1)
-
-    class joint_acc_l2(Reward):
-        def __init__(self, env, joint_names: str, weight: float, enabled: bool = True):
-            super().__init__(env, weight, enabled)
-            self.asset: Articulation = self.env.scene["robot"]
-            joint_ids, joint_names = self.asset.find_joints(joint_names)
-            self.joint_ids = torch.tensor(joint_ids, device=self.device)
-
-        def compute(self) -> torch.Tensor:
-            joint_acc = self.asset.data.joint_acc[:, self.joint_ids]
-            return - joint_acc.square().sum(1, True)
     
     class arm_joint_acc_penalty(Reward):
         def __init__(self, env, weight: float, enabled: bool = True):
