@@ -122,7 +122,7 @@ class Env(EnvBase):
 
         self.command_manager: mdp.Command = hydra.utils.instantiate(self.cfg.command, env=self)
         self._step_callbacks.append(self.command_manager.step)
-        self._update_callbacks.append(self.command_manager.update)
+        # self._update_callbacks.append(self.command_manager.update)
         self._reset_callbacks.append(self.command_manager.reset)
         self._debug_draw_callbacks.append(self.command_manager.debug_draw)
         
@@ -350,8 +350,9 @@ class Env(EnvBase):
             self._render_headless()
         
         tensordict = TensorDict({}, self.num_envs, device=self.device)
-        tensordict.update(self._compute_observation())
         tensordict.update(self._compute_reward())
+        self.command_manager.update()
+        tensordict.update(self._compute_observation())
         terminated = self._compute_termination()
         truncated = (self.episode_length_buf >= self.max_episode_length).unsqueeze(1)
         tensordict.set("terminated", terminated)

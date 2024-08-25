@@ -115,7 +115,7 @@ class QuadrupedWithArm(JointPosition):
         alpha: Tuple[float, float]=(0.5, 1.0),
         arm_joint_names: str = "joint.*",
     ):
-        super().__init__(env, joint_names, action_scaling, max_delay, alpha)
+        super().__init__(env, joint_names, action_scaling, None, None, max_delay, alpha)
         self.arm_joint_ids, _ = self.asset.find_joints(arm_joint_names)
         self.arm_joint_pos = self.default_joint_pos[:, self.arm_joint_ids].clone()
         self.arm_joint_limits = self.asset.data.joint_limits[:, self.arm_joint_ids]
