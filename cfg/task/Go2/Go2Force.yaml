@@ -19,58 +19,31 @@ command:
   ext_force_ratio: 0.5
 
 observation:
-  policy:
+  command:
     command:
-    # root_angvel_b: {noise_std: 0.05}
+  policy:
     projected_gravity_b: {noise_std: 0.05}
     joint_pos:    {noise_std: 0.05}
     joint_vel:    {noise_std: 0.2}
     prev_actions: {steps: 3}
-    # motor_params: {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
-    # body_materials: {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-    # root_linvel_b:
-    # # feet_pos_b:
-    # feet_height_map: {feet_names: .*foot }
-    # applied_torques: {actuator_name: base_legs}
-  # priv:
-    # _mask_: true # randomly mask one of the items
+  priv:
     command_hidden:
     applied_action:
     root_linvel_b:    {yaw_only: true}
     root_angvel_b:
     feet_pos_b:
-    feet_vel_b:
     feet_height_map:  {feet_names: .*foot }
     applied_torques:  {actuator_name: base_legs}
     joint_forces:     {}
-    external_forces:  {body_names: ["base"]}
-    external_torques: {body_names: ["base"]}
-    # motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
-    # body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-    # motor_failure:    {actuator_name: base_legs}
-    # body_scale:       {}
-    # body_mass:        {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
-    # body_momentum:    {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
-    # rewards:          {}
     cum_error:        {}
     contact_indicator: {body_names: [".*_foot"], timing: true}
+  ext:
+    external_forces:  {body_names: ["base"]}
+    external_torques: {body_names: ["base"]}
   params:
     motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
     body_mass:        {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
-  recon_target_:
-    root_angvel_b:
-    projected_gravity_b:
-    joint_pos:
-    joint_vel:
-    root_linvel_b:
-    feet_height_map:  {feet_names: .*foot }
-    applied_torques:  {actuator_name: base_legs}
-    joint_forces:
-  aux_target_:
-    root_linvel_b:
-    root_angvel_b:
-    rewards: {}
 
 reward:
   loco:
