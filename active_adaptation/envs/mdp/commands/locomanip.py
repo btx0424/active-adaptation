@@ -1279,7 +1279,7 @@ class BaseEEImpedance(Command):
     We also model a rotational spring-damper system and the corresponding torques in z direction for the base yaw.
     """
 
-    future: int = 1
+    future: int = 2
 
     def __init__(
         self,
@@ -1317,8 +1317,8 @@ class BaseEEImpedance(Command):
             self.desired_linacc_base_w = torch.zeros(self.num_envs, self.future, 3)
             self.desired_linvel_base_w = torch.zeros(self.num_envs, self.future, 3)
             self.desired_pos_base_w = torch.zeros(self.num_envs, self.future, 3)
-            self.desired_linacc_ee_w = torch.zeros(self.num_envs, self.future, 3)
-            self.desired_linvel_ee_w = torch.zeros(self.num_envs, self.future, 3)
+            self.desired_lin_acc_ee_w = torch.zeros(self.num_envs, self.future, 3)
+            self.desired_lin_vel_ee_w = torch.zeros(self.num_envs, self.future, 3)
             self.desired_pos_ee_w = torch.zeros(self.num_envs, self.future, 3)
 
             self.acc_spring_yaw_w = torch.zeros(self.num_envs, self.future, 1)
@@ -1429,7 +1429,7 @@ class BaseEEImpedance(Command):
         kp_ee = self.kp_ee.unsqueeze(1)
         kd_ee = self.kd_ee.unsqueeze(1)
         ee_pos_diff = (ee_setpoint_to_base_w + self.desired_pos_base_w - self.desired_pos_ee_w)
-        ee_vel_diff = (0. - self.desired_linvel_ee_w)
+        ee_vel_diff = (0. - self.desired_lin_vel_ee_w)
         self.acc_spring_ee_w[:] = (kp_ee * ee_pos_diff + kd_ee * ee_vel_diff)
         
         desired_linacc_base_w = (
@@ -1437,7 +1437,7 @@ class BaseEEImpedance(Command):
             - self.acc_spring_ee_w * self.mass_ratio_ee2base[:, None, :]
             + (self.force_ext_w[:, 0] / self.virtual_mass_base)[:, None, :]
         )
-        desired_linacc_ee_w = (
+        desired_lin_acc_ee_w = (
             self.acc_spring_ee_w 
             # + (self.force_ext_w[:, 1] / self.virtual_mass_ee)[:, None, :]
         )
@@ -1446,9 +1446,9 @@ class BaseEEImpedance(Command):
         self.desired_linvel_base_w.add_(self.desired_linacc_base_w * self.env.physics_dt)
         self.desired_pos_base_w.add_(self.desired_linvel_base_w * self.env.physics_dt)
 
-        self.desired_linacc_ee_w[:] = desired_linacc_ee_w
-        self.desired_linvel_ee_w.add_(self.desired_linacc_ee_w * self.env.physics_dt)
-        self.desired_pos_ee_w.add_(self.desired_linvel_ee_w * self.env.physics_dt)
+        self.desired_lin_acc_ee_w[:] = desired_lin_acc_ee_w
+        self.desired_lin_vel_ee_w.add_(self.desired_lin_acc_ee_w * self.env.physics_dt)
+        self.desired_pos_ee_w.add_(self.desired_lin_vel_ee_w * self.env.physics_dt)
 
         self.acc_spring_yaw_w[:] = self.kp_yaw[:, None, :] * wrap_to_pi(
             self.command_setpoint_yaw_w[:, None, :] - self.desired_yaw_w
@@ -1513,21 +1513,18 @@ class BaseEEImpedance(Command):
     def update(self):
         if self.smooth_desired_buf:
             # update desired state buffers
-            self.desired_linacc_base_w.roll(1, dims=1)
             self.desired_linvel_base_w.roll(1, dims=1)
             self.desired_pos_base_w.roll(1, dims=1)
 
-            self.desired_linacc_ee_w.roll(1, dims=1)
-            self.desired_linvel_ee_w.roll(1, dims=1)
-            self.desired_pos_ee_w.roll(1, dims=1)
-
-            self.desired_yawacc_w.roll(1, dims=1)
             self.desired_yawvel_w.roll(1, dims=1)
             self.desired_yaw_w.roll(1, dims=1)
 
+        self.desired_lin_acc_ee_w = self.desired_lin_vel_ee_w.roll(1, dims=1)
+        self.desired_pos_ee_w = self.desired_pos_ee_w.roll(1, dims=1)
+
         self.desired_linvel_base_w[:, 0] = self.asset.data.root_lin_vel_w
         self.desired_pos_base_w[:, 0] = self.asset.data.root_pos_w
-        self.desired_linvel_ee_w[:, 0] = self.asset.data.body_lin_vel_w[
+        self.desired_lin_vel_ee_w[:, 0] = self.asset.data.body_lin_vel_w[
             :, self.ee_body_id
         ]
         self.desired_pos_ee_w[:, 0] = self.asset.data.body_pos_w[:, self.ee_body_id]
@@ -1558,7 +1555,7 @@ class BaseEEImpedance(Command):
         self.command_pos_base_w[:] = self.desired_pos_base_w.mean(1)
         self.command_linvel_base_w[:] = self.desired_linvel_base_w.mean(1)
         self.command_pos_ee_w[:] = self.desired_pos_ee_w.mean(1)
-        self.command_linvel_ee_w[:] = self.desired_linvel_ee_w.mean(1)
+        self.command_linvel_ee_w[:] = self.desired_lin_vel_ee_w.mean(1)
         self.command_yaw_w[:] = self.desired_yaw_w.mean(1)
         self.command_yawvel[:] = self.desired_yawvel_w.mean(1)
 
@@ -1681,8 +1678,8 @@ class BaseEEImpedance(Command):
             env_ids, None
         ] * self.xy
         self.desired_pos_base_w[env_ids] = self.asset.data.root_pos_w[env_ids, None]
-        self.desired_linacc_ee_w[env_ids] = 0.0
-        self.desired_linvel_ee_w[env_ids] = self.asset.data.body_lin_vel_w[
+        self.desired_lin_acc_ee_w[env_ids] = 0.0
+        self.desired_lin_vel_ee_w[env_ids] = self.asset.data.body_lin_vel_w[
             env_ids, None, self.ee_body_id
         ]
         self.desired_pos_ee_w[env_ids] = self.asset.data.body_pos_w[

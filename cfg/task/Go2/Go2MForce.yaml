@@ -1,6 +1,6 @@
 # @package task
 name: Go2MForce
-task: Quadruped
+task: QuadrupedManip
 
 defaults:
   # see https://hydra.cc/docs/advanced/overriding_packages/
@@ -112,6 +112,8 @@ reward:
     impedance_ee_vel:      {weight: 1.0, enabled: true, ee_name: 'gripper_base'}
     impedance_yaw_pos:      {weight: 0.5, enabled: true}
     impedance_yaw_vel:      {weight: 1.0, enabled: true}
+    ee_angvel_penalty:  {weight: 0.01, enabled: true, ee_name: 'gripper_base'}
+    
     # regularizarions
     angvel_xy_l2:       {weight: 0.02, enabled: true}
     # linvel_z_l2:        {weight: 2.0, enabled: true}
