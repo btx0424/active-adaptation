@@ -27,6 +27,7 @@ import torch.nn.functional as F
 import torch.distributions as D
 import warnings
 import functools
+import einops
 
 from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuousTensorSpec
 from torchrl.modules import ProbabilisticActor
@@ -59,11 +60,59 @@ class PPOConfig:
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
+    phase: str = "train"
+    vecnorm: Union[str, None] = None
     checkpoint_path: Union[str, None] = None
     in_keys: List[str] = field(default_factory=lambda: [CMD_KEY, OBS_KEY, OBS_PRIV_KEY, "ext"])
 
+
 cs = ConfigStore.instance()
-cs.store("ppo_dic", node=PPOConfig, group="algo")
+cs.store("ppo_dic_train", node=PPOConfig(phase="train", vecnorm="train"), group="algo")
+cs.store("ppo_dic_adapt", node=PPOConfig(phase="adapt", vecnorm="eval"), group="algo")
+
+
+class GRU(nn.Module):
+    def __init__(
+        self, 
+        input_size, 
+        hidden_size, 
+        allow_none: bool = False,
+        burn_in: bool = False
+    ) -> None:
+        super().__init__()
+        self.gru = nn.GRUCell(input_size, hidden_size)
+        self.ln = nn.LayerNorm(hidden_size)
+        self.allow_none = allow_none
+        self.burn_in = burn_in
+
+    def forward(self, x: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor):
+        if x.ndim == 2: # single step
+
+            N = x.shape[0]
+            if hx is None and self.allow_none:
+                hx = torch.zeros(N, self.gru.hidden_size, device=x.device)
+            # assert (hx[is_init.squeeze()] == 0.).all()
+            output = hx = self.gru(x, hx)
+            output = self.ln(output)
+            return output, hx
+
+        elif x.ndim == 3: # multi-step
+
+            N, T = x.shape[:2]
+            if hx is None and self.allow_none:
+                hx = torch.zeros(N, self.gru.hidden_size, device=x.device)
+            else:
+                hx = hx[:, 0]
+            output = []
+            reset = 1. - is_init.float().reshape(N, T, 1)
+            for i, x_t, reset_t in zip(range(T), x.unbind(1), reset.unbind(1)):
+                hx = self.gru(x_t, hx * reset_t)
+                if self.burn_in and i < T // 4:
+                    hx = hx.detach()
+                output.append(hx)
+            output = torch.stack(output, dim=1)
+            output = self.ln(output)
+            return output, einops.repeat(hx, "b h -> b t h", t=T)
 
 
 class GRUModule(nn.Module):
@@ -95,6 +144,7 @@ class PPODICPolicy(TensorDictModuleBase):
         self.cfg = cfg
         self.device = device
         self.observation_spec = observation_spec
+        assert self.cfg.phase in ["train", "adapt"]
 
         self.entropy_coef = self.cfg.entropy_coef
         self.max_grad_norm = 1.0
@@ -117,8 +167,8 @@ class PPODICPolicy(TensorDictModuleBase):
         ).to(self.device)
         
         self.encoder_priv = TensorDictSequential(
-            TensorDictModule(make_mlp([128]), [OBS_PRIV_KEY], ["_priv_feature"]),
-            TensorDictModule(make_mlp([32]), ["ext"], ["_ext_feature"]),
+            TensorDictModule(nn.Sequential(make_mlp([128]), nn.LazyLinear(128)), [OBS_PRIV_KEY], ["_priv_feature"]),
+            TensorDictModule(nn.Sequential(make_mlp([32]), nn.LazyLinear(32)), ["ext"], ["_ext_feature"]),
         ).to(self.device)
 
         self.adapt_module =  TensorDictModule(
@@ -126,13 +176,26 @@ class PPODICPolicy(TensorDictModuleBase):
             [OBS_KEY, "is_init", "adapt_hx"], 
             ["_priv_pred", "_ext_pred", ("next", "adapt_hx")]
         ).to(self.device)
-
-        _actor = nn.Sequential(make_mlp([256, 256]), Actor(self.action_dim))
         
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=TensorDictSequential(
-                CatTensors(["_obs_feature", "_priv_feature", "_ext_feature"], "_actor_feature"),
-                TensorDictModule(_actor, ["_actor_feature"], ["loc", "scale"])
+                CatTensors(["_obs_feature", "_priv_feature", "_ext_feature"], "_actor_feature", del_keys=False),
+                TensorDictModule(
+                    nn.Sequential(make_mlp([256, 256]), Actor(self.action_dim)),
+                    ["_actor_feature"], ["loc", "scale"])
+            ),
+            in_keys=["loc", "scale"],
+            out_keys=[ACTION_KEY],
+            distribution_class=IndependentNormal,
+            return_log_prob=True
+        ).to(self.device)
+
+        self.actor_adapt: ProbabilisticActor = ProbabilisticActor(
+            module=TensorDictSequential(
+                CatTensors(["_obs_feature", "_priv_pred", "_ext_pred"], "_actor_feature", del_keys=False),
+                TensorDictModule(
+                    nn.Sequential(make_mlp([256, 256]), Actor(self.action_dim)), 
+                    ["_actor_feature"], ["loc", "scale"])
             ),
             in_keys=["loc", "scale"],
             out_keys=[ACTION_KEY],
@@ -155,6 +218,7 @@ class PPODICPolicy(TensorDictModuleBase):
         self.actor(fake_input)
         self.critic(fake_input)
         self.adapt_module(fake_input)
+        self.actor_adapt(fake_input)
 
         self.opt = torch.optim.Adam(
             [
@@ -181,6 +245,7 @@ class PPODICPolicy(TensorDictModuleBase):
         self.encoder_obs.apply(init_)
         self.encoder_priv.apply(init_)
         self.adapt_module.apply(init_)
+        self.num_updates = 0
     
     def make_tensordict_primer(self):
         num_envs = self.observation_spec.shape[0]
@@ -188,19 +253,23 @@ class PPODICPolicy(TensorDictModuleBase):
         return TensorDictPrimer({"adapt_hx": spec}, reset_key="done")
 
     def get_rollout_policy(self, mode: str="train"):
-        if mode == "train":
-            policy = TensorDictSequential(
-                self.encoder_obs,
-                self.encoder_priv,
-                self.actor,
-                self.adapt_module,
-            )
+        modules = [self.encoder_obs, self.adapt_module]
+        if self.cfg.phase == "train":
+            modules.append(self.encoder_priv)
+            modules.append(self.actor)
+        else:
+            modules.append(self.actor_adapt)
+        policy = TensorDictSequential(*modules)
         return policy
 
     def train_op(self, tensordict: TensorDict):
         info = {}
-        info.update(self.train_policy(tensordict.copy()))
-        info.update(self.train_adapt(tensordict.copy()))
+        if self.cfg.phase == "train":
+            info.update(self.train_policy(tensordict.copy()))
+            info.update(self.train_adapt(tensordict.copy()))
+        elif self.cfg.phase == "adapt":
+            info.update(self.train_adapt(tensordict.copy()))
+        self.num_updates += 1
         return info
     
     # @torch.compile
@@ -331,6 +400,7 @@ class PPODICPolicy(TensorDictModuleBase):
                 warnings.warn(f"Failed to load state dict for {name}: {str(e)}")
                 failed_keys.append(name)
         print(f"Successfully loaded {succeed_keys}.")
+        hard_copy_(self.actor, self.actor_adapt)
         return failed_keys
 
 
