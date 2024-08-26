@@ -72,6 +72,9 @@ class PPOConfig:
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
+    swap_groups: int = 8
+    swap_prob: float = 0.25
+
     checkpoint_path: Union[str, None] = None
     in_keys: List[str] = field(default_factory=lambda: [OBS_KEY, OBS_PRIV_KEY])
 
@@ -91,14 +94,16 @@ class Swap(TensorDictModuleBase):
         self.in_keys = ["_z_priv", "z_pred"]
         self.out_keys = ["_z", "swap"]
     
-    def forward(self, tensordict: TensorDictBase):
-        swap = tensordict.get("swap", None)
-        if swap is None:
-            swap = torch.rand(tensordict.shape + (self.groups, 1), device=tensordict.device) < self.swap_prob
+    def forward(self, tensordict: TensorDictBase, from_input: bool=False):
+        if from_input:
+            swap = tensordict.get("swap")
+        else:
+            rand = torch.rand(tensordict.shape + (self.groups, 1), device=tensordict.device)
+            swap = rand < self.swap_prob
+            tensordict.set("swap", swap)
         z_priv = tensordict["_z_priv"].unflatten(-1, (self.groups, -1))
         z_pred = tensordict["z_pred"].unflatten(-1, (self.groups, -1))
         tensordict.set("_z", torch.where(swap, z_pred, z_priv).flatten(-2))
-        tensordict.set("swap", swap)
         return tensordict
 
 
@@ -143,7 +148,7 @@ class PPOPolicy(TensorDictModuleBase):
             ["z_pred", ("next", "adapt_hx")]
         ).to(self.device)
 
-        self.swap = Swap(groups=8, swap_prob=0.25).to(self.device)
+        self.swap = Swap(groups=self.cfg.swap_groups, swap_prob=self.cfg.swap_prob).to(self.device)
 
         _actor = nn.Sequential(make_mlp([256, 256]), Actor(self.action_dim))
         self.actor: ProbabilisticActor = ProbabilisticActor(
@@ -292,7 +297,7 @@ class PPOPolicy(TensorDictModuleBase):
     # @torch.compile
     def _update(self, tensordict: TensorDict):
         self.encoder(tensordict)
-        self.swap(tensordict)
+        self.swap(tensordict, from_input=True)
         dist = self.actor.get_dist(tensordict)
         log_probs = dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy().mean()
@@ -315,6 +320,7 @@ class PPOPolicy(TensorDictModuleBase):
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
         critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
+        encoder_grad_norm = nn.utils.clip_grad_norm_(self.encoder.parameters(), self.max_grad_norm)
         self.opt.step()
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
         return {
@@ -323,6 +329,7 @@ class PPOPolicy(TensorDictModuleBase):
             "actor/noise_std": tensordict["scale"].mean(),
             "actor/grad_norm": actor_grad_norm,
             'actor/approx_kl': ((ratio - 1) - log_ratio).mean(),
+            "actor/encoder_grad_norm": encoder_grad_norm,
             "critic/value_loss": value_loss,
             "critic/grad_norm": critic_grad_norm,
             "critic/explained_var": explained_var,
