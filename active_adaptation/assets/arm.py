@@ -8,6 +8,7 @@ from omni.isaac.lab.actuators import DCMotorCfg, ImplicitActuatorCfg
 ASSET_PATH = os.path.dirname(__file__)
 
 ABP_CFG = ArticulationCfg(
+    prim_path="{ENV_REGEX_NS}/Arm",
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{ASSET_PATH}/abpg.usd",
         activate_contact_sensors=False,
