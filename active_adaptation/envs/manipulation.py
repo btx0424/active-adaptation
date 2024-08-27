@@ -16,6 +16,12 @@ from .locomotion import LocomotionEnv
 from .mdp import Reward, Observation
 
 
+class ManipulationEnv(LocomotionEnv):
+    
+        def __init__(self, cfg):
+            super().__init__(cfg)
+            self.arm_indices = self.robot.actuators["arm"].joint_indices
+    
 class QuadrupedManip(LocomotionEnv):
 
     feet_name_expr = ".*_foot"

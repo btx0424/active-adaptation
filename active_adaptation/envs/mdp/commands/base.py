@@ -1,0 +1,63 @@
+import torch
+from omni.isaac.lab.assets import Articulation
+from typing import Sequence, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from active_adaptation.envs.base import Env
+
+
+def sample_quat_yaw(size, yaw_range=(0, torch.pi * 2), device: torch.device = "cpu"):
+    yaw = torch.rand(size, device=device).uniform_(*yaw_range)
+    quat = torch.cat(
+        [
+            torch.cos(yaw / 2).unsqueeze(-1),
+            torch.zeros_like(yaw).unsqueeze(-1),
+            torch.zeros_like(yaw).unsqueeze(-1),
+            torch.sin(yaw / 2).unsqueeze(-1),
+        ],
+        dim=-1,
+    )
+    return quat
+
+
+class Command:
+    def __init__(self, env) -> None:
+        self.env: Env = env
+        self.asset: Articulation = env.scene["robot"]
+        self.init_root_state = self.asset.data.default_root_state.clone()
+        self.init_joint_pos = self.asset.data.default_joint_pos.clone()
+        self.init_joint_vel = self.asset.data.default_joint_vel.clone()
+
+    @property
+    def num_envs(self):
+        return self.env.num_envs
+
+    @property
+    def device(self):
+        return self.env.device
+
+    def step(self, substep: int):
+        pass
+
+    def update(self):
+        pass
+
+    def reset(self, env_ids: torch.Tensor):
+        pass
+
+    def debug_draw(self):
+        pass
+
+    def sample_init(self, env_ids: torch.Tensor) -> torch.Tensor:
+        init_root_state = self.init_root_state[env_ids]
+        if self.env.scene.terrain.cfg.terrain_type == "plane":
+            origins = self.env.scene.env_origins[env_ids]
+        else:
+            origins = self.env.scene.env_origins[
+                torch.randint(
+                    0, self.env.scene.num_envs, (len(env_ids),), device=self.device
+                )
+            ]
+        init_root_state[:, :3] += origins
+        init_root_state[:, 3:7] = sample_quat_yaw(len(env_ids), device=self.device)
+        return init_root_state

@@ -1,0 +1,59 @@
+# @package task
+name: AirBotPlay
+task: Manipulation
+scene: manipulation
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/Velocity@_here_
+  - override action: null
+  - _self_
+
+robot: abp
+terrain: plane
+payload: false
+homogeneous: false
+
+action:
+  _target_: active_adaptation.envs.mdp.action.JointPosition
+  action_scaling:
+    joint[1-5]: 0.5
+  max_delay: 1
+  alpha: 0.8
+       
+command:
+  _target_: active_adaptation.envs.mdp.EEImpedance
+  ee_name: 'gripper_base'
+  ee_base_name: 'base_link'
+
+observation:
+  policy:
+    command:
+    # root_angvel_b: {noise_std: 0.05}
+    joint_pos:    {noise_std: 0.05}
+    joint_vel:    {noise_std: 0.2}
+    prev_actions: {steps: 3}
+    applied_action:
+    applied_torques:  {actuator_name: arm}
+    joint_forces:     {}
+
+reward:
+  manip:
+    # common loco rewards just for sanity check
+    survival:           {weight: 1.0, enabled: true}
+
+termination:
+  joint_acc_exceeds: {thres: 5000}
+  # cum_error: {thres: 1.0}
+
+randomization:
+  random_scale: [1.0, 1.2]
+  reset_joint_states_uniform:
+    pos_ranges:
+      joint1: [-2.5, 2.5]
+      joint2: [0.0, 1.0]
+      joint3: [-2.5, 0.0]
+      joint4: [-1.0, 1.0]
+      joint5: [-1.0, 1.0]
+      joint6: [-2.5, 2.5]
+    rel: true

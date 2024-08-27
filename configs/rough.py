@@ -13,6 +13,71 @@ from typing import Dict, List
 from .terrain import *
 
 @configclass
+class ManipulationSceneCfg(InteractiveSceneCfg):
+    
+    num_envs: int = 4096
+    env_spacing: float = 2.5
+
+    robot: ArticulationCfg = MISSING
+    
+    light_0: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/light_0",
+        spawn=sim_utils.DistantLightCfg(
+            color=(0.4, 0.7, 0.9),
+            intensity=3000.0,
+            angle=10,
+            exposure=0.2,
+        ),
+        init_state=ArticulationCfg.InitialStateCfg(
+            rot=(0.9330127,  0.25     ,  0.25     , -0.0669873)
+        )
+    )
+    light_1: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/light_1",
+        spawn=sim_utils.DistantLightCfg(
+            color=(0.8, 0.5, 0.5),
+            intensity=3000.0,
+            angle=20,
+        ),
+        init_state=ArticulationCfg.InitialStateCfg(
+            rot=(0.78201786,  0.3512424 ,  0.50162613, -0.11596581)
+        )
+    )
+    light_2: AssetBaseCfg = AssetBaseCfg(
+        prim_path="/World/light_2",
+        spawn=sim_utils.DistantLightCfg(
+            color=(0.8, 0.5, 0.4),
+            intensity=3000.0,
+            angle=20,
+        ),
+        init_state=ArticulationCfg.InitialStateCfg(
+            rot=(-0.87330464,  0.        ,  0.48717451,  0.        )
+        )
+    )
+
+    terrain: TerrainImporterCfg = MISSING
+
+    height_scanner = RayCasterCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/pelvis",
+        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+        attach_yaw_only=True,
+        pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
+        debug_vis=True,
+        mesh_prim_paths=["/World/ground"],
+        history_length=1
+    )
+
+    camera = TiledCameraCfg(
+        prim_path="{ENV_REGEX_NS}/camera_tpv",
+        offset=TiledCameraCfg.OffsetCfg(pos=(-3., 0., 2.), rot=[0.96592583, 0.        , 0.25881905, 0.        ], convention="world"),
+        data_types=["depth"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=20.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
+        ),
+        width=128,
+        height=96,
+    )
+@configclass
 class LocomotionSceneCfg(InteractiveSceneCfg):
     
     num_envs: int = 4096
@@ -136,7 +201,8 @@ def LocomotionEnvCfg(task_cfg):
 
     scene_cfg_class = {
         "locomotion": LocomotionSceneCfg,
-        "locomanip": LocoManipSceneCfg
+        "locomanip": LocoManipSceneCfg,
+        "manipulation": ManipulationSceneCfg
     }[task_cfg.get("scene", "locomotion")]
 
     env_cfg = EnvCfg(
