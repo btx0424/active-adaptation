@@ -1,5 +1,5 @@
 import torch
-from typing import Dict, Tuple, Union, TYPE_CHECKING
+from typing import Dict, Literal, Tuple, Union, TYPE_CHECKING
 from tensordict import TensorDictBase
 from omni.isaac.lab.assets import Articulation
 import omni.isaac.lab.utils.string as string_utils
@@ -26,6 +26,141 @@ class ActionManager:
     def device(self):
         return self.env.device
 
+
+class IKResidual(ActionManager):
+    def __init__(
+        self, 
+        env, 
+        action_scaling: Dict[str, float] = 0.5,
+        max_delay: int = 4,
+        alpha: Tuple[float, float] = (0.5, 1.0),
+        ik_method: Literal["pinv",
+                            "svd",
+                            "trans",
+                            "dls"] = "dls",
+        ik_params: Dict[str, float] = {
+            "k_val": 1.0,
+            "lambda_val": 0.01,
+        }
+    ):
+        super().__init__(env)
+        self.joint_ids, self.joint_names, self.action_scaling = string_utils.resolve_matching_names_values(dict(action_scaling), self.asset.joint_names)
+        
+        self.action_scaling = torch.tensor(self.action_scaling, device=self.device)
+        self.action_dim = len(self.joint_ids)
+        
+        self.ik_method = ik_method
+        self.ik_params = ik_params
+
+        self.max_delay = max_delay
+        if isinstance(alpha, float):
+            self.alpha_range = (alpha, alpha)
+        else:
+            self.alpha_range = tuple(alpha)
+        with torch.device(self.device):
+            self.action_buf = torch.zeros(self.num_envs, self.action_dim, max(max_delay + 1, 3)) # at least 3 for action_rate_2_l2 reward
+            self.applied_action = torch.zeros(self.num_envs, self.action_dim)
+            self.alpha = torch.ones(self.num_envs, 1)
+            self.delay = torch.zeros(self.num_envs, 1, dtype=int)
+        
+        from active_adaptation.envs.mdp.commands import EEImpedance
+        self.command_manager: EEImpedance = self.env.command_manager
+        self.ee_body_id = self.command_manager.ee_body_id
+    
+    def reset(self, env_ids: torch.Tensor):
+        self.delay[env_ids] = torch.randint(0, self.max_delay + 1, (len(env_ids), 1), device=self.device)
+        self.action_buf[env_ids] = 0
+        self.applied_action[env_ids] = 0
+
+        alpha = torch.empty(len(env_ids), 1, device=self.device).uniform_(*self.alpha_range)
+        self.alpha[env_ids] = alpha
+
+    def __call__(self, tensordict: TensorDictBase, substep: int):
+        if substep == 0:
+            # update action buf
+            action = tensordict["action"].clamp(-10, 10)
+            self.action_buf.roll(1, dims=-1)
+            self.action_buf[:, :, 0] = action
+            delayed_action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
+            self.applied_action.lerp_(delayed_action.squeeze(-1), self.alpha)
+
+            # compute position control ik target
+            # ee_pos_diff_b = self.command_manager.command_pos_ee_diff_b # = ee_pos_b_des - ee_pos_b
+            ee_pos_diff_b = self.command_manager.command_setpoint_pos_ee_diff_b # = ee_setpoint_pos_b - ee_pos_b
+            jacobian_pos = self.asset.root_physx_view.get_jacobians()[:, self.ee_body_id, :3, self.joint_ids]
+            delta_joint_pos = self._compute_delta_joint_pos(ee_pos_diff_b, jacobian_pos)
+            
+            # add delta joint pos to current joint pos
+            joint_pos_target = self.asset.data.joint_pos.clone()
+            joint_pos_target[:, self.joint_ids] += delta_joint_pos 
+
+            # add residual action
+            joint_pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
+            
+            self.asset.set_joint_position_target(joint_pos_target)
+        self.asset.write_data_to_sim()
+    
+    def _compute_delta_joint_pos(self, delta_pose: torch.Tensor, jacobian: torch.Tensor) -> torch.Tensor:
+        """Computes the change in joint position that yields the desired change in pose.
+
+        The method uses the Jacobian mapping from joint-space velocities to end-effector velocities
+        to compute the delta-change in the joint-space that moves the robot closer to a desired
+        end-effector position.
+
+        Args:
+            delta_pose: The desired delta pose in shape (N, 3) or (N, 6).
+            jacobian: The geometric jacobian matrix in shape (N, 3, num_joints) or (N, 6, num_joints).
+
+        Returns:
+            The desired delta in joint space. Shape is (N, num-jointsß).
+        """
+        if self.ik_params is None:
+            raise RuntimeError(f"Inverse-kinematics parameters for method '{self.ik_method}' is not defined!")
+        # compute the delta in joint-space
+        if self.ik_method == "pinv":  # Jacobian pseudo-inverse
+            # parameters
+            k_val = self.ik_params["k_val"]
+            # computation
+            jacobian_pinv = torch.linalg.pinv(jacobian)
+            delta_joint_pos = k_val * jacobian_pinv @ delta_pose.unsqueeze(-1)
+            delta_joint_pos = delta_joint_pos.squeeze(-1)
+        elif self.ik_method == "svd":  # adaptive SVD
+            # parameters
+            k_val = self.ik_params["k_val"]
+            min_singular_value = self.ik_params["min_singular_value"]
+            # computation
+            # U: 6xd, S: dxd, V: d x num-joint
+            U, S, Vh = torch.linalg.svd(jacobian)
+            S_inv = 1.0 / S
+            S_inv = torch.where(S > min_singular_value, S_inv, torch.zeros_like(S_inv))
+            jacobian_pinv = (
+                torch.transpose(Vh, dim0=1, dim1=2)[:, :, :6]
+                @ torch.diag_embed(S_inv)
+                @ torch.transpose(U, dim0=1, dim1=2)
+            )
+            delta_joint_pos = k_val * jacobian_pinv @ delta_pose.unsqueeze(-1)
+            delta_joint_pos = delta_joint_pos.squeeze(-1)
+        elif self.ik_method == "trans":  # Jacobian transpose
+            # parameters
+            k_val = self.ik_params["k_val"]
+            # computation
+            jacobian_T = torch.transpose(jacobian, dim0=1, dim1=2)
+            delta_joint_pos = k_val * jacobian_T @ delta_pose.unsqueeze(-1)
+            delta_joint_pos = delta_joint_pos.squeeze(-1)
+        elif self.ik_method == "dls":  # damped least squares
+            # parameters
+            lambda_val = self.ik_params["lambda_val"]
+            # computation
+            jacobian_T = torch.transpose(jacobian, dim0=1, dim1=2)
+            lambda_matrix = (lambda_val**2) * torch.eye(n=jacobian.shape[1], device=self.device)
+            delta_joint_pos = (
+                jacobian_T @ torch.inverse(jacobian @ jacobian_T + lambda_matrix) @ delta_pose.unsqueeze(-1)
+            )
+            delta_joint_pos = delta_joint_pos.squeeze(-1)
+        else:
+            raise ValueError(f"Unsupported inverse-kinematics method: {self.ik_method}")
+
+        return delta_joint_pos
 
 class JointPosition(ActionManager):
     def __init__(

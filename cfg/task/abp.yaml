@@ -15,36 +15,55 @@ payload: false
 homogeneous: false
 
 action:
-  _target_: active_adaptation.envs.mdp.action.JointPosition
+  _target_: active_adaptation.envs.mdp.action.IKResidual
   action_scaling:
     joint[1-5]: 0.5
   max_delay: 1
   alpha: 0.8
-       
+  ik_method: "dls"
+  ik_params:
+    k_val: 1.0
+    lambda_val: 0.05
+
 command:
   _target_: active_adaptation.envs.mdp.EEImpedance
   ee_name: 'gripper_base'
   ee_base_name: 'base_link'
+  kp_range: [100., 150.]
+  damping_ratio_range: [0.7, 1.5]
+  virtual_mass_range: [0.5, 1.5]
+  max_force: 20.0
+  compliant_ratio: 0.2
+  ext_force_ratio: 0.5
+  future: 3
+  mix_openloop: true
 
 observation:
-  policy:
+  command:
     command:
-    # root_angvel_b: {noise_std: 0.05}
+  policy:
     joint_pos:    {noise_std: 0.05}
     joint_vel:    {noise_std: 0.2}
     prev_actions: {steps: 3}
+  priv:
+    command_hidden:
     applied_action:
     applied_torques:  {actuator_name: arm}
     joint_forces:     {}
+    cum_error:        {}
+  ext:
+    external_forces: {body_names: ["gripper_base"]}
 
 reward:
   manip:
     # common loco rewards just for sanity check
     survival:           {weight: 1.0, enabled: true}
+    impedance_ee_pos:   {weight: 1.0, enabled: true, ee_name: 'gripper_base'}
+    impedance_ee_vel:   {weight: 1.0, enabled: true, ee_name: 'gripper_base'}
 
 termination:
-  joint_acc_exceeds: {thres: 5000}
-  # cum_error: {thres: 1.0}
+  # joint_acc_exceeds: {thres: 5000.}
+  cum_error: {thres: 1.0, min_steps: 5000}
 
 randomization:
   random_scale: [1.0, 1.2]

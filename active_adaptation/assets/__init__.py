@@ -19,7 +19,7 @@ from .spawn import clone
 from .quadruped import *
 from .humanoid import *
 from .scene import *
-from .arm import *
+from .abp import *
 
 
 ASSET_PATH = os.path.dirname(__file__)

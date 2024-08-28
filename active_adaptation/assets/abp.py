@@ -39,10 +39,9 @@ ABP_CFG = ArticulationCfg(
     ),
     soft_joint_pos_limit_factor=0.9,
     actuators={
-        "arm": DCMotorCfg(
+        "arm": ImplicitActuatorCfg(
             joint_names_expr=["(joint.*)"],
-            effort_limit=200.,
-            saturation_effort=200.,
+            effort_limit=200.0,
             velocity_limit=5.0,
             stiffness={
                 "joint[1-3]": 20.0,
@@ -52,6 +51,14 @@ ABP_CFG = ArticulationCfg(
                 "joint[1-3]": 1.0,
                 "joint[4-6]": 0.5,
             },
+            # stiffness=0.0,
+            # damping=20.0,
+            friction=0.001,
+        ),
+        "gripper": ImplicitActuatorCfg(
+            joint_names_expr=["end(left|right)"],
+            stiffness=2000.0,
+            damping=100.0,
             friction=0.001,
         ),
     },

@@ -17,8 +17,9 @@ class impedance_base_pos(Reward):
         return r
     
     
-class impedance_ee_pos(Reward):
+class impedance_ee_pos_b(Reward):
     def __init__(self, env, weight: float, ee_name: str = "arm_link06", enabled: bool = True):
+        assert False
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.body_id = self.asset.find_bodies(ee_name)[0][0]
@@ -51,8 +52,9 @@ class impedance_base_vel(Reward):
         r = torch.exp(- diff.square().sum(dim=-1, keepdim=True) / 0.25)
         return r
     
-class impedance_ee_vel(Reward):
+class impedance_ee_vel_b(Reward):
     def __init__(self, env, weight: float, ee_name: str = "arm_link06", enabled: bool = True):
+        assert False
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.body_id = self.asset.find_bodies(ee_name)[0][0]
