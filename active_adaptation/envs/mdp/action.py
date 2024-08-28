@@ -35,6 +35,7 @@ class JointPosition(ActionManager):
         action_scaling: Dict[str, float] = 0.5,
         left_names = None,
         right_names = None,
+        middle_names = None,
         max_delay: int = 4,
         alpha: Tuple[float, float] = (0.5, 1.0),
     ):
@@ -48,6 +49,10 @@ class JointPosition(ActionManager):
         else:
             self.left_joint_ids = None
             self.right_joint_ids = None
+        if middle_names is not None:
+            self.middle_joint_ids = string_utils.resolve_matching_names(middle_names, self.joint_names)[0]
+        else:
+            self.middle_joint_ids = None
         
         self.action_scaling = torch.tensor(self.action_scaling, device=self.device)
         self.max_delay = max_delay
@@ -79,6 +84,9 @@ class JointPosition(ActionManager):
         right = action_flipped[:, self.right_joint_ids]
         action_flipped[:, self.left_joint_ids] = left
         action_flipped[:, self.right_joint_ids] = right
+        if self.middle_joint_ids is not None:
+            middle = action_flipped[:, self.middle_joint_ids]
+            action_flipped[:, self.middle_joint_ids] = -middle
         return action_flipped.reshape(action.shape)
 
     def reset(self, env_ids: torch.Tensor):

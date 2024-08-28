@@ -105,7 +105,7 @@ def main(cfg: DictConfig):
     ]
     episode_stats = EpisodeStats(stats_keys)
 
-    rollout_policy = policy.get_rollout_policy("eval")
+    rollout_policy = policy.get_rollout_policy("train")
     compile_policy = cfg.get("compile", False)
     assert compile_policy in (True, False, "auto")
     if compile_policy or compile_policy == "auto":

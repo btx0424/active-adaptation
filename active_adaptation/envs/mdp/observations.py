@@ -299,6 +299,7 @@ class JointObs(Observation):
         joint_names: str=".*", 
         left_names = None,
         right_names = None,
+        middle_names = None,
         mask_ratio: float = 0
     ):
         super().__init__(env, mask_ratio)
@@ -310,15 +311,22 @@ class JointObs(Observation):
         else:
             self.left_joint_ids = None
             self.right_joint_ids = None
+        if middle_names is not None:
+            self.middle_joint_ids = resolve_matching_names(middle_names, self.joint_names)[0]
+        else:
+            self.middle_joint_ids = None
 
     def fliplr(self, obs: torch.Tensor):
+        if self.left_joint_ids is None and self.middle_joint_ids is None:
+            raise ValueError(f"Flipping is not supported for this {self.__class__.__name__}.")
+        obs_flipped = obs.clone()
         if self.left_joint_ids is not None:
-            obs_flipped = obs.clone()
             obs_flipped[:, self.left_joint_ids] = obs[:, self.right_joint_ids]
             obs_flipped[:, self.right_joint_ids] = obs[:, self.left_joint_ids]
-            return obs_flipped
-        else:
-            raise ValueError("No left and right joint names are provided.")
+        if self.middle_joint_ids is not None:
+            middle = obs[:, self.middle_joint_ids]
+            obs_flipped[:, self.middle_joint_ids] = -middle
+        return obs_flipped
 
 
 class joint_pos(JointObs):
@@ -328,9 +336,10 @@ class joint_pos(JointObs):
         joint_names: str=".*",
         left_names = None,
         right_names = None,
+        middle_names = None,
         noise_std: float=0.0,
     ):
-        super().__init__(env, joint_names, left_names, right_names)
+        super().__init__(env, joint_names, left_names, right_names, middle_names)
         self.noise_std = noise_std
 
     def compute(self) -> torch.Tensor:
@@ -344,9 +353,10 @@ class joint_vel(JointObs):
         joint_names: str=".*",
         left_names = None,
         right_names = None,
+        middle_names = None,
         noise_std: float=0.0
     ):
-        super().__init__(env, joint_names, left_names, right_names)
+        super().__init__(env, joint_names, left_names, right_names, middle_names)
         self.noise_std = noise_std
     
     def compute(self) -> torch.Tensor:
@@ -1006,6 +1016,17 @@ class phase(Observation):
     def compute(self) -> torch.Tensor:
         phase_sin = self.phase.sin()
         phase_cos = self.phase.cos()
+        if self.deriv:
+            return torch.stack([
+                phase_sin, self.omega * phase_cos,
+                phase_cos, -self.omega * phase_sin
+            ], 1)
+        else:
+            return torch.stack([phase_sin, phase_cos], 1)
+    
+    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
+        phase_sin = (self.phase + torch.pi).sin()
+        phase_cos = (self.phase + torch.pi).cos()
         if self.deriv:
             return torch.stack([
                 phase_sin, self.omega * phase_cos,
