@@ -16,6 +16,7 @@ class EEImpedance(Command):
         ee_base_name: str,
         kp_range: tuple = (100.0, 150.0),
         damping_ratio_range: tuple = (0.7, 1.5),
+        default_mass_ee: float = 1.0,
         virtual_mass_range: tuple = (0.5, 1.5),
         max_force: float = 20.0,
         compliant_ratio: float = 0.2,
@@ -66,7 +67,7 @@ class EEImpedance(Command):
             self.command_kp = torch.zeros(self.num_envs, 3)
             self.command_kd = torch.zeros(self.num_envs, 3)
 
-            self.default_mass_ee = 1.0
+            self.default_mass_ee = default_mass_ee
             self.virtual_mass_ee = torch.zeros(self.num_envs, 1)
 
             self.force_ext_ee_w = torch.zeros(self.num_envs, 3)

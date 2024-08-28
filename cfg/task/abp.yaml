@@ -31,12 +31,13 @@ command:
   ee_base_name: 'base_link'
   kp_range: [100., 150.]
   damping_ratio_range: [0.7, 1.5]
+  default_mass_ee: 10
   virtual_mass_range: [0.5, 1.5]
   max_force: 20.0
   compliant_ratio: 0.2
   ext_force_ratio: 0.5
   future: 3
-  mix_openloop: true
+  mix_openloop: false
 
 observation:
   command:
