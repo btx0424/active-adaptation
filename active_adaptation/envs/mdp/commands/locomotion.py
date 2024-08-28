@@ -572,7 +572,7 @@ class Impedance(Command):
         virtual_mass_range=(0.5, 1.0),
         compliant_ratio: float = 0.2,
         ext_force_ratio: float = 0.5,
-        linear_kp_range = (1.0, 4.0),
+        linear_kp_range = (2.0, 12.0),
         delta_vel_xy_range = (-3.0, 3.0),
     ) -> None:
         super().__init__(env)
@@ -675,11 +675,11 @@ class Impedance(Command):
         self.desired_yaw_w.add_(desired_yaw_acc_w * self.env.physics_dt)
 
     def update(self):
-        # self.desired_lin_vel_w = self.desired_lin_vel_w.roll(1, dims=1)
-        # self.desired_pos_w = self.desired_pos_w.roll(1, dims=1)
+        self.desired_lin_vel_w = self.desired_lin_vel_w.roll(1, dims=1)
+        self.desired_pos_w = self.desired_pos_w.roll(1, dims=1)
         
-        # self.desired_yaw_vel_w = self.desired_yaw_vel_w.roll(1, dims=1)
-        # self.desired_yaw_w = self.desired_yaw_w.roll(1, dims=1)
+        self.desired_yaw_vel_w = self.desired_yaw_vel_w.roll(1, dims=1)
+        self.desired_yaw_w = self.desired_yaw_w.roll(1, dims=1)
         
         self.desired_lin_vel_w[:, 0] = self.asset.data.root_lin_vel_w
         self.desired_pos_w[:, 0] = self.asset.data.root_pos_w
@@ -691,7 +691,7 @@ class Impedance(Command):
         self.force_ext_w[:] = torch.where(
             self.force_type == 0, 0.,
             torch.where(self.force_type == 1, constant_force, linear_impulse))
-        self.force_time.add_(self.env.physics_dt)
+        self.force_time.add_(self.env.step_dt)
         
         for _ in range(4):
             self._integrate()
@@ -769,7 +769,15 @@ class Impedance(Command):
         self.force_time[env_ids] = 0.
         
         force_type = torch.multinomial(self.force_type_dist, len(env_ids), replacement=True).unsqueeze(1)
-        force_duration = torch.randint(20, 100, (len(env_ids), 1), device=self.device) * self.env.step_dt
+        force_duration = torch.where(
+            force_type == 0,
+            torch.zeros(len(env_ids), 1, device=self.device),
+            torch.where(
+                force_type == 1,
+                torch.randint(20, 100, (len(env_ids), 1), device=self.device),
+                torch.randint(15, 40, (len(env_ids), 1), device=self.device)
+            ) * self.env.step_dt,
+        )
         
         # instead of directly setting the force, we set the expected applied momentum
         delta_vel = torch.zeros(len(env_ids), 3, device=self.device)
