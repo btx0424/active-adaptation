@@ -572,7 +572,7 @@ class Impedance(Command):
         virtual_mass_range=(0.5, 1.0),
         compliant_ratio: float = 0.2,
         ext_force_ratio: float = 0.5,
-        linear_kp_range = (1.0, 4.0),
+        linear_kp_range = (2.0, 12.0),
         delta_vel_xy_range = (-3.0, 3.0),
     ) -> None:
         super().__init__(env)
@@ -587,7 +587,7 @@ class Impedance(Command):
         self.delta_vel_xy_range = delta_vel_xy_range
 
         with torch.device(self.device):
-            self.command = torch.zeros(self.num_envs, 6)
+            self.command = torch.zeros(self.num_envs, 9)
             self.command_hidden = torch.zeros(self.num_envs, 7)
             
             self.command_linvel = torch.zeros(self.num_envs, 3)
@@ -675,11 +675,11 @@ class Impedance(Command):
         self.desired_yaw_w.add_(desired_yaw_acc_w * self.env.physics_dt)
 
     def update(self):
-        # self.desired_lin_vel_w = self.desired_lin_vel_w.roll(1, dims=1)
-        # self.desired_pos_w = self.desired_pos_w.roll(1, dims=1)
+        self.desired_lin_vel_w = self.desired_lin_vel_w.roll(1, dims=1)
+        self.desired_pos_w = self.desired_pos_w.roll(1, dims=1)
         
-        # self.desired_yaw_vel_w = self.desired_yaw_vel_w.roll(1, dims=1)
-        # self.desired_yaw_w = self.desired_yaw_w.roll(1, dims=1)
+        self.desired_yaw_vel_w = self.desired_yaw_vel_w.roll(1, dims=1)
+        self.desired_yaw_w = self.desired_yaw_w.roll(1, dims=1)
         
         self.desired_lin_vel_w[:, 0] = self.asset.data.root_lin_vel_w
         self.desired_pos_w[:, 0] = self.asset.data.root_pos_w
@@ -691,7 +691,7 @@ class Impedance(Command):
         self.force_ext_w[:] = torch.where(
             self.force_type == 0, 0.,
             torch.where(self.force_type == 1, constant_force, linear_impulse))
-        self.force_time.add_(self.env.physics_dt)
+        self.force_time.add_(self.env.step_dt)
         
         for _ in range(4):
             self._integrate()
@@ -713,11 +713,14 @@ class Impedance(Command):
         self.command_linvel[:] = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_linvel_w)
         self.command_speed[:] = self.command_linvel.norm(dim=-1, keepdim=True)
         
+        linvel_noise = torch.randn_like(self.asset.data.root_lin_vel_b).clip(-1, 1) * 0.1
+        yaw_diff = math_utils.wrap_to_pi(self.command_setrpy_w[:, 2] - self.asset.data.heading_w)
+        
         self.command[:, :2] = command_setpos_b[:, :2]
-        self.command[:, 2] = math_utils.wrap_to_pi(self.command_setrpy_w[:, 2] - self.asset.data.heading_w)
-        self.command[:, 3:4] = self.kp
-        self.command[:, 4:5] = self.kd
-        self.command[:, 5:6] = self.virtual_mass
+        self.command[:, 2] = yaw_diff
+        self.command[:, 3:5] = self.kp * command_setpos_b[:, :2]
+        self.command[:, 5:8] = self.kd * - (self.asset.data.root_lin_vel_b + linvel_noise)
+        self.command[:, 8:9] = self.virtual_mass
 
         self.command_hidden[:, 0:3] = command_pos_b
         self.command_hidden[:, 3:6] = self.command_linvel
@@ -766,7 +769,15 @@ class Impedance(Command):
         self.force_time[env_ids] = 0.
         
         force_type = torch.multinomial(self.force_type_dist, len(env_ids), replacement=True).unsqueeze(1)
-        force_duration = torch.randint(20, 100, (len(env_ids), 1), device=self.device) * self.env.step_dt
+        force_duration = torch.where(
+            force_type == 0,
+            torch.zeros(len(env_ids), 1, device=self.device),
+            torch.where(
+                force_type == 1,
+                torch.randint(20, 100, (len(env_ids), 1), device=self.device),
+                torch.randint(15, 40, (len(env_ids), 1), device=self.device)
+            ) * self.env.step_dt,
+        )
         
         # instead of directly setting the force, we set the expected applied momentum
         delta_vel = torch.zeros(len(env_ids), 3, device=self.device)

@@ -168,6 +168,28 @@ class body_vel(Observation):
         return self.body_vel_b.reshape(self.env.num_envs, -1)
 
 
+class body_acc(Observation):
+    
+    def __init__(self, env, body_names, yaw_only: bool=False):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.yaw_only = yaw_only
+        self.body_indices, self.body_names = self.asset.find_bodies(body_names)
+        print(f"Track body acc for {self.body_names}")
+        self.body_acc_b = torch.zeros(self.env.num_envs, len(self.body_indices), 3, device=self.env.device)
+
+    def update(self):
+        if self.yaw_only:
+            quat = yaw_quat(self.asset.data.root_quat_w).unsqueeze(1)
+        else:
+            quat = self.asset.data.root_quat_w.unsqueeze(1)
+        body_acc_w = self.asset.data.body_lin_acc_w[:, self.body_indices]
+        self.body_acc_b[:] = quat_rotate_inverse(quat, body_acc_w)
+        
+    def compute(self):
+        return self.body_acc_b.reshape(self.env.num_envs, -1)
+
+
 def observation_func(func):
 
     class ObsFunc(Observation):
@@ -299,6 +321,7 @@ class JointObs(Observation):
         joint_names: str=".*", 
         left_names = None,
         right_names = None,
+        middle_names = None,
         mask_ratio: float = 0
     ):
         super().__init__(env, mask_ratio)
@@ -310,15 +333,22 @@ class JointObs(Observation):
         else:
             self.left_joint_ids = None
             self.right_joint_ids = None
+        if middle_names is not None:
+            self.middle_joint_ids = resolve_matching_names(middle_names, self.joint_names)[0]
+        else:
+            self.middle_joint_ids = None
 
     def fliplr(self, obs: torch.Tensor):
+        if self.left_joint_ids is None and self.middle_joint_ids is None:
+            raise ValueError(f"Flipping is not supported for this {self.__class__.__name__}.")
+        obs_flipped = obs.clone()
         if self.left_joint_ids is not None:
-            obs_flipped = obs.clone()
             obs_flipped[:, self.left_joint_ids] = obs[:, self.right_joint_ids]
             obs_flipped[:, self.right_joint_ids] = obs[:, self.left_joint_ids]
-            return obs_flipped
-        else:
-            raise ValueError("No left and right joint names are provided.")
+        if self.middle_joint_ids is not None:
+            middle = obs[:, self.middle_joint_ids]
+            obs_flipped[:, self.middle_joint_ids] = -middle
+        return obs_flipped
 
 
 class joint_pos(JointObs):
@@ -328,9 +358,10 @@ class joint_pos(JointObs):
         joint_names: str=".*",
         left_names = None,
         right_names = None,
+        middle_names = None,
         noise_std: float=0.0,
     ):
-        super().__init__(env, joint_names, left_names, right_names)
+        super().__init__(env, joint_names, left_names, right_names, middle_names)
         self.noise_std = noise_std
 
     def compute(self) -> torch.Tensor:
@@ -344,9 +375,10 @@ class joint_vel(JointObs):
         joint_names: str=".*",
         left_names = None,
         right_names = None,
+        middle_names = None,
         noise_std: float=0.0
     ):
-        super().__init__(env, joint_names, left_names, right_names)
+        super().__init__(env, joint_names, left_names, right_names, middle_names)
         self.noise_std = noise_std
     
     def compute(self) -> torch.Tensor:
@@ -1006,6 +1038,17 @@ class phase(Observation):
     def compute(self) -> torch.Tensor:
         phase_sin = self.phase.sin()
         phase_cos = self.phase.cos()
+        if self.deriv:
+            return torch.stack([
+                phase_sin, self.omega * phase_cos,
+                phase_cos, -self.omega * phase_sin
+            ], 1)
+        else:
+            return torch.stack([phase_sin, phase_cos], 1)
+    
+    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
+        phase_sin = (self.phase + torch.pi).sin()
+        phase_cos = (self.phase + torch.pi).cos()
         if self.deriv:
             return torch.stack([
                 phase_sin, self.omega * phase_cos,
