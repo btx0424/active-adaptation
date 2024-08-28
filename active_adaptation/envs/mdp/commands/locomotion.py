@@ -587,7 +587,7 @@ class Impedance(Command):
         self.delta_vel_xy_range = delta_vel_xy_range
 
         with torch.device(self.device):
-            self.command = torch.zeros(self.num_envs, 6)
+            self.command = torch.zeros(self.num_envs, 9)
             self.command_hidden = torch.zeros(self.num_envs, 7)
             
             self.command_linvel = torch.zeros(self.num_envs, 3)
@@ -713,11 +713,14 @@ class Impedance(Command):
         self.command_linvel[:] = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_linvel_w)
         self.command_speed[:] = self.command_linvel.norm(dim=-1, keepdim=True)
         
+        linvel_noise = torch.randn_like(self.asset.data.root_lin_vel_b).clip(-1, 1) * 0.1
+        yaw_diff = math_utils.wrap_to_pi(self.command_setrpy_w[:, 2] - self.asset.data.heading_w)
+        
         self.command[:, :2] = command_setpos_b[:, :2]
-        self.command[:, 2] = math_utils.wrap_to_pi(self.command_setrpy_w[:, 2] - self.asset.data.heading_w)
-        self.command[:, 3:4] = self.kp
-        self.command[:, 4:5] = self.kd
-        self.command[:, 5:6] = self.virtual_mass
+        self.command[:, 2] = yaw_diff
+        self.command[:, 3:5] = self.kp * command_setpos_b[:, :2]
+        self.command[:, 5:8] = self.kd * - (self.asset.data.root_lin_vel_b + linvel_noise)
+        self.command[:, 8:9] = self.virtual_mass
 
         self.command_hidden[:, 0:3] = command_pos_b
         self.command_hidden[:, 3:6] = self.command_linvel

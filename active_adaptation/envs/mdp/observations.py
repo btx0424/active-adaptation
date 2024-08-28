@@ -168,6 +168,28 @@ class body_vel(Observation):
         return self.body_vel_b.reshape(self.env.num_envs, -1)
 
 
+class body_acc(Observation):
+    
+    def __init__(self, env, body_names, yaw_only: bool=False):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.yaw_only = yaw_only
+        self.body_indices, self.body_names = self.asset.find_bodies(body_names)
+        print(f"Track body acc for {self.body_names}")
+        self.body_acc_b = torch.zeros(self.env.num_envs, len(self.body_indices), 3, device=self.env.device)
+
+    def update(self):
+        if self.yaw_only:
+            quat = yaw_quat(self.asset.data.root_quat_w).unsqueeze(1)
+        else:
+            quat = self.asset.data.root_quat_w.unsqueeze(1)
+        body_acc_w = self.asset.data.body_lin_acc_w[:, self.body_indices]
+        self.body_acc_b[:] = quat_rotate_inverse(quat, body_acc_w)
+        
+    def compute(self):
+        return self.body_acc_b.reshape(self.env.num_envs, -1)
+
+
 def observation_func(func):
 
     class ObsFunc(Observation):
