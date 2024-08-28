@@ -134,7 +134,7 @@ class EEImpedance(Command):
     def step(self, substep: int):
         forces_ee_b = self.asset._external_force_b[:, [self.ee_body_id]].clone()
         forces_ee_b += quat_rotate_inverse(
-            self.asset.data.root_quat_w,
+            self.asset.data.body_quat_w[:, self.ee_body_id],
             self.force_ext_ee_w,
         )[:, None, :]
         quat_rotate_inverse(self.asset.data.root_quat_w, self.force_ext_ee_w)
