@@ -18,7 +18,7 @@ class EEImpedance(Command):
         damping_ratio_range: tuple = (0.7, 1.5),
         default_mass_ee: float = 1.0,
         virtual_mass_range: tuple = (0.5, 1.5),
-        max_force: float = 20.0,
+        max_force_acc: float = 20.0,
         compliant_ratio: float = 0.2,
         ext_force_ratio: float = 0.5,
         future: int = 3,
@@ -34,12 +34,11 @@ class EEImpedance(Command):
         self.kp_range = kp_range
         self.damping_ratio_range = damping_ratio_range
         self.virtual_mass_range = virtual_mass_range
-        self.max_force = max_force
-        
+        self.max_force_acc = max_force_acc
 
         self.compliant_ratio = compliant_ratio
         self.ext_force_ratio = ext_force_ratio
-        
+
         self.resample_prob = 0.005
         self.future = future
         self.mix_openloop = mix_openloop
@@ -64,6 +63,7 @@ class EEImpedance(Command):
             self.command_linvel_ee_b = torch.zeros(self.num_envs, 3)
             self.command_pos_ee_diff_b = torch.zeros(self.num_envs, 3)
 
+            self.compliant_ee = torch.zeros(self.num_envs, 1, dtype=torch.bool)
             self.command_kp = torch.zeros(self.num_envs, 3)
             self.command_kd = torch.zeros(self.num_envs, 3)
 
@@ -97,6 +97,7 @@ class EEImpedance(Command):
                 *self.damping_ratio_range
             )
         )
+        self.compliant_ee[env_ids] = compliant_ee
         self.command_kp[env_ids] = kp_ee * (~compliant_ee)
         self.command_kd[env_ids] = kd_ee
 
@@ -109,15 +110,49 @@ class EEImpedance(Command):
 
     def _sample_force(self, env_ids: torch.Tensor):
         force_ext_ee_w = torch.empty(len(env_ids), 3, device=self.device).uniform_(
-            -self.max_force, self.max_force
+            -50.0, 50.0
         )
         force_ext_ee_w = clamp_norm(
-            force_ext_ee_w, max=self.virtual_mass_ee[env_ids] * 2.0
+            force_ext_ee_w, max=self.virtual_mass_ee[env_ids] * self.max_force_acc
         )
         apply_force = (
             torch.rand(len(env_ids), 1, device=self.device) < self.ext_force_ratio
         )
         self.force_ext_ee_w[env_ids] = force_ext_ee_w * apply_force
+
+    def _update_command(self):
+        # compute command in world/body frame
+        self.command_pos_ee_w[:] = self.desired_pos_ee_w.mean(1)
+        self.command_linvel_ee_w[:] = self.desired_linvel_ee_w.mean(1)
+
+        self.command_pos_ee_b[:] = quat_rotate_inverse(
+            self.asset.data.root_quat_w,
+            self.command_pos_ee_w,
+        )
+        self.command_linvel_ee_b[:] = quat_rotate_inverse(
+            self.asset.data.root_quat_w,
+            self.command_linvel_ee_w,
+        )
+
+        # compute diff
+        ee_pos_b = quat_rotate_inverse(
+            self.asset.data.root_quat_w,
+            self.asset.data.body_pos_w[:, self.ee_body_id] - self.asset.data.root_pos_w,
+        )
+        self.command_setpoint_pos_ee_diff_b[:] = (
+            self.command_setpoint_pos_ee_b - ee_pos_b
+        )
+        self.command_pos_ee_diff_b[:] = self.command_pos_ee_b - ee_pos_b
+
+        # populate command tensor
+        self.command[:, 0:3] = self.command_setpoint_pos_ee_diff_b * (
+            ~self.compliant_ee
+        )
+        self.command[:, 3:6] = self.command_kp
+        self.command[:, 6:9] = self.command_kd
+
+        self.command_hidden[:, 0:3] = self.command_pos_ee_diff_b
+        self.command_hidden[:, 3:6] = self.command_linvel_ee_b
 
     def reset(self, env_ids: torch.Tensor):
         self._sample_command(env_ids)
@@ -130,6 +165,8 @@ class EEImpedance(Command):
         self.desired_pos_ee_w[env_ids] = self.asset.data.body_pos_w[
             env_ids, None, self.ee_body_id
         ]
+        # sim reset -> command_manager.reset() -> compute obs ->  sim step -> compute reward
+        self._update_command()
 
     def step(self, substep: int):
         forces_ee_b = self.asset._external_force_b[:, [self.ee_body_id]].clone()
@@ -164,16 +201,35 @@ class EEImpedance(Command):
     def _compute_error(self):
         linvel_ee_error = (
             self.asset.data.body_lin_vel_w[:, self.ee_body_id]
-            - self.desired_linvel_ee_w[:, 0]
+            - self.command_linvel_ee_w
         ).norm(dim=-1)
         pos_ee_error = (
-            self.asset.data.body_pos_w[:, self.ee_body_id]
-            - self.desired_pos_ee_w[:, 0]
+            self.asset.data.body_pos_w[:, self.ee_body_id] - self.command_pos_ee_w
         ).norm(dim=-1)
         self._cum_error[:, 0].add_(linvel_ee_error * self.env.step_dt).mul_(0.99)
         self._cum_error[:, 1].add_(pos_ee_error * self.env.step_dt).mul_(0.99)
 
     def update(self):
+        self._compute_error()
+
+        # resample command and force
+        # sim step -> compute reward -> command_manager.update() -> compute obs
+        # the command/forces will be issued/applied in the next time step
+        sample_command = (
+            torch.rand(self.num_envs, device=self.device) < self.resample_prob
+        )
+        sample_command = sample_command.nonzero().squeeze(-1)
+        if len(sample_command) > 0:
+            self._sample_command(sample_command)
+
+        sample_force = (
+            torch.rand(self.num_envs, device=self.device) < self.resample_prob
+        )
+        sample_force = sample_force.nonzero().squeeze(-1)
+        if len(sample_force) > 0:
+            self._sample_force(sample_force)
+
+        # update desired quantities under the current command and forces
         if not self.mix_openloop:
             self.desired_linvel_ee_w.roll(1, 1)
             self.desired_pos_ee_w.roll(1, 1)
@@ -186,51 +242,10 @@ class EEImpedance(Command):
         for _ in range(int(self.env.step_dt / self.env.physics_dt)):
             self._integrate()
 
-        ee_pos_b = quat_rotate_inverse(
-            self.asset.data.root_quat_w,
-            self.asset.data.body_pos_w[:, self.ee_body_id] - self.asset.data.root_pos_w,
-        )
-        self.command_setpoint_pos_ee_diff_b[:] = (
-            self.command_setpoint_pos_ee_b - ee_pos_b
-        )
-
-        self.command_pos_ee_w[:] = self.desired_pos_ee_w.mean(1)
-        self.command_linvel_ee_w[:] = self.desired_linvel_ee_w.mean(1)
-
-        self.command_pos_ee_b[:] = quat_rotate_inverse(
-            self.asset.data.root_quat_w,
-            self.command_pos_ee_w,
-        )
-        self.command_linvel_ee_b[:] = quat_rotate_inverse(
-            self.asset.data.root_quat_w,
-            self.command_linvel_ee_w,
-        )
-
-        self.command_pos_ee_diff_b[:] = self.command_pos_ee_b - ee_pos_b
-
-        self.command[:, 0:3] = self.command_setpoint_pos_ee_b
-        self.command[:, 3:6] = self.command_kp
-        self.command[:, 6:9] = self.command_kd
-
-        self.command_hidden[:, 0:3] = self.command_pos_ee_diff_b
-        self.command_hidden[:, 3:6] = self.command_linvel_ee_b
-
-        self._compute_error()
-        
-        sample_command = torch.rand(self.num_envs, device=self.device) < self.resample_prob
-        sample_command = sample_command.nonzero().squeeze(-1)
-        if len(sample_command) > 0:
-            self._sample_command(sample_command)
-        
-        sample_force = torch.rand(self.num_envs, device=self.device) < self.resample_prob
-        sample_force = sample_force.nonzero().squeeze(-1)
-        if len(sample_force) > 0:
-            self._sample_force(sample_force)
-        
-        
+        self._update_command()
 
     def debug_draw(self):
-        # draw desired position for ee (green)
+        # command position for ee (green)
         self.env.debug_draw.point(
             self.command_pos_ee_w,
             color=(0.0, 1.0, 0.0, 1.0),
@@ -238,12 +253,12 @@ class EEImpedance(Command):
         )
         # command linvel for ee (green)
         self.env.debug_draw.vector(
-            self.asset.data.body_pos_w[:, self.ee_body_id],
+            self.command_pos_ee_w,
             self.command_linvel_ee_w,
             color=(0.0, 1.0, 0.0, 1.0),
             size=1.0,
         )
-        # draw vector from desired to setpoint (blue)
+        # draw vector from desired to setpoint for ee (blue)
         command_setpoint_pos_ee_w = (
             quat_rotate(
                 self.asset.data.root_quat_w,
@@ -263,6 +278,12 @@ class EEImpedance(Command):
             color=(1.0, 0.0, 0.0, 1.0),
             size=10.0,
         )
+        # draw actual position for ee (yellow)
+        self.env.debug_draw.point(
+            self.asset.data.body_pos_w[:, self.ee_body_id],
+            color=(1.0, 1.0, 0.0, 1.0),
+            size=10.0,
+        )
         # draw external force on desired ee (orange)
         self.env.debug_draw.vector(
             self.command_pos_ee_w,
@@ -270,6 +291,17 @@ class EEImpedance(Command):
             color=(1.0, 0.5, 0.0, 1.0),
             size=4.0,
         )
-        
-        
-        
+        # draw a point to indicate if the manipulator is compliant (green for compliant, red for non-compliant)
+        compliant_kp = self.command_kp.sum(dim=-1) == 0.0
+        self.env.debug_draw.point(
+            self.asset.data.root_pos_w[compliant_kp]
+            + torch.tensor([0.1, 0.0, 0.0], device=self.device),
+            color=(0.0, 1.0, 0.0, 1.0),
+            size=10.0,
+        )
+        self.env.debug_draw.point(
+            self.asset.data.root_pos_w[~compliant_kp]
+            + torch.tensor([0.1, 0.0, 0.0], device=self.device),
+            color=(1.0, 0.0, 0.0, 1.0),
+            size=10.0,
+        )
