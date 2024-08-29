@@ -23,7 +23,7 @@ homogeneous: false
 #   ik_method: "dls"
 #   ik_params:
 #     k_val: 1.0
-#     lambda_val: 0.05
+#     lambda_val: 0.01
 
 action:
   _target_: active_adaptation.envs.mdp.action.JointPosition

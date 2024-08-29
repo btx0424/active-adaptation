@@ -79,7 +79,7 @@ class IKResidual(ActionManager):
         if substep == 0:
             # update action buf
             action = tensordict["action"].clamp(-10, 10)
-            self.action_buf.roll(1, dims=-1)
+            self.action_buf[:] = self.action_buf.roll(1, dims=-1)
             self.action_buf[:, :, 0] = action
             delayed_action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
             self.applied_action.lerp_(delayed_action.squeeze(-1), self.alpha)

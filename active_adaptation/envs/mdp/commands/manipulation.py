@@ -231,8 +231,8 @@ class EEImpedance(Command):
 
         # update desired quantities under the current command and forces
         if not self.mix_openloop:
-            self.desired_linvel_ee_w.roll(1, 1)
-            self.desired_pos_ee_w.roll(1, 1)
+            self.desired_linvel_ee_w[:] = self.desired_linvel_ee_w.roll(1, 1)
+            self.desired_pos_ee_w[:] = self.desired_pos_ee_w.roll(1, 1)
         self.desired_linvel_ee_w[:, 0] = self.asset.data.body_lin_vel_w[
             :, self.ee_body_id
         ]
@@ -292,15 +292,14 @@ class EEImpedance(Command):
             size=4.0,
         )
         # draw a point to indicate if the manipulator is compliant (green for compliant, red for non-compliant)
-        compliant_kp = self.command_kp.sum(dim=-1) == 0.0
         self.env.debug_draw.point(
-            self.asset.data.root_pos_w[compliant_kp]
+            self.asset.data.root_pos_w[self.compliant_ee.squeeze(-1)]
             + torch.tensor([0.1, 0.0, 0.0], device=self.device),
             color=(0.0, 1.0, 0.0, 1.0),
             size=10.0,
         )
         self.env.debug_draw.point(
-            self.asset.data.root_pos_w[~compliant_kp]
+            self.asset.data.root_pos_w[~self.compliant_ee.squeeze(-1)]
             + torch.tensor([0.1, 0.0, 0.0], device=self.device),
             color=(1.0, 0.0, 0.0, 1.0),
             size=10.0,

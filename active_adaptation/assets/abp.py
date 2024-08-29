@@ -44,12 +44,12 @@ ABP_CFG = ArticulationCfg(
             effort_limit=200.0,
             velocity_limit=5.0,
             stiffness={
-                "joint[1-3]": 20.0,
-                "joint[4-6]": 15.0,
+                "joint[1-3]": 40.0,
+                "joint[4-6]": 30.0,
             },
             damping={
-                "joint[1-3]": 1.0,
-                "joint[4-6]": 0.5,
+                "joint[1-3]": 2.0,
+                "joint[4-6]": 1.0,
             },
             # stiffness=0.0,
             # damping=20.0,
