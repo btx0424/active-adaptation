@@ -229,7 +229,6 @@ class Env(EnvBase):
 
         self.use_flipping = False
         self.fliplr = torch.zeros(self.num_envs, dtype=bool, device=self.device)
-        # self.fliplr[:self.num_envs // 2] = True
 
     @property
     def action_dim(self) -> int:
@@ -254,6 +253,8 @@ class Env(EnvBase):
         self.episode_length_buf[env_ids] = 0
         for callback in self._reset_callbacks:
             callback(env_ids)
+        if self.use_flipping:
+            self.fliplr[env_ids] = torch.rand(env_ids.shape, device=self.device) < 0.5
         self.scene.update(self.step_dt)
         tensordict = TensorDict(
             self._compute_observation(), 

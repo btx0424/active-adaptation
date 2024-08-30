@@ -415,10 +415,23 @@ class joint_acc(Observation):
 
 
 class applied_torques(JointObs):
-    def __init__(self, env, actuator_name: str, noise_std: float=0.):
-        super().__init__(env, mask_ratio=0.)
-        self.asset: Articulation = self.env.scene["robot"]
+    def __init__(
+        self, 
+        env,
+        actuator_name: str,
+        left_names: str = None,
+        right_names: str = None,
+        middle_names: str = None
+    ):
+        self.asset: Articulation = env.scene["robot"]
         self.actuator = self.asset.actuators[actuator_name]
+        super().__init__(
+            env, 
+            joint_names=self.actuator.joint_names,
+            left_names=left_names,
+            right_names=right_names,
+            middle_names=middle_names
+        )
         
         self.joint_indices = self.actuator.joint_indices
         self.effort_limit = self.actuator.effort_limit
