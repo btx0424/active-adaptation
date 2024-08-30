@@ -328,8 +328,8 @@ class JointObs(Observation):
         self.asset: Articulation = self.env.scene["robot"]
         self.joint_ids, self.joint_names = self.asset.find_joints(joint_names)
         if left_names is not None:
-            self.left_joint_ids = resolve_matching_names(left_names, self.joint_names)[0]
-            self.right_joint_ids = resolve_matching_names(right_names, self.joint_names)[0]
+            self.left_joint_ids, self.left_joint_names = resolve_matching_names(left_names, self.joint_names)
+            self.right_joint_ids, self.left_joint_names = resolve_matching_names(right_names, self.joint_names)
         else:
             self.left_joint_ids = None
             self.right_joint_ids = None

@@ -6,11 +6,21 @@ task: Humanoid
 defaults:
   # see https://hydra.cc/docs/advanced/overriding_packages/
   - /task/Velocity@_here_
+  - override /task/action@action: null
   - _self_
 
 robot: cy1
 terrain: easy
 payload: false
+
+action:
+  _target_: active_adaptation.envs.mdp.action.JointPosition
+  action_scaling: { "(?![l,r]arm_joint5).*" : 0.5}
+  left_names: "l.*"
+  right_names: "r.*"
+  middle_names: "waist_yaw_joint"
+  max_delay: 1
+  alpha: [0.5, 1.0]
 
 command:
   _target_: active_adaptation.envs.mdp.Command2
@@ -27,8 +37,8 @@ observation:
     # root_quat_w:
     root_angvel_b:  {noise_std: 0.05}
     projected_gravity_b: {noise_std: 0.01}
-    joint_pos: {noise_std: 0.05}
-    joint_vel: {noise_std: 0.2}
+    joint_pos: {noise_std: 0.05, left_names: "l.*", right_names: "r.*", middle_names: "waist_yaw_joint"}
+    joint_vel: {noise_std: 0.2, left_names: "l.*", right_names: "r.*", middle_names: "waist_yaw_joint"}
     prev_actions:   {steps: 3}
     phase: {cycle_range: [1.0, 1.2], deriv: true}
   priv:
@@ -39,7 +49,7 @@ observation:
     feet_height_map:  {feet_names: .*leg_link6 }
     applied_torques:  {actuator_name: base_legs}
     contact_indicator: {body_names: [".*leg_link6"], timing: false}
-    joint_forces:     {}
+    joint_forces:     {left_names: "l.*", right_names: "r.*", middle_names: "waist_yaw_joint"}
     jacobians:        {body_names: [base_link, .*leg_link6, .*arm_link5]}
     cum_error:        {}
     # rewards:     {}
@@ -86,8 +96,8 @@ reward:
     feet_swing:         {weight: 1.1, enabled: true, feet_names: .*leg_link6}
     feet_orientation:   {weight: 0.2, enabled: true, feet_names: .*leg_link6}
     feet_step:          {weight: 1.0, enabled: true, feet_names: .*leg_link6}
-    arm_swing:          {weight: 1.0, enabled: true, arm_names: .*arm_link5}
-    joint_pos_default:  {weight: 0.1, enabled: true}
+    # arm_swing:          {weight: 1.0, enabled: true, arm_names: .*arm_link5}
+    joint_pos_default:  {weight: 0.5, enabled: true, joint_names: .*arm_joint1*}
     joint_vel_l2:       {weight: 0.002, enabled: true, joint_names: .*arm_joint.*}
     feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}
 
