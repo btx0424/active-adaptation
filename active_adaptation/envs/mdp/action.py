@@ -217,8 +217,8 @@ class JointPosition(ActionManager):
         action_flipped = action.reshape(self.num_envs, self.action_dim, -1).clone()
         left = action_flipped[:, self.left_joint_ids]
         right = action_flipped[:, self.right_joint_ids]
-        action_flipped[:, self.left_joint_ids] = left
-        action_flipped[:, self.right_joint_ids] = right
+        action_flipped[:, self.left_joint_ids] = right
+        action_flipped[:, self.right_joint_ids] = left
         if self.middle_joint_ids is not None:
             middle = action_flipped[:, self.middle_joint_ids]
             action_flipped[:, self.middle_joint_ids] = -middle

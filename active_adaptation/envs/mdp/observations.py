@@ -329,7 +329,7 @@ class JointObs(Observation):
         self.joint_ids, self.joint_names = self.asset.find_joints(joint_names)
         if left_names is not None:
             self.left_joint_ids, self.left_joint_names = resolve_matching_names(left_names, self.joint_names)
-            self.right_joint_ids, self.left_joint_names = resolve_matching_names(right_names, self.joint_names)
+            self.right_joint_ids, self.right_joint_names = resolve_matching_names(right_names, self.joint_names)
         else:
             self.left_joint_ids = None
             self.right_joint_ids = None
@@ -968,6 +968,8 @@ class applied_action(JointObs):
     def compute(self) -> torch.Tensor:
         return self.env.action_manager.applied_action
 
+    def fliplr(self, obs: torch.Tensor):
+        return self.env.action_manager.fliplr(obs)
 
 class joint_forces(JointObs):
 
