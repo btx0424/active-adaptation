@@ -357,9 +357,10 @@ class linvel_projection(Reward):
         self.linvel[:] = quat_rotate_inverse(quat, linvel_w)
     
     def compute(self) -> torch.Tensor:
-        command_linvel_b = self.env.command_manager.command_linvel[:, :self.dim]
-        command_linvel_b = command_linvel_b / command_linvel_b.norm(dim=-1, keepdim=True)
-        command_linvel_b.nan_to_num_(0.)
+        command_linvel_b: torch.Tensor = self.env.command_manager.command_linvel[:, :self.dim]
+        command_linvel_b = command_linvel_b / command_linvel_b.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+        # or
+        # command_linvel_b.nan_to_num_(nan=0., posinf=0., neginf=0.)
         projection = (self.linvel[:, :self.dim] * command_linvel_b).sum(dim=-1, keepdim=True)
         reward = projection.clamp_max(self.env.command_manager.command_speed)
         return reward.reshape(self.num_envs, 1)

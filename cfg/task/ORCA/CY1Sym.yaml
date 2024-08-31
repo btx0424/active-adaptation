@@ -25,7 +25,7 @@ action:
 
 command:
   _target_: active_adaptation.envs.mdp.Command2
-  linvel_x_range: [0., 1.25]
+  linvel_x_range: [0., 2.0]
   linvel_y_range: [-0.1, 0.1]
   angvel_range: [-1.5, 1.5]
   yaw_stiffness_range: [0.5, 0.7]
@@ -41,12 +41,12 @@ observation:
     joint_pos: {noise_std: 0.05, left_joints: "l.*", right_joints: "r.*", asym_joints: "${task.asym_joints}"}
     joint_vel: {noise_std: 0.2, left_joints: "l.*", right_joints: "r.*", asym_joints: "${task.asym_joints}"}
     prev_actions:   {steps: 3}
-    phase: {cycle_range: [1.0, 1.2], deriv: true}
+    phase: {cycle_range: [0.8, 1.0], deriv: true}
   # priv:
     applied_action:   {left_joints: "l.*", right_joints: "r.*", asym_joints: "${task.asym_joints}"}
     root_linvel_b:    {yaw_only: true}
-    # body_pos:         {body_names: [.*leg_link6, .*arm_link5], yaw_only: true}
-    # body_vel:         {body_names: [.*leg_link6, .*arm_link5], yaw_only: true}
+    body_pos:         {body_names: [.*leg_link6, .*arm_link5], yaw_only: true, left_bodies: "l(leg|arm)_link.*", right_bodies: "r(leg|arm)_link.*"}
+    body_vel:         {body_names: [.*leg_link6, .*arm_link5], yaw_only: true, left_bodies: "l(leg|arm)_link.*", right_bodies: "r(leg|arm)_link.*"}
     # feet_height_map:  {feet_names: .*leg_link6 }
     applied_torques:  {actuator_name: base_legs, left_joints: "l.*", right_joints: "r.*", asym_joints: "${task.asym_joints}"}
     # contact_indicator: {body_names: [".*leg_link6"], timing: false}
@@ -76,9 +76,9 @@ observation:
 
 reward:
   loco:
-    linvel_exp:         {weight: 1.5, enabled: true, dim: 3, yaw_only: true}
+    linvel_exp:         {weight: 1.5, enabled: true, dim: 3, yaw_only: true, gamma: 0.9}
     linacc_z_l2:        {weight: 0.005, enabled: false}
-    linvel_projection:  {weight: 1.0, enabled: true, yaw_only: true}
+    linvel_projection:  {weight: 1.0, enabled: false, yaw_only: true}
     angvel_z_exp:       {weight: 1.5, enabled: true, world_frame: true}
     angvel_z_exp_shaped: {weight: 1.0, enabled: false}
     linvel_z_l2:        {weight: 0.5, enabled: true}
@@ -94,11 +94,11 @@ reward:
     feet_air_time:      {weight: 1.0, enabled: true, body_names: .*leg_link6, thres: 0.4}
     feet_slip:          {weight: 0.5, enabled: true, body_names: .*leg_link6}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*leg_link6}
-    feet_swing:         {weight: 1.1, enabled: true, feet_names: .*leg_link6}
+    feet_swing:         {weight: 1.0, enabled: true, feet_names: .*leg_link6}
     feet_orientation:   {weight: 0.2, enabled: true, feet_names: .*leg_link6}
     feet_step:          {weight: 1.0, enabled: true, feet_names: .*leg_link6}
     # arm_swing:          {weight: 1.0, enabled: true, arm_names: .*arm_link5}
-    joint_pos_default:  {weight: 0.25, enabled: true, joint_names: ".*arm_joint[1,2]"}
+    joint_pos_default:  {weight: 0.25, enabled: true, joint_names: [".*arm_joint2", "waist_yaw_joint"]}
     joint_vel_l2:       {weight: 0.002, enabled: true, joint_names: .*arm_joint.*}
     feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}
 

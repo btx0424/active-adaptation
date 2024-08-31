@@ -125,12 +125,46 @@ class joint_vel_buffer(BufferedObs):
         self.buffer.update(self.asset.data.joint_vel, self.env.time_stamp)
 
 
-class body_pos(Observation):
-    def __init__(self, env, body_names, yaw_only: bool=False):
-        super().__init__(env)
+class CartesianObs(Observation):
+
+    def __init__(
+        self,
+        env,
+        body_names: str,
+        left_bodies: str=None,
+        right_bodies: str=None,
+        mask_ratio: float=0.
+    ):
+        super().__init__(env, mask_ratio)
         self.asset: Articulation = self.env.scene["robot"]
-        self.yaw_only = yaw_only
+
         self.body_indices, self.body_names = self.asset.find_bodies(body_names)
+
+        if left_bodies is not None:
+            self.left_ids, self.left_names = resolve_matching_names(left_bodies, self.body_names)
+            self.right_ids, self.right_names = resolve_matching_names(right_bodies, self.body_names)
+        
+    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
+        obs_flipped = obs.reshape(self.num_envs, -1, 3).clone()
+        left = obs_flipped[:, self.left_ids]
+        right = obs_flipped[:, self.right_ids]
+        fliplr = torch.tensor([1., -1., 1.], device=self.device)
+        obs_flipped[:, self.left_ids] = right * fliplr
+        obs_flipped[:, self.right_ids] = left * fliplr
+        return obs_flipped        
+
+
+class body_pos(CartesianObs):
+    def __init__(
+        self,
+        env,
+        body_names: str,
+        left_bodies: str=None,
+        right_bodies: str=None,
+        yaw_only: bool=False
+    ):
+        super().__init__(env, body_names, left_bodies, right_bodies)
+        self.yaw_only = yaw_only
         print(f"Track body pos for {self.body_names}")
         self.body_pos_b = torch.zeros(self.env.num_envs, len(self.body_indices), 3, device=self.env.device)
 
@@ -144,17 +178,22 @@ class body_pos(Observation):
         self.body_pos_b[:] = quat_rotate_inverse(quat, body_pos)
         
     def compute(self):
-        return self.body_pos_b.reshape(self.env.num_envs, -1)
+        return self.body_pos_b.reshape(self.num_envs, -1)
 
 
-class body_vel(Observation):
-    def __init__(self, env, body_names, yaw_only: bool=False):
-        super().__init__(env)
-        self.asset: Articulation = self.env.scene["robot"]
+class body_vel(CartesianObs):
+    def __init__(
+        self,
+        env,
+        body_names: str,
+        left_bodies: str=None,
+        right_bodies: str=None,
+        yaw_only: bool=False
+    ):
+        super().__init__(env, body_names, left_bodies, right_bodies)
         self.yaw_only = yaw_only
-        self.body_indices, self.body_names = self.asset.find_bodies(body_names)
         print(f"Track body vel for {self.body_names}")
-        self.body_vel_b = torch.zeros(self.env.num_envs, len(self.body_indices), 3, device=self.env.device)
+        self.body_vel_b = torch.zeros(self.num_envs, len(self.body_indices), 3, device=self.env.device)
 
     def update(self):
         if self.yaw_only:
@@ -165,7 +204,7 @@ class body_vel(Observation):
         self.body_vel_b[:] = quat_rotate_inverse(quat, body_vel_w)
         
     def compute(self):
-        return self.body_vel_b.reshape(self.env.num_envs, -1)
+        return self.body_vel_b.reshape(self.num_envs, -1)
 
 
 class body_acc(Observation):
