@@ -104,7 +104,7 @@ reward:
   all:
     # common loco rewards just for sanity check
     linvel_exp:         {weight: 1.5, enabled: false, dim: 3, yaw_only: true}
-    linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
+    linvel_projection:  {weight: 0.5, enabled: true, yaw_only: true}
     angvel_z_exp:       {weight: 1.0, enabled: false}
     # impedance pos&vel tracking
     impedance_base_pos:      {weight: 0.5, enabled: true, l: 0.05}
@@ -137,7 +137,7 @@ reward:
     com_support:        {weight: 1.0, enabled: true}
 
 termination:
-  crash: {body_names_expr: [Head.*, "base"], t_thres: 1.0, z_thres: 0.1}
+  crash: {body_names_expr: [Head.*, "base", "arm_link[1-5]", "gripper_base", "finger_(left|right)"], t_thres: 1.0, z_thres: 0.1}
   # joint_acc_exceeds: {thres: 5000}
   # cum_error: {thres: 1.0}
 

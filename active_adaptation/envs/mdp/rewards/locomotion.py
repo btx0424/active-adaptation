@@ -358,6 +358,7 @@ class linvel_projection(Reward):
     
     def compute(self) -> torch.Tensor:
         command_linvel_b = self.env.command_manager.command_linvel[:, :self.dim]
+        command_linvel_b = command_linvel_b / command_linvel_b.norm(dim=-1, keepdim=True)
         projection = (self.linvel[:, :self.dim] * command_linvel_b).sum(dim=-1, keepdim=True)
         reward = projection.clamp_max(self.env.command_manager.command_speed)
         return reward.reshape(self.num_envs, 1)
