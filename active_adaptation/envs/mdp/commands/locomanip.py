@@ -16,6 +16,18 @@ import wandb
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
 
+@batchify
+def yaw_rotate(yaw: torch.Tensor, vec: torch.Tensor):
+    yaw_cos = torch.cos(yaw).squeeze(-1)
+    yaw_sin = torch.sin(yaw).squeeze(-1)
+    return torch.stack(
+        [
+            yaw_cos * vec[:, 0] - yaw_sin * vec[:, 1],
+            yaw_sin * vec[:, 0] + yaw_cos * vec[:, 1],
+            vec[:, 2],
+        ],
+        1,
+    )
 def slerp_angle(angle1, angle2, t):
     """Spherical linear interpolation for angles."""
     delta = torch.remainder(angle2 - angle1 + torch.pi, 2 * torch.pi) - torch.pi
@@ -597,7 +609,6 @@ class CommandEEPose_Cont(Command):
         # update cum error
         ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id]
         ee_pos_error = (ee_pos_w - self.command_ee_pos_w).norm(dim=-1)
-        # print(ee_pos_error)
         
         ee_quat_w = self.asset.data.body_quat_w[:, self.ee_id]
         ee_forward_w = quat_rotate(ee_quat_w, self.fwd_vec)
@@ -1406,30 +1417,20 @@ class BaseEEImpedance(Command):
             self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
             self.xy = torch.tensor([1.0, 1.0, 0.0])
 
-    def sample_init(self, env_ids: torch.Tensor) -> torch.Tensor:
-        # TODO: disable random orietation: this is only for testing when making the robot still
-        init_root_state = self.init_root_state[env_ids]
-        if self.env.scene.terrain.cfg.terrain_type == "plane":
-            origins = self.env.scene.env_origins[env_ids]
-        else:
-            origins = self.env.scene.env_origins[
-                torch.randint(
-                    0, self.env.scene.num_envs, (len(env_ids),), device=self.device
-                )
-            ]
-        init_root_state[:, :3] += origins
-        return init_root_state
-
     def _sample_command(self, env_ids: torch.Tensor):
-        command_setpoint_pos_base_w = torch.zeros(len(env_ids), 3, device=self.device)
-        command_setpoint_pos_base_w[:, 0].uniform_(2.0, 3.0)
-        command_setpoint_pos_base_w[:, 1].uniform_(-1, 1)
+        setpoint_pos_base_radius = torch.empty(len(env_ids), 1, device=self.device).uniform_(2.0, 3.0)
+        setpoint_pos_base_yaw = torch.empty(len(env_ids), 1, device=self.device).uniform_(-torch.pi, torch.pi)
+        command_setpoint_pos_base_w = torch.cat(
+            [
+                setpoint_pos_base_radius * torch.cos(setpoint_pos_base_yaw),
+                setpoint_pos_base_radius * torch.sin(setpoint_pos_base_yaw),
+                torch.zeros(len(env_ids), 1, device=self.device),
+            ],
+            dim=1,
+        )
         self.command_setpoint_pos_base_w[env_ids] = (
             command_setpoint_pos_base_w + self.asset.data.root_pos_w[env_ids]
         )
-
-        # TODO: disable base setpoint: this is only for testing ee tracking when making the robot still
-        self.command_setpoint_pos_base_w[env_ids] = self.asset.data.root_pos_w[env_ids]
 
         # ee_yaw = torch.empty(len(env_ids), 1, device=self.device).uniform_(
         #     -torch.pi / 2, torch.pi / 2
@@ -1453,8 +1454,6 @@ class BaseEEImpedance(Command):
         self.command_setpoint_pos_ee_b[env_ids] = command_setpoint_pos_ee_b
 
         self.command_setpoint_yaw_w[env_ids] = torch.empty(len(env_ids), 1, device=self.device).uniform_(-torch.pi, torch.pi)
-        # TODO: disable yaw setpoint: this is only for testing when making the robot still
-        self.command_setpoint_yaw_w[env_ids] = self.asset.data.heading_w[env_ids, None]
 
         kp_base = torch.empty(len(env_ids), 1, device=self.device).uniform_(
             *self.kp_base_range
@@ -1535,8 +1534,6 @@ class BaseEEImpedance(Command):
             torch.rand(len(env_ids), 1, device=self.device) < self.ext_force_ratio
         )
         self.force_ext_base_w[env_ids] = force_ext_base_w * apply_force_base
-        # TODO: set force_ext_base_w to 0: this is only for testing ee tracking when making the robot still
-        self.force_ext_base_w[env_ids] = 0.0
 
         force_ext_ee_w = torch.empty(len(env_ids), 3, device=self.device).uniform_(
             -50.0, 50.0
@@ -1564,6 +1561,7 @@ class BaseEEImpedance(Command):
         coriolis_vel_ee_w = self.asset.data.root_lin_vel_w + torch.cross(
             root_ang_vel_w_only_yaw,
             pos_ee_w,
+            dim=-1,
         )
 
         self.pos_ee_b[:] = yaw_rotate(-self.asset.data.heading_w[:, None], pos_ee_w)
@@ -1579,6 +1577,8 @@ class BaseEEImpedance(Command):
         self.command_linvel_ee_w[:] = self.desired_linvel_ee_w.mean(1)
         self.command_yaw_w[:] = self.desired_yaw_w.mean(1)
         self.command_yawvel[:] = self.desired_yawvel_w.mean(1)
+
+        assert torch.all(self.command_linvel_base_w[:, 2] == 0.0)
 
         # setpoints to diff in body frame
         self.command_setpoint_pos_base_diff_b[:] = yaw_rotate(
@@ -1796,7 +1796,6 @@ class BaseEEImpedance(Command):
         )
         self._cum_error[:, 4].add_(angvel_error * self.env.step_dt).mul_(0.99)
         self._cum_error[:, 5].add_(yaw_error * self.env.step_dt).mul_(0.99)
-        # print(self._cum_error.mean(0))
 
     def update(self):
         self._compute_error()
@@ -1826,7 +1825,7 @@ class BaseEEImpedance(Command):
             self.desired_yawvel_w[:] = self.desired_yawvel_w.roll(1, dims=1)
             self.desired_yaw_w[:] = self.desired_yaw_w.roll(1, dims=1)
 
-        self.desired_linvel_base_w[:, 0] = self.asset.data.root_lin_vel_w
+        self.desired_linvel_base_w[:, 0] = self.asset.data.root_lin_vel_w * self.xy
         self.desired_pos_base_w[:, 0] = self.asset.data.root_pos_w
         self.desired_linvel_ee_w[:, 0] = self.asset.data.body_lin_vel_w[
             :, self.ee_body_id
@@ -1844,7 +1843,7 @@ class BaseEEImpedance(Command):
         command_setpoint_ee_w = self.command_pos_base_w + yaw_rotate(
             self.command_yaw_w, self.command_setpoint_pos_ee_b
         )
-        # draw vector from desired to setpoint for base, ee and setpoint direction for yaw (green)
+        # from desired to setpoint for base, ee (green)
         self.env.debug_draw.vector(
             self.command_pos_base_w,
             self.command_setpoint_pos_base_w - self.command_pos_base_w,
@@ -1856,24 +1855,38 @@ class BaseEEImpedance(Command):
             color=(0.0, 1.0, 0.0, 1.0),
         )
 
-        # draw setpoints
+        # draw setpoints (red if not compliant, blue if compliant)
         self.env.debug_draw.point(
-            self.command_setpoint_pos_base_w, color=(1.0, 0.0, 0.0, 0.5), size=40.0
+            self.command_setpoint_pos_base_w[~self.compliant_base.squeeze(-1)], color=(1.0, 0.0, 0.0, 0.5), size=40.0
         )
         self.env.debug_draw.point(
-            command_setpoint_ee_w, color=(1.0, 0.0, 0.0, 0.5), size=20.0
+            self.command_setpoint_pos_base_w[self.compliant_base.squeeze(-1)], color=(0.0, 0.0, 1.0, 0.5), size=40.0
+        )
+        self.env.debug_draw.point(
+            command_setpoint_ee_w[~self.compliant_ee.squeeze(-1)], color=(1.0, 0.0, 0.0, 0.5), size=20.0
+        )
+        self.env.debug_draw.point(
+            command_setpoint_ee_w[self.compliant_ee.squeeze(-1)], color=(0.0, 0.0, 1.0, 0.5), size=20.0
         )
         self.env.debug_draw.vector(
-            self.command_pos_base_w,
+            self.command_pos_base_w[~self.compliant_yaw.squeeze(-1)],
             yaw_rotate(
-                self.command_setpoint_yaw_w,
+                self.command_setpoint_yaw_w[~self.compliant_yaw.squeeze(-1)],
                 torch.tensor([1.0, 0.0, 0.0], device=self.device),
             ),
-            color=(0.0, 1.0, 0.0, 0.5),
+            color=(1.0, 0.0, 0.0, 0.5),
+        )
+        self.env.debug_draw.vector(
+            self.command_pos_base_w[self.compliant_yaw.squeeze(-1)],
+            yaw_rotate(
+                self.command_setpoint_yaw_w[self.compliant_yaw.squeeze(-1)],
+                torch.tensor([0.0, 0.0, 1.0], device=self.device),
+            ),
+            color=(1.0, 0.0, 0.0, 0.5),
         )
 
     def _debug_draw_desired(self):
-        # draw desired pos for base, ee and direction for yaw (green)
+        # command pos for base, ee and direction for yaw (green)
         self.env.debug_draw.point(
             self.command_pos_base_w, color=(0.0, 1.0, 0.0, 1.0), size=40.0
         )
@@ -1881,23 +1894,22 @@ class BaseEEImpedance(Command):
             self.command_pos_ee_w, color=(0.0, 1.0, 0.0, 1.0), size=20.0
         )
         self.env.debug_draw.vector(
-            self.command_pos_ee_w,
-            self.command_linvel_ee_w,
-            color=(1.0, 1.0, 1.0, 1.0),
-        )
-        self.env.debug_draw.vector(
             self.command_pos_base_w,
             yaw_rotate(
                 self.command_yaw_w,
-                torch.tensor([1.0, 0.0, 0.0], device=self.device),
+                torch.tensor([0.0, 1.0, 0.0], device=self.device),
             ),
             color=(0.0, 1.0, 0.0, 1.0),
         )
-        # commanded lin vel (white)
+        # command lin vel for base and ee (white)
         self.env.debug_draw.vector(
-            self.asset.data.root_pos_w
-            + torch.tensor([0.0, 0.0, 0.2], device=self.device),
+            self.asset.data.root_pos_w,
             self.command_linvel_base_w,
+            color=(1.0, 1.0, 1.0, 1.0),
+        )
+        self.env.debug_draw.vector(
+            self.command_pos_ee_w,
+            self.command_linvel_ee_w,
             color=(1.0, 1.0, 1.0, 1.0),
         )
         # # draw a vector from base to ee (yellow)
@@ -1906,72 +1918,10 @@ class BaseEEImpedance(Command):
         #     self.command_pos_ee_w - self.command_pos_base_w,
         #     color=(1.0, 1.0, 0.0, 1.0),
         # )
-
-    def debug_draw(self):
-        self._debug_draw_desired()
-        self._debug_draw_desired_to_setpoint()
-        return
-        # command lin vel (blue)
-        self.env.debug_draw.vector(
-            self.asset.data.root_pos_w
-            + torch.tensor([0.0, 0.0, 0.2], device=self.device),
-            self.command_linvel_base_w,
-            color=(0.0, 0.0, 1.0, 1.0),
-        )
-        # base setpoint (red)
-        self.env.debug_draw.vector(
-            self.asset.data.root_pos_w,
-            self.command_setpoint_pos_base_w - self.asset.data.root_pos_w,
-            color=(1.0, 0.0, 0.0, 1.0),
-        )
-        # ee setpoint (red)
-        self.env.debug_draw.vector(
-            self.asset.data.body_pos_w[:, self.ee_body_id],
-            self.asset.data.root_pos_w
-            + yaw_rotate(
-                # self.asset.data.heading_w[:, None],
-                self.command_yaw_w,
-                self.command_setpoint_pos_ee_b,
-            )
-            - self.asset.data.body_pos_w[:, self.ee_body_id],
-            color=(1.0, 0.0, 0.0, 1.0),
-        )
-        # yaw setpoint direction (red)
-        self.env.debug_draw.vector(
-            self.asset.data.root_pos_w,
-            yaw_rotate(
-                self.command_setpoint_yaw_w,
-                torch.tensor([[1.0, 0.0, 0.0]], device=self.device),
-            ),
-            color=(1.0, 0.0, 0.0, 1.0),
-        )
-        # base command pos (green)
-        self.env.debug_draw.vector(
-            self.asset.data.root_pos_w,
-            self.command_pos_base_w - self.asset.data.root_pos_w,
-            color=(0.0, 1.0, 0.0, 1.0),
-        )
-        # ee command pos (green)
-        self.env.debug_draw.vector(
-            self.asset.data.body_pos_w[:, self.ee_body_id],
-            self.command_pos_ee_w - self.asset.data.body_pos_w[:, self.ee_body_id],
-            color=(0.0, 1.0, 0.0, 1.0),
-        )
-        # ee command vel (green)
-        self.env.debug_draw.vector(
-            self.command_pos_ee_w,
-            self.command_linvel_ee_w,
-            color=(0.0, 1.0, 0.0, 1.0),
-        )
-        # ee spring acc (orange)
-        self.env.debug_draw.vector(
-            self.asset.data.body_pos_w[:, self.ee_body_id],
-            self.acc_spring_ee_w[:, 0],
-            color=(1.0, 0.8, 0.0, 1.0),
-            size=4.0,
-        )
+    
+    def _debug_draw_forces(self):
         # force on base (orange)
-        force_acc_base = self.force_ext_w[:, 0] / self.virtual_mass_base
+        force_acc_base = self.force_ext_base_w / self.virtual_mass_base
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w
             + yaw_rotate(self.asset.data.heading_w[:, None], self.force_base_offset_b),
@@ -1980,24 +1930,28 @@ class BaseEEImpedance(Command):
             size=2.0,
         )
         # force on ee (orange)
-        force_acc_ee = self.force_ext_w[:, 1] / self.virtual_mass_ee
+        force_acc_ee = self.force_ext_ee_w / self.virtual_mass_ee
         self.env.debug_draw.vector(
             self.asset.data.body_pos_w[:, self.ee_body_id],
             force_acc_ee,
             color=(1.0, 0.8, 0.0, 1.0),
             size=2.0,
         )
+    
+    def _debug_draw_real(self):
+        # real position for base and ee (yellow)
+        self.env.debug_draw.point(
+            self.asset.data.root_pos_w, color=(1.0, 1.0, 0.0, 1.0), size=40.0
+        )
+        self.env.debug_draw.point(
+            self.asset.data.body_pos_w[:, self.ee_body_id],
+            color=(1.0, 1.0, 0.0, 1.0),
+            size=20.0,
+        )
+    
 
-
-@batchify
-def yaw_rotate(yaw: torch.Tensor, vec: torch.Tensor):
-    yaw_cos = torch.cos(yaw).squeeze(-1)
-    yaw_sin = torch.sin(yaw).squeeze(-1)
-    return torch.stack(
-        [
-            yaw_cos * vec[:, 0] - yaw_sin * vec[:, 1],
-            yaw_sin * vec[:, 0] + yaw_cos * vec[:, 1],
-            vec[:, 2],
-        ],
-        1,
-    )
+    def debug_draw(self):
+        self._debug_draw_desired()
+        self._debug_draw_desired_to_setpoint()
+        self._debug_draw_forces()
+        self._debug_draw_real()
