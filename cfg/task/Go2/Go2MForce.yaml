@@ -35,6 +35,8 @@ command:
   _target_: active_adaptation.envs.mdp.BaseEEImpedance
   ee_name: 'gripper_base'
   ee_base_name: 'base'
+  # base_setpoint_radius_range: [0.4, 0.8]
+  base_setpoint_radius_range: [2.0, 3.0]
   kp_base_range: [0.5, 5.0]
   kp_yaw_range: [0.5, 5.0]
   kp_ee_range: [100.0, 150.0]

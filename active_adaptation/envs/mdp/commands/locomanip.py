@@ -1294,6 +1294,7 @@ class BaseEEImpedance(Command):
         env,
         ee_name: str = "arm_link06",
         ee_base_name: str = "arm_link00",
+        base_setpoint_radius_range: tuple = (2.0, 3.0),
         kp_base_range: tuple = (0.5, 5.0),
         kp_yaw_range: tuple = (0.5, 5.0),
         kp_ee_range: tuple = (100.0, 150.0),
@@ -1317,6 +1318,8 @@ class BaseEEImpedance(Command):
         self.ee_body_id = self.asset.find_bodies(ee_name)[0][0]
         self.ee_base_body_id = self.asset.find_bodies(ee_base_name)[0][0]
         self.body_ids = [self.base_body_id, self.ee_body_id]
+
+        self.base_setpoint_radius_range = base_setpoint_radius_range
 
         self.kp_base_range = kp_base_range
         self.kp_yaw_range = kp_yaw_range
@@ -1422,7 +1425,9 @@ class BaseEEImpedance(Command):
             self.xy = torch.tensor([1.0, 1.0, 0.0])
 
     def _sample_command(self, env_ids: torch.Tensor):
-        setpoint_pos_base_radius = torch.empty(len(env_ids), 1, device=self.device).uniform_(2.0, 3.0)
+        setpoint_pos_base_radius = torch.empty(len(env_ids), 1, device=self.device).uniform_(
+            *self.base_setpoint_radius_range
+        )
         setpoint_pos_base_yaw = torch.empty(len(env_ids), 1, device=self.device).uniform_(-torch.pi, torch.pi)
         command_setpoint_pos_base_w = torch.cat(
             [
