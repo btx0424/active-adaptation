@@ -44,7 +44,7 @@ class EEImpedance(Command):
         self.mix_openloop = mix_openloop
 
         with torch.device(self.device):
-            self.command = torch.zeros(self.num_envs, 9)
+            self.command = torch.zeros(self.num_envs, 10)
             self.command_hidden = torch.zeros(self.num_envs, 6)
 
             # integration
@@ -150,6 +150,7 @@ class EEImpedance(Command):
         )
         self.command[:, 3:6] = self.command_kp
         self.command[:, 6:9] = self.command_kd
+        self.command[:, 9:10] = self.virtual_mass_ee
 
         self.command_hidden[:, 0:3] = self.command_pos_ee_diff_b
         self.command_hidden[:, 3:6] = self.command_linvel_ee_b
@@ -157,6 +158,8 @@ class EEImpedance(Command):
     def reset(self, env_ids: torch.Tensor):
         self._sample_command(env_ids)
         self._sample_force(env_ids)
+
+        self._cum_error[env_ids] = 0.0
 
         self.desired_linacc_ee_w[env_ids] = 0.0
         self.desired_linvel_ee_w[env_ids] = self.asset.data.body_lin_vel_w[
@@ -174,7 +177,6 @@ class EEImpedance(Command):
             self.asset.data.body_quat_w[:, self.ee_body_id],
             self.force_ext_ee_w,
         )[:, None, :]
-        quat_rotate_inverse(self.asset.data.root_quat_w, self.force_ext_ee_w)
         torques_ee_b = self.asset._external_torque_b[:, [self.ee_body_id]].clone()
         self.asset.set_external_force_and_torque(
             forces_ee_b, torques_ee_b, [self.ee_body_id]
