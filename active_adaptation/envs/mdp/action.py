@@ -168,26 +168,27 @@ class JointPosition(ActionManager):
         env,
         joint_names: str = ".*",
         action_scaling: Dict[str, float] = 0.5,
-        left_names = None,
-        right_names = None,
-        middle_names = None,
+        left_joints = None,
+        right_joints = None,
+        asym_joints = None,
         max_delay: int = 4,
         alpha: Tuple[float, float] = (0.5, 1.0),
     ):
         super().__init__(env)
         self.joint_ids, self.joint_names, self.action_scaling = string_utils.resolve_matching_names_values(
             dict(action_scaling), self.asset.joint_names)
-        if left_names is not None:
-            self.left_joint_ids = string_utils.resolve_matching_names(left_names, self.joint_names)[0]
-            self.right_joint_ids = string_utils.resolve_matching_names(right_names, self.joint_names)[0]
+        if left_joints is not None:
+            self.left_joint_ids = string_utils.resolve_matching_names(left_joints, self.joint_names)[0]
+            self.right_joint_ids = string_utils.resolve_matching_names(right_joints, self.joint_names)[0]
             assert len(self.left_joint_ids) == len(self.right_joint_ids), "Left and right joints must have the same length."
         else:
             self.left_joint_ids = None
             self.right_joint_ids = None
-        if middle_names is not None:
-            self.middle_joint_ids = string_utils.resolve_matching_names(middle_names, self.joint_names)[0]
-        else:
-            self.middle_joint_ids = None
+        
+        self.signs = torch.ones(len(self.joint_ids), device=self.device)
+        if asym_joints is not None:
+            self.asym_joint_ids = string_utils.resolve_matching_names(asym_joints, self.joint_names)[0]
+            self.signs[self.asym_joint_ids] = -1
         
         self.action_scaling = torch.tensor(self.action_scaling, device=self.device)
         self.max_delay = max_delay
@@ -219,10 +220,7 @@ class JointPosition(ActionManager):
         right = action_flipped[:, self.right_joint_ids]
         action_flipped[:, self.left_joint_ids] = right
         action_flipped[:, self.right_joint_ids] = left
-        if self.middle_joint_ids is not None:
-            middle = action_flipped[:, self.middle_joint_ids]
-            action_flipped[:, self.middle_joint_ids] = -middle
-        return action_flipped.reshape(action.shape)
+        return (action_flipped * self.signs.unsqueeze(-1)).reshape(action.shape)
 
     def reset(self, env_ids: torch.Tensor):
         self.delay[env_ids] = torch.randint(0, self.max_delay + 1, (len(env_ids), 1), device=self.device)

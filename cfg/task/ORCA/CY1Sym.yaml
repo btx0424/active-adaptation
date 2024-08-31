@@ -1,0 +1,129 @@
+# @package task
+
+name: OrcaSym
+task: Humanoid
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/Velocity@_here_
+  - override /task/action@action: null
+  - _self_
+
+robot: cy1
+terrain: easy
+payload: false
+asym_joints: ["waist_yaw_joint", "[l,r]leg_joint6", "[l,r]arm_joint3", "[l,r]arm_joint5"]
+
+action:
+  _target_: active_adaptation.envs.mdp.action.JointPosition
+  action_scaling: { "(?![l,r]arm_joint5).*" : 0.5}
+  left_joints: "l.*"
+  right_joints: "r.*"
+  asym_joints: ["waist_yaw_joint", "[l,r]leg_joint6", "[l,r]arm_joint3"]
+  max_delay: 1
+  alpha: [0.5, 1.0]
+
+command:
+  _target_: active_adaptation.envs.mdp.Command2
+  linvel_x_range: [0., 1.25]
+  linvel_y_range: [-0.1, 0.1]
+  angvel_range: [-1.5, 1.5]
+  yaw_stiffness_range: [0.5, 0.7]
+  use_stiffness_ratio: 1.0
+  stand_prob: 0.05
+  
+observation:
+  policy:
+    command:
+    # root_quat_w:
+    root_angvel_b:  {noise_std: 0.05}
+    projected_gravity_b: {noise_std: 0.01}
+    joint_pos: {noise_std: 0.05, left_joints: "l.*", right_joints: "r.*", asym_joints: "${task.asym_joints}"}
+    joint_vel: {noise_std: 0.2, left_joints: "l.*", right_joints: "r.*", asym_joints: "${task.asym_joints}"}
+    prev_actions:   {steps: 3}
+    phase: {cycle_range: [1.0, 1.2], deriv: true}
+  # priv:
+    applied_action:   {left_joints: "l.*", right_joints: "r.*", asym_joints: "${task.asym_joints}"}
+    root_linvel_b:    {yaw_only: true}
+    # body_pos:         {body_names: [.*leg_link6, .*arm_link5], yaw_only: true}
+    # body_vel:         {body_names: [.*leg_link6, .*arm_link5], yaw_only: true}
+    # feet_height_map:  {feet_names: .*leg_link6 }
+    applied_torques:  {actuator_name: base_legs, left_joints: "l.*", right_joints: "r.*", asym_joints: "${task.asym_joints}"}
+    # contact_indicator: {body_names: [".*leg_link6"], timing: false}
+    joint_forces:     {left_joints: "l.*", right_joints: "r.*", asym_joints: "${task.asym_joints}"}
+    # jacobians:        {body_names: [base_link, .*leg_link6, .*arm_link5]}
+    cum_error:        {}
+    # rewards:     {}
+  params:
+    motor_params:     {actuator_name: "base_legs"}
+    body_materials:   {body_names: ".*leg_link6"}
+    body_mass:        {body_names: [base_link, waist_yaw_link]}
+  recon_target: # for DWL
+    root_angvel_b:
+    projected_gravity_b:
+    joint_pos:
+    joint_vel:
+    root_linvel_b:
+    feet_height_map:  {feet_names: .*leg_link6 }
+    applied_torques:  {actuator_name: base_legs}
+    joint_forces:
+  symmetry: # for symmetry reward
+    symmetry:         {arm_names: .*arm_link5, feet_names: .*leg_link6}
+  aux_target_: # for HIM
+    root_linvel_b:    {yaw_only: true}
+    root_angvel_b:    {yaw_only: true}
+    rewards:          {}
+
+reward:
+  loco:
+    linvel_exp:         {weight: 1.5, enabled: true, dim: 3, yaw_only: true}
+    linacc_z_l2:        {weight: 0.005, enabled: false}
+    linvel_projection:  {weight: 1.0, enabled: true, yaw_only: true}
+    angvel_z_exp:       {weight: 1.5, enabled: true, world_frame: true}
+    angvel_z_exp_shaped: {weight: 1.0, enabled: false}
+    linvel_z_l2:        {weight: 0.5, enabled: true}
+    angvel_xy_l2:       {weight: 0.2, enabled: true}
+    energy_l1:          {weight: 5.0e-4, enabled: true}
+    joint_acc_l2:       {weight: 1.0e-8, enabled: true}
+    joint_torques_l2:   {weight: 1.0e-5, enabled: true, joint_names: .*arm_joint.*}
+    # stand: 0.5
+    root_orientation:   {weight: 0.5, enabled: true}
+    survival:           {weight: 1.0, enabled: true}
+    action_rate_l2:     {weight: 0.02, enabled: true}
+    action_rate2_l2:    {weight: 0.01, enabled: true}
+    feet_air_time:      {weight: 1.0, enabled: true, body_names: .*leg_link6, thres: 0.4}
+    feet_slip:          {weight: 0.5, enabled: true, body_names: .*leg_link6}
+    feet_contact_count: {weight: 1.0, enabled: false, body_names: .*leg_link6}
+    feet_swing:         {weight: 1.1, enabled: true, feet_names: .*leg_link6}
+    feet_orientation:   {weight: 0.2, enabled: true, feet_names: .*leg_link6}
+    feet_step:          {weight: 1.0, enabled: true, feet_names: .*leg_link6}
+    # arm_swing:          {weight: 1.0, enabled: true, arm_names: .*arm_link5}
+    joint_pos_default:  {weight: 0.25, enabled: true, joint_names: ".*arm_joint[1,2]"}
+    joint_vel_l2:       {weight: 0.002, enabled: true, joint_names: .*arm_joint.*}
+    feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}
+
+randomization:
+  push:     {body_names: ["base_link", "waist_yaw_link"], force_range: [0.0, 0.1]}
+  perturb_body_mass:
+    .*: [0.9, 1.1]
+  perturb_body_materials:
+    body_names: ".*leg_link6"
+    static_friction_range: [0.6, 2.0]
+    dynamic_friction_range: [0.6, 2.0]
+    restitution_range: [0.0, 0.2]
+  motor_params:
+    actuator_name:    base_legs
+    stiffness_range:  [0.7, 1.0]
+    damping_range:    [0.7, 1.0]
+  reset_joint_states_uniform:
+    pos_ranges:
+      .*: [-0.3, 0.3]
+    rel: true
+  # stumble:  {body_names: ".*leg_link6", stumble_height: 0.045, friction_range: [0.4, 1.8]}
+
+termination:
+  crash: 
+    body_names_expr: ["base_link", "[l,r]arm_link4"]
+    z_thres: -0.6
+  # feet_too_close: {feet_names: ".*leg_link6", thres: 0.11}
+  cum_error: {thres: 0.9}
