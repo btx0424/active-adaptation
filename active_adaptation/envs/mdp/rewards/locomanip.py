@@ -36,6 +36,7 @@ class impedance_base_vel(Reward):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.command_manager: BaseEEImpedance = self.env.command_manager
+        self.l = l
     
     def compute(self) -> torch.Tensor:
         diff = (self.command_manager.command_linvel_base_w[:, :2] - self.asset.data.root_lin_vel_w[:, :2])
@@ -106,6 +107,7 @@ class impedance_yaw_vel(Reward):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.command_manager: BaseEEImpedance = self.env.command_manager
+        self.l = l
     
     def compute(self) -> torch.Tensor:
         diff = (self.command_manager.command_yawvel - self.asset.data.root_ang_vel_w[:, 2:3])

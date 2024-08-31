@@ -609,7 +609,6 @@ class CommandEEPose_Cont(Command):
         # update cum error
         ee_pos_w = self.asset.data.body_pos_w[:, self.ee_id]
         ee_pos_error = (ee_pos_w - self.command_ee_pos_w).norm(dim=-1)
-        # print(ee_pos_error)
         
         ee_quat_w = self.asset.data.body_quat_w[:, self.ee_id]
         ee_forward_w = quat_rotate(ee_quat_w, self.fwd_vec)
@@ -1797,7 +1796,6 @@ class BaseEEImpedance(Command):
         )
         self._cum_error[:, 4].add_(angvel_error * self.env.step_dt).mul_(0.99)
         self._cum_error[:, 5].add_(yaw_error * self.env.step_dt).mul_(0.99)
-        # print(self._cum_error.mean(0))
 
     def update(self):
         self._compute_error()
