@@ -319,24 +319,25 @@ class JointObs(Observation):
         self, 
         env,
         joint_names: str=".*", 
-        left_names = None,
-        right_names = None,
-        middle_names = None,
+        left_joints = None,
+        right_joints = None,
+        asym_joints = None,
         mask_ratio: float = 0
     ):
         super().__init__(env, mask_ratio)
         self.asset: Articulation = self.env.scene["robot"]
         self.joint_ids, self.joint_names = self.asset.find_joints(joint_names)
-        if left_names is not None:
-            self.left_joint_ids, self.left_joint_names = resolve_matching_names(left_names, self.joint_names)
-            self.right_joint_ids, self.right_joint_names = resolve_matching_names(right_names, self.joint_names)
+        if left_joints is not None:
+            self.left_joint_ids, self.left_joint_names = resolve_matching_names(left_joints, self.joint_names)
+            self.right_joint_ids, self.right_joint_names = resolve_matching_names(right_joints, self.joint_names)
         else:
             self.left_joint_ids = None
             self.right_joint_ids = None
-        if middle_names is not None:
-            self.middle_joint_ids = resolve_matching_names(middle_names, self.joint_names)[0]
-        else:
-            self.middle_joint_ids = None
+        self.signs = torch.ones(len(self.joint_ids), device=self.device)
+        
+        if asym_joints is not None:
+            self.asym_joint_ids = resolve_matching_names(asym_joints, self.joint_names)[0]
+            self.signs[self.asym_joint_ids] = -1.
 
     def fliplr(self, obs: torch.Tensor):
         if self.left_joint_ids is None and self.middle_joint_ids is None:
@@ -345,10 +346,7 @@ class JointObs(Observation):
         if self.left_joint_ids is not None:
             obs_flipped[:, self.left_joint_ids] = obs[:, self.right_joint_ids]
             obs_flipped[:, self.right_joint_ids] = obs[:, self.left_joint_ids]
-        if self.middle_joint_ids is not None:
-            middle = obs[:, self.middle_joint_ids]
-            obs_flipped[:, self.middle_joint_ids] = -middle
-        return obs_flipped
+        return obs_flipped * self.signs
 
 
 class joint_pos(JointObs):
@@ -356,12 +354,12 @@ class joint_pos(JointObs):
         self, 
         env, 
         joint_names: str=".*",
-        left_names = None,
-        right_names = None,
-        middle_names = None,
+        left_joints = None,
+        right_joints = None,
+        asym_joints = None,
         noise_std: float=0.0,
     ):
-        super().__init__(env, joint_names, left_names, right_names, middle_names)
+        super().__init__(env, joint_names, left_joints, right_joints, asym_joints)
         self.noise_std = noise_std
 
     def compute(self) -> torch.Tensor:
@@ -373,12 +371,12 @@ class joint_vel(JointObs):
         self,
         env,
         joint_names: str=".*",
-        left_names = None,
-        right_names = None,
-        middle_names = None,
+        left_joints = None,
+        right_joints = None,
+        asym_joints = None,
         noise_std: float=0.0
     ):
-        super().__init__(env, joint_names, left_names, right_names, middle_names)
+        super().__init__(env, joint_names, left_joints, right_joints, asym_joints)
         self.noise_std = noise_std
     
     def compute(self) -> torch.Tensor:
@@ -419,18 +417,18 @@ class applied_torques(JointObs):
         self, 
         env,
         actuator_name: str,
-        left_names: str = None,
-        right_names: str = None,
-        middle_names: str = None
+        left_joints: str = None,
+        right_joints: str = None,
+        asym_joints: str = None
     ):
         self.asset: Articulation = env.scene["robot"]
         self.actuator = self.asset.actuators[actuator_name]
         super().__init__(
             env, 
             joint_names=self.actuator.joint_names,
-            left_names=left_names,
-            right_names=right_names,
-            middle_names=middle_names
+            left_joints=left_joints,
+            right_joints=right_joints,
+            asym_joints=asym_joints
         )
         
         self.joint_indices = self.actuator.joint_indices
