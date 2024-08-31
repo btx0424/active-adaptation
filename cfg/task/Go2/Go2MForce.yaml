@@ -48,7 +48,9 @@ command:
   compliant_ratio: 0.2
   ext_force_ratio: 0.5
   future: 3
-  mix_openloop: false
+  mix_openloop_base: true
+  mix_openloop_ee: false
+  mix_openloop_yaw: true
 
 observation:
   command:

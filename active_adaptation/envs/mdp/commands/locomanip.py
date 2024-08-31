@@ -1307,7 +1307,9 @@ class BaseEEImpedance(Command):
         compliant_ratio: float = 0.2,
         ext_force_ratio: float = 0.5,
         future: int = 3,
-        mix_openloop: bool = False,
+        mix_openloop_base: bool = True,
+        mix_openloop_ee: bool = False,
+        mix_openloop_yaw: bool = True,
     ) -> None:
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
@@ -1332,7 +1334,9 @@ class BaseEEImpedance(Command):
 
         self.resample_prob = 0.005
         self.future = future
-        self.mix_openloop = mix_openloop
+        self.mix_openloop_base = mix_openloop_base
+        self.mix_openloop_ee = mix_openloop_ee
+        self.mix_openloop_yaw = mix_openloop_yaw
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 15)
@@ -1815,13 +1819,15 @@ class BaseEEImpedance(Command):
         if len(sample_force):
             self._sample_force(sample_force)
 
-        if not self.mix_openloop:
+        if not self.mix_openloop_base:
             self.desired_linvel_base_w[:] = self.desired_linvel_base_w.roll(1, dims=1)
             self.desired_pos_base_w[:] = self.desired_pos_base_w.roll(1, dims=1)
 
+        if not self.mix_openloop_ee:
             self.desired_linvel_ee_w[:] = self.desired_linvel_ee_w.roll(1, dims=1)
             self.desired_pos_ee_w[:] = self.desired_pos_ee_w.roll(1, dims=1)
 
+        if not self.mix_openloop_yaw:
             self.desired_yawvel_w[:] = self.desired_yawvel_w.roll(1, dims=1)
             self.desired_yaw_w[:] = self.desired_yaw_w.roll(1, dims=1)
 
@@ -1840,6 +1846,9 @@ class BaseEEImpedance(Command):
         self._update_command()
 
     def _debug_draw_desired_to_setpoint(self):
+        command_pos_ee_w = self.asset.data.root_pos_w + yaw_rotate(
+            self.asset.data.heading_w[:, None], self.command_pos_ee_b
+        )
         command_setpoint_ee_w = self.command_pos_base_w + yaw_rotate(
             self.command_yaw_w, self.command_setpoint_pos_ee_b
         )
@@ -1850,8 +1859,8 @@ class BaseEEImpedance(Command):
             color=(0.0, 1.0, 0.0, 1.0),
         )
         self.env.debug_draw.vector(
-            self.command_pos_ee_w,
-            command_setpoint_ee_w - self.command_pos_ee_w,
+            command_pos_ee_w,
+            command_setpoint_ee_w - command_pos_ee_w,
             color=(0.0, 1.0, 0.0, 1.0),
         )
 
@@ -1890,25 +1899,30 @@ class BaseEEImpedance(Command):
         self.env.debug_draw.point(
             self.command_pos_base_w, color=(0.0, 1.0, 0.0, 1.0), size=40.0
         )
+        command_pos_ee_w = self.asset.data.root_pos_w + yaw_rotate(
+            self.asset.data.heading_w[:, None], self.command_pos_ee_b
+        )
         self.env.debug_draw.point(
-            self.command_pos_ee_w, color=(0.0, 1.0, 0.0, 1.0), size=20.0
+            command_pos_ee_w, color=(0.0, 1.0, 0.0, 1.0), size=20.0
         )
         self.env.debug_draw.vector(
             self.command_pos_base_w,
             yaw_rotate(
                 self.command_yaw_w,
-                torch.tensor([0.0, 1.0, 0.0], device=self.device),
+                torch.tensor([1.0, 0.0, 0.0], device=self.device),
             ),
             color=(0.0, 1.0, 0.0, 1.0),
         )
         # command lin vel for base and ee (white)
         self.env.debug_draw.vector(
-            self.asset.data.root_pos_w,
+            self.asset.data.root_pos_w +
+            torch.tensor([0.0, 0.0, 0.2], device=self.device),
             self.command_linvel_base_w,
             color=(1.0, 1.0, 1.0, 1.0),
+            size=2.0,
         )
         self.env.debug_draw.vector(
-            self.command_pos_ee_w,
+            command_pos_ee_w,
             self.command_linvel_ee_w,
             color=(1.0, 1.0, 1.0, 1.0),
         )
@@ -1927,7 +1941,7 @@ class BaseEEImpedance(Command):
             + yaw_rotate(self.asset.data.heading_w[:, None], self.force_base_offset_b),
             force_acc_base,
             color=(1.0, 0.8, 0.0, 1.0),
-            size=2.0,
+            size=4.0,
         )
         # force on ee (orange)
         force_acc_ee = self.force_ext_ee_w / self.virtual_mass_ee
@@ -1935,7 +1949,7 @@ class BaseEEImpedance(Command):
             self.asset.data.body_pos_w[:, self.ee_body_id],
             force_acc_ee,
             color=(1.0, 0.8, 0.0, 1.0),
-            size=2.0,
+            size=4.0,
         )
     
     def _debug_draw_real(self):
