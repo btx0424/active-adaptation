@@ -122,7 +122,9 @@ class ee_forward(Reward):
         self.fwd_vec = torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
     
     def compute(self) -> torch.Tensor:
-        fwd = quat_rotate(self.asset.data.body_quat_w[:, self.command_manager.ee_body_id], self.fwd_vec)
-        diff = fwd - self.fwd_vec
+        ee_fwd_w = quat_rotate(self.asset.data.body_quat_w[:, self.command_manager.ee_body_id], self.fwd_vec)
+        body_fwd_w = quat_rotate(self.asset.data.body_quat_w, self.fwd_vec)
+
+        diff = body_fwd_w - self.fwd_vec
         r = - diff.norm(dim=-1, keepdim=True)
         return r
