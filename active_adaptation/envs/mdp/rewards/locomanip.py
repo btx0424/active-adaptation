@@ -1,7 +1,7 @@
 import torch
 
 from omni.isaac.lab.assets import Articulation
-from omni.isaac.lab.utils.math import wrap_to_pi
+from omni.isaac.lab.utils.math import wrap_to_pi, quat_rotate
 from active_adaptation.utils.helpers import batchify
 from ..commands import BaseEEImpedance
 from .locomotion import Reward
@@ -112,4 +112,17 @@ class impedance_yaw_vel(Reward):
     def compute(self) -> torch.Tensor:
         diff = (self.command_manager.command_yawvel - self.asset.data.root_ang_vel_w[:, 2:3])
         r = torch.exp(- diff.abs() / self.l)
+        return r
+
+class ee_forward(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.command_manager: BaseEEImpedance = self.env.command_manager
+        self.fwd_vec = torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
+    
+    def compute(self) -> torch.Tensor:
+        fwd = quat_rotate(self.asset.data.body_quat_w[:, self.command_manager.ee_body_id], self.fwd_vec)
+        diff = fwd - self.fwd_vec
+        r = - diff.norm(dim=-1, keepdim=True)
         return r
