@@ -90,6 +90,17 @@ UNITREE_GO2ARX_CFG.actuators["arm"] = DCMotorCfg(
 # UNITREE_GO2ABP_CFG.init_state.joint_pos["joint2"] = -0.3
 # UNITREE_GO2ABP_CFG.init_state.joint_pos["joint3"] = 0.3
 
+UNITREE_ALIENGO_A1_CFG = copy.deepcopy(UNITREE_GO2_CFG)
+UNITREE_ALIENGO_A1_CFG.spawn.usd_path = f"{ASSET_PATH}/Aliengo/aliengo_a1.usd"
+UNITREE_ALIENGO_A1_CFG.init_state.pos = (0., 0., 0.35)
+UNITREE_ALIENGO_A1_CFG.actuators["arm"] = DCMotorCfg(
+    joint_names_expr=["arm_joint.*"],
+    effort_limit=44,
+    saturation_effort=44,
+    velocity_limit=10.,
+    stiffness=20.,
+    damping=1.0
+)
 
 CYBERDOG_CFG = copy.deepcopy(UNITREE_A1_CFG)
 CYBERDOG_CFG.spawn.usd_path = f"{ASSET_PATH}/cyberdog2_v3.usd"
