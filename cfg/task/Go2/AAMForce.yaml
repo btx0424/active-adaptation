@@ -119,7 +119,7 @@ reward:
     ee_angvel_penalty:  {weight: 0.01, enabled: true, ee_name: 'arm_link6'}
     angvel_xy_l2:       {weight: 0.08, enabled: true}
     linvel_z_l2:        {weight: 2.0, enabled: true}
-    base_height_l1:     {weight: 2.0, enabled: true, target_height: 0.35}
+    base_height_l1:     {weight: 2.0, enabled: true, target_height: 0.4}
     energy_l1:          {weight: 0.0006, enabled: true}
     energy_dist_lr:     {weight: 0.0002, enabled: false}
     # energy_dist_fb:     {weight: 0.0002, enabled: false}
