@@ -98,10 +98,9 @@ UNITREE_ALIENGO_A1_CFG.init_state.joint_pos = {
     ".*thigh_joint": 0.8,
     ".*calf_joint": -1.5,
 }
-UNITREE_ALIENGO_A1_CFG.actuators["arm"] = DCMotorCfg(
-    joint_names_expr=["arm_joint.*"],
-    effort_limit=44,
-    saturation_effort=44,
+UNITREE_ALIENGO_A1_CFG.actuators["arm"] = ImplicitActuatorCfg(
+    joint_names_expr=["(arm_joint.*|gripper.*)"],
+    effort_limit=100,
     velocity_limit=10.,
     stiffness=20.,
     damping=1.0
