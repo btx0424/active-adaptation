@@ -1385,7 +1385,8 @@ class BaseEEImpedance(Command):
 
             self.command_yaw_w = torch.zeros(self.num_envs, 1)
             self.command_yaw_diff = torch.zeros(self.num_envs, 1)
-            self.command_yawvel = torch.zeros(self.num_envs, 1)
+            self.command_angvel_w = torch.zeros(self.num_envs, 3)
+            self.command_yawvel = self.command_angvel_w[:, 2:3]
 
             # for reward computation (legacy)
             self.command_linvel = self.command_linvel_base_b
@@ -1611,13 +1612,18 @@ class BaseEEImpedance(Command):
         )
         self.command_speed[:] = self.command_linvel_base_w.norm(dim=-1, keepdim=True)
 
+        des_coriolis_vel_ee_w = self.command_linvel_base_w + torch.cross(
+            self.command_angvel_w,
+            self.command_pos_ee_w - self.command_pos_base_w, 
+            dim=-1,
+        )
         self.command_pos_ee_b[:] = yaw_rotate(
-            -self.asset.data.heading_w[:, None],
-            self.command_pos_ee_w - self.asset.data.root_pos_w,
+            -self.command_yaw_w,
+            self.command_pos_ee_w - self.command_pos_base_w,
         )
         self.command_linvel_ee_b[:] = yaw_rotate(
-            -self.asset.data.heading_w[:, None],
-            self.command_linvel_ee_w - coriolis_vel_ee_w,
+            -self.command_yaw_w,
+            self.command_linvel_ee_w - des_coriolis_vel_ee_w,
         )
         self.command_pos_ee_diff_b[:] = self.command_pos_ee_b - self.pos_ee_b
 
@@ -1850,68 +1856,26 @@ class BaseEEImpedance(Command):
 
         self._update_command()
 
+    """
+    --------------------------------------------------------------------------------
+    |   setpoint_pos_ee_b --> desired_ee_pos_w --|--> desired_ee_pos_b --> reward  |
+    | + desired_base_.*                          |  + real_base_pos                |
+    ------------- physics integration ------------------ reward computation --------
+    
+    we visualize the first part to verify the correctness of physic model
+    visualize the second part to verify the correctness of reward computation, to check whether the policy is learning the correct behavior
+    
+    """
     def _debug_draw_desired_to_setpoint(self):
-        command_pos_ee_w = self.asset.data.root_pos_w + yaw_rotate(
-            self.asset.data.heading_w[:, None], self.command_pos_ee_b
-        )
-        command_setpoint_ee_w = self.command_pos_base_w + yaw_rotate(
-            self.command_yaw_w, self.command_setpoint_pos_ee_b
-        )
-        # from desired to setpoint for base, ee (green)
-        self.env.debug_draw.vector(
-            self.command_pos_base_w,
-            self.command_setpoint_pos_base_w - self.command_pos_base_w,
-            color=(0.0, 1.0, 0.0, 1.0),
-        )
-        self.env.debug_draw.vector(
-            command_pos_ee_w,
-            command_setpoint_ee_w - command_pos_ee_w,
-            color=(0.0, 1.0, 0.0, 1.0),
-        )
-
-        # draw setpoints (red if not compliant, blue if compliant)
-        self.env.debug_draw.point(
-            self.command_setpoint_pos_base_w[~self.compliant_base.squeeze(-1)], color=(1.0, 0.0, 0.0, 0.5), size=40.0
-        )
-        self.env.debug_draw.point(
-            self.command_setpoint_pos_base_w[self.compliant_base.squeeze(-1)], color=(0.0, 0.0, 1.0, 0.5), size=40.0
-        )
-        self.env.debug_draw.point(
-            command_setpoint_ee_w[~self.compliant_ee.squeeze(-1)], color=(1.0, 0.0, 0.0, 0.5), size=20.0
-        )
-        self.env.debug_draw.point(
-            command_setpoint_ee_w[self.compliant_ee.squeeze(-1)], color=(0.0, 0.0, 1.0, 0.5), size=20.0
-        )
-        self.env.debug_draw.vector(
-            self.command_pos_base_w[~self.compliant_yaw.squeeze(-1)],
-            yaw_rotate(
-                self.command_setpoint_yaw_w[~self.compliant_yaw.squeeze(-1)],
-                torch.tensor([1.0, 0.0, 0.0], device=self.device),
-            ),
-            color=(1.0, 0.0, 0.0, 0.5),
-        )
-        self.env.debug_draw.vector(
-            self.command_pos_base_w[self.compliant_yaw.squeeze(-1)],
-            yaw_rotate(
-                self.command_setpoint_yaw_w[self.compliant_yaw.squeeze(-1)],
-                torch.tensor([0.0, 0.0, 1.0], device=self.device),
-            ),
-            color=(1.0, 0.0, 0.0, 0.5),
-        )
-
-    def _debug_draw_desired(self):
         # command pos for base, ee and direction for yaw (green)
         self.env.debug_draw.point(
             self.command_pos_base_w, color=(0.0, 1.0, 0.0, 1.0), size=40.0
         )
-        command_pos_ee_w = self.asset.data.root_pos_w + yaw_rotate(
-            self.asset.data.heading_w[:, None], self.command_pos_ee_b
-        )
         self.env.debug_draw.point(
-            command_pos_ee_w, color=(0.0, 1.0, 0.0, 1.0), size=20.0
+            self.command_pos_ee_w, color=(0.0, 1.0, 0.0, 1.0), size=20.0
         )
         self.env.debug_draw.vector(
-            self.command_pos_base_w,
+            self.asset.data.root_pos_w,
             yaw_rotate(
                 self.command_yaw_w,
                 torch.tensor([1.0, 0.0, 0.0], device=self.device),
@@ -1927,17 +1891,94 @@ class BaseEEImpedance(Command):
             size=2.0,
         )
         self.env.debug_draw.vector(
-            command_pos_ee_w,
+            self.command_pos_ee_w,
             self.command_linvel_ee_w,
             color=(1.0, 1.0, 1.0, 1.0),
         )
-        # # draw a vector from base to ee (yellow)
-        # self.env.debug_draw.vector(
-        #     self.command_pos_base_w,
-        #     self.command_pos_ee_w - self.command_pos_base_w,
-        #     color=(1.0, 1.0, 0.0, 1.0),
-        # )
     
+        command_setpoint_ee_w = self.command_pos_base_w + yaw_rotate(
+            self.command_yaw_w, self.command_setpoint_pos_ee_b
+        )
+        # from desired to setpoint for base, ee (green)
+        self.env.debug_draw.vector(
+            self.command_pos_base_w,
+            self.command_setpoint_pos_base_w - self.command_pos_base_w,
+            color=(0.0, 1.0, 0.0, 1.0),
+        )
+        self.env.debug_draw.vector(
+            self.command_pos_ee_w,
+            command_setpoint_ee_w - self.command_pos_ee_w,
+            color=(0.0, 1.0, 0.0, 1.0),
+        )
+        
+        # draw setpoints (red if not compliant, blue if compliant)
+        self.env.debug_draw.point(
+            self.command_setpoint_pos_base_w[~self.compliant_base.squeeze(-1)], color=(1.0, 0.0, 0.0, 0.5), size=40.0
+        )
+        self.env.debug_draw.point(
+            self.command_setpoint_pos_base_w[self.compliant_base.squeeze(-1)], color=(0.0, 0.0, 1.0, 0.5), size=40.0
+        )
+        self.env.debug_draw.point(
+            command_setpoint_ee_w[~self.compliant_ee.squeeze(-1)], color=(1.0, 0.0, 0.0, 0.5), size=20.0
+        )
+        self.env.debug_draw.point(
+            command_setpoint_ee_w[self.compliant_ee.squeeze(-1)], color=(0.0, 0.0, 1.0, 0.5), size=20.0
+        )
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w[~self.compliant_yaw.squeeze(-1)],
+            yaw_rotate(
+                self.command_setpoint_yaw_w[~self.compliant_yaw.squeeze(-1)],
+                torch.tensor([1.0, 0.0, 0.0], device=self.device),
+            ),
+            color=(1.0, 0.0, 0.0, 0.5),
+        )
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w[self.compliant_yaw.squeeze(-1)],
+            yaw_rotate(
+                self.command_setpoint_yaw_w[self.compliant_yaw.squeeze(-1)],
+                torch.tensor([0.0, 0.0, 1.0], device=self.device),
+            ),
+            color=(0.0, 0.0, 1.0, 0.5),
+        )
+
+    def _debug_draw_real_to_desired(self):
+        # real position for base and ee and real heading vector (yellow)
+        self.env.debug_draw.point(
+            self.asset.data.root_pos_w, color=(1.0, 1.0, 0.0, 1.0), size=40.0
+        )
+        self.env.debug_draw.point(
+            self.asset.data.body_pos_w[:, self.ee_body_id],
+            color=(1.0, 1.0, 0.0, 1.0),
+            size=20.0,
+        )
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            yaw_rotate(
+                self.asset.data.heading_w[:, None],
+                torch.tensor([1.0, 0.0, 0.0], device=self.device),
+            ),
+            color=(1.0, 1.0, 0.0, 1.0),
+        )
+
+        command_pos_ee_w_rew = self.asset.data.root_pos_w + yaw_rotate(
+            self.asset.data.heading_w[:, None], self.command_pos_ee_b
+        )
+        # desire pos rew for ee (green)
+        self.env.debug_draw.point(
+            command_pos_ee_w_rew, color=(0.0, 1.0, 0.0, 1.0), size=20.0
+        )
+        # from real to desired for base, ee (yellow)
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            self.command_pos_base_w - self.asset.data.root_pos_w,
+            color=(1.0, 1.0, 0.0, 1.0),
+        )
+        self.env.debug_draw.vector(
+            self.asset.data.body_pos_w[:, self.ee_body_id],
+            command_pos_ee_w_rew - self.asset.data.body_pos_w[:, self.ee_body_id],
+            color=(1.0, 1.0, 0.0, 1.0),
+        )
+
     def _debug_draw_forces(self):
         # force on base (orange)
         force_acc_base = self.force_ext_base_w / self.virtual_mass_base
@@ -1957,20 +1998,7 @@ class BaseEEImpedance(Command):
             size=4.0,
         )
     
-    def _debug_draw_real(self):
-        # real position for base and ee (yellow)
-        self.env.debug_draw.point(
-            self.asset.data.root_pos_w, color=(1.0, 1.0, 0.0, 1.0), size=40.0
-        )
-        self.env.debug_draw.point(
-            self.asset.data.body_pos_w[:, self.ee_body_id],
-            color=(1.0, 1.0, 0.0, 1.0),
-            size=20.0,
-        )
-    
-
     def debug_draw(self):
-        self._debug_draw_desired()
         self._debug_draw_desired_to_setpoint()
+        self._debug_draw_real_to_desired()
         self._debug_draw_forces()
-        self._debug_draw_real()

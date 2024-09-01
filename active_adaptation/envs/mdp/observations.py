@@ -140,7 +140,7 @@ class CartesianObs(Observation):
 
         self.body_indices, self.body_names = self.asset.find_bodies(body_names)
 
-        if left_bodies is not None:
+        if left_bodies is not None and left_bodies is not False:
             self.left_ids, self.left_names = resolve_matching_names(left_bodies, self.body_names)
             self.right_ids, self.right_names = resolve_matching_names(right_bodies, self.body_names)
         
