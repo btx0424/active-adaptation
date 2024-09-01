@@ -49,10 +49,10 @@ command:
   max_force_acc_ee: 20.0
   compliant_ratio: 0.2
   ext_force_ratio: 0.5
-  future: 3
-  mix_openloop_base: true
+  future: 5
+  mix_openloop_base: false
   mix_openloop_ee: false
-  mix_openloop_yaw: true
+  mix_openloop_yaw: false
 
 observation:
   command:

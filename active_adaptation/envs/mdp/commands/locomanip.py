@@ -1561,6 +1561,77 @@ class BaseEEImpedance(Command):
         force_base_offset_b[:, 1].uniform_(-0.2, 0.2)
         self.force_base_offset_b[env_ids] = force_base_offset_b
 
+    def _integrate(self):
+        kp_base = self.kp_base.unsqueeze(1)
+        kd_base = self.kd_base.unsqueeze(1)
+        base_pos_diff = (
+            self.command_setpoint_pos_base_w.unsqueeze(1) - self.desired_pos_base_w
+        )
+        base_vel_diff = 0.0 - self.desired_linvel_base_w
+        self.acc_spring_base_w[:] = kp_base * base_pos_diff + kd_base * base_vel_diff
+
+        ee_setpoint_to_base_w = yaw_rotate(
+            self.desired_yaw_w, self.command_setpoint_pos_ee_b[:, None, :]
+        )
+        ee_setpoint_vel_w = self.desired_linvel_base_w + torch.cross(
+            self.desired_angvel_w, ee_setpoint_to_base_w, dim=-1
+        )
+        kp_ee = self.kp_ee.unsqueeze(1)
+        kd_ee = self.kd_ee.unsqueeze(1)
+        ee_pos_diff = (
+            ee_setpoint_to_base_w + self.desired_pos_base_w - self.desired_pos_ee_w
+        )
+        ee_vel_diff = ee_setpoint_vel_w - self.desired_linvel_ee_w
+        self.acc_spring_ee_w[:] = kp_ee * ee_pos_diff + kd_ee * ee_vel_diff
+
+        desired_linacc_base_w = (
+            self.acc_spring_base_w
+            - self.acc_spring_ee_w
+            * (self.virtual_mass_ee / self.virtual_mass_base).unsqueeze(1)
+            + (self.force_ext_base_w / self.virtual_mass_base)[:, None, :]
+        )
+        desired_lin_acc_ee_w = (
+            self.acc_spring_ee_w
+            + (self.force_ext_ee_w / self.virtual_mass_ee)[:, None, :]
+        )
+
+        self.desired_linacc_base_w[:] = desired_linacc_base_w * self.xy
+        self.desired_linvel_base_w.add_(
+            self.desired_linacc_base_w * self.env.physics_dt
+        )
+        self.desired_pos_base_w.add_(self.desired_linvel_base_w * self.env.physics_dt)
+
+        self.desired_lin_acc_ee_w[:] = desired_lin_acc_ee_w
+        self.desired_linvel_ee_w.add_(self.desired_lin_acc_ee_w * self.env.physics_dt)
+        self.desired_pos_ee_w.add_(self.desired_linvel_ee_w * self.env.physics_dt)
+
+        kp_yaw = self.kp_yaw.unsqueeze(1)
+        kd_yaw = self.kd_yaw.unsqueeze(1)
+        yaw_diff = wrap_to_pi(self.command_setpoint_yaw_w.unsqueeze(1) - self.desired_yaw_w)
+        yaw_vel_diff = 0.0 - self.desired_yawvel_w
+        self.acc_spring_yaw_w[:] = kp_yaw * yaw_diff + kd_yaw * yaw_vel_diff
+
+        force_ext_offset_w = yaw_rotate(
+            self.desired_yaw_w, self.force_base_offset_b[:, None, :]
+        )  # [n, t, 3]
+        torque_ext_z = torch.cross(
+            force_ext_offset_w, self.force_ext_base_w[:, None, :], dim=-1
+        )[:, :, 2:3]
+        torque_int_z = torch.cross(
+            ee_setpoint_to_base_w,
+            -self.virtual_mass_ee[:, None, :] * self.acc_spring_ee_w,
+            dim=-1,
+        )[:, :, 2:3]
+        torque_z = torque_ext_z + torque_int_z
+
+        desired_yaw_acc_w = self.acc_spring_yaw_w + (
+            torque_z / self.virtual_inertia_z[:, None, :]
+        )
+
+        self.desired_yawacc_w[:] = desired_yaw_acc_w
+        self.desired_yawvel_w.add_(self.desired_yawacc_w * self.env.physics_dt)
+        self.desired_yaw_w.add_(self.desired_yawvel_w * self.env.physics_dt)
+
     def _update_command(self):
         # update body frame quantities
         pos_ee_w = (
@@ -1568,7 +1639,7 @@ class BaseEEImpedance(Command):
         )
         root_ang_vel_w_only_yaw = self.asset.data.root_ang_vel_w.clone()
         root_ang_vel_w_only_yaw[:, :2] = 0.0
-        coriolis_vel_ee_w = self.asset.data.root_lin_vel_w + torch.cross(
+        coriolis_vel_ee_w = self.asset.data.root_lin_vel_w * self.xy + torch.cross(
             root_ang_vel_w_only_yaw,
             pos_ee_w,
             dim=-1,
@@ -1682,6 +1753,11 @@ class BaseEEImpedance(Command):
         ]
         self.desired_yaw_w[env_ids] = self.asset.data.heading_w[env_ids, None, None]
 
+        for _ in range(int(self.env.step_dt / self.env.physics_dt)):
+            self._integrate()
+
+        # now that we get the desired quantities at next time step, 
+        # we update command to inform the agent the desired behavior
         self._update_command()
 
     def step(self, substep: int):
@@ -1713,77 +1789,6 @@ class BaseEEImpedance(Command):
         self.asset.set_external_force_and_torque(
             forces_ee_b, torques_ee_b, self.ee_body_id
         )
-
-    def _integrate(self):
-        kp_base = self.kp_base.unsqueeze(1)
-        kd_base = self.kd_base.unsqueeze(1)
-        base_pos_diff = (
-            self.command_setpoint_pos_base_w.unsqueeze(1) - self.desired_pos_base_w
-        )
-        base_vel_diff = 0.0 - self.desired_linvel_base_w
-        self.acc_spring_base_w[:] = kp_base * base_pos_diff + kd_base * base_vel_diff
-
-        ee_setpoint_to_base_w = yaw_rotate(
-            self.desired_yaw_w, self.command_setpoint_pos_ee_b[:, None, :]
-        )
-        ee_setpoint_vel_w = self.desired_linvel_base_w + torch.cross(
-            self.desired_angvel_w, ee_setpoint_to_base_w, dim=-1
-        )
-        kp_ee = self.kp_ee.unsqueeze(1)
-        kd_ee = self.kd_ee.unsqueeze(1)
-        ee_pos_diff = (
-            ee_setpoint_to_base_w + self.desired_pos_base_w - self.desired_pos_ee_w
-        )
-        ee_vel_diff = ee_setpoint_vel_w - self.desired_linvel_ee_w
-        self.acc_spring_ee_w[:] = kp_ee * ee_pos_diff + kd_ee * ee_vel_diff
-
-        desired_linacc_base_w = (
-            self.acc_spring_base_w
-            - self.acc_spring_ee_w
-            * (self.virtual_mass_ee / self.virtual_mass_base).unsqueeze(1)
-            + (self.force_ext_base_w / self.virtual_mass_base)[:, None, :]
-        )
-        desired_lin_acc_ee_w = (
-            self.acc_spring_ee_w
-            + (self.force_ext_ee_w / self.virtual_mass_ee)[:, None, :]
-        )
-
-        self.desired_linacc_base_w[:] = desired_linacc_base_w * self.xy
-        self.desired_linvel_base_w.add_(
-            self.desired_linacc_base_w * self.env.physics_dt
-        )
-        self.desired_pos_base_w.add_(self.desired_linvel_base_w * self.env.physics_dt)
-
-        self.desired_lin_acc_ee_w[:] = desired_lin_acc_ee_w
-        self.desired_linvel_ee_w.add_(self.desired_lin_acc_ee_w * self.env.physics_dt)
-        self.desired_pos_ee_w.add_(self.desired_linvel_ee_w * self.env.physics_dt)
-
-        kp_yaw = self.kp_yaw.unsqueeze(1)
-        kd_yaw = self.kd_yaw.unsqueeze(1)
-        yaw_diff = wrap_to_pi(self.command_setpoint_yaw_w.unsqueeze(1) - self.desired_yaw_w)
-        yaw_vel_diff = 0.0 - self.desired_yawvel_w
-        self.acc_spring_yaw_w[:] = kp_yaw * yaw_diff + kd_yaw * yaw_vel_diff
-
-        force_ext_offset_w = yaw_rotate(
-            self.desired_yaw_w, self.force_base_offset_b[:, None, :]
-        )  # [n, t, 3]
-        torque_ext_z = torch.cross(
-            force_ext_offset_w, self.force_ext_base_w[:, None, :], dim=-1
-        )[:, :, 2:3]
-        torque_int_z = torch.cross(
-            ee_setpoint_to_base_w,
-            -self.virtual_mass_ee[:, None, :] * self.acc_spring_ee_w,
-            dim=-1,
-        )[:, :, 2:3]
-        torque_z = torque_ext_z + torque_int_z
-
-        desired_yaw_acc_w = self.acc_spring_yaw_w + (
-            torque_z / self.virtual_inertia_z[:, None, :]
-        )
-
-        self.desired_yawacc_w[:] = desired_yaw_acc_w
-        self.desired_yawvel_w.add_(self.desired_yawacc_w * self.env.physics_dt)
-        self.desired_yaw_w.add_(self.desired_yawvel_w * self.env.physics_dt)
 
     def _compute_error(self):
         linvel_base_error = (
