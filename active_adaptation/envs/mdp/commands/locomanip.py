@@ -1533,9 +1533,9 @@ class BaseEEImpedance(Command):
         # other model are also available, force static in world/body frame, offset/torque static in body frame
         # which is most realistic (to reduce sim2real ood)?
         # and now resample both, maybe should resample force more frequently than offset?
-        force_ext_base_w = torch.empty(len(env_ids), 3, device=self.device).uniform_(
-            -50.0, 50.0
-        )
+        force_ext_base_w = torch.empty(len(env_ids), 3, device=self.device)
+        force_ext_base_w[:, :2].uniform_(-50.0, 50.0)
+        force_ext_base_w[:, 2].uniform_(-20.0, 20.0)
         force_ext_base_w = clamp_norm(
             force_ext_base_w,
             max=self.virtual_mass_base[env_ids] * self.max_force_acc_base,
