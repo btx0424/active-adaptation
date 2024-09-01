@@ -93,10 +93,14 @@ UNITREE_GO2ARX_CFG.actuators["arm"] = DCMotorCfg(
 UNITREE_ALIENGO_A1_CFG = copy.deepcopy(UNITREE_GO2_CFG)
 UNITREE_ALIENGO_A1_CFG.spawn.usd_path = f"{ASSET_PATH}/Aliengo/aliengo_a1.usd"
 UNITREE_ALIENGO_A1_CFG.init_state.pos = (0., 0., 0.35)
-UNITREE_ALIENGO_A1_CFG.actuators["arm"] = DCMotorCfg(
-    joint_names_expr=["arm_joint.*"],
-    effort_limit=44,
-    saturation_effort=44,
+UNITREE_ALIENGO_A1_CFG.init_state.joint_pos = {
+    ".*hip_joint": 0,
+    ".*thigh_joint": 0.8,
+    ".*calf_joint": -1.5,
+}
+UNITREE_ALIENGO_A1_CFG.actuators["arm"] = ImplicitActuatorCfg(
+    joint_names_expr=["(arm_joint.*|gripper.*)"],
+    effort_limit=100,
     velocity_limit=10.,
     stiffness=20.,
     damping=1.0
