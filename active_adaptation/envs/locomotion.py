@@ -103,7 +103,7 @@ class LocomotionEnv(Env):
         def __init__(self, env: "LocomotionEnv", feet_names=None, yaw_only: bool=False):
             if feet_names is None:
                 feet_names = env.feet_name_expr
-            super().__init__(env, feet_names, yaw_only)
+            super().__init__(env, feet_names, yaw_only=yaw_only)
             self.asset.data.feet_pos_b = self.body_pos_b
         
         def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
@@ -114,7 +114,7 @@ class LocomotionEnv(Env):
         def __init__(self, env: "LocomotionEnv", feet_names=None, yaw_only: bool=False):
             if feet_names is None:
                 feet_names = env.feet_name_expr
-            super().__init__(env, feet_names, yaw_only)
+            super().__init__(env, feet_names, yaw_only=yaw_only)
             self.asset.data.feet_vel_b = self.body_vel_b
         
         def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
