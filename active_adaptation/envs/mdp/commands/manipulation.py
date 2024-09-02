@@ -27,6 +27,7 @@ class EEImpedance(Command):
         ext_force_ratio: float = 0.5,
         future: int = 3,
         mix_openloop: bool = False,
+        command_acc: bool = False,
     ) -> None:
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
@@ -51,6 +52,7 @@ class EEImpedance(Command):
         self.resample_prob = 0.005
         self.future = future
         self.mix_openloop = mix_openloop
+        self.command_acc = command_acc
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 10)
@@ -168,6 +170,13 @@ class EEImpedance(Command):
         )
         self.command[:, 3:6] = self.command_kp
         self.command[:, 6:9] = self.command_kd
+        if self.command_acc:
+            ee_linvel_b = quat_rotate_inverse(
+                self.asset.data.root_quat_w,
+                self.asset.data.body_lin_vel_w[:, self.ee_body_id],
+            )
+            self.command[:, 3:6] *= self.command_setpoint_pos_ee_diff_b
+            self.command[:, 6:9] *= - ee_linvel_b
         self.command[:, 9:10] = self.virtual_mass_ee
 
         self.command_hidden[:, 0:3] = self.command_pos_ee_diff_b

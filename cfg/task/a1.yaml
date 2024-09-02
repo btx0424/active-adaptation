@@ -54,6 +54,7 @@ command:
   ext_force_ratio: 0.5
   future: 3
   mix_openloop: false
+  command_acc: true
 
 observation:
   command:
@@ -78,7 +79,7 @@ reward:
   manip:
     # common loco rewards just for sanity check
     survival:           {weight: 1.0, enabled: true}
-    impedance_ee_pos:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.01}
+    impedance_ee_pos:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.05}
     impedance_ee_vel:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.05}
 
 termination:
