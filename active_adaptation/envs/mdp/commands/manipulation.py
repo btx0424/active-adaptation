@@ -17,6 +17,7 @@ class EEImpedance(Command):
         setpoint_x_range: tuple = (0.2, 0.6),
         setpoint_y_range: tuple = (-0.2, 0.2),
         setpoint_z_range: tuple = (0.2, 0.6),
+        relative_setpoint: bool = False,
         kp_range: tuple = (100.0, 150.0),
         damping_ratio_range: tuple = (0.7, 1.5),
         default_mass_ee: float = 1.0,
@@ -37,6 +38,7 @@ class EEImpedance(Command):
         self.setpoint_x_range = setpoint_x_range
         self.setpoint_y_range = setpoint_y_range
         self.setpoint_z_range = setpoint_z_range
+        self.relative_setpoint = relative_setpoint
 
         self.kp_range = kp_range
         self.damping_ratio_range = damping_ratio_range
@@ -89,6 +91,15 @@ class EEImpedance(Command):
         command_setpoint_pos_ee_b[:, 0].uniform_(*self.setpoint_x_range)
         command_setpoint_pos_ee_b[:, 1].uniform_(*self.setpoint_y_range)
         command_setpoint_pos_ee_b[:, 2].uniform_(*self.setpoint_z_range)
+        if self.relative_setpoint:
+            ee_pos_b = quat_rotate_inverse(
+                self.asset.data.root_quat_w[env_ids],
+                self.asset.data.body_pos_w[env_ids, self.ee_body_id] - self.asset.data.root_pos_w[env_ids],
+            )
+            command_setpoint_pos_ee_b += ee_pos_b
+            command_setpoint_pos_ee_b[:, 0].clamp_(0.0, 0.8)
+            command_setpoint_pos_ee_b[:, 1].clamp_(-0.4, 0.4)
+            command_setpoint_pos_ee_b[:, 2].clamp_(0.2, 0.8)
         self.command_setpoint_pos_ee_b[env_ids] = command_setpoint_pos_ee_b
 
         kp_ee = torch.empty(len(env_ids), 3, device=self.device).uniform_(
