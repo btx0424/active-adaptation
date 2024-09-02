@@ -78,12 +78,12 @@ reward:
   manip:
     # common loco rewards just for sanity check
     survival:           {weight: 1.0, enabled: true}
-    impedance_ee_pos:   {weight: 1.0, enabled: true, ee_name: 'arm_link6'}
-    impedance_ee_vel:   {weight: 1.0, enabled: true, ee_name: 'arm_link6'}
+    impedance_ee_pos:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.01}
+    impedance_ee_vel:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.05}
 
 termination:
   # joint_acc_exceeds: {thres: 5000.}
-  cum_error: {thres: 1.0, min_steps: 100}
+  cum_error: {thres: 1.0, min_steps: 1000}
 
 randomization:
   random_scale: [1.0, 1.2]
