@@ -14,41 +14,47 @@ terrain: plane
 payload: false
 homogeneous: false
 
-action:
-  _target_: active_adaptation.envs.mdp.action.IKResidual
-  action_scaling:
-    arm_joint[1-6]: 0.5
-  max_delay: 1
-  alpha: 0.8
-  ik_method: "dls"
-  ik_params:
-    k_val: 1.0
-    lambda_val: 0.01
-  fwd: true
-
 # action:
-#   _target_: active_adaptation.envs.mdp.action.JointPosition
+#   _target_: active_adaptation.envs.mdp.action.IKResidual
 #   action_scaling:
-#     arm_joint[1-5]: 0.5
+#     arm_joint[1-6]: 0.5
 #   max_delay: 1
 #   alpha: 0.8
+#   ik_method: "dls"
+#   ik_params:
+#     k_val: 1.0
+#     lambda_val: 0.01
+#   fwd: true
+
+action:
+  _target_: active_adaptation.envs.mdp.action.JointPosition
+  action_scaling:
+    arm_joint[1-5]: 0.5
+  max_delay: 1
+  alpha: 0.8
 
 command:
   _target_: active_adaptation.envs.mdp.EEImpedance
   ee_name: 'arm_link6'
   ee_base_name: 'arm_base'
-  setpoint_x_range: [0.2, 0.6]
+  # setpoint_x_range: [0.2, 0.6]
+  # setpoint_y_range: [-0.2, 0.2]
+  # setpoint_z_range: [0.3, 0.7]
+  # relative_setpoint: false
+  setpoint_x_range: [-0.2, 0.2]
   setpoint_y_range: [-0.2, 0.2]
-  setpoint_z_range: [0.3, 0.7]
+  setpoint_z_range: [-0.2, 0.2]
+  relative_setpoint: true
   kp_range: [100., 150.]
   damping_ratio_range: [0.7, 1.5]
   default_mass_ee: 1.
   virtual_mass_range: [0.5, 1.5]
   max_force_acc: 20.
-  compliant_ratio: 0.2
+  compliant_ratio: 0.5
   ext_force_ratio: 0.5
   future: 3
   mix_openloop: false
+  command_acc: true
 
 observation:
   command:
@@ -73,12 +79,12 @@ reward:
   manip:
     # common loco rewards just for sanity check
     survival:           {weight: 1.0, enabled: true}
-    impedance_ee_pos:   {weight: 1.0, enabled: true, ee_name: 'arm_link6'}
-    impedance_ee_vel:   {weight: 1.0, enabled: true, ee_name: 'arm_link6'}
+    impedance_ee_pos:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.05}
+    impedance_ee_vel:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.05}
 
 termination:
   # joint_acc_exceeds: {thres: 5000.}
-  cum_error: {thres: 1.0, min_steps: 100}
+  cum_error: {thres: 1.0, min_steps: 1000}
 
 randomization:
   random_scale: [1.0, 1.2]
