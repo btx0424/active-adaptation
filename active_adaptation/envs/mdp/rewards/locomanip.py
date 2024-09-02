@@ -119,11 +119,31 @@ class ee_forward(Reward):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.command_manager: BaseEEImpedance = self.env.command_manager
-        self.fwd_vec = torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
+
+        self.ee_fwd_vec = torch.tensor([0.0, 0.0, 1.0], device=self.device).repeat(self.num_envs, 1)
+        self.base_fwd_vec = torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
+        self.ee_fwd_w = torch.zeros(self.num_envs, 3, device=self.device)
+        self.base_fwd_w = torch.zeros(self.num_envs, 3, device=self.device)
+    
+    def update(self):
+        self.ee_fwd_w[:] = quat_rotate(self.asset.data.body_quat_w[:, self.command_manager.ee_body_id], self.ee_fwd_vec)
+        self.base_fwd_w[:] = quat_rotate(self.asset.data.root_quat_w, self.base_fwd_vec)
     
     def compute(self) -> torch.Tensor:
-        ee_fwd_w = quat_rotate(self.asset.data.body_quat_w[:, self.command_manager.ee_body_id], self.fwd_vec)
-        body_fwd_w = quat_rotate(self.asset.data.root_quat_w, self.fwd_vec)
-        diff = body_fwd_w - ee_fwd_w
+        diff = self.base_fwd_w - self.ee_fwd_w
         r = - diff.norm(dim=-1, keepdim=True)
         return r
+    
+    def debug_draw(self):
+        # draw ee forward vector (yellow)
+        self.env.debug_draw.vector(
+            self.asset.data.body_pos_w[:, self.command_manager.ee_body_id],
+            self.ee_fwd_w,
+            color=(1.0, 1.0, 0.0, 1.0),
+        )
+        # draw body forward vector
+        self.env.debug_draw.vector(
+            self.asset.data.body_pos_w[:, self.command_manager.ee_body_id],
+            self.base_fwd_w,
+            color=(1.0, 0.0, 0.0, 1.0),
+        )

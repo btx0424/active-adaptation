@@ -37,7 +37,7 @@ command:
   _target_: active_adaptation.envs.mdp.EEImpedance
   ee_name: 'arm_link6'
   ee_base_name: 'arm_base'
-  setpoint_x_range: [0.0, 0.4]
+  setpoint_x_range: [0.2, 0.6]
   setpoint_y_range: [-0.2, 0.2]
   setpoint_z_range: [0.3, 0.7]
   kp_range: [100., 150.]
