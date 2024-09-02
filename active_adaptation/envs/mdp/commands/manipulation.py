@@ -175,6 +175,10 @@ class EEImpedance(Command):
         self.desired_pos_ee_w[env_ids] = self.asset.data.body_pos_w[
             env_ids, None, self.ee_body_id
         ]
+
+        for _ in range(int(self.env.step_dt / self.env.physics_dt)):
+            self._integrate()
+
         # sim reset -> command_manager.reset() -> compute obs ->  sim step -> compute reward
         self._update_command()
 
