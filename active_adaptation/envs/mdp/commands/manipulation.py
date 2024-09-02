@@ -14,6 +14,9 @@ class EEImpedance(Command):
         env,
         ee_name: str,
         ee_base_name: str,
+        setpoint_x_range: tuple = (0.2, 0.6),
+        setpoint_y_range: tuple = (-0.2, 0.2),
+        setpoint_z_range: tuple = (0.2, 0.6),
         kp_range: tuple = (100.0, 150.0),
         damping_ratio_range: tuple = (0.7, 1.5),
         default_mass_ee: float = 1.0,
@@ -30,6 +33,10 @@ class EEImpedance(Command):
         self.ee_base_name = ee_base_name
         self.ee_body_id = self.robot.find_bodies(ee_name)[0][0]
         self.ee_base_body_id = self.robot.find_bodies(ee_base_name)[0][0]
+
+        self.setpoint_x_range = setpoint_x_range
+        self.setpoint_y_range = setpoint_y_range
+        self.setpoint_z_range = setpoint_z_range
 
         self.kp_range = kp_range
         self.damping_ratio_range = damping_ratio_range
@@ -79,9 +86,9 @@ class EEImpedance(Command):
 
     def _sample_command(self, env_ids: torch.Tensor):
         command_setpoint_pos_ee_b = torch.empty(len(env_ids), 3, device=self.device)
-        command_setpoint_pos_ee_b[:, 0].uniform_(0.2, 0.6)
-        command_setpoint_pos_ee_b[:, 1].uniform_(-0.2, 0.2)
-        command_setpoint_pos_ee_b[:, 2].uniform_(0.2, 0.6)
+        command_setpoint_pos_ee_b[:, 0].uniform_(*self.setpoint_x_range)
+        command_setpoint_pos_ee_b[:, 1].uniform_(*self.setpoint_y_range)
+        command_setpoint_pos_ee_b[:, 2].uniform_(*self.setpoint_z_range)
         self.command_setpoint_pos_ee_b[env_ids] = command_setpoint_pos_ee_b
 
         kp_ee = torch.empty(len(env_ids), 3, device=self.device).uniform_(
@@ -246,7 +253,69 @@ class EEImpedance(Command):
 
         self._update_command()
 
+    def _debug_draw_setpoint_boundaries(self):
+        # draw the 8 setpoint boundaries
+        setpoint_bounds = torch.tensor(
+            [
+                [
+                    self.setpoint_x_range[0],
+                    self.setpoint_y_range[0],
+                    self.setpoint_z_range[0],
+                ],
+                [
+                    self.setpoint_x_range[0],
+                    self.setpoint_y_range[0],
+                    self.setpoint_z_range[1],
+                ],
+                [
+                    self.setpoint_x_range[0],
+                    self.setpoint_y_range[1],
+                    self.setpoint_z_range[0],
+                ],
+                [
+                    self.setpoint_x_range[0],
+                    self.setpoint_y_range[1],
+                    self.setpoint_z_range[1],
+                ],
+                [
+                    self.setpoint_x_range[1],
+                    self.setpoint_y_range[0],
+                    self.setpoint_z_range[0],
+                ],
+                [
+                    self.setpoint_x_range[1],
+                    self.setpoint_y_range[0],
+                    self.setpoint_z_range[1],
+                ],
+                [
+                    self.setpoint_x_range[1],
+                    self.setpoint_y_range[1],
+                    self.setpoint_z_range[0],
+                ],
+                [
+                    self.setpoint_x_range[1],
+                    self.setpoint_y_range[1],
+                    self.setpoint_z_range[1],
+                ],
+            ],
+            device=self.device,
+        )
+        # [8, 3]
+
+        # Transform these points into the world frame using the base frame's orientation and position
+        setpoint_bounds_world = (
+            setpoint_bounds.unsqueeze(0)
+            + self.asset.data.root_pos_w.unsqueeze(1)
+        ).view(-1, 3)
+        self.env.debug_draw.point(
+            setpoint_bounds_world,
+            color=(1.0, 1.0, 1.0, 1.0),
+            size=15.0,
+        )
+        
+
     def debug_draw(self):
+        self._debug_draw_setpoint_boundaries()
         # command position for ee (green)
         self.env.debug_draw.point(
             self.command_pos_ee_w,

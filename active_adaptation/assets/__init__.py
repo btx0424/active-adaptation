@@ -19,7 +19,7 @@ from .spawn import clone
 from .quadruped import *
 from .humanoid import *
 from .scene import *
-from .abp import *
+from .arm import *
 
 
 ASSET_PATH = os.path.dirname(__file__)
@@ -66,6 +66,7 @@ ROBOTS = {
     "cy1": CY1_CFG,
     "cyberdog": CYBERDOG_CFG,
     "abp": ABP_CFG,
+    "a1-arm": A1_CFG,
 }
 
 for robot in ROBOTS.values():
