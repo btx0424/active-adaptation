@@ -15,8 +15,9 @@ homogeneous: false
 command:
   _target_: active_adaptation.envs.mdp.Impedance
   virtual_mass_range: [0.2, 1.0]
-  compliant_ratio: 0.25
-  ext_force_ratio: 0.5
+  compliant_ratio: 1.0
+  force_type_probs: [0.4, 0.3, 0.3]
+  delta_vel_xy_range: [-5.0, 5.0]
 
 observation:
   command:
@@ -77,30 +78,25 @@ reward:
 termination:
   crash: {body_names_expr: [Head.*, "base"], t_thres: 0.1, z_thres: -0.2}
   # joint_acc_exceeds: {thres: 5000}
-  cum_error: {thres: 1.0}
+  # cum_error: {thres: 1.0}
 
 randomization:
-  random_scale: [1.0, 1.2]
+  random_scale: [1.0, 1.0]
   perturb_body_mass:
     (?!(payload|base|Head.*)).*: [0.8, 1.2]
     base: [0.8, 1.2]
-    Head.*: [25.0, 250.0]
   perturb_body_materials:
     body_names: ".*_foot"
-    static_friction_range:  [0.6, 2.0]
-    dynamic_friction_range: [0.6, 2.0]
-    restitution_range:      [0.0, 0.2]
+    static_friction_range:  [0.5, 4.0]
+    dynamic_friction_range: [0.5, 4.0]
+    restitution_range:      [0.0, 0.5]
     homogeneous: true # ${task.homogeneous}
   motor_params:
     actuator_name: base_legs
-    stiffness_range:  [0.8, 1.2]
-    damping_range:    [0.8, 1.2]
+    stiffness_range:  [0.7, 1.3]
+    damping_range:    [0.7, 1.3]
     armature_range:   [0.0, 0.02]
     homogeneous: ${task.homogeneous}
-  # random_motor_failure:
-  #   actuator_name: base_legs
-  #   joint_names: .*_calf_joint
-  #   failure_prob: 0.0
   reset_joint_states_scale:
     pos_scales:
       .*: [0.8, 1.2]

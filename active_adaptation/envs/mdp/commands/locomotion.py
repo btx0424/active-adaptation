@@ -562,7 +562,7 @@ class CommandPosVel(Command2):
 
 class Impedance(Command):
     
-    future: int = 2
+    future: int = 3
     
     def __init__(
         self, 
@@ -571,7 +571,7 @@ class Impedance(Command):
         yaw_stiffness_range=(0.5, 0.5),
         virtual_mass_range=(0.5, 1.0),
         compliant_ratio: float = 0.2,
-        ext_force_ratio: float = 0.5,
+        force_type_probs = (0.4, 0.3, 0.3),
         linear_kp_range = (2.0, 12.0),
         delta_vel_xy_range = (-3.0, 3.0),
     ) -> None:
@@ -631,7 +631,7 @@ class Impedance(Command):
             """
             self.force_type = torch.zeros(self.num_envs, 1, dtype=torch.long) # none, constant, impulse
             self.force_time = torch.zeros(self.num_envs, 1) # application time of external force
-            self.force_type_dist = torch.tensor([0.5, 0.25, 0.25], device=self.device)
+            self.force_type_dist = torch.tensor(force_type_probs, device=self.device)
             self.momentum = torch.zeros(self.num_envs, 3)
             self.force_duration = torch.zeros(self.num_envs, 1) # duration of external force
 
@@ -719,7 +719,7 @@ class Impedance(Command):
         self.command[:, :2] = command_setpos_b[:, :2]
         self.command[:, 2] = yaw_diff
         self.command[:, 3:5] = self.kp * command_setpos_b[:, :2]
-        self.command[:, 5:8] = self.kd * - (self.asset.data.root_lin_vel_b + linvel_noise)
+        self.command[:, 5:8] = self.kd # * - (self.asset.data.root_lin_vel_b + linvel_noise)
         self.command[:, 8:9] = self.virtual_mass
 
         self.command_hidden[:, 0:3] = command_pos_b
@@ -774,7 +774,7 @@ class Impedance(Command):
             torch.zeros(len(env_ids), 1, device=self.device),
             torch.where(
                 force_type == 1,
-                torch.randint(20, 100, (len(env_ids), 1), device=self.device),
+                torch.randint(50, 150, (len(env_ids), 1), device=self.device),
                 torch.randint(15, 40, (len(env_ids), 1), device=self.device)
             ) * self.env.step_dt,
         )
