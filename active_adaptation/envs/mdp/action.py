@@ -3,6 +3,7 @@ from typing import Dict, Literal, Tuple, Union, TYPE_CHECKING
 from tensordict import TensorDictBase
 from omni.isaac.lab.assets import Articulation
 import omni.isaac.lab.utils.string as string_utils
+from omni.isaac.lab.utils.math import euler_xyz_from_quat, quat_mul, quat_conjugate, axis_angle_from_quat, quat_inv
 
 if TYPE_CHECKING:
     from active_adaptation.envs.base import Env
@@ -41,7 +42,8 @@ class IKResidual(ActionManager):
         ik_params: Dict[str, float] = {
             "k_val": 1.0,
             "lambda_val": 0.01,
-        }
+        },
+        fwd: bool = False,
     ):
         super().__init__(env)
         self.joint_ids, self.joint_names, self.action_scaling = string_utils.resolve_matching_names_values(dict(action_scaling), self.asset.joint_names)
@@ -51,6 +53,9 @@ class IKResidual(ActionManager):
         
         self.ik_method = ik_method
         self.ik_params = ik_params
+        self.fwd = fwd
+        if self.fwd:
+            self.target_quat = torch.tensor([0.5, 0.5, 0.5, 0.5], device=self.device).repeat(self.num_envs, 1)
 
         self.max_delay = max_delay
         if isinstance(alpha, float):
@@ -87,7 +92,17 @@ class IKResidual(ActionManager):
             # compute position control ik target
             # ee_pos_diff_b = self.command_manager.command_pos_ee_diff_b # = ee_pos_b_des - ee_pos_b
             ee_pos_diff_b = self.command_manager.command_setpoint_pos_ee_diff_b # = ee_setpoint_pos_b - ee_pos_b
-            jacobian_pos = self.asset.root_physx_view.get_jacobians()[:, self.ee_body_id, :3, self.joint_ids]
+            if self.fwd:
+                # get ee pitch and yaw 
+                ee_quat_w = self.asset.data.body_quat_w[:, self.ee_body_id]
+                root_quat_w = self.asset.data.root_quat_w
+                ee_quat_b = quat_mul(quat_inv(root_quat_w), ee_quat_w)
+                axis_angle_error = self._compute_axis_angle_error(ee_quat_b, self.target_quat)
+                ee_pos_diff_b = torch.cat([ee_pos_diff_b, axis_angle_error], dim=-1)
+            if not self.fwd:
+                jacobian_pos = self.asset.root_physx_view.get_jacobians()[:, self.ee_body_id, :3, self.joint_ids]
+            else:
+                jacobian_pos = self.asset.root_physx_view.get_jacobians()[:, self.ee_body_id, :, self.joint_ids]
             delta_joint_pos = self._compute_delta_joint_pos(ee_pos_diff_b, jacobian_pos)
             
             # add delta joint pos to current joint pos
@@ -99,6 +114,24 @@ class IKResidual(ActionManager):
             
             self.asset.set_joint_position_target(joint_pos_target)
         self.asset.write_data_to_sim()
+    
+    def _compute_axis_angle_error(
+        self,
+        q01: torch.Tensor,
+        q02: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        # Compute quaternion error (i.e., difference quaternion)
+        # Reference: https://personal.utdallas.edu/~sxb027100/dock/quaternion.html
+        # q_current_norm = q_current * q_current_conj
+        source_quat_norm = quat_mul(q01, quat_conjugate(q01))[:, 0]
+        # q_current_inv = q_current_conj / q_current_norm
+        source_quat_inv = quat_conjugate(q01) / source_quat_norm.unsqueeze(-1)
+        # q_error = q_target * q_current_inv
+        quat_error = quat_mul(q02, source_quat_inv)
+
+        # Convert to axis-angle error
+        axis_angle_error = axis_angle_from_quat(quat_error)
+        return axis_angle_error
     
     def _compute_delta_joint_pos(self, delta_pose: torch.Tensor, jacobian: torch.Tensor) -> torch.Tensor:
         """Computes the change in joint position that yields the desired change in pose.
@@ -151,10 +184,12 @@ class IKResidual(ActionManager):
             # parameters
             lambda_val = self.ik_params["lambda_val"]
             # computation
-            jacobian_T = torch.transpose(jacobian, dim0=1, dim1=2)
-            lambda_matrix = (lambda_val**2) * torch.eye(n=jacobian.shape[1], device=self.device)
+            jacobian_T = torch.transpose(jacobian, dim0=1, dim1=2) # [N, num_joints, 3/6]
+            lambda_matrix = (lambda_val**2) * torch.eye(n=jacobian.shape[2], device=self.device) # [num_joints, num_joints]
+            lambda_matrix[0, 0] *= 10
             delta_joint_pos = (
-                jacobian_T @ torch.inverse(jacobian @ jacobian_T + lambda_matrix) @ delta_pose.unsqueeze(-1)
+                # jacobian_T @ torch.inverse(jacobian @ jacobian_T + lambda_matrix) @ delta_pose.unsqueeze(-1)
+                torch.inverse(jacobian_T @ jacobian + lambda_matrix) @ jacobian_T @ delta_pose.unsqueeze(-1)
             )
             delta_joint_pos = delta_joint_pos.squeeze(-1)
         else:

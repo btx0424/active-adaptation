@@ -17,13 +17,14 @@ homogeneous: false
 action:
   _target_: active_adaptation.envs.mdp.action.IKResidual
   action_scaling:
-    joint[1-5]: 0.5
+    joint[1-6]: 0.5
   max_delay: 1
   alpha: 0.8
   ik_method: "dls"
   ik_params:
     k_val: 1.0
     lambda_val: 0.01
+  fwd: true
 
 # action:
 #   _target_: active_adaptation.envs.mdp.action.JointPosition

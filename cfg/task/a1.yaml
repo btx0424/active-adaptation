@@ -17,13 +17,14 @@ homogeneous: false
 action:
   _target_: active_adaptation.envs.mdp.action.IKResidual
   action_scaling:
-    arm_joint[1-5]: 0.5
+    arm_joint[1-6]: 0.5
   max_delay: 1
   alpha: 0.8
   ik_method: "dls"
   ik_params:
     k_val: 1.0
     lambda_val: 0.01
+  fwd: true
 
 # action:
 #   _target_: active_adaptation.envs.mdp.action.JointPosition
@@ -36,9 +37,9 @@ command:
   _target_: active_adaptation.envs.mdp.EEImpedance
   ee_name: 'arm_link6'
   ee_base_name: 'arm_base'
-  setpoint_x_range: [0.1, 0.4]
+  setpoint_x_range: [0.0, 0.4]
   setpoint_y_range: [-0.2, 0.2]
-  setpoint_z_range: [0.1, 0.4]
+  setpoint_z_range: [0.3, 0.7]
   kp_range: [100., 150.]
   damping_ratio_range: [0.7, 1.5]
   default_mass_ee: 1.
@@ -81,12 +82,12 @@ termination:
 
 randomization:
   random_scale: [1.0, 1.2]
-  reset_joint_states_uniform:
-    pos_ranges:
-      arm_joint1: [-2.5, 2.5]
-      arm_joint2: [0.0, 1.0]
-      arm_joint3: [-2.5, 0.0]
-      arm_joint4: [-1.0, 1.0]
-      arm_joint5: [-1.0, 1.0]
-      # arm_joint6: [-2.5, 2.5]
-    rel: true
+  # reset_joint_states_uniform:
+  #   pos_ranges:
+  #     arm_joint1: [-2.5, 2.5]
+  #     arm_joint2: [0.0, 1.0]
+  #     arm_joint3: [-2.5, 0.0]
+  #     arm_joint4: [-1.0, 1.0]
+  #     arm_joint5: [-1.0, 1.0]
+  #     # arm_joint6: [-2.5, 2.5]
+  #   rel: true
