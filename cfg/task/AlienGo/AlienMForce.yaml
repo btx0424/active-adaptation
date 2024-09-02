@@ -1,5 +1,5 @@
 # @package task
-name: Go2MForce
+name: AlienMForce
 task: QuadrupedManip
 
 defaults:
@@ -8,7 +8,7 @@ defaults:
   - override action: null
   - _self_
 
-robot: alien-a1
+robot: aliengo-a1
 terrain: plane
 payload: false
 homogeneous: false
@@ -26,7 +26,7 @@ homogeneous: false
 action:
   _target_: active_adaptation.envs.mdp.action.JointPosition
   action_scaling:
-    (F|R)(L|R)_(hip|thigh|calf)_joint: 0.5
+    (F|R)(L|R)_(hip|thigh|calf)_joint: 0.8
     arm_joint[1-5]: 0.5
   max_delay: 1
   alpha: 0.8
@@ -86,19 +86,6 @@ observation:
     motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
     body_mass:        {body_names: ["base", ".*_hip", ".*_thigh"]}
-  recon_target_:
-    root_angvel_b:
-    projected_gravity_b:
-    joint_pos:
-    joint_vel:
-    root_linvel_b:
-    feet_height_map:  {feet_names: .*foot }
-    applied_torques:  {actuator_name: base_legs}
-    joint_forces:
-  aux_target_:
-    root_linvel_b:
-    root_angvel_b:
-    rewards: {}
 
 reward:
   all:
@@ -124,7 +111,7 @@ reward:
     energy_dist_lr:     {weight: 0.0002, enabled: false}
     # energy_dist_fb:     {weight: 0.0002, enabled: false}
     joint_acc_l2:       {weight: 2.5e-7, enabled: true}
-    joint_torques_l2:   {weight: 3.0e-4, enabled: true}
+    joint_torques_l2:   {weight: 3.0e-5, enabled: true}
     # quadruped_stand:    {weight: 0.5}
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.005, enabled: true}
@@ -143,7 +130,7 @@ termination:
   # cum_error: {thres: 1.0}
 
 randomization:
-  random_scale: [1.0, 1.2]
+  random_scale: [1.0, 1.0]
   perturb_body_mass:
     (?!(payload|base.*)).*: [0.8, 1.2]
     base: [0.8, 1.2]
@@ -159,24 +146,10 @@ randomization:
     damping_range:    [0.8, 1.2]
     armature_range:   [0.0, 0.02]
     homogeneous: ${task.homogeneous}
-  # random_motor_failure:
-  #   actuator_name: base_legs
-  #   joint_names: .*_calf_joint
-  #   failure_prob: 0.0
-  # reset_joint_states_uniform:
-  #   pos_ranges:
-  #     joint1: [-2.5, 2.5]
-  #     joint2: [0.0, 1.0]
-  #     joint3: [-2.5, 0.0]
-  #     joint4: [-1.0, 1.0]
-  #     joint5: [-1.0, 1.0]
-  #     joint6: [-2.5, 2.5]
-  #     .*_joint: [-0.4, 0.4]
-  #     # .*: [-0.4, 0.4]
-  #   rel: true
-  # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
-  # drag: {body_names: base, drag_range: [0.2, 0.4]}
-  # pull:
-  #   drag_prob: 1.0
-  #   drag_range: [0.2, 0.4]
+  reset_joint_states_uniform:
+    pos_ranges:
+      .*_thigh_joint: [-0.2, 0.2]
+      .*_calf_joint: [-0.2, 0.2]
+      .*_hip_joint: [-0.2, 0.2]
+    rel: true
   stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.4, 0.4]}
