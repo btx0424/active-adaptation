@@ -151,7 +151,7 @@ class CartesianObs(Observation):
         fliplr = torch.tensor([1., -1., 1.], device=self.device)
         obs_flipped[:, self.left_ids] = right * fliplr
         obs_flipped[:, self.right_ids] = left * fliplr
-        return obs_flipped        
+        return obs_flipped.reshape(self.num_envs, -1)
 
 
 class body_pos(CartesianObs):
