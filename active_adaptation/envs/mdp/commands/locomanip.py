@@ -1308,9 +1308,10 @@ class BaseEEImpedance(Command):
         compliant_ratio: float = 0.2,
         ext_force_ratio: float = 0.5,
         future: int = 3,
-        mix_openloop_base: bool = True,
+        mix_openloop_base: bool = False,
         mix_openloop_ee: bool = False,
-        mix_openloop_yaw: bool = True,
+        mix_openloop_yaw: bool = False,
+        command_acc: bool = False,
     ) -> None:
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
@@ -1340,9 +1341,10 @@ class BaseEEImpedance(Command):
         self.mix_openloop_base = mix_openloop_base
         self.mix_openloop_ee = mix_openloop_ee
         self.mix_openloop_yaw = mix_openloop_yaw
+        self.command_acc = command_acc
 
         with torch.device(self.device):
-            self.command = torch.zeros(self.num_envs, 15)
+            self.command = torch.zeros(self.num_envs, 23)
             self.command_hidden = torch.zeros(self.num_envs, 12)
 
             # integration
@@ -1398,10 +1400,10 @@ class BaseEEImpedance(Command):
             self.pos_ee_b = torch.zeros(self.num_envs, 3)
 
             # spring-damper parameters
-            self.kp_base = torch.zeros(self.num_envs, 1)
-            self.kd_base = torch.zeros(self.num_envs, 1)
-            self.kp_ee = torch.zeros(self.num_envs, 1)
-            self.kd_ee = torch.zeros(self.num_envs, 1)
+            self.kp_base = torch.zeros(self.num_envs, 3)
+            self.kd_base = torch.zeros(self.num_envs, 3)
+            self.kp_ee = torch.zeros(self.num_envs, 3)
+            self.kd_ee = torch.zeros(self.num_envs, 3)
             self.kp_yaw = torch.zeros(self.num_envs, 1)
             self.kd_yaw = torch.zeros(self.num_envs, 1)
             self.compliant_base = torch.zeros(self.num_envs, 1, dtype=bool)
@@ -1632,8 +1634,8 @@ class BaseEEImpedance(Command):
         self.desired_yawvel_w.add_(self.desired_yawacc_w * self.env.physics_dt)
         self.desired_yaw_w.add_(self.desired_yawvel_w * self.env.physics_dt)
 
-    def _update_command(self):
-        # update body frame quantities
+    def _update_buffers(self):
+        # update body frame quantities that is used to compute diff for hidden command and compute cum error
         pos_ee_w = (
             self.asset.data.body_pos_w[:, self.ee_body_id] - self.asset.data.root_pos_w
         )
@@ -1651,6 +1653,7 @@ class BaseEEImpedance(Command):
             self.asset.data.body_lin_vel_w[:, self.ee_body_id] - coriolis_vel_ee_w,
         )
 
+    def _update_command(self):
         # smooth desired command
         self.command_pos_base_w[:] = self.desired_pos_base_w.mean(1)
         self.command_linvel_base_w[:] = self.desired_linvel_base_w.mean(1)
@@ -1710,15 +1713,19 @@ class BaseEEImpedance(Command):
         self.command[:, 3:6] = self.command_setpoint_pos_ee_diff_b * (
             ~self.compliant_ee
         )
-        self.command[:, 6:7] = self.kp_base
-        self.command[:, 7:8] = self.kd_base
-        self.command[:, 8:9] = self.kp_ee
-        self.command[:, 9:10] = self.kd_ee
-        self.command[:, 10:11] = self.kp_yaw
-        self.command[:, 11:12] = self.kd_yaw
-        self.command[:, 12:13] = self.virtual_mass_base
-        self.command[:, 13:14] = self.virtual_mass_ee
-        self.command[:, 14:15] = self.virtual_inertia_z
+        self.command[:, 6:9] = self.kp_base
+        self.command[:, 9:12] = self.kd_base
+        self.command[:, 12:15] = self.kp_ee
+        self.command[:, 15:18] = self.kd_ee
+        self.command[:, 18:19] = self.kp_yaw
+        self.command[:, 19:20] = self.kd_yaw
+        if self.command_acc:
+            self.command[:, 6:9] *= self.command_setpoint_pos_base_diff_b
+            self.command[:, 12:15] *= self.command_setpoint_pos_ee_diff_b
+            self.command[:, 18:19] *= self.command_setpoint_yaw_diff
+        self.command[:, 20:21] = self.virtual_mass_base
+        self.command[:, 21:22] = self.virtual_mass_ee
+        self.command[:, 22:23] = self.virtual_inertia_z
 
         self.command_hidden[:, 0:2] = self.command_pos_base_diff_b[:, :2]
         self.command_hidden[:, 2:3] = self.command_yaw_diff
@@ -1728,6 +1735,8 @@ class BaseEEImpedance(Command):
         self.command_hidden[:, 9:12] = self.command_linvel_ee_b
 
     def reset(self, env_ids: torch.Tensor):
+        self._update_buffers()
+
         self._sample_command(env_ids)
         self._sample_force(env_ids)
 
@@ -1799,7 +1808,7 @@ class BaseEEImpedance(Command):
         )
 
         linvel_ee_error = (self.command_linvel_ee_b - self.linvel_ee_b).norm(dim=-1)
-        pos_ee_error = self.command_pos_ee_b - self.pos_ee_b
+        pos_ee_error = (self.command_pos_ee_b - self.pos_ee_b).norm(dim=-1)
 
         angvel_error = (
             self.command_yawvel.squeeze() - self.asset.data.root_ang_vel_w[:, 2]
@@ -1811,13 +1820,12 @@ class BaseEEImpedance(Command):
         self._cum_error[:, 0].add_(linvel_base_error * self.env.step_dt).mul_(0.99)
         self._cum_error[:, 1].add_(pos_base_error * self.env.step_dt).mul_(0.99)
         self._cum_error[:, 2].add_(linvel_ee_error * self.env.step_dt).mul_(0.99)
-        self._cum_error[:, 3].add_(pos_ee_error.norm(dim=-1) * self.env.step_dt).mul_(
-            0.99
-        )
+        self._cum_error[:, 3].add_(pos_ee_error * self.env.step_dt).mul_(0.99)
         self._cum_error[:, 4].add_(angvel_error * self.env.step_dt).mul_(0.99)
         self._cum_error[:, 5].add_(yaw_error * self.env.step_dt).mul_(0.99)
 
     def update(self):
+        self._update_buffers()
         self._compute_error()
 
         # resample command and force
