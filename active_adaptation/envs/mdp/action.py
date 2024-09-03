@@ -1,15 +1,19 @@
 import torch
-from typing import Dict, Tuple, Union
+from typing import Dict, Literal, Tuple, Union, TYPE_CHECKING
 from tensordict import TensorDictBase
 from omni.isaac.lab.assets import Articulation
 import omni.isaac.lab.utils.string as string_utils
+from omni.isaac.lab.utils.math import euler_xyz_from_quat, quat_mul, quat_conjugate, axis_angle_from_quat, quat_inv
+
+if TYPE_CHECKING:
+    from active_adaptation.envs.base import Env
 
 class ActionManager:
     
     action_dim: int
 
     def __init__(self, env):
-        self.env = env
+        self.env: Env = env
         self.asset: Articulation = self.env.scene["robot"]
     
     def reset(self, env_ids: torch.Tensor):
@@ -24,22 +28,202 @@ class ActionManager:
         return self.env.device
 
 
-class JointPosition(ActionManager):
+class IKResidual(ActionManager):
     def __init__(
         self, 
         env, 
-        joint_names: str, 
         action_scaling: Dict[str, float] = 0.5,
         max_delay: int = 4,
-        alpha: Tuple[float, float] = (0.5, 1.0)
+        alpha: Tuple[float, float] = (0.5, 1.0),
+        ik_method: Literal["pinv",
+                            "svd",
+                            "trans",
+                            "dls"] = "dls",
+        ik_params: Dict[str, float] = {
+            "k_val": 1.0,
+            "lambda_val": 0.01,
+        },
+        fwd: bool = False,
     ):
         super().__init__(env)
-        self.joint_ids, self.joint_names = self.asset.find_joints(joint_names)
-        action_joint_ids, _, self.action_scaling = string_utils.resolve_matching_names_values(
-            dict(action_scaling), self.asset.joint_names)
+        self.joint_ids, self.joint_names, self.action_scaling = string_utils.resolve_matching_names_values(dict(action_scaling), self.asset.joint_names)
         
-        if not self.joint_ids == action_joint_ids:
-            raise ValueError("`action_scaling` must match `joint_names`")
+        self.action_scaling = torch.tensor(self.action_scaling, device=self.device)
+        self.action_dim = len(self.joint_ids)
+        
+        self.ik_method = ik_method
+        self.ik_params = ik_params
+        self.fwd = fwd
+        if self.fwd:
+            self.target_quat = torch.tensor([0.5, 0.5, 0.5, 0.5], device=self.device).repeat(self.num_envs, 1)
+
+        self.max_delay = max_delay
+        if isinstance(alpha, float):
+            self.alpha_range = (alpha, alpha)
+        else:
+            self.alpha_range = tuple(alpha)
+        with torch.device(self.device):
+            self.action_buf = torch.zeros(self.num_envs, self.action_dim, max(max_delay + 1, 3)) # at least 3 for action_rate_2_l2 reward
+            self.applied_action = torch.zeros(self.num_envs, self.action_dim)
+            self.alpha = torch.ones(self.num_envs, 1)
+            self.delay = torch.zeros(self.num_envs, 1, dtype=int)
+        
+        from active_adaptation.envs.mdp.commands import EEImpedance
+        self.command_manager: EEImpedance = self.env.command_manager
+        self.ee_body_id = self.command_manager.ee_body_id
+    
+    def reset(self, env_ids: torch.Tensor):
+        self.delay[env_ids] = torch.randint(0, self.max_delay + 1, (len(env_ids), 1), device=self.device)
+        self.action_buf[env_ids] = 0
+        self.applied_action[env_ids] = 0
+
+        alpha = torch.empty(len(env_ids), 1, device=self.device).uniform_(*self.alpha_range)
+        self.alpha[env_ids] = alpha
+
+    def __call__(self, tensordict: TensorDictBase, substep: int):
+        if substep == 0:
+            # update action buf
+            action = tensordict["action"].clamp(-10, 10)
+            self.action_buf[:] = self.action_buf.roll(1, dims=-1)
+            self.action_buf[:, :, 0] = action
+            delayed_action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
+            self.applied_action.lerp_(delayed_action.squeeze(-1), self.alpha)
+
+            # compute position control ik target
+            # ee_pos_diff_b = self.command_manager.command_pos_ee_diff_b # = ee_pos_b_des - ee_pos_b
+            ee_pos_diff_b = self.command_manager.command_setpoint_pos_ee_diff_b # = ee_setpoint_pos_b - ee_pos_b
+            if self.fwd:
+                # get ee pitch and yaw 
+                ee_quat_w = self.asset.data.body_quat_w[:, self.ee_body_id]
+                root_quat_w = self.asset.data.root_quat_w
+                ee_quat_b = quat_mul(quat_inv(root_quat_w), ee_quat_w)
+                axis_angle_error = self._compute_axis_angle_error(ee_quat_b, self.target_quat)
+                ee_pos_diff_b = torch.cat([ee_pos_diff_b, axis_angle_error], dim=-1)
+            if not self.fwd:
+                jacobian_pos = self.asset.root_physx_view.get_jacobians()[:, self.ee_body_id, :3, self.joint_ids]
+            else:
+                jacobian_pos = self.asset.root_physx_view.get_jacobians()[:, self.ee_body_id, :, self.joint_ids]
+            delta_joint_pos = self._compute_delta_joint_pos(ee_pos_diff_b, jacobian_pos)
+            
+            # add delta joint pos to current joint pos
+            joint_pos_target = self.asset.data.joint_pos.clone()
+            joint_pos_target[:, self.joint_ids] += delta_joint_pos 
+
+            # add residual action
+            joint_pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
+            
+            self.asset.set_joint_position_target(joint_pos_target)
+        self.asset.write_data_to_sim()
+    
+    def _compute_axis_angle_error(
+        self,
+        q01: torch.Tensor,
+        q02: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        # Compute quaternion error (i.e., difference quaternion)
+        # Reference: https://personal.utdallas.edu/~sxb027100/dock/quaternion.html
+        # q_current_norm = q_current * q_current_conj
+        source_quat_norm = quat_mul(q01, quat_conjugate(q01))[:, 0]
+        # q_current_inv = q_current_conj / q_current_norm
+        source_quat_inv = quat_conjugate(q01) / source_quat_norm.unsqueeze(-1)
+        # q_error = q_target * q_current_inv
+        quat_error = quat_mul(q02, source_quat_inv)
+
+        # Convert to axis-angle error
+        axis_angle_error = axis_angle_from_quat(quat_error)
+        return axis_angle_error
+    
+    def _compute_delta_joint_pos(self, delta_pose: torch.Tensor, jacobian: torch.Tensor) -> torch.Tensor:
+        """Computes the change in joint position that yields the desired change in pose.
+
+        The method uses the Jacobian mapping from joint-space velocities to end-effector velocities
+        to compute the delta-change in the joint-space that moves the robot closer to a desired
+        end-effector position.
+
+        Args:
+            delta_pose: The desired delta pose in shape (N, 3) or (N, 6).
+            jacobian: The geometric jacobian matrix in shape (N, 3, num_joints) or (N, 6, num_joints).
+
+        Returns:
+            The desired delta in joint space. Shape is (N, num-jointsß).
+        """
+        if self.ik_params is None:
+            raise RuntimeError(f"Inverse-kinematics parameters for method '{self.ik_method}' is not defined!")
+        # compute the delta in joint-space
+        if self.ik_method == "pinv":  # Jacobian pseudo-inverse
+            # parameters
+            k_val = self.ik_params["k_val"]
+            # computation
+            jacobian_pinv = torch.linalg.pinv(jacobian)
+            delta_joint_pos = k_val * jacobian_pinv @ delta_pose.unsqueeze(-1)
+            delta_joint_pos = delta_joint_pos.squeeze(-1)
+        elif self.ik_method == "svd":  # adaptive SVD
+            # parameters
+            k_val = self.ik_params["k_val"]
+            min_singular_value = self.ik_params["min_singular_value"]
+            # computation
+            # U: 6xd, S: dxd, V: d x num-joint
+            U, S, Vh = torch.linalg.svd(jacobian)
+            S_inv = 1.0 / S
+            S_inv = torch.where(S > min_singular_value, S_inv, torch.zeros_like(S_inv))
+            jacobian_pinv = (
+                torch.transpose(Vh, dim0=1, dim1=2)[:, :, :6]
+                @ torch.diag_embed(S_inv)
+                @ torch.transpose(U, dim0=1, dim1=2)
+            )
+            delta_joint_pos = k_val * jacobian_pinv @ delta_pose.unsqueeze(-1)
+            delta_joint_pos = delta_joint_pos.squeeze(-1)
+        elif self.ik_method == "trans":  # Jacobian transpose
+            # parameters
+            k_val = self.ik_params["k_val"]
+            # computation
+            jacobian_T = torch.transpose(jacobian, dim0=1, dim1=2)
+            delta_joint_pos = k_val * jacobian_T @ delta_pose.unsqueeze(-1)
+            delta_joint_pos = delta_joint_pos.squeeze(-1)
+        elif self.ik_method == "dls":  # damped least squares
+            # parameters
+            lambda_val = self.ik_params["lambda_val"]
+            # computation
+            jacobian_T = torch.transpose(jacobian, dim0=1, dim1=2) # [N, num_joints, 3/6]
+            lambda_matrix = (lambda_val**2) * torch.eye(n=jacobian.shape[2], device=self.device) # [num_joints, num_joints]
+            lambda_matrix[0, 0] *= 10
+            delta_joint_pos = (
+                # jacobian_T @ torch.inverse(jacobian @ jacobian_T + lambda_matrix) @ delta_pose.unsqueeze(-1)
+                torch.inverse(jacobian_T @ jacobian + lambda_matrix) @ jacobian_T @ delta_pose.unsqueeze(-1)
+            )
+            delta_joint_pos = delta_joint_pos.squeeze(-1)
+        else:
+            raise ValueError(f"Unsupported inverse-kinematics method: {self.ik_method}")
+
+        return delta_joint_pos
+
+class JointPosition(ActionManager):
+    def __init__(
+        self, 
+        env,
+        joint_names: str = ".*",
+        action_scaling: Dict[str, float] = 0.5,
+        left_joints = None,
+        right_joints = None,
+        asym_joints = None,
+        max_delay: int = 4,
+        alpha: Tuple[float, float] = (0.5, 1.0),
+    ):
+        super().__init__(env)
+        self.joint_ids, self.joint_names, self.action_scaling = string_utils.resolve_matching_names_values(
+            dict(action_scaling), self.asset.joint_names)
+        if left_joints is not None:
+            self.left_joint_ids = string_utils.resolve_matching_names(left_joints, self.joint_names)[0]
+            self.right_joint_ids = string_utils.resolve_matching_names(right_joints, self.joint_names)[0]
+            assert len(self.left_joint_ids) == len(self.right_joint_ids), "Left and right joints must have the same length."
+        else:
+            self.left_joint_ids = None
+            self.right_joint_ids = None
+        
+        self.signs = torch.ones(len(self.joint_ids), device=self.device)
+        if asym_joints is not None:
+            self.asym_joint_ids = string_utils.resolve_matching_names(asym_joints, self.joint_names)[0]
+            self.signs[self.asym_joint_ids] = -1
         
         self.action_scaling = torch.tensor(self.action_scaling, device=self.device)
         self.max_delay = max_delay
@@ -51,17 +235,30 @@ class JointPosition(ActionManager):
 
         self.action_dim = len(self.joint_ids)
         
+        self.default_joint_pos = self.asset.data.default_joint_pos.clone()
+
         with torch.device(self.device):
-            self.action_buf = torch.zeros(self.num_envs, self.action_dim, 4)
+            self.action_buf = torch.zeros(self.num_envs, self.action_dim, max(max_delay + 1, 3)) # at least 3 for action_rate_2_l2 reward
             self.applied_action = torch.zeros(self.num_envs, self.action_dim)
             self.alpha = torch.ones(self.num_envs, 1)
             self.delay = torch.zeros(self.num_envs, 1, dtype=int)
-            self.offset = torch.zeros(self.num_envs, self.action_dim)
-        
-        self.default_joint_pos = self.asset.data.default_joint_pos.clone()
+            self.offset = torch.zeros_like(self.default_joint_pos)
+    
+    def fliplr(self, action: torch.Tensor):
+        """
+        Used for flipping the `action` and `prev_action`.
+        """
+        if self.left_joint_ids is None:
+            raise ValueError("Left and right joint names must be provided to flip the action.")
+        action_flipped = action.reshape(self.num_envs, self.action_dim, -1).clone()
+        left = action_flipped[:, self.left_joint_ids]
+        right = action_flipped[:, self.right_joint_ids]
+        action_flipped[:, self.left_joint_ids] = right
+        action_flipped[:, self.right_joint_ids] = left
+        return (action_flipped * self.signs.unsqueeze(-1)).reshape(action.shape)
 
     def reset(self, env_ids: torch.Tensor):
-        self.delay[env_ids] = torch.randint(0, self.max_delay, (len(env_ids), 1), device=self.device)
+        self.delay[env_ids] = torch.randint(0, self.max_delay + 1, (len(env_ids), 1), device=self.device)
         self.action_buf[env_ids] = 0
         self.applied_action[env_ids] = 0
 
@@ -71,12 +268,14 @@ class JointPosition(ActionManager):
     def __call__(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
             action = tensordict["action"].clamp(-10, 10)
+            if self.env.use_flipping:
+                action = torch.where(self.env.fliplr.unsqueeze(1), self.fliplr(action), action)
             self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
             self.action_buf[:, :, 0] = action
             action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
             self.applied_action.lerp_(action.squeeze(-1), self.alpha)
 
-            pos_target = self.default_joint_pos + self.offset
+            pos_target = self.default_joint_pos.clone()
             pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
             pos_target.clamp_(-torch.pi, torch.pi)
             self.asset.set_joint_position_target(pos_target)
@@ -92,7 +291,7 @@ class QuadrupedWithArm(JointPosition):
         alpha: Tuple[float, float]=(0.5, 1.0),
         arm_joint_names: str = "joint.*",
     ):
-        super().__init__(env, joint_names, action_scaling, max_delay, alpha)
+        super().__init__(env, joint_names, action_scaling, None, None, max_delay, alpha)
         self.arm_joint_ids, _ = self.asset.find_joints(arm_joint_names)
         self.arm_joint_pos = self.default_joint_pos[:, self.arm_joint_ids].clone()
         self.arm_joint_limits = self.asset.data.joint_limits[:, self.arm_joint_ids]

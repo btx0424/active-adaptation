@@ -122,7 +122,7 @@ class Env(EnvBase):
 
         self.command_manager: mdp.Command = hydra.utils.instantiate(self.cfg.command, env=self)
         self._step_callbacks.append(self.command_manager.step)
-        self._update_callbacks.append(self.command_manager.update)
+        # self._update_callbacks.append(self.command_manager.update)
         self._reset_callbacks.append(self.command_manager.reset)
         self._debug_draw_callbacks.append(self.command_manager.debug_draw)
         
@@ -227,6 +227,9 @@ class Env(EnvBase):
 
         self.lookat_env_i = 0
 
+        self.use_flipping = False
+        self.fliplr = torch.zeros(self.num_envs, dtype=bool, device=self.device)
+
     @property
     def action_dim(self) -> int:
         return self.action_manager.action_dim
@@ -250,6 +253,8 @@ class Env(EnvBase):
         self.episode_length_buf[env_ids] = 0
         for callback in self._reset_callbacks:
             callback(env_ids)
+        if self.use_flipping:
+            self.fliplr[env_ids] = torch.rand(env_ids.shape, device=self.device) < 0.5
         self.scene.update(self.step_dt)
         tensordict = TensorDict(
             self._compute_observation(), 
@@ -279,6 +284,12 @@ class Env(EnvBase):
                 masks = []
                 for obs_name, func in funcs.items():
                     tensor, mask = func()
+                    if self.use_flipping:
+                        tensor = torch.where(
+                            self.fliplr.reshape((self.num_envs,) + (1,) * (tensor.ndim - 1)),
+                            func.fliplr(tensor),
+                            tensor
+                        )
                     tensors.append(tensor)
                     masks.append(mask)
                 observation[group] = torch.cat(tensors, dim=-1)
@@ -340,8 +351,9 @@ class Env(EnvBase):
             self._render_headless()
         
         tensordict = TensorDict({}, self.num_envs, device=self.device)
-        tensordict.update(self._compute_observation())
         tensordict.update(self._compute_reward())
+        self.command_manager.update()
+        tensordict.update(self._compute_observation())
         terminated = self._compute_termination()
         truncated = (self.episode_length_buf >= self.max_episode_length).unsqueeze(1)
         tensordict.set("terminated", terminated)

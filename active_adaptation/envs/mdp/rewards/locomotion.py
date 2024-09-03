@@ -10,6 +10,7 @@ from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from active_adaptation.utils.helpers import batchify
 from ..commands import *
 
+quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
 
 class Reward:
@@ -356,7 +357,10 @@ class linvel_projection(Reward):
         self.linvel[:] = quat_rotate_inverse(quat, linvel_w)
     
     def compute(self) -> torch.Tensor:
-        command_linvel_b = self.env.command_manager.command_linvel[:, :self.dim]
+        command_linvel_b: torch.Tensor = self.env.command_manager.command_linvel[:, :self.dim]
+        command_linvel_b = command_linvel_b / command_linvel_b.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+        # or
+        # command_linvel_b.nan_to_num_(nan=0., posinf=0., neginf=0.)
         projection = (self.linvel[:, :self.dim] * command_linvel_b).sum(dim=-1, keepdim=True)
         reward = projection.clamp_max(self.env.command_manager.command_speed)
         return reward.reshape(self.num_envs, 1)
@@ -627,6 +631,36 @@ class step_lift(Reward):
         return r.max(1, True).values
 
 
+class com_linvel(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+
+        with torch.device(self.device):
+            self.com_pos_w = torch.zeros(self.num_envs, 3)
+            self.com_pos_w_prev = torch.zeros(self.num_envs, 3)
+            self.com_linvel_w = torch.zeros(self.num_envs, 3)
+            self.coms = self.asset.root_physx_view.get_coms()[:, :, :3].to(self.device)
+            self.masses = self.asset.root_physx_view.get_masses().to(self.device)
+            self.masses = self.masses / self.masses.sum(1, True)
+
+    def update(self):
+        self.com_pos_w_prev[:] = self.com_pos_w
+        com_pos_w = (self.asset.data.body_pos_w + quat_rotate(self.asset.data.body_quat_w, self.coms))
+        self.com_pos_w[:] = (com_pos_w * self.masses.unsqueeze(-1)).sum(1)
+        self.com_linvel_w[:] = (self.com_pos_w - self.com_pos_w_prev) / self.env.step_dt
+    
+    def compute(self) -> torch.Tensor:
+        return torch.zeros(self.num_envs, 1, device=self.device)
+
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.com_pos_w,
+            self.com_linvel_w,
+            color=(1.0, 0.1, 0.7, 1.)
+        )
+
+
 class base_height_l1(Reward):
     def __init__(self, env, target_height: float, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
@@ -717,7 +751,7 @@ class impedance_vel(Reward):
     
     def compute(self) -> torch.Tensor:
         diff = (self.command_manager.command_linvel_w - self.asset.data.root_lin_vel_w)
-        r = torch.exp(- diff.norm(dim=-1, keepdim=True) / 0.25)
+        r = torch.exp(- diff.square().sum(dim=-1, keepdim=True) / 0.25)
         return r
 
 

@@ -46,13 +46,15 @@ class LocomotionEnv(Env):
         self.action_buf: torch.Tensor = self.action_manager.action_buf
         self.last_action: torch.Tensor = self.action_manager.applied_action
 
+        self.fix_root_link = self.robot.cfg.spawn.articulation_props.fix_root_link
+
     def _reset_idx(self, env_ids: torch.Tensor):
         init_root_state = self.command_manager.sample_init(env_ids)
-        
-        self.robot.write_root_state_to_sim(
-            init_root_state, 
-            env_ids=env_ids
-        )
+        if not self.fix_root_link:
+            self.robot.write_root_state_to_sim(
+                init_root_state, 
+                env_ids=env_ids
+            )
         self.stats[env_ids] = 0.
 
         self.scene.reset(env_ids)
@@ -67,14 +69,6 @@ class LocomotionEnv(Env):
             lookat = torch.tensor(self.cfg.viewer.lookat) + robot_pos
             self.sim.set_camera_view(eye, lookat)
         return super().render(mode)
-    
-    @mdp.observation_func
-    def command(self):
-        return self.command_manager.command
-    
-    @mdp.observation_func
-    def prev_command(self):
-        return self.command_manager.command_prev
     
     # @mdp.reward_func
     # def heading(self):
@@ -109,7 +103,7 @@ class LocomotionEnv(Env):
         def __init__(self, env: "LocomotionEnv", feet_names=None, yaw_only: bool=False):
             if feet_names is None:
                 feet_names = env.feet_name_expr
-            super().__init__(env, feet_names, yaw_only)
+            super().__init__(env, feet_names, yaw_only=yaw_only)
             self.asset.data.feet_pos_b = self.body_pos_b
         
         def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
@@ -120,7 +114,7 @@ class LocomotionEnv(Env):
         def __init__(self, env: "LocomotionEnv", feet_names=None, yaw_only: bool=False):
             if feet_names is None:
                 feet_names = env.feet_name_expr
-            super().__init__(env, feet_names, yaw_only)
+            super().__init__(env, feet_names, yaw_only=yaw_only)
             self.asset.data.feet_vel_b = self.body_vel_b
         
         def fliplr(self, obs: torch.Tensor) -> torch.Tensor:

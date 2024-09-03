@@ -49,8 +49,10 @@ def log_video(env, it, render_interval, render_decimation):
         
         wandb.log({"video": wandb.Video(video_path)}, step=it)
 
+FILE_PATH = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(FILE_PATH, "..", "cfg")
 
-@hydra.main(config_path="../cfg", config_name="train", version_base=None)
+@hydra.main(config_path=CONFIG_PATH, config_name="train", version_base=None)
 def main(cfg: DictConfig):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
@@ -103,7 +105,7 @@ def main(cfg: DictConfig):
     ]
     episode_stats = EpisodeStats(stats_keys)
 
-    rollout_policy = policy.get_rollout_policy("eval")
+    rollout_policy = policy.get_rollout_policy("train")
     compile_policy = cfg.get("compile", False)
     assert compile_policy in (True, False, "auto")
     if compile_policy or compile_policy == "auto":
@@ -149,7 +151,7 @@ def main(cfg: DictConfig):
             )
             artifact.add_file(ckpt_path)
             run.log_artifact(artifact)
-        wandb.save(ckpt_path, policy="now")
+        run.save(ckpt_path, policy="now", base_path=run.dir)
         logging.info(f"Saved checkpoint to {str(ckpt_path)}")
 
     pbar = tqdm(collector, total=total_iters)

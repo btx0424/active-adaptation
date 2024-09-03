@@ -6,11 +6,18 @@ task: Humanoid
 defaults:
   # see https://hydra.cc/docs/advanced/overriding_packages/
   - /task/Velocity@_here_
+  - override /task/action@action: null
   - _self_
 
 robot: cy1
 terrain: easy
 payload: false
+
+action:
+  _target_: active_adaptation.envs.mdp.action.JointPosition
+  action_scaling: { "(?![l,r]arm_joint5).*" : 0.5}
+  max_delay: 1
+  alpha: [0.5, 1.0]
 
 command:
   _target_: active_adaptation.envs.mdp.Command2
@@ -86,8 +93,8 @@ reward:
     feet_swing:         {weight: 1.1, enabled: true, feet_names: .*leg_link6}
     feet_orientation:   {weight: 0.2, enabled: true, feet_names: .*leg_link6}
     feet_step:          {weight: 1.0, enabled: true, feet_names: .*leg_link6}
-    arm_swing:          {weight: 1.0, enabled: true, arm_names: .*arm_link5}
-    joint_pos_default:  {weight: 0.1, enabled: true}
+    # arm_swing:          {weight: 1.0, enabled: true, arm_names: .*arm_link5}
+    joint_pos_default:  {weight: 0.25, enabled: true, joint_names: ".*arm_joint[1,2]"}
     joint_vel_l2:       {weight: 0.002, enabled: true, joint_names: .*arm_joint.*}
     feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}
 

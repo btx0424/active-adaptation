@@ -2,6 +2,9 @@ import torch
 import numpy as np
 import mujoco, mujoco_viewer
 import time
+import os
+import itertools
+import imageio
 
 from tensordict import TensorDict
 from torchrl.envs import set_exploration_type, ExplorationType
@@ -47,15 +50,28 @@ DEBUG = False
 
 class MJCRobot:
 
-    def __init__(self, xml_path):
+    smoothing: int = 2
+
+    def __init__(self, xml_path, headless=False):
         self.model = mujoco.MjModel.from_xml_path(xml_path)
         self.data = mujoco.MjData(self.model)
-        self.action_dim = self.data.ctrl.shape[0]
-        self.viewer = mujoco_viewer.MujocoViewer(self.model, self.data)
+        if headless:
+            self.viewer = mujoco_viewer.MujocoViewer(self.model, self.data, mode="offscreen", width=640, height=480)
+        else:
+            self.viewer = mujoco_viewer.MujocoViewer(self.model, self.data)
+
         self.viewer.cam.type = 1
         self.viewer.cam.trackbodyid = 1
         print(self.viewer.cam)
-        breakpoint()
+        
+        # sometimes we only control/observe a subset of the joints
+        self.joint_names = [self.model.joint(i).name for i in range(self.model.njnt)]
+        self.joint_observed_ids = [self.joint_names.index(joint) for joint in MJC_JOINTS]
+
+        self.actuator_names = [self.model.actuator(i).name for i in range(self.model.nu)]
+        self.actuator_controlled_ids = [self.actuator_names.index(joint) for joint in MJC_JOINTS]
+        
+        self.action_dim = len(self.actuator_controlled_ids)
 
         self.decimation = int(0.02 / self.model.opt.timestep)
         print(f"Decimation: {self.decimation}")
@@ -64,10 +80,9 @@ class MJCRobot:
         # allocate buffers
         self.command    = np.zeros(4)
         self.action_buf = np.zeros((self.action_dim, 2))
-        smoothing: int = 2
-        self.qvel_buf   = np.zeros((self.action_dim, smoothing))
-        self.angvel_buf = np.zeros((3, smoothing))
-        self.smth_weight = np.flip(np.arange(1, smoothing + 1)).reshape(1, -1)
+        self.qvel_buf   = np.zeros((self.action_dim, self.smoothing))
+        self.angvel_buf = np.zeros((3, self.smoothing))
+        self.smth_weight = np.flip(np.arange(1, self.smoothing + 1)).reshape(1, -1)
         self.smth_weight = self.smth_weight / self.smth_weight.sum()
         print(f"Smoothing weight: {self.smth_weight}")
         
@@ -97,12 +112,22 @@ class MJCRobot:
     
     def reset(self):
         self.set_cycle(1.1)
-        self.qpos = self.data.qpos[-self.action_dim:]
-        self.qvel = self.data.qvel[-self.action_dim:]
-        self.angvel = self.data.sensor("angular-velocity").data
+        self.update()
         obs = self.compute_obs()
         return obs
     
+    def update(self):
+        self.qpos = self.data.qpos[-self.model.njnt:][self.joint_observed_ids]
+        qvel = self.data.qvel[-self.model.njnt:][self.joint_observed_ids]
+        self.qvel_buf = np.roll(self.qvel_buf, 1, axis=1)
+        self.qvel_buf[:, 0] = qvel
+        self.qvel = np.mean(self.qvel_buf, axis=1)
+        
+        angvel = self.data.sensor("angular-velocity").data
+        self.angvel_buf = np.roll(self.angvel_buf, 1, axis=1)
+        self.angvel_buf[:, 0] = angvel
+        self.angvel = np.mean(self.angvel_buf, axis=1)
+
     def step(self, action=None):
         if action is not None:
             self.action_buf = np.roll(self.action_buf, 1, axis=1)
@@ -121,24 +146,18 @@ class MJCRobot:
             qpos_des[11] = 0.5 * np.sin(phase)
             qpos_des[17] = 0.5 * -np.sin(phase)
 
-        self.pd_control(qpos_des[isaac2mjc])
+
         for _ in range(self.decimation):
             mujoco.mj_step(self.model, self.data)
-            self.qpos = self.data.qpos[-self.action_dim:]
-            qvel = self.data.qvel[-self.action_dim:]
-            self.qvel_buf = np.roll(self.qvel_buf, 1, axis=1)
-            self.qvel_buf[:, 0] = qvel
-            self.qvel = np.mean(self.qvel_buf, axis=1)
-
-            angvel = self.data.sensor("angular-velocity").data
-            self.angvel_buf = np.roll(self.angvel_buf, 1, axis=1)
-            self.angvel_buf[:, 0] = angvel
-            self.angvel = np.mean(self.angvel_buf, axis=1)
+            self.update()
+            self.pd_control(qpos_des[isaac2mjc])
         
         self.command[0] = 1.0
 
-        self.viewer.cam
-        self.viewer.render()
+        if self.viewer.render_mode == "window":
+            self.viewer.render()
+        else:
+            self.img = self.viewer.read_pixels()
         return self.compute_obs()
     
     def compute_obs(self):
@@ -164,25 +183,26 @@ class MJCRobot:
         qpos_err = qpos_des - self.qpos
         self.tau_des = qpos_err * self.kp - self.qvel_buf.mean(1) * self.kd
         self.tau_ctrl = lerp(self.data.ctrl, self.tau_des, 0.4)
-        self.data.ctrl[:] = np.clip(self.tau_ctrl, -200, 200)
+        self.data.ctrl[self.actuator_controlled_ids] = np.clip(self.tau_ctrl, -200, 200)
 
 
 def lerp(a, b, t):
     return a + (b - a) * t
 
 
+FILE_PATH = os.path.dirname(os.path.abspath(__file__))
+
+
+@set_exploration_type(ExplorationType.MODE)
 @torch.inference_mode()
 def main():
-    # xml_path = "orca/mjcf/orca_1.xml"
-    # xml_path = "XBot/mjcf/XBot-L.xml"
-    # xml_path = "orca1h/mjcf/orca_description_mj.xml"
-    xml_path = "orca1h/mjcf/orca1h.xml"
-    # xml_path = "orca/mjcf/orca_description_mj.xml"
+
+    xml_path = os.path.join(FILE_PATH, "orca1h/mjcf/orca1h.xml")
     robot = MJCRobot(xml_path)
 
     obs = robot.reset()
 
-    policy_path = "/home/btx0424/isaac_lab/active-adaptation/scripts/policy-07-05_11-51.pt"
+    policy_path = "policy-07-05_11-51.pt"
     policy = torch.load(policy_path)
     policy.module[0].set_missing_tolerance(True)
 
@@ -192,14 +212,17 @@ def main():
         "context_adapt_hx": torch.zeros(128)
     }, []).unsqueeze(0)
 
-    with set_exploration_type(ExplorationType.MODE):
-        i = 0
-        while True:
+    imgs = []
+    
+    try:
+        for i in itertools.count():
             start = time.perf_counter()
             policy(tensordict)
             action = tensordict["action"].squeeze().numpy()
             obs = torch.as_tensor(robot.step(action))
-            # obs = torch.as_tensor(robot.step())
+
+            if hasattr(robot, "img"):
+                imgs.append(robot.img)
             
             tensordict["next", "policy"] = obs.unsqueeze(0)
             tensordict["next", "is_init"] = torch.tensor([0], dtype=bool)
@@ -212,6 +235,13 @@ def main():
                 print("qvel:", robot.qvel_buf.mean(axis=1))
                 print("tau:", robot.tau_ctrl)
             i += 1
+    except KeyboardInterrupt:
+        pass
+    
+    if len(imgs):
+        print("Saving gif of length", len(imgs))
+        imageio.mimsave("orca1h.gif", imgs, fps=50)
+
 
 if __name__ == "__main__":
     main()

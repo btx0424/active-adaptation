@@ -55,14 +55,15 @@ class tracking_error(Termination):
 
 
 class cum_error(Termination):
-    def __init__(self, env, thres: float = 0.85):
+    def __init__(self, env, thres: float = 0.85, min_steps: int = 50):
         super().__init__(env)
         from .commands import Command2
         self.thres = torch.tensor(thres, device=self.env.device)
+        self.min_steps = min_steps # tolerate the first few steps
         self.command_manager: Command2 = self.env.command_manager
     
     def __call__(self) -> torch.Tensor:
-        return (self.command_manager._cum_error > self.thres).any(-1, True)
+        return ((self.command_manager._cum_error > self.thres).any(-1, True) & (self.env.episode_length_buf > self.min_steps).unsqueeze(-1))
 
 class ee_cum_error(Termination):
     def __init__(self, env, thres: float = 1.0, min_steps: int = 50):
