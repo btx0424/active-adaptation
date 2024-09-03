@@ -83,6 +83,7 @@ reward:
     survival:           {weight: 1.0, enabled: true}
     impedance_ee_pos:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.05}
     impedance_ee_vel:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.05}
+    joint_acc_l2:       {weight: 0.01, enabled: true, joint_names: "arm_joint[1-5]"}
 
 termination:
   # joint_acc_exceeds: {thres: 5000.}

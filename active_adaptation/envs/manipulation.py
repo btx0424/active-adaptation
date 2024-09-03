@@ -22,6 +22,17 @@ class ManipulationEnv(LocomotionEnv):
             super().__init__(cfg)
             self.arm_indices = self.robot.actuators["arm"].joint_indices
     
+        class joint_acc_l2(Reward):
+            def __init__(self, env, joint_names: str, weight: float, enabled: bool = True):
+                super().__init__(env, weight, enabled)
+                self.asset: Articulation = self.env.scene["robot"]
+                self.joint_ids, self.joint_names = self.asset.find_joints(joint_names)
+            
+            def compute(self) -> torch.Tensor:
+                r = - self.asset.data.joint_acc[:, self.joint_ids].square().sum(1, True)
+                return r
+    
+
 class QuadrupedManip(LocomotionEnv):
 
     feet_name_expr = ".*_foot"
