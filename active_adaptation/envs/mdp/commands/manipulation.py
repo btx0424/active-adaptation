@@ -428,7 +428,7 @@ class EEImpedance(Command):
         
         # draw external force on desired ee (orange)
         self.env.debug_draw.vector(
-            self.command_pos_ee_w,
+            self.asset.data.body_pos_w[:, self.ee_body_id],
             force_ext_ee_w,
             color=(1.0, 0.5, 0.0, 1.0),
             size=4.0,
@@ -436,7 +436,7 @@ class EEImpedance(Command):
         if self.spring_force:
             # draw external force setpoint (orange)
             self.env.debug_draw.point(
-                self.force_ext_ee_setpoint_w,
+                self.force_ext_ee_setpoint_w[self.apply_force.squeeze(-1)],
                 color=(1.0, 0.5, 0.0, 1.0),
                 size=10.0,
             )
