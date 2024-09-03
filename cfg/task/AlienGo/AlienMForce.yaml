@@ -35,6 +35,7 @@ command:
   _target_: active_adaptation.envs.mdp.BaseEEImpedance
   ee_name: 'arm_link6'
   ee_base_name: 'base'
+  base_setpoint_radius_range: [1.0, 3.0]
   kp_base_range: [0.5, 5.0]
   kp_yaw_range: [0.5, 5.0]
   kp_ee_range: [100.0, 150.0]
@@ -48,9 +49,10 @@ command:
   compliant_ratio: 0.2
   ext_force_ratio: 0.5
   future: 3
-  mix_openloop_base: true
+  mix_openloop_base: false
   mix_openloop_ee: false
-  mix_openloop_yaw: true
+  mix_openloop_yaw: false
+  command_acc: true
 
 observation:
   command:
