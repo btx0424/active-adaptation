@@ -15,8 +15,7 @@ homogeneous: false
 
 action:
   _target_: active_adaptation.envs.mdp.action.JointPosition
-  joint_names: .*_joint
-  action_scaling: {.*_joint: 0.5}
+  action_scaling: {.*_(hip|thigh|calf)_joint: 0.5}
   max_delay: 2
   alpha: [0.5, 1.0]
 
@@ -45,14 +44,7 @@ observation:
     joint_pos:    {noise_std: 0.05, joint_names: .*_joint}
     joint_vel:    {noise_std: 0.4, joint_names: .*_joint}
     prev_actions: {steps: 3}
-    # motor_params: {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
-    # body_materials: {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-    # root_linvel_b:
-    # # feet_pos_b:
-    # feet_height_map: {feet_names: .*foot }
-    # applied_torques: {actuator_name: base_legs}
   # priv:
-    # _mask_: true # randomly mask one of the items
     applied_action:
     root_linvel_b:    {yaw_only: true}
     root_angvel_b:
@@ -62,11 +54,6 @@ observation:
     applied_torques:  {actuator_name: base_legs}
     joint_forces:     {joint_names: .*_joint}
     external_forces:  {body_names: ["base"]}
-    # motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
-    # body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-    # motor_failure:    {actuator_name: base_legs}
-    # body_scale:       {}
-    # rewards:          {}
     contact_indicator:  {body_names: [".*_foot", ".*_calf"], timing: true}
     cum_error:
   params:
@@ -133,10 +120,6 @@ randomization:
     damping_range:    [0.7, 1.3]
     armature_range:   [0.0, 0.02]
     homogeneous: ${task.homogeneous}
-  # random_motor_failure:
-  #   actuator_name: base_legs
-  #   joint_names: .*_calf_joint
-  #   failure_prob: 0.0
   reset_joint_states_scale:
     pos_scales:
       .*: [0.8, 1.2]
