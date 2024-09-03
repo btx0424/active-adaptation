@@ -37,14 +37,14 @@ command:
   _target_: active_adaptation.envs.mdp.EEImpedance
   ee_name: 'arm_link6'
   ee_base_name: 'arm_base'
-  # setpoint_x_range: [0.2, 0.6]
-  # setpoint_y_range: [-0.2, 0.2]
-  # setpoint_z_range: [0.3, 0.7]
-  # relative_setpoint: false
-  setpoint_x_range: [-0.2, 0.2]
+  setpoint_x_range: [0.2, 0.6]
   setpoint_y_range: [-0.2, 0.2]
-  setpoint_z_range: [-0.2, 0.2]
-  relative_setpoint: true
+  setpoint_z_range: [0.3, 0.7]
+  relative_setpoint: false
+  # setpoint_x_range: [-0.2, 0.2]
+  # setpoint_y_range: [-0.2, 0.2]
+  # setpoint_z_range: [-0.2, 0.2]
+  # relative_setpoint: true
   kp_range: [100., 150.]
   damping_ratio_range: [0.7, 1.5]
   default_mass_ee: 1.
@@ -55,6 +55,8 @@ command:
   future: 3
   mix_openloop: false
   command_acc: true
+  spring_force: true
+  force_kp_range: [100., 500.]
 
 observation:
   command:

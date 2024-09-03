@@ -28,6 +28,8 @@ class EEImpedance(Command):
         future: int = 3,
         mix_openloop: bool = False,
         command_acc: bool = False,
+        spring_force: bool = False,
+        force_kp_range: tuple = (100.0, 500.0),
     ) -> None:
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
@@ -53,6 +55,8 @@ class EEImpedance(Command):
         self.future = future
         self.mix_openloop = mix_openloop
         self.command_acc = command_acc
+        self.spring_force = spring_force
+        self.force_kp_range = force_kp_range
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 10)
@@ -81,7 +85,12 @@ class EEImpedance(Command):
             self.default_mass_ee = default_mass_ee
             self.virtual_mass_ee = torch.zeros(self.num_envs, 1)
 
-            self.force_ext_ee_w = torch.zeros(self.num_envs, 3)
+            self.apply_force = torch.zeros(self.num_envs, 1, dtype=torch.bool)
+            if not self.spring_force:
+                self.force_ext_ee_w = torch.zeros(self.num_envs, 3)
+            else:
+                self.force_ext_ee_setpoint_w = torch.zeros(self.num_envs, 3)
+                self.force_ext_ee_kp = torch.zeros(self.num_envs, 3)
 
             self._cum_error = torch.zeros(self.num_envs, 2)
 
@@ -129,16 +138,30 @@ class EEImpedance(Command):
         )
 
     def _sample_force(self, env_ids: torch.Tensor):
-        force_ext_ee_w = torch.empty(len(env_ids), 3, device=self.device).uniform_(
-            -50.0, 50.0
-        )
-        force_ext_ee_w = clamp_norm(
-            force_ext_ee_w, max=self.virtual_mass_ee[env_ids] * self.max_force_acc
-        )
+        if not self.spring_force:
+            force_ext_ee_w = torch.empty(len(env_ids), 3, device=self.device).uniform_(
+                -50.0, 50.0
+            )
+            force_ext_ee_w = clamp_norm(
+                force_ext_ee_w, max=self.virtual_mass_ee[env_ids] * self.max_force_acc
+            )
+            self.force_ext_ee_w[env_ids] = force_ext_ee_w
+        else:
+            rel_force_ext_ee_setpoint_w = torch.empty(len(env_ids), 3, device=self.device).uniform_(
+                -0.2, 0.2
+            )
+            ee_pos_w = self.asset.data.body_pos_w[env_ids, self.ee_body_id]
+            force_ext_ee_kp = torch.empty(len(env_ids), 3, device=self.device).uniform_(
+                *self.force_kp_range
+            )
+            self.force_ext_ee_setpoint_w[env_ids] = rel_force_ext_ee_setpoint_w + ee_pos_w
+            self.force_ext_ee_kp[env_ids] = force_ext_ee_kp
+
         apply_force = (
             torch.rand(len(env_ids), 1, device=self.device) < self.ext_force_ratio
         )
-        self.force_ext_ee_w[env_ids] = force_ext_ee_w * apply_force
+        self.apply_force[env_ids] = apply_force
+        
 
     def _update_command(self):
         # compute command in world/body frame
@@ -203,10 +226,18 @@ class EEImpedance(Command):
         self._update_command()
 
     def step(self, substep: int):
+        if not self.spring_force:
+            force_ext_ee_w = self.force_ext_ee_w
+        else:
+            force_ext_ee_w = (
+                self.force_ext_ee_setpoint_w - self.asset.data.body_pos_w[:, self.ee_body_id]
+            ) * self.force_ext_ee_kp
+        
+        force_ext_ee_w *= self.apply_force
         forces_ee_b = self.asset._external_force_b[:, [self.ee_body_id]].clone()
         forces_ee_b += quat_rotate_inverse(
             self.asset.data.body_quat_w[:, self.ee_body_id],
-            self.force_ext_ee_w,
+            force_ext_ee_w,
         )[:, None, :]
         torques_ee_b = self.asset._external_torque_b[:, [self.ee_body_id]].clone()
         self.asset.set_external_force_and_torque(
@@ -214,6 +245,14 @@ class EEImpedance(Command):
         )
 
     def _integrate(self):
+        if not self.spring_force:
+            force_ext_ee_w = self.force_ext_ee_w.unsqueeze(1).repeat(1, self.future, 1)
+        else:
+            force_ext_ee_w = (
+                self.force_ext_ee_setpoint_w.unsqueeze(1) - self.desired_pos_ee_w
+            ) * self.force_ext_ee_kp.unsqueeze(1)
+        force_ext_ee_w *= self.apply_force.unsqueeze(1)
+        
         command_setpoint_pos_ee_w = (
             quat_rotate(
                 self.asset.data.root_quat_w,
@@ -226,8 +265,8 @@ class EEImpedance(Command):
             command_setpoint_pos_ee_w.unsqueeze(1) - self.desired_pos_ee_w
         ) + self.command_kd.unsqueeze(1) * (-self.desired_linvel_ee_w)
         self.desired_linacc_ee_w[:] = self.acc_spring_ee_w + (
-            self.force_ext_ee_w / self.virtual_mass_ee
-        ).unsqueeze(1)
+            force_ext_ee_w / self.virtual_mass_ee.unsqueeze(1)
+        )
         self.desired_linvel_ee_w.add_(self.desired_linacc_ee_w * self.env.physics_dt)
         self.desired_pos_ee_w.add_(self.desired_linvel_ee_w * self.env.physics_dt)
 
@@ -379,13 +418,28 @@ class EEImpedance(Command):
             color=(1.0, 1.0, 0.0, 1.0),
             size=10.0,
         )
+        if not self.spring_force:
+            force_ext_ee_w = self.force_ext_ee_w
+        else:
+            force_ext_ee_w = (
+                self.force_ext_ee_setpoint_w - self.asset.data.body_pos_w[:, self.ee_body_id]
+            ) * self.force_ext_ee_kp
+        force_ext_ee_w *= self.apply_force
+        
         # draw external force on desired ee (orange)
         self.env.debug_draw.vector(
             self.command_pos_ee_w,
-            self.force_ext_ee_w,
+            force_ext_ee_w,
             color=(1.0, 0.5, 0.0, 1.0),
             size=4.0,
         )
+        if self.spring_force:
+            # draw external force setpoint (orange)
+            self.env.debug_draw.point(
+                self.force_ext_ee_setpoint_w,
+                color=(1.0, 0.5, 0.0, 1.0),
+                size=10.0,
+            )
         # draw a point to indicate if the manipulator is compliant (green for compliant, red for non-compliant)
         self.env.debug_draw.point(
             self.asset.data.root_pos_w[self.compliant_ee.squeeze(-1)]
