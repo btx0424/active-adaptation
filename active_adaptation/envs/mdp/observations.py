@@ -1034,11 +1034,43 @@ class jacobians(Observation):
         self.asset: Articulation = self.env.scene["robot"]
         self.body_ids, self.body_names = self.asset.find_bodies(body_names)
         self.body_ids = torch.tensor(self.body_ids, device=self.device)
+        if self.env.fix_root_link:
+            self.body_ids = self.body_ids - 1
     
     def compute(self) -> torch.Tensor:
         jacobian = self.asset.root_physx_view.get_jacobians()[:, self.body_ids]
         return jacobian.reshape(self.num_envs, -1)
 
+
+class jacobians_b(Observation):
+    """The jacobians relative to the root link in body frame. The shape of returned jacobian is (num_envs, num_bodies * 6 * num_joints)"""
+    def __init__(self, env, body_names: str, joint_names: str):
+        super().__init__(env)
+        joint_names = ".*"
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_ids, self.body_names = self.asset.find_bodies(body_names)
+        self.body_ids = torch.tensor(self.body_ids, device=self.device)
+        self.joint_ids, self.joint_names = self.asset.find_joints(joint_names)
+        self.joint_ids = torch.tensor(self.joint_ids, device=self.device)
+        if self.env.fix_root_link:
+            self.body_ids = self.body_ids - 1
+        else:
+            self.joint_ids = self.joint_ids + 6
+    
+    def compute(self) -> torch.Tensor:
+        jacobian_all = self.asset.root_physx_view.get_jacobians() # [N, B, 6, J]
+        jacobian = jacobian_all[:, self.body_ids.unsqueeze(1), :, self.joint_ids.unsqueeze(0)].permute(2, 0, 3, 1) # [N, b, j, 6]
+        root_quat_w = self.asset.data.root_quat_w # [N, 4]
+        # [N, b, 6, j] -> [N, b, j, 6] -> [N, b * j * 2, 3] then rotate
+        jacobian_b = jacobian.permute(0, 1, 3, 2).reshape(self.num_envs, -1, 3)
+        jacobian_b = quat_rotate_inverse(root_quat_w.unsqueeze(1), jacobian_b)
+
+        # # [N, b * j * 2, 3] -> [N, b * j, 6] -> [N, b, j, 6] -> [N, b, 6, j]
+        # jacobian_b = jacobian_b.reshape(self.num_envs, len(self.body_ids), -1, 6).permute(0, 1, 3, 2)
+        # arm_joint_ids, _ = self.asset.find_joints("arm_joint[1-6]")
+        # breakpoint()
+
+        return jacobian_b.reshape(self.num_envs, -1)
 
 class cum_error(Observation):
     def __init__(self, env):
