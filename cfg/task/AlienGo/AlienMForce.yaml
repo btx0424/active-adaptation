@@ -27,7 +27,7 @@ action:
   _target_: active_adaptation.envs.mdp.action.JointPosition
   action_scaling:
     (F|R)(L|R)_(hip|thigh|calf)_joint: 0.5
-    arm_joint[1-5]: 0.0
+    arm_joint[1-5]: 0.5
   max_delay: 1
   alpha: 0.8
 
@@ -92,12 +92,12 @@ reward:
     angvel_z_exp:       {weight: 1.0, enabled: true}
     linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
     # impedance pos&vel tracking
-    impedance_base_pos:      {weight: 0.5, enabled: true, l: 0.05}
-    impedance_base_vel:      {weight: 1.0, enabled: true, l: 0.25}
-    impedance_ee_pos_b:      {weight: 0.5, enabled: false, l: 0.05}
+    impedance_base_pos:      {weight: 0.5, enabled: true, l: 0.01}
+    impedance_base_vel:      {weight: 1.0, enabled: true, l: 0.1}
+    impedance_ee_pos_b:      {weight: 0.5, enabled: false, l: 0.01}
     impedance_ee_vel_b:      {weight: 1.0, enabled: false, l: 0.25}
-    impedance_yaw_pos:      {weight: 0.5, enabled: true, l: 0.05}
-    impedance_yaw_vel:      {weight: 1.0, enabled: true, l: 0.25}
+    impedance_yaw_pos:      {weight: 0.5, enabled: true, l: 0.01}
+    impedance_yaw_vel:      {weight: 1.0, enabled: true, l: 0.1}
     
     # regularizarions
     ee_forward:         {weight: 0.2, enabled: false}
