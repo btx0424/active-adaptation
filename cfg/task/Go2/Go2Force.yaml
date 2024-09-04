@@ -17,7 +17,6 @@ command:
   virtual_mass_range: [0.2, 1.0]
   compliant_ratio: 1.0
   force_type_probs: [0.4, 0.3, 0.3]
-  delta_vel_xy_range: [-5.0, 5.0]
 
 observation:
   command:
@@ -100,9 +99,4 @@ randomization:
   reset_joint_states_scale:
     pos_scales:
       .*: [0.8, 1.2]
-  # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
-  # drag: {body_names: base, drag_range: [0.2, 0.4]}
-  # pull:
-  #   drag_prob: 1.0
-  #   drag_range: [0.2, 0.4]
   stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.4, 0.4]}

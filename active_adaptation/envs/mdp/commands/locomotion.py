@@ -573,7 +573,10 @@ class Impedance(Command):
         compliant_ratio: float = 0.2,
         force_type_probs = (0.4, 0.3, 0.3),
         linear_kp_range = (2.0, 12.0),
-        delta_vel_xy_range = (-3.0, 3.0),
+        impulse_force_momentum_range = (-5.0, 5.0),
+        impulse_force_duration_range = (0.1, 0.5),
+        constant_force_xy_range = (-50, 50),
+        constant_force_duration_range = (1, 4),
     ) -> None:
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
@@ -584,7 +587,13 @@ class Impedance(Command):
         self.resample_prob = 0.01
         self.compliant_ratio = compliant_ratio # kp=0 for compliant mode
         self.linear_kp_range = linear_kp_range
-        self.delta_vel_xy_range = delta_vel_xy_range
+        
+        # force parameters
+        self.impulse_force_momentum_range = impulse_force_momentum_range
+        self.impulse_force_duration_range = impulse_force_duration_range
+
+        self.constant_force_xy_range = constant_force_xy_range
+        self.constant_force_duration_range = constant_force_duration_range
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 9)
@@ -612,9 +621,9 @@ class Impedance(Command):
             self.kp = torch.zeros(self.num_envs, 1)
             self.kd = torch.zeros(self.num_envs, 1)
 
-            self.default_mass = self.asset.root_physx_view.get_masses().sum(1, True).to(self.device)
-            self.default_inertia = self.asset.root_physx_view.get_inertias()[:, 0, [0, 4, 8]].to(self.device)
-            self.default_inertia[:, 2] += 0.8
+            self.default_mass = self.asset.root_physx_view.get_masses()[0].sum().to(self.device)
+            self.default_inertia = self.asset.root_physx_view.get_inertias()[0, 0, [0, 4, 8]].to(self.device)
+            self.default_inertia[2] += 0.8
 
             self.virtual_mass = torch.zeros(self.num_envs, 1)
             self.virtual_inertia = torch.zeros(self.num_envs, 3)
@@ -625,15 +634,20 @@ class Impedance(Command):
             
             """
             Force Types:
-            0: None, t in [0, duration], f[t] = 0
-            1: Constant, t in [0, duration], f[t] = momentum / duration
-            2: Linear Impulse, t in [0, duration], f[t] = 2 * momentum / duration * (1 - t / duration)
+            0: None
+            1: Constant
+            2: Impulse
             """
-            self.force_type = torch.zeros(self.num_envs, 1, dtype=torch.long) # none, constant, impulse
-            self.force_time = torch.zeros(self.num_envs, 1) # application time of external force
-            self.force_type_dist = torch.tensor(force_type_probs, device=self.device)
-            self.momentum = torch.zeros(self.num_envs, 3)
-            self.force_duration = torch.zeros(self.num_envs, 1) # duration of external force
+            self.force_type_probs = torch.tensor(force_type_probs)
+            self.force_type = torch.zeros(self.num_envs, 1, dtype=torch.int64)
+            
+            self.constant_force_struct = torch.zeros(self.num_envs, 3 + 1 + 1) # force, duration, time
+            self.constant_force_duration = self.constant_force_struct[:, -2].unsqueeze(1)
+            self.constant_force_time = self.constant_force_struct[:, -1].unsqueeze(1)
+            
+            self.impulse_force_struct = torch.zeros(self.num_envs, 3 + 1 + 1) # force, duration, time
+            self.impulse_force_duration = self.impulse_force_struct[:, -2].unsqueeze(1)
+            self.impulse_force_time = self.impulse_force_struct[:, -1].unsqueeze(1)
 
             self._cum_error = torch.zeros(self.num_envs, 3)
 
@@ -686,12 +700,18 @@ class Impedance(Command):
         self.desired_yaw_vel_w[:, 0] = self.asset.data.root_ang_vel_w[:, 2:3]
         self.desired_yaw_w[:, 0] = self.asset.data.heading_w.unsqueeze(1)
         
-        constant_force = self.momentum / self.force_duration
-        linear_impulse = 2 * constant_force * (1 - (self.force_time / self.force_duration).clamp(0., 1.))
+        constant_force = self.constant_force_struct[:, 0:3] * (self.constant_force_time < self.constant_force_duration)
+        impulse_force_t = (self.impulse_force_time / self.impulse_force_duration).clamp(0., 1.)
+        impulse_force = torch.where(
+            impulse_force_t < 0.5,
+            impulse_force_t * self.impulse_force_struct[:, 0:3] * 2,
+            (1 - impulse_force_t) * self.impulse_force_struct[:, 0:3] * 2
+        )
         self.force_ext_w[:] = torch.where(
             self.force_type == 0, 0.,
-            torch.where(self.force_type == 1, constant_force, linear_impulse))
-        self.force_time.add_(self.env.step_dt)
+            torch.where(self.force_type == 1, constant_force, impulse_force))
+        self.constant_force_time.add_(self.env.step_dt)
+        self.impulse_force_time.add_(self.env.step_dt)
         
         for _ in range(4):
             self._integrate()
@@ -762,34 +782,29 @@ class Impedance(Command):
         self.desired_yaw_w[env_ids] = root_yaw.reshape(-1, 1, 1)
 
         virtual_mass = torch.empty(len(env_ids), 1, device=self.device).uniform_(*self.virtual_mass_range)
-        self.virtual_mass[env_ids] = self.default_mass[env_ids] * virtual_mass
-        self.virtual_inertia[env_ids] = self.default_inertia[env_ids] * virtual_mass
+        self.virtual_mass[env_ids] = self.default_mass * virtual_mass
+        self.virtual_inertia[env_ids] = self.default_inertia
 
     def _sample_force(self, env_ids: torch.Tensor):
-        self.force_time[env_ids] = 0.
         
-        force_type = torch.multinomial(self.force_type_dist, len(env_ids), replacement=True).unsqueeze(1)
-        force_duration = torch.where(
-            force_type == 0,
-            torch.zeros(len(env_ids), 1, device=self.device),
-            torch.where(
-                force_type == 1,
-                torch.randint(50, 150, (len(env_ids), 1), device=self.device),
-                torch.randint(15, 40, (len(env_ids), 1), device=self.device)
-            ) * self.env.step_dt,
-        )
-        
-        # instead of directly setting the force, we set the expected applied momentum
-        delta_vel = torch.zeros(len(env_ids), 3, device=self.device)
-        delta_vel[:, 0].uniform_(*self.delta_vel_xy_range)
-        delta_vel[:, 1].uniform_(*self.delta_vel_xy_range)
-        delta_vel[:, 2].uniform_(-0.4, 0.4)
-        momentum = delta_vel * self.virtual_mass[env_ids]
-        
-        self.force_type[env_ids] = force_type
-        self.force_duration[env_ids] = force_duration.float()
-        self.momentum[env_ids] = momentum * (force_type > 0)
+        self.force_type[env_ids] = torch.multinomial(self.force_type_probs, len(env_ids), replacement=True).unsqueeze(1)
 
+        # sample constant force
+        constant_force = torch.zeros(len(env_ids), 5, device=self.device)
+        constant_force[:, 0].uniform_(*self.constant_force_xy_range)
+        constant_force[:, 1].uniform_(*self.constant_force_xy_range)
+        constant_force[:, 3].uniform_(*self.constant_force_duration_range)
+        self.constant_force_struct[env_ids] = constant_force
+        
+        # sample impulse force
+        impulse = torch.zeros(len(env_ids), 5, device=self.device)
+        impulse[:, 0].uniform_(*self.impulse_force_momentum_range)
+        impulse[:, 1].uniform_(*self.impulse_force_momentum_range)
+        impulse[:, 2].uniform_(-1, 1)
+        impulse[:, 3].uniform_(*self.impulse_force_duration_range)
+        impulse[:, :3].mul_((self.default_mass / impulse[:, 3]).unsqueeze(1)) # f = v * (m / t)
+        self.impulse_force_struct[env_ids] = impulse
+        
         force_offset_b = torch.zeros(len(env_ids), 3, device=self.device)
         force_offset_b[:, 0].uniform_(-0.3, 0.3)
         force_offset_b[:, 1].uniform_(-0.2, 0.2)
