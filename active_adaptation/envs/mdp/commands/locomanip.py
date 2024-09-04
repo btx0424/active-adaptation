@@ -2119,26 +2119,27 @@ class BaseEEImpedance(Command):
     #         color=(1.0, 1.0, 0.0, 1.0),
     #     )
 
-    # def _debug_draw_forces(self):
-    #     # force on base (orange)
-    #     force_acc_base = self.force_ext_base_w / self.virtual_mass_base
-    #     self.env.debug_draw.vector(
-    #         self.asset.data.root_pos_w
-    #         + yaw_rotate(self.asset.data.heading_w[:, None], self.force_base_offset_b),
-    #         force_acc_base,
-    #         color=(1.0, 0.8, 0.0, 1.0),
-    #         size=4.0,
-    #     )
-    #     # force on ee (orange)
-    #     force_acc_ee = self.force_ext_ee_w / self.virtual_mass_ee
-    #     self.env.debug_draw.vector(
-    #         self.asset.data.body_pos_w[:, self.ee_body_id],
-    #         force_acc_ee,
-    #         color=(1.0, 0.8, 0.0, 1.0),
-    #         size=4.0,
-    #     )
+    def _debug_draw_forces(self):
+        # force on base (orange)
+        force_acc_base = self.force_ext_base_w / self.virtual_mass_base
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w
+            + yaw_rotate(self.asset.data.heading_w[:, None], self.force_base_offset_b),
+            force_acc_base,
+            color=(1.0, 0.8, 0.0, 1.0),
+            size=4.0,
+        )
+        # force on ee (orange)
+        force_acc_ee = self.force_ext_ee_w / self.virtual_mass_ee
+        self.env.debug_draw.vector(
+            self.asset.data.body_pos_w[:, self.ee_body_id],
+            force_acc_ee,
+            color=(1.0, 0.8, 0.0, 1.0),
+            size=4.0,
+        )
     
     def debug_draw(self):
-        # self._debug_draw_ee()
+        self._debug_draw_ee()
         self._debug_draw_base()
         self._debug_draw_yaw()
+        self._debug_draw_forces()
