@@ -111,7 +111,7 @@ reward:
     joint_acc_l2:       {weight: 2.5e-7, enabled: true}
     joint_torques_l2:   {weight: 2.0e-4, enabled: false}
     quadruped_stand:    {weight: 0.5, enabled: true}
-    stance_width:       {weight: 0.5, enabled: true, target_width: 0.15}
+    stance_width:       {weight: 0.5, enabled: false, target_width: 0.15}
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.01, enabled: true}
     action_rate2_l2:    {weight: 0.005, enabled: true}
