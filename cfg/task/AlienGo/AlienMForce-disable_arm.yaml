@@ -108,7 +108,7 @@ reward:
     energy_l1:          {weight: 0.0002, enabled: true}
     energy_dist_lr:     {weight: 0.0002, enabled: false}
     energy_dist_fb:     {weight: 0.0002, enabled: false}
-    joint_acc_l2:       {weight: 2.5e-7, enabled: true}
+    joint_acc_l2:       {weight: 2.5e-7, enabled: true, joint_names: "(F|R)(L|R)_(hip|thigh|calf)_joint"}
     joint_torques_l2:   {weight: 2.0e-4, enabled: false}
     quadruped_stand:    {weight: 0.5, enabled: true}
     stance_width:       {weight: 0.5, enabled: false, target_width: 0.15}
