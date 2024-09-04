@@ -94,8 +94,8 @@ reward:
     # impedance pos&vel tracking
     impedance_base_pos:      {weight: 0.5, enabled: true, l: 0.01}
     impedance_base_vel:      {weight: 1.0, enabled: true, l: 0.1}
-    impedance_ee_pos_b:      {weight: 0.5, enabled: false, l: 0.01}
-    impedance_ee_vel_b:      {weight: 1.0, enabled: false, l: 0.25}
+    impedance_ee_pos_b:      {weight: 0.5, enabled: true, l: 0.01}
+    impedance_ee_vel_b:      {weight: 1.0, enabled: true, l: 0.25}
     impedance_yaw_pos:      {weight: 0.5, enabled: true, l: 0.01}
     impedance_yaw_vel:      {weight: 1.0, enabled: true, l: 0.1}
     
@@ -111,6 +111,7 @@ reward:
     joint_acc_l2:       {weight: 2.5e-7, enabled: true}
     joint_torques_l2:   {weight: 2.0e-4, enabled: false}
     quadruped_stand:    {weight: 0.5, enabled: true}
+    stance_width:       {weight: 0.5, enabled: true, target_width: 0.15}
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.01, enabled: true}
     action_rate2_l2:    {weight: 0.005, enabled: true}

@@ -1329,7 +1329,6 @@ class BaseEEImpedance(Command):
         self.base_setpoint_radius_range = base_setpoint_radius_range
 
         self.kp_base_range = kp_base_range
-        self.kp_base_range = [4.5, 5.0]
         self.kp_yaw_range = kp_yaw_range
         self.kp_ee_range = kp_ee_range
         self.damping_ratio_range = damping_ratio_range
@@ -1339,11 +1338,9 @@ class BaseEEImpedance(Command):
         self.virtual_mass_range = virtual_mass_range
         self.max_force_acc_base = max_force_acc_base
         self.max_force_acc_ee = max_force_acc_ee
-        self.max_force_acc_ee = 0.0
 
         self.compliant_ratio = compliant_ratio
         self.ext_force_ratio = ext_force_ratio
-        self.ext_force_ratio = 0.8
 
         self.resample_prob = 0.005
         self.future = future
@@ -1451,9 +1448,7 @@ class BaseEEImpedance(Command):
             ],
             dim=1,
         )
-        self.command_setpoint_pos_base_w[env_ids] = (
-            command_setpoint_pos_base_w + self.asset.data.root_pos_w[env_ids]
-        )
+        self.command_setpoint_pos_base_w[env_ids] = command_setpoint_pos_base_w
 
         # ee_yaw = torch.empty(len(env_ids), 1, device=self.device).uniform_(
         #     -torch.pi / 2, torch.pi / 2
@@ -1476,8 +1471,8 @@ class BaseEEImpedance(Command):
         command_setpoint_pos_ee_b[:, 2].uniform_(0.3, 0.7)
         self.command_setpoint_pos_ee_b[env_ids] = command_setpoint_pos_ee_b
 
-        self.command_setpoint_yaw_w[env_ids] = torch.empty(len(env_ids), 1, device=self.device).uniform_(-torch.pi, torch.pi)
-        self.command_setpoint_yaw_w[env_ids] = self.asset.data.heading_w[env_ids].unsqueeze(1)
+        self.command_setpoint_yaw_w[env_ids] = torch.empty(len(env_ids), 1, device=self.device).uniform_(-torch.pi / 2, torch.pi / 2)
+        self.command_setpoint_yaw_w[env_ids] += self.asset.data.heading_w[env_ids].unsqueeze(1)
 
         kp_base = torch.empty(len(env_ids), 1, device=self.device).uniform_(
             *self.kp_base_range

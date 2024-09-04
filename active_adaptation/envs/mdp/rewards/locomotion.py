@@ -700,6 +700,20 @@ class quadruped_stand(Reward):
         return cost * self.env.command_manager.is_standing_env.reshape(self.num_envs, 1)
 
 
+class stance_width(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf), target_width=0.15):
+        """penalize stance width smaller than target_width"""
+        super().__init__(env, weight, enabled, clip_range)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.target_width = target_width
+    
+    def compute(self) -> torch.Tensor:
+        front_width = self.asset.data.feet_pos_b[:, [0, 1], 0].diff(dim=1).norm(dim=1, keepdim=True)
+        back_width = self.asset.data.feet_pos_b[:, [2, 3], 0].diff(dim=1).norm(dim=1, keepdim=True)
+        width = torch.cat([front_width, back_width], dim=1)
+        return -(self.target_width - width).clamp_min(0.).sum(1, keepdim=True)
+    
+
 class stand_up_height(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf)):
         super().__init__(env, weight, enabled, clip_range)
