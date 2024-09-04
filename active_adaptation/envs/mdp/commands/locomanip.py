@@ -1318,6 +1318,7 @@ class BaseEEImpedance(Command):
         mix_openloop_ee: bool = False,
         mix_openloop_yaw: bool = False,
         command_acc: bool = False,
+        hidden_cmd_ee_only: bool = False,
     ) -> None:
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
@@ -1348,6 +1349,7 @@ class BaseEEImpedance(Command):
         self.mix_openloop_ee = mix_openloop_ee
         self.mix_openloop_yaw = mix_openloop_yaw
         self.command_acc = command_acc
+        self.hidden_cmd_ee_only = hidden_cmd_ee_only
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 23)
@@ -1449,6 +1451,7 @@ class BaseEEImpedance(Command):
             dim=1,
         )
         self.command_setpoint_pos_base_w[env_ids] = command_setpoint_pos_base_w
+        self.command_setpoint_pos_base_w[env_ids] += self.asset.data.root_pos_w[env_ids]    
 
         # ee_yaw = torch.empty(len(env_ids), 1, device=self.device).uniform_(
         #     -torch.pi / 2, torch.pi / 2
@@ -1809,6 +1812,10 @@ class BaseEEImpedance(Command):
         self.command_hidden[:, 8:9] = self.command_yawvel
         self.command_hidden[:, 9:12] = self.command_linvel_ee_b
 
+        if self.hidden_cmd_ee_only:
+            self.command_hidden[:, 0:3].zero_()
+            self.command_hidden[:, 6:9].zero_()
+
     def update(self):
         self._update_buffers()
         self._compute_error()
@@ -1817,6 +1824,7 @@ class BaseEEImpedance(Command):
         env_ids = self.need_reset_mask.squeeze(-1)
         self._cum_error[env_ids] = 0.0
         self._cum_count[env_ids] = 0.0
+        # print((self._cum_error / self._cum_count / self.env.step_dt).mean(0))
         self.desired_linacc_base_w[env_ids] = 0.0
         self.desired_linvel_base_w[env_ids] = (
             self.asset.data.root_lin_vel_w[env_ids, None] * self.xy
@@ -2119,26 +2127,27 @@ class BaseEEImpedance(Command):
     #         color=(1.0, 1.0, 0.0, 1.0),
     #     )
 
-    # def _debug_draw_forces(self):
-    #     # force on base (orange)
-    #     force_acc_base = self.force_ext_base_w / self.virtual_mass_base
-    #     self.env.debug_draw.vector(
-    #         self.asset.data.root_pos_w
-    #         + yaw_rotate(self.asset.data.heading_w[:, None], self.force_base_offset_b),
-    #         force_acc_base,
-    #         color=(1.0, 0.8, 0.0, 1.0),
-    #         size=4.0,
-    #     )
-    #     # force on ee (orange)
-    #     force_acc_ee = self.force_ext_ee_w / self.virtual_mass_ee
-    #     self.env.debug_draw.vector(
-    #         self.asset.data.body_pos_w[:, self.ee_body_id],
-    #         force_acc_ee,
-    #         color=(1.0, 0.8, 0.0, 1.0),
-    #         size=4.0,
-    #     )
+    def _debug_draw_forces(self):
+        # force on base (orange)
+        force_acc_base = self.force_ext_base_w / self.virtual_mass_base
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w
+            + yaw_rotate(self.asset.data.heading_w[:, None], self.force_base_offset_b),
+            force_acc_base,
+            color=(1.0, 0.8, 0.0, 1.0),
+            size=4.0,
+        )
+        # force on ee (orange)
+        force_acc_ee = self.force_ext_ee_w / self.virtual_mass_ee
+        self.env.debug_draw.vector(
+            self.asset.data.body_pos_w[:, self.ee_body_id],
+            force_acc_ee,
+            color=(1.0, 0.8, 0.0, 1.0),
+            size=4.0,
+        )
     
     def debug_draw(self):
-        # self._debug_draw_ee()
+        self._debug_draw_ee()
         self._debug_draw_base()
         self._debug_draw_yaw()
+        self._debug_draw_forces()
