@@ -1046,7 +1046,6 @@ class jacobians_b(Observation):
     """The jacobians relative to the root link in body frame. The shape of returned jacobian is (num_envs, num_bodies * 6 * num_joints)"""
     def __init__(self, env, body_names: str, joint_names: str):
         super().__init__(env)
-        joint_names = ".*"
         self.asset: Articulation = self.env.scene["robot"]
         self.body_ids, self.body_names = self.asset.find_bodies(body_names)
         self.body_ids = torch.tensor(self.body_ids, device=self.device)
