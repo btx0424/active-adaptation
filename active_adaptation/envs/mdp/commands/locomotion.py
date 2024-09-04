@@ -561,14 +561,10 @@ class CommandPosVel(Command2):
 
 
 class Impedance(Command):
-    
-    future: int = 3
-    
+        
     def __init__(
         self, 
         env,
-        angvel_range=(-2.0, 2.0),
-        yaw_stiffness_range=(0.5, 0.5),
         virtual_mass_range=(0.5, 1.0),
         compliant_ratio: float = 0.2,
         force_type_probs = (0.4, 0.3, 0.3),
@@ -577,16 +573,16 @@ class Impedance(Command):
         impulse_force_duration_range = (0.1, 0.5),
         constant_force_xy_range = (-50, 50),
         constant_force_duration_range = (1, 4),
+        temporal_smoothing: int = 5
     ) -> None:
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
         
-        self.angvel_range = angvel_range
-        self.yaw_stiffness_range = yaw_stiffness_range
         self.virtual_mass_range = virtual_mass_range
         self.resample_prob = 0.01
         self.compliant_ratio = compliant_ratio # kp=0 for compliant mode
         self.linear_kp_range = linear_kp_range
+        self.temporal_smoothing = temporal_smoothing
         
         # force parameters
         self.impulse_force_momentum_range = impulse_force_momentum_range
@@ -606,13 +602,13 @@ class Impedance(Command):
             self.command_linvel_w = torch.zeros(self.num_envs, 3)
 
             # integration
-            self.desired_lin_acc_w = torch.zeros(self.num_envs, self.future, 3)
-            self.desired_lin_vel_w = torch.zeros(self.num_envs, self.future, 3)
-            self.desired_pos_w = torch.zeros(self.num_envs, self.future, 3)
+            self.desired_lin_acc_w = torch.zeros(self.num_envs, self.temporal_smoothing, 3)
+            self.desired_lin_vel_w = torch.zeros(self.num_envs, self.temporal_smoothing, 3)
+            self.desired_pos_w = torch.zeros(self.num_envs, self.temporal_smoothing, 3)
             
-            self.desired_yaw_acc_w = torch.zeros(self.num_envs, self.future, 1)
-            self.desired_yaw_vel_w = torch.zeros(self.num_envs, self.future, 1)
-            self.desired_yaw_w = torch.zeros(self.num_envs, self.future, 1)
+            self.desired_yaw_acc_w = torch.zeros(self.num_envs, self.temporal_smoothing, 1)
+            self.desired_yaw_vel_w = torch.zeros(self.num_envs, self.temporal_smoothing, 1)
+            self.desired_yaw_w = torch.zeros(self.num_envs, self.temporal_smoothing, 1)
             
             self.command_angvel = torch.zeros(self.num_envs)
             self.command_setpos_w = torch.zeros(self.num_envs, 3)
@@ -623,7 +619,7 @@ class Impedance(Command):
 
             self.default_mass = self.asset.root_physx_view.get_masses()[0].sum().to(self.device)
             self.default_inertia = self.asset.root_physx_view.get_inertias()[0, 0, [0, 4, 8]].to(self.device)
-            self.default_inertia[2] += 0.8
+            self.default_inertia[2] += 1.2
 
             self.virtual_mass = torch.zeros(self.num_envs, 1)
             self.virtual_inertia = torch.zeros(self.num_envs, 3)
@@ -689,11 +685,11 @@ class Impedance(Command):
         self.desired_yaw_w.add_(desired_yaw_acc_w * self.env.physics_dt)
 
     def update(self):
-        self.desired_lin_vel_w = self.desired_lin_vel_w.roll(1, dims=1)
-        self.desired_pos_w = self.desired_pos_w.roll(1, dims=1)
+        self.desired_lin_vel_w[:, :-1] = self.desired_lin_vel_w[:, :-1].roll(1, dims=1)
+        self.desired_pos_w[:, :-1] = self.desired_pos_w[:, :-1].roll(1, dims=1)
         
-        self.desired_yaw_vel_w = self.desired_yaw_vel_w.roll(1, dims=1)
-        self.desired_yaw_w = self.desired_yaw_w.roll(1, dims=1)
+        self.desired_yaw_vel_w[:, :-1] = self.desired_yaw_vel_w[:, :-1].roll(1, dims=1)
+        self.desired_yaw_w[:, :-1] = self.desired_yaw_w[:, :-1].roll(1, dims=1)
         
         self.desired_lin_vel_w[:, 0] = self.asset.data.root_lin_vel_w
         self.desired_pos_w[:, 0] = self.asset.data.root_pos_w
