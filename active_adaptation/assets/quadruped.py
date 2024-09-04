@@ -134,6 +134,9 @@ UNITREE_ALIENGO_A1_CFG.actuators["gripper"] = ImplicitActuatorCfg(
     friction=0.001,
 )
 
+UNITREE_ALIENGO_A1_FIX_CFG = copy.deepcopy(UNITREE_ALIENGO_A1_CFG)
+UNITREE_ALIENGO_A1_FIX_CFG.spawn.articulation_props.fix_root_link = True
+
 CYBERDOG_CFG = copy.deepcopy(UNITREE_A1_CFG)
 CYBERDOG_CFG.spawn.usd_path = f"{ASSET_PATH}/cyberdog2_v3.usd"
 CYBERDOG_CFG.actuators["base_legs"].stiffness = 20.
