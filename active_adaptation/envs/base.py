@@ -76,6 +76,7 @@ class Env(EnvBase):
         self.max_episode_length = self.cfg.max_episode_length
         self.episode_length_buf = torch.zeros(self.num_envs, dtype=int, device=self.device)
         self.step_dt = self.physics_dt * self.cfg.decimation
+        self.fix_root_link = self.scene.articulations["robot"].cfg.spawn.articulation_props.fix_root_link
 
         # parse obs and reward functions
         self.done_spec = (

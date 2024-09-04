@@ -77,7 +77,7 @@ observation:
     applied_torques:  {actuator_name: base_legs}
     joint_forces:     {}
 
-    jacobians:        {body_names: "arm_link6"}
+    jacobians_b:      {body_names: "arm_link6", joint_names: "arm_joint[1-5]"}
     body_pos:         {body_names: "arm_link6", yaw_only: true}
     body_vel:         {body_names: "arm_link6", yaw_only: true}
     cum_error:        {}

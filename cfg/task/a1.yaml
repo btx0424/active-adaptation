@@ -70,7 +70,7 @@ observation:
     applied_action:
     applied_torques:  {actuator_name: arm}
     joint_forces:     {}
-    jacobians:        {body_names: ["arm_link6"]}
+    jacobians_b:      {body_names: ["arm_link6"], joint_names: ["arm_joint[1-5]"]}
     body_pos:         {body_names: ["arm_link6"]}
     body_vel:         {body_names: ["arm_link6"]}
     cum_error:        {}
