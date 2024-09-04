@@ -62,6 +62,7 @@ ROBOTS = {
     "go2arx": UNITREE_GO2ARX_CFG,
     "aliengo": UNITREE_ALIENGO_CFG,
     "aliengo-a1": UNITREE_ALIENGO_A1_CFG,
+    "aliengo-a1-fix": UNITREE_ALIENGO_A1_FIX_CFG,
     "cassie": CASSIE_CFG,
     "h1": H1_CFG,
     "cy1": CY1_CFG,
