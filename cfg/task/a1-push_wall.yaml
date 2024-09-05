@@ -1,0 +1,81 @@
+# @package task
+name: A1-Arm
+task: Manipulation
+scene: manipulation
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/Velocity@_here_
+  - override action: null
+  - _self_
+
+robot: a1-arm
+terrain: plane
+payload: false
+homogeneous: false
+
+# action:
+#   _target_: active_adaptation.envs.mdp.action.IKResidual
+#   action_scaling:
+#     arm_joint[1-6]: 0.5
+#   max_delay: 1
+#   alpha: 0.8
+#   ik_method: "dls"
+#   ik_params:
+#     k_val: 1.0
+#     lambda_val: 0.01
+#   fwd: true
+
+action:
+  _target_: active_adaptation.envs.mdp.action.JointPosition
+  action_scaling:
+    arm_joint[1-5]: 0.5
+  max_delay: 1
+  alpha: 0.8
+
+command:
+  _target_: active_adaptation.envs.mdp.PushWall
+  ee_name: 'arm_link6'
+
+observation:
+  command:
+    command:
+  policy:
+    joint_pos:    {noise_std: 0.05}
+    joint_vel:    {noise_std: 0.2}
+    prev_actions: {steps: 3}
+  priv:
+    command_hidden:
+    applied_action:
+    applied_torques:  {actuator_name: arm}
+    joint_forces:     {}
+    jacobians_b:      {body_names: ["arm_link6"], joint_names: ["arm_joint[1-5]"]}
+    body_pos:         {body_names: ["arm_link6"]}
+    body_vel:         {body_names: ["arm_link6"]}
+    cum_error:        {}
+  ext:
+    external_forces: {body_names: ["arm_link6"]}
+
+reward:
+  manip:
+    # common loco rewards just for sanity check
+    survival:           {weight: 1.0, enabled: true}
+    impedance_ee_pos:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.01}
+    impedance_ee_vel:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.05}
+    joint_acc_l2:       {weight: 1.0e-5, enabled: true, joint_names: "arm_joint[1-5]"}
+
+termination:
+  # joint_acc_exceeds: {thres: 5000.}
+  cum_error: {thres: 1.0, min_steps: 1000}
+
+randomization:
+  random_scale: [1.0, 1.2]
+  # reset_joint_states_uniform:
+  #   pos_ranges:
+  #     arm_joint1: [-2.5, 2.5]
+  #     arm_joint2: [0.0, 1.0]
+  #     arm_joint3: [-2.5, 0.0]
+  #     arm_joint4: [-1.0, 1.0]
+  #     arm_joint5: [-1.0, 1.0]
+  #     # arm_joint6: [-2.5, 2.5]
+  #   rel: true
