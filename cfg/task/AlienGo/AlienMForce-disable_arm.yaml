@@ -28,6 +28,13 @@ action:
   action_scaling:
     (F|R)(L|R)_(hip|thigh|calf)_joint: 0.5
     arm_joint[1-5]: 0.0
+  offset_ranges:
+      (F|R)(L|R)_(hip|thigh|calf)_joint: [-0.05, 0.05]
+      arm_joint1: [-2.5, 2.5]
+      arm_joint2: [0.0, 2.0]
+      arm_joint3: [-2.5, 0.0]
+      arm_joint4: [-1.0, 1.0]
+      arm_joint5: [-1.0, 1.0]
   max_delay: 1
   alpha: 0.8
 

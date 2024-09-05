@@ -203,6 +203,7 @@ class JointPosition(ActionManager):
         env,
         joint_names: str = ".*",
         action_scaling: Dict[str, float] = 0.5,
+        offset_ranges: Dict[str, Tuple[float]] = None,
         left_joints = None,
         right_joints = None,
         asym_joints = None,
@@ -236,13 +237,20 @@ class JointPosition(ActionManager):
         self.action_dim = len(self.joint_ids)
         
         self.default_joint_pos = self.asset.data.default_joint_pos.clone()
+        self.joint_limits = self.asset.data.joint_limits.clone().unbind(-1)
 
         with torch.device(self.device):
             self.action_buf = torch.zeros(self.num_envs, self.action_dim, max(max_delay + 1, 3)) # at least 3 for action_rate_2_l2 reward
             self.applied_action = torch.zeros(self.num_envs, self.action_dim)
             self.alpha = torch.ones(self.num_envs, 1)
             self.delay = torch.zeros(self.num_envs, 1, dtype=int)
-            self.offset = torch.zeros_like(self.default_joint_pos)
+
+        if offset_ranges is not None:
+            joint_ids, _, self.offset_ranges = string_utils.resolve_matching_names_values(
+                dict(offset_ranges), self.asset.joint_names)
+            assert self.joint_ids == joint_ids, "Joint names in action_scaling and offset must match."
+            self.offset_ranges = torch.as_tensor(self.offset_ranges, device=self.device).unbind(-1)
+            
     
     def fliplr(self, action: torch.Tensor):
         """
@@ -265,6 +273,12 @@ class JointPosition(ActionManager):
         alpha = torch.empty(len(env_ids), 1, device=self.device).uniform_(*self.alpha_range)
         self.alpha[env_ids] = alpha
 
+        if hasattr(self, "offset_ranges"):
+            shape = (len(env_ids), self.offset_ranges[0].shape[0])
+            offset = self.offset_ranges[0] + torch.rand(shape, device=self.device) * (self.offset_ranges[1] - self.offset_ranges[0])
+            self.default_joint_pos[env_ids] = self.asset.data.default_joint_pos[env_ids].clone()
+            self.default_joint_pos[env_ids.unsqueeze(1), [self.joint_ids]] += offset
+
     def __call__(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
             action = tensordict["action"].clamp(-10, 10)
@@ -278,7 +292,7 @@ class JointPosition(ActionManager):
             pos_target = self.default_joint_pos.clone()
             pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
             pos_target.clamp_(-torch.pi, torch.pi)
-            self.asset.set_joint_position_target(pos_target)
+            self.asset.set_joint_position_target(pos_target.clamp(*self.joint_limits))
         self.asset.write_data_to_sim()
 
 class QuadrupedWithArm(JointPosition):
