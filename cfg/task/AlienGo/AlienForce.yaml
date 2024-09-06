@@ -1,5 +1,5 @@
 # @package task
-name: Go2Force
+name: AlienForce
 task: Quadruped
 
 defaults:
@@ -7,7 +7,7 @@ defaults:
   - /task/Velocity@_here_
   - _self_
 
-robot: go2
+robot: aliengo
 terrain: plane
 payload: false
 homogeneous: false
@@ -17,7 +17,7 @@ command:
   virtual_mass_range: [0.25, 1.0]
   compliant_ratio: 0.25
   force_type_probs: [0.0, 0.5, 0.5]
-  constant_force_scale: [80., 80., 20.]
+  constant_force_scale: [100., 100., 20.]
   constant_force_duration_range: [1, 4]
   impulse_force_momentum_scale: [5.0, 5.0, 1.0]
   impulse_force_duration_range: [0.1, 0.4]
@@ -48,7 +48,7 @@ observation:
   params:
     motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
     body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-    body_mass:        {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
+    body_mass:        {body_names: ["base", ".*_hip", ".*_thigh"]}
 
 reward:
   loco:
@@ -80,14 +80,14 @@ reward:
     com_support:        {weight: 1.0, enabled: true}
 
 termination:
-  crash: {body_names_expr: [Head.*, "base"], t_thres: 0.1, z_thres: -0.2}
+  crash: {body_names_expr: ["base"], t_thres: 0.1, z_thres: -0.2}
   # joint_acc_exceeds: {thres: 5000}
   # cum_error: {thres: 1.0}
 
 randomization:
   random_scale: [1.0, 1.0]
   perturb_body_mass:
-    (?!(payload|base|Head.*)).*: [0.8, 1.2]
+    (?!(payload|base)).*: [0.8, 1.2]
     base: [0.8, 1.2]
   perturb_body_materials:
     body_names: ".*_foot"
