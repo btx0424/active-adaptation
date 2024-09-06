@@ -2,6 +2,7 @@ from math import pi
 import torch
 import torch.distributions as D
 import math
+import warp as wp
 from typing import Sequence, TYPE_CHECKING
 
 from omni.isaac.lab.assets import Articulation
@@ -569,9 +570,9 @@ class Impedance(Command):
         compliant_ratio: float = 0.2,
         force_type_probs = (0.4, 0.3, 0.3),
         linear_kp_range = (2.0, 12.0),
-        impulse_force_momentum_range = (-5.0, 5.0),
+        impulse_force_momentum_scale = (5.0, 5.0, 1.0),
         impulse_force_duration_range = (0.1, 0.5),
-        constant_force_xy_range = (-50, 50),
+        constant_force_scale = (50, 50, 10),
         constant_force_duration_range = (1, 4),
         temporal_smoothing: int = 5
     ) -> None:
@@ -584,13 +585,6 @@ class Impedance(Command):
         self.linear_kp_range = linear_kp_range
         self.temporal_smoothing = temporal_smoothing
         
-        # force parameters
-        self.impulse_force_momentum_range = impulse_force_momentum_range
-        self.impulse_force_duration_range = impulse_force_duration_range
-
-        self.constant_force_xy_range = constant_force_xy_range
-        self.constant_force_duration_range = constant_force_duration_range
-
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 9)
             self.command_hidden = torch.zeros(self.num_envs, 7)
@@ -634,6 +628,13 @@ class Impedance(Command):
             1: Constant
             2: Impulse
             """
+            # force parameters
+            self.impulse_force_momentum_scale = torch.tensor(impulse_force_momentum_scale) * self.default_mass
+            self.impulse_force_duration_range = impulse_force_duration_range
+
+            self.constant_force_scale = torch.tensor(constant_force_scale)
+            self.constant_force_duration_range = constant_force_duration_range
+
             self.force_type_probs = torch.tensor(force_type_probs)
             self.force_type = torch.zeros(self.num_envs, 1, dtype=torch.int64)
             
@@ -643,13 +644,16 @@ class Impedance(Command):
             
             self.impulse_force_struct = torch.zeros(self.num_envs, 3 + 1 + 1) # force, duration, time
             self.impulse_force_duration = self.impulse_force_struct[:, -2].unsqueeze(1)
+            self.impulse_force_duration.fill_(0.1) # non-zero placeholder
             self.impulse_force_time = self.impulse_force_struct[:, -1].unsqueeze(1)
 
             self._cum_error = torch.zeros(self.num_envs, 3)
 
             self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
             self.xy = torch.tensor([1., 1., 0.], device=self.device)
-    
+
+        self.cnt = 0
+
     def reset(self, env_ids: torch.Tensor):
         self._sample_command(env_ids)
         self._cum_error[env_ids] = 0.
@@ -703,9 +707,8 @@ class Impedance(Command):
             impulse_force_t * self.impulse_force_struct[:, 0:3] * 2,
             (1 - impulse_force_t) * self.impulse_force_struct[:, 0:3] * 2
         )
-        self.force_ext_w[:] = torch.where(
-            self.force_type == 0, 0.,
-            torch.where(self.force_type == 1, constant_force, impulse_force))
+        
+        self.force_ext_w[:] = constant_force + impulse_force
         self.constant_force_time.add_(self.env.step_dt)
         self.impulse_force_time.add_(self.env.step_dt)
         
@@ -747,10 +750,29 @@ class Impedance(Command):
         if len(sample_command) > 0:
             self._sample_command(sample_command)
         
-        sample_force = torch.rand(self.num_envs, device=self.device) < self.resample_prob
-        sample_force = sample_force.nonzero().squeeze(-1)
-        if len(sample_force) > 0:
-            self._sample_force(sample_force)
+        sample_force = torch.rand(self.num_envs, device=self.device) <  self.resample_prob
+        # sample_force = sample_force.nonzero().squeeze(-1)
+        # if len(sample_force) > 0:
+        #     self._sample_force(sample_force)
+        force_type = torch.multinomial(self.force_type_probs, self.num_envs, replacement=True)
+        
+        wp.launch(
+            maybe_sample_force,
+            dim=self.num_envs,
+            inputs=[
+                self.cnt,
+                self.constant_force_scale,
+                self.constant_force_duration_range,
+                self.impulse_force_momentum_scale,
+                self.impulse_force_duration_range,
+                wp.from_torch(sample_force, dtype=wp.bool),
+                wp.from_torch(force_type.int(), dtype=wp.int32),
+                wp.from_torch(self.constant_force_struct, dtype=vec5f),
+                wp.from_torch(self.impulse_force_struct, dtype=vec5f),
+            ],
+            device=str(self.device)
+        )
+        self.cnt += 1
     
     def _sample_command(self, env_ids: torch.Tensor):
         command_setpoint_w = torch.zeros(len(env_ids), 3, device=self.device)
@@ -882,3 +904,38 @@ def quat_to_yaw(quat: torch.Tensor):
     yaw = torch.atan2(sin_yaw, cos_yaw)
     return yaw % (2 * torch.pi)
 
+
+@wp.func
+def sample_uniform(rng: wp.uint32, range: wp.vec2) -> float:
+    return wp.randf(rng) * (range[1] - range[0]) + range[0]
+
+vec5f = wp.vec(length=5, dtype=wp.float32)
+
+@wp.kernel
+def maybe_sample_force(
+    kernel_seed: int,
+    const_force_scale: wp.vec3,
+    const_force_duration_range: wp.vec2,
+    impulse_force_scale: wp.vec3,
+    impulse_force_duration_range: wp.vec2,
+    sample_force: wp.array(dtype=wp.bool),
+    force_type: wp.array(dtype=wp.int32),
+    const_force: wp.array(dtype=vec5f),
+    impulse_force: wp.array(dtype=vec5f),
+):
+    tid = wp.tid()
+
+    if sample_force[tid]:
+        if force_type[tid] == 0:
+            pass
+        elif (force_type[tid] == 1) and (const_force[tid][4] > const_force[tid][3]):
+            rng = wp.rand_init(kernel_seed, tid)
+            xy = wp.cw_mul(wp.sample_unit_cube(rng), const_force_scale)
+            duration = sample_uniform(rng, const_force_duration_range)
+            const_force[tid] = vec5f(xy[0], xy[1], 0., duration, 0.)
+        elif (force_type[tid] == 2) and (impulse_force[tid][4] > impulse_force[tid][3]):
+            rng = wp.rand_init(kernel_seed, tid)
+            xy = wp.cw_mul(wp.sample_unit_cube(rng), impulse_force_scale)
+            duration = sample_uniform(rng, impulse_force_duration_range)
+            xy = xy / duration
+            impulse_force[tid] = vec5f(xy[0], xy[1], 0., duration, 0.)

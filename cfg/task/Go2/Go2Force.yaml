@@ -14,12 +14,14 @@ homogeneous: false
 
 command:
   _target_: active_adaptation.envs.mdp.Impedance
-  virtual_mass_range: [0.5, 1.0]
+  virtual_mass_range: [0.25, 1.0]
   compliant_ratio: 0.25
-  force_type_probs: [0.4, 0.3, 0.3]
-  constant_force_xy_range: [-50., 50.]
+  force_type_probs: [0.0, 0.5, 0.5]
+  constant_force_scale: [80., 80., 20.]
   constant_force_duration_range: [1, 4]
-  temporal_smoothing: 5
+  impulse_force_momentum_scale: [5.0, 5.0, 1.0]
+  impulse_force_duration_range: [0.1, 0.4]
+  temporal_smoothing: 4
 
 observation:
   command:
