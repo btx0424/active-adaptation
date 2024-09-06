@@ -55,8 +55,6 @@ command:
   future: 3
   mix_openloop: false
   command_acc: true
-  spring_force: false
-  force_kp_range: [100., 500.]
 
 observation:
   command:
