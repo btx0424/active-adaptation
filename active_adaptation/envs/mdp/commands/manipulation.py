@@ -473,6 +473,9 @@ class PushWall(Command):
 
         self.wall_kp = 500.0
 
+        self.enable_teleop = True
+        self.step_size = 0.005
+
         self.command_acc = True
         
         with torch.device(self.device):
@@ -486,6 +489,7 @@ class PushWall(Command):
             self.desired_pos_ee_w = torch.zeros(self.num_envs, self.future, 3)
 
             # command setpoints
+            self.command_setpoint_pos_ee_wall = torch.zeros(self.num_envs, 3)
             self.command_setpoint_pos_ee_b = torch.zeros(self.num_envs, 3)
             self.command_setpoint_pos_ee_diff_b = torch.zeros(self.num_envs, 3)
 
@@ -502,10 +506,75 @@ class PushWall(Command):
             self.wall_direction = torch.zeros(self.num_envs, 3)
             self.wall_quat = torch.zeros(self.num_envs, 4)
             self.wall_distance = torch.zeros(self.num_envs, 1)    
-            self.wall_force_w = torch.zeros(self.num_envs, 3)
+            self.wall_resistance_force_w = torch.zeros(self.num_envs, 3)
+            self.wall_friction_force_w = torch.zeros(self.num_envs, 3)
 
             self.need_reset_mask = torch.ones(self.num_envs, dtype=torch.bool)
             self._cum_error = torch.zeros(self.num_envs, 2)
+        
+        self.log_file = "push_wall_force.pkl"
+        self.actual_forces = []
+        self.desired_forces = []
+        self.desired_kp_forces = []
+        self.kp_forces = []
+
+        self.key_pressed = {
+            "up": False,
+            "down": False,
+            "left": False,
+            "right": False,
+            "w": False,
+            "s": False,
+            "a": False,
+            "d": False,
+            "q": False,
+            "e": False,
+        }
+
+        from pynput import keyboard
+        self.listener = keyboard.Listener(
+            on_press=self._on_press, on_release=self._on_release
+        )
+        self.listener.start()
+        print("[KeyboardCommandManager]: Keyboard listener started")
+
+    def _on_press(self, key):
+        try:
+            if key.char.lower() in self.key_pressed:
+                self.key_pressed[key.char.lower()] = True
+        except AttributeError:
+            if key == keyboard.Key.up:
+                self.key_pressed["up"] = True
+            elif key == keyboard.Key.down:
+                self.key_pressed["down"] = True
+            elif key == keyboard.Key.left:
+                self.key_pressed["left"] = True
+            elif key == keyboard.Key.right:
+                self.key_pressed["right"] = True
+
+    def _on_release(self, key):
+        try:
+            if key.char.lower() in self.key_pressed:
+                self.key_pressed[key.char.lower()] = False
+        except AttributeError:
+            if key == keyboard.Key.up:
+                self.key_pressed["up"] = False
+            elif key == keyboard.Key.down:
+                self.key_pressed["down"] = False
+            elif key == keyboard.Key.left:
+                self.key_pressed["left"] = False
+            elif key == keyboard.Key.right:
+                self.key_pressed["right"] = False
+        
+    def save_logs(self):
+        print("Saving log file to", self.log_file)
+        actual_forces = torch.stack(self.actual_forces, dim=0).cpu().numpy()
+        desired_forces = torch.stack(self.desired_forces, dim=0).cpu().numpy()
+        desired_kp_forces = torch.stack(self.desired_kp_forces, dim=0).cpu().numpy()
+        kp_forces = torch.stack(self.kp_forces, dim=0).cpu().numpy()
+        with open(self.log_file, "wb") as f:
+            import pickle
+            pickle.dump((actual_forces, desired_forces, desired_kp_forces, kp_forces), f)
     
     def sample_init(self, env_ids: torch.Tensor) -> torch.Tensor:
         return self.init_root_state[env_ids]
@@ -531,32 +600,58 @@ class PushWall(Command):
     def _sample_wall(self, env_ids: torch.Tensor):
         # sample wall normal direction
         wall_normal_yaw = torch.empty(len(env_ids), device=self.device).uniform_(-torch.pi / 6, torch.pi / 6)
-        wall_normal_pitch = torch.empty(len(env_ids), device=self.device).uniform_(0, torch.pi / 6)
+        wall_normal_pitch = torch.empty(len(env_ids), device=self.device).uniform_(-torch.pi / 6, 0)
         # wall_direction = [1, 0, 0] rotate with yaw pitch
         wall_direction = torch.stack([
             torch.cos(wall_normal_yaw) * torch.cos(wall_normal_pitch),
             torch.sin(wall_normal_yaw) * torch.cos(wall_normal_pitch),
-            torch.sin(wall_normal_pitch)
+            -torch.sin(wall_normal_pitch)
         ], dim=-1)
         wall_quat = torch.stack([
             torch.cos(wall_normal_yaw / 2) * torch.cos(wall_normal_pitch / 2),
-            torch.sin(wall_normal_yaw / 2) * torch.cos(wall_normal_pitch / 2),
-            torch.sin(wall_normal_yaw / 2) * torch.sin(wall_normal_pitch / 2),
+            -torch.sin(wall_normal_yaw / 2) * torch.sin(wall_normal_pitch / 2),
             torch.cos(wall_normal_yaw / 2) * torch.sin(wall_normal_pitch / 2),
+            torch.sin(wall_normal_yaw / 2) * torch.cos(wall_normal_pitch / 2),
         ], dim=-1)
-        wall_distance = torch.empty(len(env_ids), 1, device=self.device).uniform_(0.3, 0.7)
+        wall_distance = torch.empty(len(env_ids), 1, device=self.device).uniform_(0.3, 0.6)
         self.wall_direction[env_ids] = wall_direction
         self.wall_quat[env_ids] = wall_quat
         self.wall_distance[env_ids] = wall_distance
     
+        self.command_setpoint_pos_ee_wall[:, 0] = self.wall_distance.squeeze(-1)
+        self.command_setpoint_pos_ee_wall[:, 0].add_(0.1)
+        self.command_setpoint_pos_ee_wall[:, 2] = 0.3
+        
     def _update_command(self):
+        if self.enable_teleop:
+            delta = torch.zeros(self.num_envs, 3, device=self.device)
+            if self.key_pressed["up"] or self.key_pressed["w"]:
+                delta[:, 2] += self.step_size
+            if self.key_pressed["down"] or self.key_pressed["s"]:
+                delta[:, 2] -= self.step_size
+            if self.key_pressed["right"] or self.key_pressed["d"]:
+                delta[:, 1] += self.step_size
+            if self.key_pressed["left"] or self.key_pressed["a"]:
+                delta[:, 1] -= self.step_size
+            if self.key_pressed["e"]:
+                delta[:, 0] += self.step_size
+            if self.key_pressed["q"]:
+                delta[:, 0] -= self.step_size
+            
+            self.command_setpoint_pos_ee_wall.add_(delta)
+                
+        self.command_setpoint_pos_ee_b[:] = quat_rotate(
+            self.wall_quat,
+            self.command_setpoint_pos_ee_wall,
+        )
+        
         # compute command in world/body frame
         self.command_pos_ee_w[:] = self.desired_pos_ee_w.mean(1)
         self.command_linvel_ee_w[:] = self.desired_linvel_ee_w.mean(1)
 
         self.command_pos_ee_b[:] = quat_rotate_inverse(
             self.asset.data.root_quat_w,
-            self.command_pos_ee_w,
+            self.command_pos_ee_w - self.asset.data.root_pos_w,
         )
         self.command_linvel_ee_b[:] = quat_rotate_inverse(
             self.asset.data.root_quat_w,
@@ -570,6 +665,8 @@ class PushWall(Command):
         )
         self.command_pos_ee_diff_b[:] = self.command_pos_ee_b - ee_pos_b
 
+        self.command_setpoint_pos_ee_diff_b[:] = self.command_setpoint_pos_ee_b - ee_pos_b
+            
         # populate command tensor
         self.command[:, 0:3] = self.command_setpoint_pos_ee_diff_b
         self.command[:, 3:6] = self.command_kp
@@ -588,21 +685,36 @@ class PushWall(Command):
 
     def reset(self, env_ids: torch.Tensor):
         self.need_reset_mask[env_ids] = True
-        self._sample_command(env_ids)
         self._sample_wall(env_ids)
+        self._sample_command(env_ids)
 
         self.command[env_ids] = 0.0
         self.command_hidden[env_ids] = 0.0
-    
+
+        if len(self.kp_forces):
+            self.save_logs()
+
     def step(self, substep: int):
         # wall force
-        ee_distance = torch.norm(
-            self.asset.data.body_pos_w[:, self.ee_body_id] - self.asset.data.root_pos_w, dim=-1, keepdim=True
-        ) # [envs, 1]
-        self.wall_force_w[:] = - self.wall_kp * (ee_distance - self.wall_distance).clamp_min(0.0) * self.wall_direction
+        ee_distance = (
+            (self.asset.data.body_pos_w[:, self.ee_body_id] - self.asset.data.root_pos_w) * self.wall_direction
+        ).sum(dim=-1, keepdim=True)
+        wall_resistance = self.wall_kp * (ee_distance - self.wall_distance).clamp_min(0.0)
+
+        body_vel = self.asset.data.body_lin_vel_w[:, self.ee_body_id]
+        velocity_parallel = body_vel - (
+            body_vel * self.wall_direction
+        ).sum(dim=-1, keepdim=True) * self.wall_direction
+        velocity_parallel[velocity_parallel.norm(dim=-1) < 1e-3] = 0.0
+        velocity_parallel_dir = velocity_parallel / velocity_parallel.norm(dim=-1, keepdim=True).clamp_min(1e-3)
+
+        self.wall_resistance_force_w[:] = -wall_resistance * self.wall_direction
+        self.wall_friction_force_w[:] = -0.3 * wall_resistance * velocity_parallel_dir
+        wall_force_w = self.wall_resistance_force_w + self.wall_friction_force_w
+
         wall_force_b = quat_rotate_inverse(
-            self.asset.data.root_quat_w,
-            self.wall_force_w,
+            self.asset.data.body_quat_w[:, self.ee_body_id],
+            wall_force_w,
         )
         
         forces_ee_b = self.asset._external_force_b[:, [self.ee_body_id]].clone()
@@ -620,12 +732,13 @@ class PushWall(Command):
             )
             + self.asset.data.root_pos_w
         )
+        wall_force_w = self.wall_resistance_force_w + self.wall_friction_force_w
 
         self.acc_spring_ee_w[:] = self.command_kp.unsqueeze(1) * (
             command_setpoint_pos_ee_w.unsqueeze(1) - self.desired_pos_ee_w
         ) + self.command_kd.unsqueeze(1) * (-self.desired_linvel_ee_w)
         self.desired_linacc_ee_w[:] = self.acc_spring_ee_w + (
-            (self.wall_force_w / self.virtual_mass_ee).unsqueeze(1)
+            (wall_force_w / self.virtual_mass_ee).unsqueeze(1)
         )
         self.desired_linvel_ee_w.add_(self.desired_linacc_ee_w * self.env.physics_dt)
         self.desired_pos_ee_w.add_(self.desired_linvel_ee_w * self.env.physics_dt)
@@ -648,43 +761,51 @@ class PushWall(Command):
         ]
         self.desired_pos_ee_w[:, 0] = self.asset.data.body_pos_w[:, self.ee_body_id]
         
-        command_setpoint_pos_ee_w = (
-            self.asset.data.root_pos_w
-            + self.wall_direction * (0.1 + self.wall_distance)
-        )
-        self.command_setpoint_pos_ee_b[:] = quat_rotate_inverse(
-            self.asset.data.root_quat_w,
-            command_setpoint_pos_ee_w - self.asset.data.root_pos_w,
-        )
-        self.command_setpoint_pos_ee_diff_b[:] = quat_rotate_inverse(
-            self.asset.data.root_quat_w,
-            command_setpoint_pos_ee_w - self.asset.data.body_pos_w[:, self.ee_body_id],
-        )
-
-        # print depth of penetration * wall kp
-        # print (setpoint_pos_ee_w - ee_pos_w) * wall_direction * command_kp
-        
         for _ in range(int(self.env.step_dt / self.env.physics_dt)):
             self._integrate()
         
         self._update_command()
+        
+        # record forces
+        actual_force = quat_rotate_inverse(
+            self.wall_quat,
+            self.wall_resistance_force_w + self.wall_friction_force_w,
+        )
+        desired_force = quat_rotate_inverse(
+            self.wall_quat,
+            self.virtual_mass_ee * self.acc_spring_ee_w.mean(1),
+        )
+        desired_kp_force = quat_rotate_inverse(
+            self.wall_quat,
+            self.command_kp * (self.command_setpoint_pos_ee_b - self.command_pos_ee_b),
+        )
+        kp_force = quat_rotate_inverse(
+            self.wall_quat,
+            self.command_kp * self.command_setpoint_pos_ee_diff_b,
+        )
+        self.actual_forces.append(actual_force)
+        self.desired_forces.append(desired_force)
+        self.desired_kp_forces.append(desired_kp_force)
+        self.kp_forces.append(kp_force)
     
     def _debug_draw_wall(self):
-        # TOFIX: draw wall is not correct
         # draw a grid of 16 points on the wall
-        # if wall_direction = [1, 0, 0], wall_distance = 1.0
-        # then the grid points are [1.0, y, z] for y in [-1.5, -0.5, 0.5, 1.5] and z in [-1.5, -0.5, 0.5, 1.5]
         wall_points_b = torch.tensor([
-            [1.0, y, z] for y in [-1.5, -0.5, 0.5, 1.5] for z in [-1.5, -0.5, 0.5, 1.5]
-        ], device=self.device).repeat(self.num_envs, 1) # [envs * 16, 3]
+            [1.0, y, z] for y in [-0.3, -0.1, 0.1, 0.3] for z in [-0.3, -0.1, 0.1, 0.3]
+        ], device=self.device).repeat(self.num_envs, 1, 1) # [envs, 16, 3]
         # tranform according to wall quat and distance
-        wall_points_b = quat_rotate(self.wall_quat.repeat(16, 1), wall_points_b * self.wall_distance.repeat(16, 1))
+        wall_points_b[:, :, 0].mul_(self.wall_distance)
+        num_points = wall_points_b.shape[1]
+        wall_quat = self.wall_quat.unsqueeze(1).repeat(1, num_points, 1)
+        root_quat_w = self.asset.data.root_quat_w.unsqueeze(1).repeat(1, num_points, 1)
+
+        wall_points_b = quat_rotate(wall_quat.view(-1, 4), wall_points_b.view(-1, 3)).view(-1, num_points, 3)
         wall_points_w = quat_rotate(
-            self.asset.data.root_quat_w.repeat(16, 1),
-            wall_points_b
-        ) + self.asset.data.root_pos_w.repeat(16, 1)
+            root_quat_w.view(-1, 4),
+            wall_points_b.view(-1, 3),
+        ).view(-1, num_points, 3) + self.asset.data.root_pos_w.unsqueeze(1)
         self.env.debug_draw.point(
-            wall_points_w,
+            wall_points_w.view(-1, 3),
             color=(1.0, 1.0, 1.0, 1.0),
             size=20.0,
         )
@@ -735,7 +856,13 @@ class PushWall(Command):
         # draw external force on desired ee (orange)
         self.env.debug_draw.vector(
             self.asset.data.body_pos_w[:, self.ee_body_id],
-            self.wall_force_w,
+            self.wall_resistance_force_w,
+            color=(1.0, 0.5, 0.0, 1.0),
+            size=4.0,
+        )
+        self.env.debug_draw.vector(
+            self.asset.data.body_pos_w[:, self.ee_body_id],
+            self.wall_friction_force_w,
             color=(1.0, 0.5, 0.0, 1.0),
             size=4.0,
         )
