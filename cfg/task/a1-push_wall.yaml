@@ -34,29 +34,8 @@ action:
   alpha: 0.8
 
 command:
-  _target_: active_adaptation.envs.mdp.EEImpedance
+  _target_: active_adaptation.envs.mdp.PushWall
   ee_name: 'arm_link6'
-  ee_base_name: 'arm_base'
-  setpoint_x_range: [0.2, 0.6]
-  setpoint_y_range: [-0.2, 0.2]
-  setpoint_z_range: [0.3, 0.7]
-  relative_setpoint: false
-  # setpoint_x_range: [-0.2, 0.2]
-  # setpoint_y_range: [-0.2, 0.2]
-  # setpoint_z_range: [-0.2, 0.2]
-  # relative_setpoint: true
-  kp_range: [100., 150.]
-  damping_ratio_range: [0.7, 1.5]
-  default_mass_ee: 1.
-  virtual_mass_range: [0.5, 1.5]
-  max_force_acc: 20.
-  compliant_ratio: 0.5
-  ext_force_ratio: 0.5
-  future: 3
-  mix_openloop: false
-  command_acc: true
-  spring_force: false
-  force_kp_range: [100., 500.]
 
 observation:
   command:

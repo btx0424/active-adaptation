@@ -46,8 +46,6 @@ class LocomotionEnv(Env):
         self.action_buf: torch.Tensor = self.action_manager.action_buf
         self.last_action: torch.Tensor = self.action_manager.applied_action
 
-        self.fix_root_link = self.robot.cfg.spawn.articulation_props.fix_root_link
-
     def _reset_idx(self, env_ids: torch.Tensor):
         init_root_state = self.command_manager.sample_init(env_ids)
         if not self.fix_root_link:

@@ -242,6 +242,34 @@ class PPODICPolicy(TensorDictModuleBase):
         self.adapt_module.apply(init_)
         self.num_updates = 0
     
+    def set_two_teacher(
+        self,
+        teacher_legs, 
+        teacher_arm,
+        legs_joint_ids,
+        arm_joint_ids,
+        reg_lambda_legs,
+        reg_lambda_arm,
+        vecnorm_legs, 
+        vecnorm_arm, 
+        vecnorm,
+
+    ):
+        self.teacher_arm = teacher_arm
+        self.teacher_legs = teacher_legs
+        self.legs_joint_ids = legs_joint_ids
+        self.arm_joint_ids = arm_joint_ids
+        self.reg_lambda_legs = reg_lambda_legs
+        self.reg_lambda_arm = reg_lambda_arm
+        self.vecnorm_legs = vecnorm_legs
+        self.vecnorm_arm = vecnorm_arm
+        self.vecnorm = vecnorm
+        
+        teacher_legs.module[2].module[1].out_keys = ['action_legs', 'sample_log_prob']
+        teacher_legs.module[2].out_keys = ['_actor_feature', 'loc', 'scale', 'action_legs', 'sample_log_prob']
+        teacher_arm.module[2].module[1].out_keys = ['action_arm', 'sample_log_prob']
+        teacher_arm.module[2].out_keys = ['_actor_feature', 'loc', 'scale', 'action_arm', 'sample_log_prob']
+    
     def make_tensordict_primer(self):
         num_envs = self.observation_spec.shape[0]
         spec = UnboundedContinuousTensorSpec((num_envs, 128), device=self.device)
@@ -371,15 +399,30 @@ class PPODICPolicy(TensorDictModuleBase):
             reg_loss = self.reg_lambda * F.mse_loss(tensordict["_priv_feature"], tensordict["priv_pred"])
         else:
             reg_loss = 0.
-        
-        loss = policy_loss + entropy_loss + value_loss + reg_loss
+
+        if hasattr(self, "teacher_arm"):
+            # add regression loss on action
+            with torch.no_grad():
+                self.teacher_arm(tensordict)
+                self.teacher_legs(tensordict)
+            action_arm = tensordict["action_arm"]
+            action_legs = tensordict["action_legs"]
+            action = dist.rsample()
+            imitation_arm_loss = self.reg_lambda_arm * F.mse_loss(action[:, self.arm_joint_ids], action_arm[:, self.arm_joint_ids])
+            imitation_legs_loss = self.reg_lambda_legs * F.mse_loss(action[:, self.legs_joint_ids], action_legs[:, self.legs_joint_ids])
+            imitation_loss = imitation_arm_loss + imitation_legs_loss
+        else:
+            imitation_loss = 0.
+            
+        loss = policy_loss + entropy_loss + value_loss + reg_loss + imitation_loss
+        # loss = imitation_loss
         self.opt.zero_grad()
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
         critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
         self.opt.step()
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-        return {
+        info = {
             "actor/policy_loss": policy_loss,
             "actor/entropy": entropy,
             "actor/noise_std": tensordict["scale"].mean(),
@@ -390,6 +433,11 @@ class PPODICPolicy(TensorDictModuleBase):
             "critic/grad_norm": critic_grad_norm,
             "critic/explained_var": explained_var,
         }
+        if hasattr(self, "teacher_arm"):
+            info["imitation/loss"] = imitation_loss
+            info["imitation/arm_loss"] = imitation_arm_loss
+            info["imitation/legs_loss"] = imitation_legs_loss
+        return info
 
     def state_dict(self):
         state_dict = OrderedDict()

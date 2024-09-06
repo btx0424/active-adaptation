@@ -27,7 +27,14 @@ action:
   _target_: active_adaptation.envs.mdp.action.JointPosition
   action_scaling:
     (F|R)(L|R)_(hip|thigh|calf)_joint: 0.5
-    arm_joint[1-5]: 0.5
+    arm_joint[1-5]: 0.0
+  offset_ranges:
+      (F|R)(L|R)_(hip|thigh|calf)_joint: [-0.05, 0.05]
+      arm_joint1: [-2.5, 2.5]
+      arm_joint2: [0.0, 2.0]
+      arm_joint3: [-2.5, 0.0]
+      arm_joint4: [-1.0, 1.0]
+      arm_joint5: [-1.0, 1.0]
   max_delay: 1
   alpha: 0.8
 
@@ -35,25 +42,25 @@ command:
   _target_: active_adaptation.envs.mdp.BaseEEImpedance
   ee_name: 'arm_link6'
   ee_base_name: 'base'
-  base_setpoint_radius_range: [0.0, 0.0]
-  kp_base_range: [0.5, 5.0]
-  kp_yaw_range: [0.5, 5.0]
-  kp_ee_range: [100.0, 150.0]
+  base_setpoint_radius_range: [1.0, 3.0]
+  kp_base_range: [0.5, 1.0]
+  kp_yaw_range: [0.5, 1.0]
+  # kp_ee_range: [100.0, 150.0]
+  kp_ee_range: [0.0, 0.0]
   damping_ratio_range: [0.7, 1.5]
-  default_mass_base: 10.0
-  default_mass_ee: 1.0
-  default_inertia_z: 1.0
-  virtual_mass_range: [0.5, 1.5]  
-  max_force_acc_base: 5.0
+  default_mass_base: 20.0
+  default_mass_ee: 0.5
+  default_inertia_z: 5.0
+  virtual_mass_range: [0.8, 1.2]
+  max_force_acc_base: 20.0
   max_force_acc_ee: 20.0
   compliant_ratio: 0.2
   ext_force_ratio: 0.5
-  future: 3
+  future: 9
   mix_openloop_base: false
   mix_openloop_ee: false
   mix_openloop_yaw: false
   command_acc: true
-  hidden_cmd_ee_only: true
 
 observation:
   command:
@@ -95,8 +102,8 @@ reward:
     # impedance pos&vel tracking
     impedance_base_pos:      {weight: 0.5, enabled: true, l: 0.01}
     impedance_base_vel:      {weight: 1.0, enabled: true, l: 0.1}
-    impedance_ee_pos_b:      {weight: 0.5, enabled: true, l: 0.02}
-    impedance_ee_vel_b:      {weight: 1.0, enabled: true, l: 1.0}
+    impedance_ee_pos_b:      {weight: 0.5, enabled: false, l: 0.01}
+    impedance_ee_vel_b:      {weight: 1.0, enabled: false, l: 0.25}
     impedance_yaw_pos:      {weight: 0.5, enabled: true, l: 0.01}
     impedance_yaw_vel:      {weight: 1.0, enabled: true, l: 0.1}
     
@@ -109,7 +116,7 @@ reward:
     energy_l1:          {weight: 0.0002, enabled: true}
     energy_dist_lr:     {weight: 0.0002, enabled: false}
     energy_dist_fb:     {weight: 0.0002, enabled: false}
-    joint_acc_l2:       {weight: 2.5e-7, enabled: true, joint_names: ["(F|R)(L|R)_(hip|thigh|calf)_joint", "arm_joint[1-5]"]}
+    joint_acc_l2:       {weight: 2.5e-7, enabled: true, joint_names: "(F|R)(L|R)_(hip|thigh|calf)_joint"}
     joint_torques_l2:   {weight: 2.0e-4, enabled: false}
     quadruped_stand:    {weight: 0.5, enabled: true}
     stance_width:       {weight: 0.5, enabled: false, target_width: 0.15}
