@@ -1318,7 +1318,6 @@ class BaseEEImpedance(Command):
         mix_openloop_ee: bool = False,
         mix_openloop_yaw: bool = False,
         command_acc: bool = False,
-        hidden_cmd_ee_only: bool = False,
     ) -> None:
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
@@ -1349,7 +1348,6 @@ class BaseEEImpedance(Command):
         self.mix_openloop_ee = mix_openloop_ee
         self.mix_openloop_yaw = mix_openloop_yaw
         self.command_acc = command_acc
-        self.hidden_cmd_ee_only = hidden_cmd_ee_only
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 23)
@@ -1672,15 +1670,14 @@ class BaseEEImpedance(Command):
         ee_setpoint_to_base_w = yaw_rotate(
             self.desired_yaw_w, self.command_setpoint_pos_ee_b[:, None, :]
         )
-        ee_setpoint_vel_w = self.desired_linvel_base_w + torch.cross(
-            self.desired_angvel_w, ee_setpoint_to_base_w, dim=-1
+        ee_setpoint_pos_w = self.desired_pos_base_w + ee_setpoint_to_base_w
+        des_coriolis_vel_ee_w = self.desired_linvel_base_w + torch.cross(
+            self.desired_angvel_w, self.desired_pos_ee_w - self.desired_pos_base_w, dim=-1
         )
         kp_ee = self.kp_ee.unsqueeze(1)
         kd_ee = self.kd_ee.unsqueeze(1)
-        ee_pos_diff = (
-            ee_setpoint_to_base_w + self.desired_pos_base_w - self.desired_pos_ee_w
-        )
-        ee_vel_diff = ee_setpoint_vel_w - self.desired_linvel_ee_w
+        ee_pos_diff = ee_setpoint_pos_w - self.desired_pos_ee_w
+        ee_vel_diff = des_coriolis_vel_ee_w - self.desired_linvel_ee_w
         self.acc_spring_ee_w[:] = kp_ee * ee_pos_diff + kd_ee * ee_vel_diff
 
         desired_linacc_base_w = (
@@ -1811,10 +1808,6 @@ class BaseEEImpedance(Command):
         self.command_hidden[:, 6:8] = self.command_linvel_base_b[:, :2]
         self.command_hidden[:, 8:9] = self.command_yawvel
         self.command_hidden[:, 9:12] = self.command_linvel_ee_b
-
-        if self.hidden_cmd_ee_only:
-            self.command_hidden[:, 0:3].zero_()
-            self.command_hidden[:, 6:9].zero_()
 
     def update(self):
         self._update_buffers()
