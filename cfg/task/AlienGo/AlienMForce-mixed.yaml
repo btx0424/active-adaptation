@@ -27,15 +27,15 @@ action:
   _target_: active_adaptation.envs.mdp.action.JointPosition
   action_scaling:
     (F|R)(L|R)_(hip|thigh|calf)_joint: 0.5
-    arm_joint[1-5]: 0.0
+    arm_joint[1-5]: 0.5
   max_delay: 1
   alpha: 0.8
 
 command:
   _target_: active_adaptation.envs.mdp.BaseEEImpedanceMixed
   ee_name: 'arm_link6'
-  ee_base_name: 'base'
-  base_setpoint_radius_range: [0.0, 0.0]
+  ee_base_name: 'arm_base'
+  base_setpoint_radius_range: [2.0, 3.0]
   kp_base_range: [2.0, 12.0]
   kp_yaw_range: [2.0, 12.0]
   kp_ee_range: [100.0, 150.0]
@@ -53,7 +53,8 @@ command:
   temporal_smoothing: 3
   command_acc: true
   arm_activated_prob: 0.5
-  arm_activated_base_vel_max: 0.2
+  arm_activated_base_vel_max: 0.5
+  arm_activated_base_vel_min: 0.1
 
 observation:
   command:

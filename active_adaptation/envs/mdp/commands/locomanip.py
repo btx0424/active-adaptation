@@ -2204,13 +2204,11 @@ class BaseEEImpedanceMixed(Command):
         self.virtual_mass_range = virtual_mass_range
 
         self.compliant_ratio = compliant_ratio
-        self.compliant_ratio = 0
 
         self.resample_prob = 0.005
         self.temporal_smoothing = temporal_smoothing
         self.command_acc = command_acc
         self.arm_activated_prob = arm_activated_prob
-        self.arm_activated_prob = 1.0
         self.arm_activated_base_vel_max = arm_activated_base_vel_max
         self.arm_activated_base_vel_min = arm_activated_base_vel_min
 
