@@ -27,7 +27,7 @@ action:
   _target_: active_adaptation.envs.mdp.action.JointPosition
   action_scaling:
     (F|R)(L|R)_(hip|thigh|calf)_joint: 0.5
-    arm_joint[1-5]: 0.5
+    arm_joint[1-5]: 0.0
   max_delay: 1
   alpha: 0.8
 
@@ -52,6 +52,8 @@ command:
   impulse_force_duration_range: [0.05, 0.2]
   temporal_smoothing: 3
   command_acc: true
+  arm_activated_prob: 0.5
+  arm_activated_base_vel_max: 0.2
 
 observation:
   command:
