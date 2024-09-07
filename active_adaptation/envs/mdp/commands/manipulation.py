@@ -28,6 +28,7 @@ class EEImpedance(Command):
         future: int = 3,
         mix_openloop: bool = False,
         command_acc: bool = False,
+        fix_reset_body_pos: bool = False,
     ) -> None:
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
@@ -53,6 +54,7 @@ class EEImpedance(Command):
         self.future = future
         self.mix_openloop = mix_openloop
         self.command_acc = command_acc
+        self.fix_reset_body_pos = fix_reset_body_pos
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 10)
@@ -84,7 +86,8 @@ class EEImpedance(Command):
             self.apply_force = torch.zeros(self.num_envs, 1, dtype=torch.bool)
             self.force_ext_ee_w = torch.zeros(self.num_envs, 3)
 
-            self.need_reset_mask = torch.ones(self.num_envs, dtype=torch.bool)
+            if self.fix_reset_body_pos:
+                self.need_reset_mask = torch.ones(self.num_envs, dtype=torch.bool)
             self._cum_error = torch.zeros(self.num_envs, 2)
 
     def sample_init(self, env_ids: torch.Tensor) -> torch.Tensor:
@@ -193,10 +196,25 @@ class EEImpedance(Command):
 
         self._cum_error[env_ids] = 0.0
 
-        self.command[env_ids] = 0.0
-        self.command_hidden[env_ids] = 0.0
-        
-        self.need_reset_mask[env_ids] = True
+        if self.fix_reset_body_pos:
+            self.command[env_ids] = 0.0
+            self.command_hidden[env_ids] = 0.0
+            
+            self.need_reset_mask[env_ids] = True
+        else:
+            self.desired_linacc_ee_w[env_ids] = 0.0
+            self.desired_linvel_ee_w[env_ids] = self.asset.data.body_lin_vel_w[
+                env_ids, None, self.ee_body_id
+            ]
+            self.desired_pos_ee_w[env_ids] = self.asset.data.body_pos_w[
+                env_ids, None, self.ee_body_id
+            ]
+            
+            for _ in range(int(self.env.step_dt / self.env.physics_dt)):
+                self._integrate()
+
+            # sim reset -> command_manager.reset() -> compute obs ->  sim step -> compute reward
+            self._update_command()
 
     def step(self, substep: int):
         force_ext_ee_w = self.force_ext_ee_w
@@ -246,16 +264,17 @@ class EEImpedance(Command):
     def update(self):
         self._compute_error()
 
-        env_ids = self.need_reset_mask.squeeze(-1)
-        self._cum_error[env_ids] = 0.0
-        self.desired_linacc_ee_w[env_ids] = 0.0
-        self.desired_linvel_ee_w[env_ids] = self.asset.data.body_lin_vel_w[
-            env_ids, None, self.ee_body_id
-        ]
-        self.desired_pos_ee_w[env_ids] = self.asset.data.body_pos_w[
-            env_ids, None, self.ee_body_id
-        ]
-        self.need_reset_mask[env_ids] = False
+        if self.fix_reset_body_pos:
+            env_ids = self.need_reset_mask.squeeze(-1)
+            self._cum_error[env_ids] = 0.0
+            self.desired_linacc_ee_w[env_ids] = 0.0
+            self.desired_linvel_ee_w[env_ids] = self.asset.data.body_lin_vel_w[
+                env_ids, None, self.ee_body_id
+            ]
+            self.desired_pos_ee_w[env_ids] = self.asset.data.body_pos_w[
+                env_ids, None, self.ee_body_id
+            ]
+            self.need_reset_mask[env_ids] = False
 
         # resample command and force
         # sim step -> compute reward -> command_manager.update() -> compute obs

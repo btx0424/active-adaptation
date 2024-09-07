@@ -55,6 +55,7 @@ command:
   future: 3
   mix_openloop: false
   command_acc: true
+  fix_reset_body_pos: false
 
 observation:
   command:
@@ -69,6 +70,7 @@ observation:
     applied_torques:  {actuator_name: arm}
     joint_forces:     {}
     jacobians_b:      {body_names: ["arm_link6"], joint_names: ["arm_joint[1-5]"]}
+    # jacobians:        {body_names: ["arm_link6"]}
     body_pos:         {body_names: ["arm_link6"]}
     body_vel:         {body_names: ["arm_link6"]}
     cum_error:        {}
@@ -80,7 +82,7 @@ reward:
     # common loco rewards just for sanity check
     survival:           {weight: 1.0, enabled: true}
     impedance_ee_pos:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.01}
-    impedance_ee_vel:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.05}
+    impedance_ee_vel:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.25}
     joint_acc_l2:       {weight: 1.0e-5, enabled: true, joint_names: "arm_joint[1-5]"}
 
 termination:
