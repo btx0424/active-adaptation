@@ -12,16 +12,23 @@ terrain: plane
 payload: false
 homogeneous: false
 
+action:
+  _target_: active_adaptation.envs.mdp.action.JointPosition
+  action_scaling: {.*_(hip|thigh|calf)_joint: 0.5}
+  max_delay: 1
+  alpha: [0.5, 1.0]
+
 command:
   _target_: active_adaptation.envs.mdp.Impedance
   virtual_mass_range: [0.25, 1.0]
   compliant_ratio: 0.25
   force_type_probs: [0.0, 0.5, 0.5]
-  constant_force_scale: [100., 100., 20.]
+  constant_force_scale: [120., 120., 20.]
   constant_force_duration_range: [1, 4]
   impulse_force_momentum_scale: [5.0, 5.0, 1.0]
   impulse_force_duration_range: [0.1, 0.4]
-  temporal_smoothing: 4
+  temporal_smoothing: 16
+  force_offset_scale: [0.3, 0.2, 0.1]
 
 observation:
   command:
@@ -67,7 +74,7 @@ reward:
     # energy_dist_fb:     {weight: 0.0002, enabled: false}
     joint_acc_l2:       {weight: 2.5e-7, enabled: true}
     joint_torques_l2:   {weight: 2.0e-4, enabled: true}
-    # quadruped_stand:    {weight: 0.5}
+    quadruped_stand:    {weight: 0.5}
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.01, enabled: true}
     action_rate2_l2:    {weight: 0.005, enabled: true}

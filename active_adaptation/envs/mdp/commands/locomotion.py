@@ -574,7 +574,8 @@ class Impedance(Command):
         impulse_force_duration_range = (0.1, 0.5),
         constant_force_scale = (50, 50, 10),
         constant_force_duration_range = (1, 4),
-        temporal_smoothing: int = 5
+        temporal_smoothing: int = 5,
+        force_offset_scale = (0.3, 0.2, 0.1)
     ) -> None:
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
@@ -604,6 +605,9 @@ class Impedance(Command):
             self.desired_yaw_vel_w = torch.zeros(self.num_envs, self.temporal_smoothing, 1)
             self.desired_yaw_w = torch.zeros(self.num_envs, self.temporal_smoothing, 1)
             
+            self.smoothing_weight = torch.full((1, self.temporal_smoothing, 1), 0.9).cumprod(1)
+            self.smoothing_weight /= self.smoothing_weight.sum()
+
             self.command_angvel = torch.zeros(self.num_envs)
             self.command_setpos_w = torch.zeros(self.num_envs, 3)
             self.command_setrpy_w = torch.zeros(self.num_envs, 3)
@@ -635,6 +639,8 @@ class Impedance(Command):
             self.constant_force_scale = torch.tensor(constant_force_scale)
             self.constant_force_duration_range = constant_force_duration_range
 
+            self.force_offset_scale = torch.tensor(force_offset_scale)
+
             self.force_type_probs = torch.tensor(force_type_probs)
             self.force_type = torch.zeros(self.num_envs, 1, dtype=torch.int64)
             
@@ -652,6 +658,7 @@ class Impedance(Command):
             self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
             self.xy = torch.tensor([1., 1., 0.], device=self.device)
 
+        self.decimation = int(self.env.step_dt / self.env.physics_dt)
         self.cnt = 0
 
     def reset(self, env_ids: torch.Tensor):
@@ -712,12 +719,16 @@ class Impedance(Command):
         self.constant_force_time.add_(self.env.step_dt)
         self.impulse_force_time.add_(self.env.step_dt)
         
-        for _ in range(4):
+        for _ in range(self.decimation):
             self._integrate()
 
-        self.command_linvel_w[:] = self.desired_lin_vel_w.mean(1)
-        self.command_angvel[:] = self.desired_yaw_vel_w.mean(1).squeeze(-1)
-        self.command_pos_w[:] = self.desired_pos_w.mean(1)
+        self.command_linvel_w[:] = (self.desired_lin_vel_w * self.smoothing_weight).sum(1)
+        self.command_angvel[:] = (self.desired_yaw_vel_w * self.smoothing_weight).sum(1).squeeze(-1)
+        self.command_pos_w[:] = (self.desired_pos_w * self.smoothing_weight).sum(1)
+        self.is_standing_env[:] = (
+            (self.command_linvel_w.norm(dim=-1, keepdim=True) < 0.1)
+            & (self.command_angvel.abs() < 0.1).unsqueeze(1)
+        )
 
         linvel_error = (self.command_linvel_w - self.asset.data.root_lin_vel_w).norm(dim=-1)
         pos_error = (self.command_pos_w - self.asset.data.root_pos_w).norm(dim=-1)
@@ -751,9 +762,6 @@ class Impedance(Command):
             self._sample_command(sample_command)
         
         sample_force = torch.rand(self.num_envs, device=self.device) <  self.resample_prob
-        # sample_force = sample_force.nonzero().squeeze(-1)
-        # if len(sample_force) > 0:
-        #     self._sample_force(sample_force)
         force_type = torch.multinomial(self.force_type_probs, self.num_envs, replacement=True)
         
         wp.launch(
@@ -765,18 +773,15 @@ class Impedance(Command):
                 self.constant_force_duration_range,
                 self.impulse_force_momentum_scale,
                 self.impulse_force_duration_range,
+                self.force_offset_scale,
                 wp.from_torch(sample_force, dtype=wp.bool),
                 wp.from_torch(force_type.int(), dtype=wp.int32),
                 wp.from_torch(self.constant_force_struct, dtype=vec5f),
                 wp.from_torch(self.impulse_force_struct, dtype=vec5f),
+                wp.from_torch(self.force_offset_b, dtype=wp.vec3),
             ],
             device=str(self.device)
         )
-        # sample force offset
-        force_offset_b = torch.zeros(len(sample_force.nonzero()), 3, device=self.device)
-        force_offset_b[:, 0].uniform_(-0.3, 0.3)
-        force_offset_b[:, 1].uniform_(-0.2, 0.2)
-        self.force_offset_b[sample_force.nonzero().squeeze(-1)] = force_offset_b
         
         self.cnt += 1
     
@@ -809,31 +814,6 @@ class Impedance(Command):
         self.virtual_mass[env_ids] = self.default_mass * virtual_mass
         self.virtual_inertia[env_ids] = self.default_inertia
 
-    def _sample_force(self, env_ids: torch.Tensor):
-        
-        self.force_type[env_ids] = torch.multinomial(self.force_type_probs, len(env_ids), replacement=True).unsqueeze(1)
-
-        # sample constant force
-        constant_force = torch.zeros(len(env_ids), 5, device=self.device)
-        constant_force[:, 0].uniform_(*self.constant_force_xy_range)
-        constant_force[:, 1].uniform_(*self.constant_force_xy_range)
-        constant_force[:, 3].uniform_(*self.constant_force_duration_range)
-        self.constant_force_struct[env_ids] = constant_force
-        
-        # sample impulse force
-        impulse = torch.zeros(len(env_ids), 5, device=self.device)
-        impulse[:, 0].uniform_(*self.impulse_force_momentum_range)
-        impulse[:, 1].uniform_(*self.impulse_force_momentum_range)
-        impulse[:, 2].uniform_(-1, 1)
-        impulse[:, 3].uniform_(*self.impulse_force_duration_range)
-        impulse[:, :3].mul_((self.default_mass / impulse[:, 3]).unsqueeze(1)) # f = v * (m / t)
-        self.impulse_force_struct[env_ids] = impulse
-        
-        force_offset_b = torch.zeros(len(env_ids), 3, device=self.device)
-        force_offset_b[:, 0].uniform_(-0.3, 0.3)
-        force_offset_b[:, 1].uniform_(-0.2, 0.2)
-        self.force_offset_b[env_ids] = force_offset_b
-
     def debug_draw(self):
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
@@ -856,11 +836,8 @@ class Impedance(Command):
             color=(0., 1., 0., 1.),
             size=2.0
         )
-        # self.env.debug_draw.vector(
-        #     self.asset.data.root_pos_w,
-        #     quat_rotate(self.asset.data.root_quat_w, self.asset._external_torque_b[:, 0]),
-        #     color=(1., 1., 1., 1.)
-        # )
+        # desired_pos in yellow
+        self.env.debug_draw.point(self.desired_pos_w[:, -1], color=(0., 0., 1., 1.), size=40.)
 
 
 class ImpedanceTeleOp(Command):
@@ -1336,10 +1313,12 @@ def maybe_sample_force(
     const_force_duration_range: wp.vec2,
     impulse_force_scale: wp.vec3,
     impulse_force_duration_range: wp.vec2,
+    force_offset_scale: wp.vec3,
     sample_force: wp.array(dtype=wp.bool),
     force_type: wp.array(dtype=wp.int32),
     const_force: wp.array(dtype=vec5f),
     impulse_force: wp.array(dtype=vec5f),
+    force_offset: wp.array(dtype=wp.vec3),
 ):
     tid = wp.tid()
 
@@ -1357,3 +1336,7 @@ def maybe_sample_force(
             duration = sample_uniform(rng, impulse_force_duration_range)
             xy = xy / duration
             impulse_force[tid] = vec5f(xy[0], xy[1], 0., duration, 0.)
+        
+        rng = wp.rand_init(kernel_seed, tid + 1)
+        force_offset[tid] = wp.cw_mul(wp.sample_unit_cube(rng), force_offset_scale)
+
