@@ -611,6 +611,9 @@ class Impedance(Command):
             self.command_angvel = torch.zeros(self.num_envs)
             self.command_setpos_w = torch.zeros(self.num_envs, 3)
             self.command_setrpy_w = torch.zeros(self.num_envs, 3)
+            
+            self.set_linvel = torch.zeros(self.num_envs, 3)
+            self.use_set_linvel = torch.zeros(self.num_envs, dtype=torch.bool)
 
             self.kp = torch.zeros(self.num_envs, 1)
             self.kd = torch.zeros(self.num_envs, 1)
@@ -696,11 +699,15 @@ class Impedance(Command):
         self.desired_yaw_w.add_(desired_yaw_acc_w * self.env.physics_dt)
 
     def update(self):
+        self._compute_errors()
+
         self.desired_lin_vel_w[:, :-1] = self.desired_lin_vel_w[:, :-1].roll(1, dims=1)
         self.desired_pos_w[:, :-1] = self.desired_pos_w[:, :-1].roll(1, dims=1)
+        self.desired_pos_w[:, -1].lerp_(self.asset.data.root_pos_w, 0.01)
         
         self.desired_yaw_vel_w[:, :-1] = self.desired_yaw_vel_w[:, :-1].roll(1, dims=1)
         self.desired_yaw_w[:, :-1] = self.desired_yaw_w[:, :-1].roll(1, dims=1)
+        self.desired_yaw_vel_w[:, -1].lerp_(self.asset.data.root_ang_vel_w[:, 2:3], 0.01)
         
         self.desired_lin_vel_w[:, 0] = self.asset.data.root_lin_vel_w
         self.desired_pos_w[:, 0] = self.asset.data.root_pos_w
@@ -730,12 +737,11 @@ class Impedance(Command):
             & (self.command_angvel.abs() < 0.1).unsqueeze(1)
         )
 
-        linvel_error = (self.command_linvel_w - self.asset.data.root_lin_vel_w).norm(dim=-1)
-        pos_error = (self.command_pos_w - self.asset.data.root_pos_w).norm(dim=-1)
-        angvel_error = (self.command_angvel - self.asset.data.root_ang_vel_w[:, 2]).abs()
-        self._cum_error[:, 0].add_(linvel_error * self.env.step_dt).mul_(0.99)
-        self._cum_error[:, 1].add_(pos_error * self.env.step_dt).mul_(0.99)
-        self._cum_error[:, 2].add_(angvel_error * self.env.step_dt).mul_(0.99)
+        self.command_setpos_w[:] = torch.where(
+            self.use_set_linvel.unsqueeze(1),
+            self.command_setpos_w.lerp(self.kd / self.kp * self.set_linvel + self.asset.data.root_pos_w, 0.5),
+            self.command_setpos_w
+        )
 
         command_pos_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_pos_w - self.asset.data.root_pos_w)
         command_setpos_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_setpos_w - self.asset.data.root_pos_w)
@@ -786,19 +792,34 @@ class Impedance(Command):
         self.cnt += 1
     
     def _sample_command(self, env_ids: torch.Tensor):
-        command_setpoint_w = torch.zeros(len(env_ids), 3, device=self.device)
-        command_setpoint_w[:, 0].uniform_(2., 3.)
-        command_setpoint_w[:, 1].uniform_(-1, 1)
-        command_setpoint_w.add_(self.asset.data.root_pos_w[env_ids])
-        
+
         kp = torch.empty(len(env_ids), 1, device=self.device).uniform_(*self.linear_kp_range)
         kd = 2.0 * kp.sqrt()    # to make the system critically damped
         compliant = torch.rand(len(env_ids), device=self.device) < self.compliant_ratio
         kp *= (~compliant).unsqueeze(1)
 
-        self.command_setpos_w[env_ids] = command_setpoint_w
         self.kp[env_ids] = kp
         self.kd[env_ids] = kd
+
+        set_linvel = torch.empty(len(env_ids), 3, device=self.device)
+        set_linvel[:, 0].uniform_(0.4, 1.2)
+        use_set_linvel = torch.rand(len(env_ids), device=self.device) < 0.5
+        use_set_linvel = use_set_linvel & ~compliant
+
+        root_pos_w = self.asset.data.root_pos_w[env_ids]
+        command_setpoint_w = torch.zeros(len(env_ids), 3, device=self.device)
+        command_setpoint_w[:, 0].uniform_(2., 3.)
+        command_setpoint_w[:, 1].uniform_(-1, 1)
+        command_setpoint_w.add_(root_pos_w)
+        
+        command_setpoint_w = torch.where(
+            use_set_linvel.unsqueeze(1),
+            kd / kp * set_linvel + root_pos_w, 
+            command_setpoint_w
+        )
+        self.set_linvel[env_ids] = set_linvel
+        self.use_set_linvel[env_ids] = use_set_linvel
+        self.command_setpos_w[env_ids] = command_setpoint_w
 
         self.desired_lin_acc_w[env_ids] = 0.
         self.desired_lin_vel_w[env_ids] = self.asset.data.root_lin_vel_w[env_ids].unsqueeze(1)
@@ -813,6 +834,14 @@ class Impedance(Command):
         virtual_mass = torch.empty(len(env_ids), 1, device=self.device).uniform_(*self.virtual_mass_range)
         self.virtual_mass[env_ids] = self.default_mass * virtual_mass
         self.virtual_inertia[env_ids] = self.default_inertia
+
+    def _compute_errors(self):
+        linvel_error = (self.command_linvel_w - self.asset.data.root_lin_vel_w).norm(dim=-1)
+        pos_error = (self.command_pos_w - self.asset.data.root_pos_w).norm(dim=-1)
+        angvel_error = (self.command_angvel - self.asset.data.root_ang_vel_w[:, 2]).abs()
+        self._cum_error[:, 0].add_(linvel_error * self.env.step_dt).mul_(0.99)
+        self._cum_error[:, 1].add_(pos_error * self.env.step_dt).mul_(0.99)
+        self._cum_error[:, 2].add_(angvel_error * self.env.step_dt).mul_(0.99)
 
     def debug_draw(self):
         self.env.debug_draw.vector(
