@@ -414,8 +414,6 @@ class EEImpedance(Command):
         )
 
 
-from pynput import keyboard
-
 
 class PushWall(Command):
     """Same as above, except that the force is replaced by a wall simulated with large penetration kp and the command setpoit is programmed to reach the wall."""
@@ -495,6 +493,7 @@ class PushWall(Command):
             "e": False,
         }
 
+        from pynput import keyboard
         self.listener = keyboard.Listener(
             on_press=self._on_press, on_release=self._on_release
         )
@@ -502,6 +501,7 @@ class PushWall(Command):
         print("[KeyboardCommandManager]: Keyboard listener started")
 
     def _on_press(self, key):
+        from pynput import keyboard
         try:
             if key.char.lower() in self.key_pressed:
                 self.key_pressed[key.char.lower()] = True
@@ -516,6 +516,7 @@ class PushWall(Command):
                 self.key_pressed["right"] = True
 
     def _on_release(self, key):
+        from pynput import keyboard
         try:
             if key.char.lower() in self.key_pressed:
                 self.key_pressed[key.char.lower()] = False
