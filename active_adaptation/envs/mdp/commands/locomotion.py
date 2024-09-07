@@ -801,7 +801,7 @@ class Impedance(Command):
         self.kp[env_ids] = kp
         self.kd[env_ids] = kd
 
-        set_linvel = torch.empty(len(env_ids), 3, device=self.device)
+        set_linvel = torch.zeros(len(env_ids), 3, device=self.device)
         set_linvel[:, 0].uniform_(0.4, 1.2)
         use_set_linvel = torch.rand(len(env_ids), device=self.device) < 0.5
         use_set_linvel = use_set_linvel & ~compliant
