@@ -884,7 +884,7 @@ class ImpedanceTeleOp(Command):
         self.virtual_mass_range = virtual_mass_range
         self.resample_prob = 0.01
         self.compliant_ratio = compliant_ratio # kp=0 for compliant mode
-        self.compliant_ratio = 0
+        # self.compliant_ratio = 1 # When teleop force mode
         self.linear_kp_range = linear_kp_range
         self.temporal_smoothing = temporal_smoothing
         force_type_probs = (1.0, 0.0, 0.0)
@@ -960,6 +960,9 @@ class ImpedanceTeleOp(Command):
         self.cnt = 0
 
         self.step_size = 0.1
+        self.teleop_force_mode = False
+        self.teleop_force_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
+        self.teleop_force_kp = 5.0
         self.key_pressed = {
             "up": False,
             "down": False,
@@ -971,6 +974,7 @@ class ImpedanceTeleOp(Command):
             "d": False,
             "q": False,
             "e": False,
+            "f": False,
         }
 
         from pynput import keyboard
@@ -983,6 +987,13 @@ class ImpedanceTeleOp(Command):
     def _on_press(self, key):
         from pynput import keyboard
         try:
+            if key.char.lower() == "f" and not self.key_pressed["f"]:
+                self.teleop_force_mode = not self.teleop_force_mode
+                print(f"[KeyboardCommandManager]: Teleop Force mode {'enabled' if self.teleop_force_mode else 'disabled'}")
+                self.teleop_force_pos_w[:] = self.asset.data.root_pos_w
+        except AttributeError:
+            pass
+        try:
             if key.char.lower() in self.key_pressed:
                 self.key_pressed[key.char.lower()] = True
         except AttributeError:
@@ -994,7 +1005,7 @@ class ImpedanceTeleOp(Command):
                 self.key_pressed["left"] = True
             elif key == keyboard.Key.right:
                 self.key_pressed["right"] = True
-
+        # if c is pressed, toggle compliant mode
     def _on_release(self, key):
         from pynput import keyboard
         try:
@@ -1079,12 +1090,18 @@ class ImpedanceTeleOp(Command):
             delta[:, 1] += self.step_size
         if self.key_pressed["right"] or self.key_pressed["d"]:
             delta[:, 1] -= self.step_size
+        
+        if not self.teleop_force_mode:
+            self.command_setpos_b.add_(delta)
+        else:
+            self.teleop_force_pos_w.add_(delta)
+            self.force_ext_w[:] = self.teleop_force_kp * (self.teleop_force_pos_w - self.asset.data.root_pos_w)
+
         if self.key_pressed["q"]:
             self.command_setrpy_w[:, 2] += self.step_size
         if self.key_pressed["e"]:
             self.command_setrpy_w[:, 2] -= self.step_size
         
-        self.command_setpos_b.add_(delta)
         self.command_setpos_w[:] = yaw_rotate(self.asset.data.heading_w.unsqueeze(-1), self.command_setpos_b) + self.asset.data.root_pos_w
 
         for _ in range(4):
