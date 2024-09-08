@@ -155,7 +155,7 @@ class EEImpedance(Command):
 
         self.command_pos_ee_b[:] = quat_rotate_inverse(
             self.asset.data.root_quat_w,
-            self.command_pos_ee_w,
+            self.command_pos_ee_w - self.asset.data.root_pos_w,
         )
         self.command_linvel_ee_b[:] = quat_rotate_inverse(
             self.asset.data.root_quat_w,
