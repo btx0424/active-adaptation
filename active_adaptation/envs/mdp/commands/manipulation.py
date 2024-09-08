@@ -66,6 +66,9 @@ class EEImpedance(Command):
             self.desired_linvel_ee_w = torch.zeros(self.num_envs, self.future, 3)
             self.desired_pos_ee_w = torch.zeros(self.num_envs, self.future, 3)
 
+            self.smoothing_weight = torch.full((1, self.future, 1), 0.9).cumprod(1)
+            self.smoothing_weight /= self.smoothing_weight.sum()
+
             # command setpoints
             self.command_setpoint_pos_ee_b = torch.zeros(self.num_envs, 3)
             self.command_setpoint_pos_ee_diff_b = torch.zeros(self.num_envs, 3)
@@ -150,8 +153,8 @@ class EEImpedance(Command):
 
     def _update_command(self):
         # compute command in world/body frame
-        self.command_pos_ee_w[:] = self.desired_pos_ee_w.mean(1)
-        self.command_linvel_ee_w[:] = self.desired_linvel_ee_w.mean(1)
+        self.command_pos_ee_w[:] = (self.desired_pos_ee_w * self.smoothing_weight).sum(1)
+        self.command_linvel_ee_w[:] = (self.desired_linvel_ee_w * self.smoothing_weight).sum(1)
 
         self.command_pos_ee_b[:] = quat_rotate_inverse(
             self.asset.data.root_quat_w,

@@ -209,6 +209,7 @@ class JointPosition(ActionManager):
         asym_joints = None,
         max_delay: int = 4,
         alpha: Tuple[float, float] = (0.5, 1.0),
+        cumstom_command: Dict[str, float] = None
     ):
         super().__init__(env)
         self.joint_ids, self.joint_names, self.action_scaling = string_utils.resolve_matching_names_values(
@@ -233,6 +234,11 @@ class JointPosition(ActionManager):
             self.alpha_range = (alpha, alpha)
         else:
             self.alpha_range = tuple(alpha)
+
+        if cumstom_command is not None:
+            cumstom_command = dict(cumstom_command)
+            self.cumstom_command_joint_ids, _, self.cumstom_command = string_utils.resolve_matching_names_values(cumstom_command, self.asset.joint_names)
+            self.cumstom_command = torch.tensor(self.cumstom_command, device=self.device)
 
         self.action_dim = len(self.joint_ids)
         
@@ -291,7 +297,8 @@ class JointPosition(ActionManager):
 
             pos_target = self.default_joint_pos.clone()
             pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
-            pos_target.clamp_(-torch.pi, torch.pi)
+            if hasattr(self, "cumstom_command"):
+                pos_target[:, self.cumstom_command_joint_ids] = self.cumstom_command
             self.asset.set_joint_position_target(pos_target.clamp(*self.joint_limits))
         self.asset.write_data_to_sim()
 

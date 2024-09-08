@@ -19,7 +19,8 @@ class impedance_ee_pos(Reward):
             self.command_manager.command_pos_ee_w
             - self.asset.data.body_pos_w[:, self.body_id]
         )
-        r = torch.exp(-diff.norm(dim=-1, keepdim=True) / self.l)
+        # r = torch.exp(-diff.norm(dim=-1, keepdim=True) / self.l)
+        r = torch.exp(- diff.square().sum(1, True) / self.l)
         return r
 
 
@@ -38,5 +39,18 @@ class impedance_ee_vel(Reward):
             self.command_manager.command_linvel_ee_w
             - self.asset.data.body_lin_vel_w[:, self.body_id]
         )
-        r = torch.exp(-diff.norm(dim=-1, keepdim=True) / self.l)
+        # r = torch.exp(-diff.norm(dim=-1, keepdim=True) / self.l)
+        r = torch.exp(- diff.square().sum(1, True) / self.l)
         return r
+
+
+class ee_angvel_penalty(Reward):
+    def __init__(self, env, ee_name: str, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_id = self.asset.find_bodies(ee_name)[0]
+        self.body_id = self.body_id[0]
+
+    def compute(self) -> torch.Tensor:
+        ee_angvel_w = self.asset.data.body_ang_vel_w[:, self.body_id]
+        return - ee_angvel_w.square().sum(1, True)
