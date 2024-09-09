@@ -13,23 +13,22 @@ terrain: plane
 payload: false
 homogeneous: false
 
-# action:
-#   _target_: active_adaptation.envs.mdp.action.QuadrupedWithArm
-#   joint_names: ^(?!joint6$|endleft$|endright$).*
-#   action_scaling:
-#     (F|R)(L|R)_(hip|thigh|calf)_joint: 0.5
-#     joint[1-5]: 0.25
-#   max_delay: 1
-#   alpha: 0.8
-#   arm_joint_names: ^joint1$
-
 action:
-  _target_: active_adaptation.envs.mdp.action.JointPosition
+  _target_: active_adaptation.envs.mdp.action.IKResidualOnBase
   action_scaling:
     (F|R)(L|R)_(hip|thigh|calf)_joint: 0.5
     arm_joint[1-5]: 0.5
+  arm_joint_names: arm_joint[1-5]
   max_delay: 1
   alpha: 0.8
+
+# action:
+#   _target_: active_adaptation.envs.mdp.action.JointPosition
+#   action_scaling:
+#     (F|R)(L|R)_(hip|thigh|calf)_joint: 0.5
+#     arm_joint[1-5]: 0.5
+#   max_delay: 1
+#   alpha: 0.8
 
 command:
   _target_: active_adaptation.envs.mdp.BaseEEImpedanceMixed
@@ -52,7 +51,7 @@ command:
   impulse_force_duration_range: [0.1, 0.4]
   temporal_smoothing: 8
   command_acc: true
-  arm_activated_prob: 0.5
+  arm_activated_prob: 1.0
   arm_activated_base_vel_max: 1.0
   arm_activated_base_vel_min: 0.4
 
@@ -150,5 +149,6 @@ randomization:
       .*_thigh_joint: [-0.2, 0.2]
       .*_calf_joint: [-0.2, 0.2]
       .*_hip_joint: [-0.2, 0.2]
+      arm_joint[1-5]: [-0.2, 0.2]
     rel: true
   stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.4, 0.4]}

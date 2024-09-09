@@ -3,7 +3,7 @@ from typing import Dict, Literal, Tuple, Union, TYPE_CHECKING
 from tensordict import TensorDictBase
 from omni.isaac.lab.assets import Articulation
 import omni.isaac.lab.utils.string as string_utils
-from omni.isaac.lab.utils.math import euler_xyz_from_quat, quat_mul, quat_conjugate, axis_angle_from_quat, quat_inv
+from omni.isaac.lab.utils.math import euler_xyz_from_quat, quat_mul, quat_conjugate, axis_angle_from_quat, quat_inv, quat_rotate_inverse, quat_rotate, yaw_quat
 
 if TYPE_CHECKING:
     from active_adaptation.envs.base import Env
@@ -186,6 +186,103 @@ class IKResidual(ActionManager):
             raise ValueError(f"Unsupported inverse-kinematics method: {self.ik_method}")
 
         return delta_joint_pos
+
+class IKResidualOnBase(ActionManager):
+    def __init__(
+        self, 
+        env, 
+        action_scaling: Dict[str, float] = 0.5,
+        arm_joint_names: str = "arm_link[1-6]",
+        max_delay: int = 4,
+        alpha: Tuple[float, float] = (0.5, 1.0),
+    ):
+        super().__init__(env)
+        self.joint_ids, self.joint_names, self.action_scaling = string_utils.resolve_matching_names_values(dict(action_scaling), self.asset.joint_names)
+        
+        self.action_scaling = torch.tensor(self.action_scaling, device=self.device)
+        self.action_dim = len(self.joint_ids)
+
+        self.max_delay = max_delay
+        if isinstance(alpha, float):
+            self.alpha_range = (alpha, alpha)
+        else:
+            self.alpha_range = tuple(alpha)
+        with torch.device(self.device):
+            self.action_buf = torch.zeros(self.num_envs, self.action_dim, max(max_delay + 1, 3))
+            self.applied_action = torch.zeros(self.num_envs, self.action_dim)
+            self.alpha = torch.ones(self.num_envs, 1) * alpha
+            self.delay = torch.zeros(self.num_envs, 1, dtype=int)
+
+        from active_adaptation.envs.mdp.commands import BaseEEImpedance
+        self.command_manager: BaseEEImpedance = self.env.command_manager
+        self.ee_body_id = self.command_manager.ee_body_id
+
+        self.arm_joint_ids, self.arm_joint_names = self.asset.find_joints(arm_joint_names)
+        self.arm_joint_ids_jacobians = torch.tensor(self.arm_joint_ids, device=self.device)
+        self.arm_joint_ids_jacobians += 6
+        self.nominal_error_weight = torch.ones(self.num_envs, 1, device=self.device) * 0.1
+        self.nominal_error_weight[0] = 0.5
+        
+        self.asset.write_joint_stiffness_to_sim(40., self.arm_joint_ids)
+        self.asset.write_joint_damping_to_sim(40., self.arm_joint_ids)
+    
+    def reset(self, env_ids: torch.Tensor):
+        self.delay[env_ids] = torch.randint(0, self.max_delay + 1, (len(env_ids), 1), device=self.device)
+        self.action_buf[env_ids] = 0
+        self.applied_action[env_ids] = 0
+    
+    def __call__(self, tensordict: TensorDictBase, substep: int):
+        if substep == 0:
+            action = tensordict["action"].clamp(-10, 10)
+            self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
+            self.action_buf[:, :, 0] = action
+            action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
+            self.applied_action.lerp_(action.squeeze(-1), self.alpha)
+        
+        ee_pos_to_base_w = self.asset.data.body_pos_w[:, self.ee_body_id] - self.asset.data.root_pos_w
+        ee_pos_b = quat_rotate_inverse(
+            self.asset.data.root_quat_w,
+            ee_pos_to_base_w,
+        )
+        ee_vel_w = self.asset.data.body_lin_vel_w[:, self.ee_body_id]
+        ee_vel_coriolis_w = self.asset.data.root_lin_vel_w + torch.cross(self.asset.data.root_ang_vel_w, ee_pos_to_base_w, dim=-1)
+        ee_vel_b = quat_rotate_inverse(
+            self.asset.data.root_quat_w,
+            ee_vel_w - ee_vel_coriolis_w
+        )
+        command_pos_ee_b = quat_rotate_inverse(
+            self.asset.data.root_quat_w,
+            quat_rotate(
+                yaw_quat(self.asset.data.root_quat_w),
+                self.command_manager.command_pos_ee_b,
+            ),
+        )
+        pos_error = command_pos_ee_b - ee_pos_b
+        vel_error = self.command_manager.command_linvel_ee_b - ee_vel_b
+        desired_vel = 40 * pos_error + 10 * vel_error
+        nominal_error = (self.asset.data.default_joint_pos - self.asset.data.joint_pos)[:, self.arm_joint_ids]
+        
+        J = self.asset.root_physx_view.get_jacobians()[:, self.ee_body_id, :3, self.arm_joint_ids_jacobians]
+        J_T = J.transpose(1, 2)
+        
+        lambda_matrix = torch.eye(J.shape[2], device=J.device) * 1.0
+        A = J_T @ J + lambda_matrix
+        b = J_T @ desired_vel.unsqueeze(-1)
+        delta_q = torch.linalg.lstsq(A, b).solution.squeeze(-1) + self.nominal_error_weight * nominal_error
+        delta_q += (self.action_scaling * self.applied_action)[:, self.arm_joint_ids]
+        
+        # set joint position target for legs
+        leg_pos_target = self.asset.data.default_joint_pos.clone()
+        leg_pos_target[:, self.joint_ids] = self.action_scaling * self.applied_action
+        self.asset.set_joint_position_target(leg_pos_target)
+
+        # overwrite arm joint positions with incremental action control
+        arm_pos_target = self.asset.data.joint_pos[:, self.arm_joint_ids] + delta_q * self.env.physics_dt
+        self.asset.set_joint_position_target(arm_pos_target, self.arm_joint_ids)
+        self.asset.set_joint_velocity_target(delta_q, self.arm_joint_ids)
+        
+        self.asset.write_data_to_sim()
+        
 
 class JointPosition(ActionManager):
     def __init__(
