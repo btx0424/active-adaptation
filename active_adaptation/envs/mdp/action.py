@@ -35,14 +35,6 @@ class IKResidual(ActionManager):
         action_scaling: Dict[str, float] = 0.5,
         max_delay: int = 4,
         alpha: Tuple[float, float] = (0.5, 1.0),
-        ik_method: Literal["pinv",
-                            "svd",
-                            "trans",
-                            "dls"] = "dls",
-        ik_params: Dict[str, float] = {
-            "k_val": 1.0,
-            "lambda_val": 0.01,
-        },
         fwd: bool = False,
     ):
         super().__init__(env)
@@ -51,8 +43,6 @@ class IKResidual(ActionManager):
         self.action_scaling = torch.tensor(self.action_scaling, device=self.device)
         self.action_dim = len(self.joint_ids)
         
-        self.ik_method = ik_method
-        self.ik_params = ik_params
         self.fwd = fwd
         if self.fwd:
             self.target_quat = torch.tensor([0.5, 0.5, 0.5, 0.5], device=self.device).repeat(self.num_envs, 1)
@@ -71,6 +61,9 @@ class IKResidual(ActionManager):
         from active_adaptation.envs.mdp.commands import EEImpedance
         self.command_manager: EEImpedance = self.env.command_manager
         self.ee_body_id = self.command_manager.ee_body_id
+        
+        self.asset.write_joint_stiffness_to_sim(40., self.joint_ids)
+        self.asset.write_joint_damping_to_sim(40., self.joint_ids)
     
     def reset(self, env_ids: torch.Tensor):
         self.delay[env_ids] = torch.randint(0, self.max_delay + 1, (len(env_ids), 1), device=self.device)
@@ -89,30 +82,28 @@ class IKResidual(ActionManager):
             delayed_action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
             self.applied_action.lerp_(delayed_action.squeeze(-1), self.alpha)
 
-            # compute position control ik target
-            # ee_pos_diff_b = self.command_manager.command_pos_ee_diff_b # = ee_pos_b_des - ee_pos_b
-            ee_pos_diff_b = self.command_manager.command_setpoint_pos_ee_diff_b # = ee_setpoint_pos_b - ee_pos_b
-            if self.fwd:
-                # get ee pitch and yaw 
-                ee_quat_w = self.asset.data.body_quat_w[:, self.ee_body_id]
-                root_quat_w = self.asset.data.root_quat_w
-                ee_quat_b = quat_mul(quat_inv(root_quat_w), ee_quat_w)
-                axis_angle_error = self._compute_axis_angle_error(ee_quat_b, self.target_quat)
-                ee_pos_diff_b = torch.cat([ee_pos_diff_b, axis_angle_error], dim=-1)
-            if not self.fwd:
-                jacobian_pos = self.asset.root_physx_view.get_jacobians()[:, self.ee_body_id, :3, self.joint_ids]
-            else:
-                jacobian_pos = self.asset.root_physx_view.get_jacobians()[:, self.ee_body_id, :, self.joint_ids]
-            delta_joint_pos = self._compute_delta_joint_pos(ee_pos_diff_b, jacobian_pos)
-            
-            # add delta joint pos to current joint pos
-            joint_pos_target = self.asset.data.joint_pos.clone()
-            joint_pos_target[:, self.joint_ids] += delta_joint_pos 
+        ee_vel_w = self.asset.data.body_lin_vel_w[:, self.ee_body_id]
+        pos_error = self.command_manager.command_pos_ee_diff_b
+        vel_error = self.command_manager.command_linvel_ee_w - ee_vel_w
+        desired_vel = 40 * pos_error + 10 * vel_error
+        nomial_error = self.asset.data.default_joint_pos - self.asset.data.joint_pos
 
-            # add residual action
-            joint_pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
-            
-            self.asset.set_joint_position_target(joint_pos_target)
+        J = self.asset.root_physx_view.get_jacobians()[:, self.ee_body_id, :3]
+        J_T = J.transpose(1, 2)
+
+        # lambda_matrix = torch.eye(3, device=J.device) * 1.0
+        # J_inv = J_T @ torch.inverse(J @ J_T + lambda_matrix) # [N, 3, 3]
+        # delta_q = (J_inv @ desired_vel.unsqueeze(-1)).squeeze(-1) + 0.1 * nomial_error
+        
+        # use `torch.linalg.lstsq`` for performance and stability
+        lambda_matrix = torch.eye(J.shape[2], device=J.device) * 1.0
+        A = J_T @ J + lambda_matrix
+        b = J_T @ desired_vel.unsqueeze(-1)
+        delta_q = torch.linalg.lstsq(A, b).solution.squeeze(-1) + 0.1 * nomial_error
+        delta_q[:, self.joint_ids] += self.action_scaling * self.applied_action
+        
+        self.asset.set_joint_position_target(self.asset.data.joint_pos + delta_q * self.env.physics_dt)
+        self.asset.set_joint_velocity_target(delta_q)
         self.asset.write_data_to_sim()
     
     def _compute_axis_angle_error(
@@ -182,11 +173,10 @@ class IKResidual(ActionManager):
             delta_joint_pos = delta_joint_pos.squeeze(-1)
         elif self.ik_method == "dls":  # damped least squares
             # parameters
-            lambda_val = self.ik_params["lambda_val"]
+            lambda_val = 0.5 # self.ik_params["lambda_val"]
             # computation
             jacobian_T = torch.transpose(jacobian, dim0=1, dim1=2) # [N, num_joints, 3/6]
             lambda_matrix = (lambda_val**2) * torch.eye(n=jacobian.shape[2], device=self.device) # [num_joints, num_joints]
-            lambda_matrix[0, 0] *= 10
             delta_joint_pos = (
                 # jacobian_T @ torch.inverse(jacobian @ jacobian_T + lambda_matrix) @ delta_pose.unsqueeze(-1)
                 torch.inverse(jacobian_T @ jacobian + lambda_matrix) @ jacobian_T @ delta_pose.unsqueeze(-1)
