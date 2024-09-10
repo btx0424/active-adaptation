@@ -681,6 +681,25 @@ class base_height_l1(Reward):
         return (height - target_height).clamp_max(0.)
 
 
+class quadruped_stand_always(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf)):
+        super().__init__(env, weight, enabled, clip_range)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids = self.asset.actuators["base_legs"].joint_indices
+
+    def compute(self):
+        jpos_error = (
+            self.asset.data.joint_pos[:, self.joint_ids] - 
+            self.asset.data.default_joint_pos[:, self.joint_ids]
+        ).abs().sum(dim=1, keepdim=True)
+
+        front_symmetry = self.asset.data.feet_pos_b[:, [0, 1], 1].sum(dim=1, keepdim=True).abs()
+        back_symmetry = self.asset.data.feet_pos_b[:, [2, 3], 1].sum(dim=1, keepdim=True).abs()
+        cost = - (jpos_error + front_symmetry + back_symmetry)
+
+        return cost
+
+
 class quadruped_stand(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf)):
         super().__init__(env, weight, enabled, clip_range)
