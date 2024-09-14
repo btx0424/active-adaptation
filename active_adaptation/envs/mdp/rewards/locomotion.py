@@ -764,30 +764,6 @@ class joint_vel_l2(Reward):
         return - self.asset.data.joint_vel[:, self.joint_ids].square().sum(1, True)
 
 
-class impedance_pos(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True):
-        super().__init__(env, weight, enabled)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: Impedance = self.env.command_manager
-
-    def compute(self) -> torch.Tensor:
-        diff = (self.command_manager.command_pos_w - self.asset.data.root_pos_w)
-        r = torch.exp(- diff.norm(dim=-1, keepdim=True) / 0.25)
-        return r
-    
-
-class impedance_vel(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True):
-        super().__init__(env, weight, enabled)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: Impedance = self.env.command_manager
-    
-    def compute(self) -> torch.Tensor:
-        diff = (self.command_manager.command_linvel_w - self.asset.data.root_lin_vel_w)
-        r = torch.exp(- diff.square().sum(dim=-1, keepdim=True) / 0.25)
-        return r
-
-
 class feet_swing_height(Reward):
     def __init__(self, env, target_height: float, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)

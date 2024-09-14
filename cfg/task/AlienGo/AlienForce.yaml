@@ -12,23 +12,21 @@ terrain: plane
 payload: false
 homogeneous: false
 
-action:
-  _target_: active_adaptation.envs.mdp.action.JointPosition
-  action_scaling: {.*_(hip|thigh|calf)_joint: 0.5}
-  max_delay: 1
-  alpha: [0.5, 1.0]
-
 command:
   _target_: active_adaptation.envs.mdp.Impedance
+  default_mass: 25.0
+  default_inertia_z: 2.5
   virtual_mass_range: [0.25, 1.0]
-  compliant_ratio: 0.25
-  force_type_probs: [0.0, 0.5, 0.5]
+  linear_kp_range: [2.0, 12.0]
+  compliant_ratio: 0.5
+  temporal_smoothing: 8
+  force_type_probs: [0.4, 0.3, 0.3]
   constant_force_scale: [120., 120., 20.]
   constant_force_duration_range: [1, 4]
   impulse_force_momentum_scale: [5.0, 5.0, 1.0]
   impulse_force_duration_range: [0.1, 0.4]
-  temporal_smoothing: 16
   force_offset_scale: [0.3, 0.2, 0.1]
+  command_acc: true
 
 observation:
   command:
@@ -60,9 +58,11 @@ observation:
 reward:
   loco:
     linvel_exp:         {weight: 1.5, enabled: false, dim: 3, yaw_only: true}
-    angvel_z_exp:       {weight: 1.0, enabled: true}
-    impedance_pos:      {weight: 1.0, enabled: true}
-    impedance_vel:      {weight: 1.5, enabled: true}
+    angvel_z_exp:       {weight: 1.0, enabled: false}
+    impedance_base_pos:      {weight: 1.0, enabled: true, l: 0.1}
+    impedance_base_vel:      {weight: 1.5, enabled: true, l: 0.25}
+    impedance_yaw_pos:       {weight: 1.0, enabled: true, l: 0.1}
+    impedance_yaw_vel:       {weight: 1.5, enabled: true, l: 0.25}
     # angvel_z_exp_shaped: {weight: 0.75, enabled: false}
     linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
     # linacc_z_l2:        {weight: 0.005, enabled: false}

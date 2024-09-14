@@ -3,7 +3,7 @@ import torch
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.utils.math import wrap_to_pi, quat_rotate
 from active_adaptation.utils.helpers import batchify
-from ..commands import BaseEEImpedance
+from ..commands import BaseEEImpedance, Impedance
 from .locomotion import Reward
 
 @batchify
@@ -23,7 +23,7 @@ class impedance_base_pos(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: BaseEEImpedance = self.env.command_manager
+        self.command_manager: BaseEEImpedance | Impedance = self.env.command_manager
         self.l = l
     
     def compute(self) -> torch.Tensor:
@@ -35,7 +35,7 @@ class impedance_base_vel(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: BaseEEImpedance = self.env.command_manager
+        self.command_manager: BaseEEImpedance | Impedance = self.env.command_manager
         self.l = l
     
     def compute(self) -> torch.Tensor:
@@ -94,7 +94,7 @@ class impedance_yaw_pos(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: BaseEEImpedance = self.env.command_manager
+        self.command_manager: BaseEEImpedance | Impedance = self.env.command_manager
         self.l = l
     
     def compute(self) -> torch.Tensor:
@@ -106,7 +106,7 @@ class impedance_yaw_vel(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: BaseEEImpedance = self.env.command_manager
+        self.command_manager: BaseEEImpedance | Impedance = self.env.command_manager
         self.l = l
     
     def compute(self) -> torch.Tensor:
