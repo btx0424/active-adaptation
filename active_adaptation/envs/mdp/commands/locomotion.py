@@ -892,10 +892,10 @@ class Impedance(Command):
         self.command_speed[:] = self.command_linvel.norm(dim=-1, keepdim=True)
         
         command_yaw_diff = math_utils.wrap_to_pi(self.command_yaw_w - self.asset.data.heading_w.unsqueeze(1))
-        command_setpoint_yaw_diff = math_utils.wrap_to_pi(self.command_setpoint_yaw_w.squeeze(1) - self.asset.data.heading_w)
+        command_setpoint_yaw_diff = math_utils.wrap_to_pi(self.command_setpoint_yaw_w - self.asset.data.heading_w.unsqueeze(1))
         
-        self.command[:, :2] = command_setpos_b[:, :2]
-        self.command[:, 2] = command_setpoint_yaw_diff
+        self.command[:, 0:2] = command_setpos_b[:, :2] * (~self.compliant_base)
+        self.command[:, 2:3] = command_setpoint_yaw_diff * (~self.compliant_yaw)
         self.command[:, 3:5] = self.kp_base
         self.command[:, 5:6] = self.kp_yaw
         self.command[:, 6:8] = self.kd_base
@@ -964,15 +964,15 @@ class Impedance(Command):
             ),
             color=(0.0, 0.0, 1.0, 1.0),
         )
-        # # desired yaw (green)
-        # self.env.debug_draw.vector(
-        #     self.asset.data.root_pos_w,
-        #     yaw_rotate(
-        #         self.command_yaw_w,
-        #         torch.tensor([1.0, 0.0, 0.0], device=self.device),
-        #     ),
-        #     color=(0.0, 1.0, 0.0, 1.0),
-        # )
+        # desired yaw (green)
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            yaw_rotate(
+                self.command_yaw_w,
+                torch.tensor([1.0, 0.0, 0.0], device=self.device),
+            ),
+            color=(0.0, 1.0, 0.0, 1.0),
+        )
         # real yaw (yellow)
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w,
@@ -1006,8 +1006,9 @@ class Impedance(Command):
         )
     
     def debug_draw(self):
+        self._debug_draw_base()
         self._debug_draw_yaw()
-        self._debug_draw_desired_yaw()
+        # self._debug_draw_desired_yaw()
         self._debug_draw_forces()
 
 
