@@ -584,7 +584,7 @@ class Impedance(Command):
         impulse_force_duration_range = (0.1, 0.5),
         force_offset_scale = (0.3, 0.2, 0.1),
         command_acc: bool = False,
-        teleop: bool = True,
+        teleop: bool = False,
     ) -> None:
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]

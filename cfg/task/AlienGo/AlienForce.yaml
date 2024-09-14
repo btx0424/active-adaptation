@@ -28,6 +28,7 @@ command:
   impulse_force_duration_range: [0.1, 0.4]
   force_offset_scale: [0.3, 0.2, 0.1]
   command_acc: true
+  teleop: false
 
 observation:
   command:
