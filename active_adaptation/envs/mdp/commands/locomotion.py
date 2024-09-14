@@ -696,7 +696,7 @@ class Impedance(Command):
         )
         self.desired_yaw_acc_w[:] = desired_yaw_acc_w
         self.desired_yaw_vel_w.add_(desired_yaw_acc_w * self.env.physics_dt)
-        self.desired_yaw_w.add_(desired_yaw_acc_w * self.env.physics_dt)
+        self.desired_yaw_w.add_(self.desired_yaw_vel_w * self.env.physics_dt)
 
     def update(self):
         self._compute_errors()
