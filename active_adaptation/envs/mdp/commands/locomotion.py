@@ -571,6 +571,7 @@ class Impedance(Command):
         virtual_mass_range=(0.5, 1.0),
         linear_kp_range = (2.0, 12.0),
         compliant_ratio: float = 0.2,
+        setpoint_use_linvel_ratio: float = 0.5,
         temporal_smoothing: int = 5,
         force_type_probs = (0.4, 0.3, 0.3),
         constant_force_scale = (50, 50, 10),
@@ -587,6 +588,7 @@ class Impedance(Command):
         self.default_inertia = default_inertia_z
         self.virtual_mass_range = virtual_mass_range
         self.linear_kp_range = linear_kp_range
+        self.setpoint_use_linvel_ratio = setpoint_use_linvel_ratio
 
         self.resample_prob = 0.01
         self.compliant_ratio_base = compliant_ratio
@@ -669,6 +671,7 @@ class Impedance(Command):
             self.impulse_force_time = self.impulse_force_struct[:, -1].unsqueeze(1)
 
             self._cum_error = torch.zeros(self.num_envs, 4)
+            self._cum_count = torch.zeros(self.num_envs, 4)
 
             self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
             self.xy = torch.tensor([1., 1., 0.], device=self.device)
@@ -680,6 +683,7 @@ class Impedance(Command):
 
     def reset(self, env_ids: torch.Tensor):
         self._cum_error[env_ids] = 0.
+        self._cum_count[env_ids] = 0
     
         # reset desired pos/vel/yaw
         self.desired_lin_acc_w[env_ids] = 0.
@@ -757,6 +761,8 @@ class Impedance(Command):
         self._cum_error[:, 1].add_(pos_error * self.env.step_dt).mul_(0.99)
         self._cum_error[:, 2].add_(angvel_error * self.env.step_dt).mul_(0.99)
         self._cum_error[:, 3].add_(yaw_error * self.env.step_dt).mul_(0.99)
+        self._cum_count.add_(1).mul_(0.99)
+        # print((self._cum_error / self._cum_count / self.env.step_dt).mean(0))
     
     def _sample_command(self, env_ids: torch.Tensor):
         # sample kp and kd
@@ -779,7 +785,7 @@ class Impedance(Command):
         # sample setpoint pos and linvel
         set_linvel = torch.zeros(len(env_ids), 3, device=self.device)
         set_linvel[:, 0].uniform_(0.4, 1.2)
-        use_set_linvel = torch.rand(len(env_ids), 1, device=self.device) < 0.5
+        use_set_linvel = torch.rand(len(env_ids), 1, device=self.device) < self.setpoint_use_linvel_ratio
         use_set_linvel = use_set_linvel & ~compliant_base
 
         root_pos_w = self.asset.data.root_pos_w[env_ids]
