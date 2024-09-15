@@ -1072,7 +1072,7 @@ def quat_to_yaw(quat: torch.Tensor):
 
 
 @wp.func
-def sample_uniform(rng: wp.uint32, range: wp.vec2) -> float:
+def sample_uniform_wp(rng: wp.uint32, range: wp.vec2) -> float:
     return wp.randf(rng) * (range[1] - range[0]) + range[0]
 
 vec5f = wp.vec(length=5, dtype=wp.float32)
@@ -1099,12 +1099,12 @@ def maybe_sample_force(
         elif (force_type[tid] == 1) and (const_force[tid][4] > const_force[tid][3]):
             rng = wp.rand_init(kernel_seed, tid)
             xy = wp.cw_mul(wp.sample_unit_cube(rng), const_force_scale)
-            duration = sample_uniform(rng, const_force_duration_range)
+            duration = sample_uniform_wp(rng, const_force_duration_range)
             const_force[tid] = vec5f(xy[0], xy[1], 0., duration, 0.)
         elif (force_type[tid] == 2) and (impulse_force[tid][4] > impulse_force[tid][3]):
             rng = wp.rand_init(kernel_seed, tid)
             xy = wp.cw_mul(wp.sample_unit_cube(rng), impulse_force_scale)
-            duration = sample_uniform(rng, impulse_force_duration_range)
+            duration = sample_uniform_wp(rng, impulse_force_duration_range)
             xy = xy / duration
             impulse_force[tid] = vec5f(xy[0], xy[1], 0., duration, 0.)
         

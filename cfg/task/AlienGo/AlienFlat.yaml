@@ -44,7 +44,7 @@ observation:
     joint_pos:    {noise_std: 0.05, joint_names: .*_joint}
     joint_vel:    {noise_std: 0.4, joint_names: .*_joint}
     prev_actions: {steps: 3}
-  # priv:
+  priv:
     applied_action:
     root_linvel_b:    {yaw_only: true}
     root_angvel_b:
