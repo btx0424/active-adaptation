@@ -5,9 +5,6 @@ import math
 import warp as wp
 from typing import Sequence, TYPE_CHECKING
 
-import carb
-import omni
-import weakref
 from omni.isaac.lab.assets import Articulation
 import omni.isaac.lab.utils.math as math_utils
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse, MultiUniform
@@ -586,7 +583,7 @@ class Impedance(Command):
         command_acc: bool = False,
         teleop: bool = False,
     ) -> None:
-        super().__init__(env)
+        super().__init__(env, teleop=teleop)
         self.robot: Articulation = env.scene["robot"]
         
         self.default_mass = default_mass
@@ -689,28 +686,16 @@ class Impedance(Command):
 
         # setup teleop
         if self.teleop:
-            # acquire omniverse interfaces
-            self._appwindow = omni.appwindow.get_default_app_window()
-            self._input = carb.input.acquire_input_interface()
-            self._keyboard = self._appwindow.get_keyboard()
-            # note: Use weakref on callbacks to ensure that this object can be deleted when its destructor is called.
-            self._keyboard_sub = self._input.subscribe_to_keyboard_events(
-                self._keyboard,
-                lambda event, *args, obj=weakref.proxy(self): obj._on_keyboard_event(event, *args),
-            )
-            self.key_mappings = {
+            self.key_mappings_xy = {
                 "W": torch.tensor([1., 0., 0.], device=self.device),
                 "A": torch.tensor([0., 1., 0.], device=self.device),
                 "S": torch.tensor([-1., 0., 0.], device=self.device),
                 "D": torch.tensor([0., -1., 0.], device=self.device),
             }
-            self.key_pressed = defaultdict(lambda: False)
-
-    def _on_keyboard_event(self, event, *args, **kwargs):
-        if event.type == carb.input.KeyboardEventType.KEY_PRESS:
-            self.key_pressed[event.input.name] = True
-        if event.type == carb.input.KeyboardEventType.KEY_RELEASE:
-            self.key_pressed[event.input.name] = False
+            self.key_mappings_yaw = {
+                "Q": -torch.pi,
+                "E": torch.pi,
+            }
 
     def reset(self, env_ids: torch.Tensor):
         self._cum_error[env_ids] = 0.
@@ -725,17 +710,8 @@ class Impedance(Command):
         self.desired_yaw_vel_w[env_ids] = self.asset.data.root_ang_vel_w[env_ids, 2:3].unsqueeze(1)
         self.desired_yaw_w[env_ids] = self.asset.data.heading_w[env_ids, None, None]
 
-        self.env_mask.zero_()
-        self.env_mask[env_ids] = True
         self._sample_command(env_ids)
-        self._sample_force(self.env_mask)
-
-        self._update_setpoint_and_force()
-
-        for _ in range(self.decimation):
-            self._integrate()
-        
-        self._update_command()
+        self._update_output()
         
     def step(self, substep: int):
         forces_b = self.asset._external_force_b.clone()
@@ -759,21 +735,25 @@ class Impedance(Command):
         
         # resample command and forces with prob
         if self.teleop:
-            for key, vec in self.key_mappings.items():
+            for key, vec in self.key_mappings_xy.items():
                 if self.key_pressed[key]:
                     self.command_setpoint_pos_base_w.add_(vec * self.env.step_dt)
+            for key, delta in self.key_mappings_yaw.items():
+                if self.key_pressed[key]:
+                    self.command_setpoint_yaw_w.add_(delta * self.env.step_dt)
+                    self.command_setpoint_yaw_w[:] = math_utils.wrap_to_pi(self.command_setpoint_yaw_w)
         else:
             sample_command = torch.rand(self.num_envs, device=self.device) < self.resample_prob
             sample_command = sample_command.nonzero().squeeze(-1)
             if len(sample_command) > 0:
                 self._sample_command(sample_command)
-    
-        self._update_setpoint_and_force()
-    
+        
         for _ in range(self.decimation):
             self._integrate()
         
-        self._update_command()
+        self._update_force()
+        self._update_setpoint()
+        self._update_output()
 
     def _compute_errors(self):
         linvel_error = (self.command_linvel_base_w - self.asset.data.root_lin_vel_w).norm(dim=-1)
@@ -834,7 +814,8 @@ class Impedance(Command):
         self.virtual_mass[env_ids] = self.default_mass * virtual_mass
         self.virtual_inertia_z[env_ids] = self.default_inertia
     
-    def _sample_force(self, env_mask: torch.Tensor):
+    def _update_force(self):
+        sample_force = torch.rand(self.num_envs, device=self.device) <  self.resample_prob
         force_type = torch.multinomial(self.force_type_probs, self.num_envs, replacement=True)
         
         wp.launch(
@@ -847,7 +828,7 @@ class Impedance(Command):
                 self.impulse_force_momentum_scale,
                 self.impulse_force_duration_range,
                 self.force_offset_scale,
-                wp.from_torch(env_mask, dtype=wp.bool),
+                wp.from_torch(sample_force, dtype=wp.bool),
                 wp.from_torch(force_type.int(), dtype=wp.int32),
                 wp.from_torch(self.constant_force_struct, dtype=vec5f),
                 wp.from_torch(self.impulse_force_struct, dtype=vec5f),
@@ -855,20 +836,6 @@ class Impedance(Command):
             ],
             device=str(self.device)
         )
-        
-        self.cnt += 1
-
-    def _update_setpoint_and_force(self):
-        if not self.teleop:
-            self.command_setpoint_pos_base_w[:] = torch.where(
-                self.use_set_linvel,
-                self.command_setpoint_pos_base_w.lerp(self.kd_base / self.kp_base * self.set_linvel + self.asset.data.root_pos_w, 0.5),
-                self.command_setpoint_pos_base_w
-            )
-        
-        sample_force = torch.rand(self.num_envs, device=self.device) <  self.resample_prob
-        if sample_force.any():
-            self._sample_force(sample_force)
 
         constant_force = self.constant_force_struct[:, 0:3] * (self.constant_force_time < self.constant_force_duration)
         impulse_force_t = (self.impulse_force_time / self.impulse_force_duration).clamp(0., 1.)
@@ -881,6 +848,16 @@ class Impedance(Command):
         self.force_ext_w[:] = constant_force + impulse_force
         self.constant_force_time.add_(self.env.step_dt)
         self.impulse_force_time.add_(self.env.step_dt)
+        
+        self.cnt += 1
+
+    def _update_setpoint(self):
+        if not self.teleop:
+            self.command_setpoint_pos_base_w[:] = torch.where(
+                self.use_set_linvel,
+                self.command_setpoint_pos_base_w.lerp(self.kd_base / self.kp_base * self.set_linvel + self.asset.data.root_pos_w, 0.5),
+                self.command_setpoint_pos_base_w
+            )
 
     def _integrate(self):
         desired_acc_w = (
@@ -905,7 +882,7 @@ class Impedance(Command):
         self.desired_yaw_vel_w.add_(self.desired_yaw_acc_w * self.env.physics_dt)
         self.desired_yaw_w.add_(self.desired_yaw_vel_w * self.env.physics_dt)
 
-    def _update_command(self):
+    def _update_output(self):
         # smooth commands
         yaw_diff = self.desired_yaw_w - self.desired_yaw_w[:, 0:1]
         self.desired_yaw_w[:] = self.desired_yaw_w[:, 0:1] + math_utils.wrap_to_pi(yaw_diff)
