@@ -605,8 +605,8 @@ class Impedance(Command):
             self.desired_yaw_vel_w = torch.zeros(self.num_envs, self.temporal_smoothing, 1)
             self.desired_yaw_w = torch.zeros(self.num_envs, self.temporal_smoothing, 1)
             
-            self.smoothing_weight = torch.full((1, self.temporal_smoothing, 1), 0.9).cumprod(1)
-            self.smoothing_weight /= self.smoothing_weight.sum()
+            self.smoothing_weight = torch.full((1, self.temporal_smoothing), 0.9).cumprod(1)
+            self.smoothing_weight = self.smoothing_weight.flip(dims=(1,)) / self.smoothing_weight.sum()
 
             self.command_angvel = torch.zeros(self.num_envs)
             self.command_setpos_w = torch.zeros(self.num_envs, 3)
@@ -695,8 +695,11 @@ class Impedance(Command):
             + (torque / self.virtual_inertia.unsqueeze(1))[..., 2:3]
         )
         self.desired_yaw_acc_w[:] = desired_yaw_acc_w
-        self.desired_yaw_vel_w.add_(desired_yaw_acc_w * self.env.physics_dt)
-        self.desired_yaw_w.add_(desired_yaw_acc_w * self.env.physics_dt)
+        self.desired_yaw_vel_w.add_(self.desired_yaw_acc_w * self.env.physics_dt)
+        self.desired_yaw_w.add_(self.desired_yaw_vel_w * self.env.physics_dt)
+
+    def _smooth(self, q: torch.Tensor):
+        return (q * self.smoothing_weight.unsqueeze(-1)).sum(1)
 
     def update(self):
         self._compute_errors()
@@ -729,9 +732,9 @@ class Impedance(Command):
         for _ in range(self.decimation):
             self._integrate()
 
-        self.command_linvel_w[:] = (self.desired_lin_vel_w * self.smoothing_weight).sum(1)
-        self.command_angvel[:] = (self.desired_yaw_vel_w * self.smoothing_weight).sum(1).squeeze(-1)
-        self.command_pos_w[:] = (self.desired_pos_w * self.smoothing_weight).sum(1)
+        self.command_linvel_w[:] = self._smooth(self.desired_lin_vel_w)
+        self.command_angvel[:] = self._smooth(self.desired_yaw_vel_w).squeeze(-1)
+        self.command_pos_w[:] = self._smooth(self.desired_pos_w)
         self.is_standing_env[:] = (
             (self.command_linvel_w.norm(dim=-1, keepdim=True) < 0.1)
             & (self.command_angvel.abs() < 0.1).unsqueeze(1)
@@ -808,7 +811,7 @@ class Impedance(Command):
 
         root_pos_w = self.asset.data.root_pos_w[env_ids]
         command_setpoint_w = torch.zeros(len(env_ids), 3, device=self.device)
-        command_setpoint_w[:, 0].uniform_(2., 3.)
+        command_setpoint_w[:, 0].uniform_(2., 2.)
         command_setpoint_w[:, 1].uniform_(-1, 1)
         command_setpoint_w.add_(root_pos_w)
         
@@ -820,16 +823,6 @@ class Impedance(Command):
         self.set_linvel[env_ids] = set_linvel
         self.use_set_linvel[env_ids] = use_set_linvel
         self.command_setpos_w[env_ids] = command_setpoint_w
-
-        self.desired_lin_acc_w[env_ids] = 0.
-        self.desired_lin_vel_w[env_ids] = self.asset.data.root_lin_vel_w[env_ids].unsqueeze(1)
-        self.desired_pos_w[env_ids] = self.asset.data.root_pos_w[env_ids].unsqueeze(1)
-
-        self.command_setrpy_w[env_ids, 2] = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
-        root_yaw = quat_to_yaw(self.asset.data.root_quat_w[env_ids])
-        self.desired_yaw_acc_w[env_ids] = 0.
-        self.desired_yaw_vel_w[env_ids] = self.asset.data.root_ang_vel_w[env_ids, 2:3].unsqueeze(1)
-        self.desired_yaw_w[env_ids] = root_yaw.reshape(-1, 1, 1)
 
         virtual_mass = torch.empty(len(env_ids), 1, device=self.device).uniform_(*self.virtual_mass_range)
         self.virtual_mass[env_ids] = self.default_mass * virtual_mass

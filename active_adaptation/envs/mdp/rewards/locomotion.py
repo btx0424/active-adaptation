@@ -765,7 +765,8 @@ class impedance_vel(Reward):
     
     def compute(self) -> torch.Tensor:
         diff = (self.command_manager.command_linvel_w - self.asset.data.root_lin_vel_w)
-        r = torch.exp(- diff.square().sum(dim=-1, keepdim=True) / 0.25)
+        error_l2 = diff.square().sum(dim=-1, keepdim=True)
+        r = torch.exp(- error_l2 / 0.25) - error_l2
         return r
 
 

@@ -5,6 +5,7 @@ task: Quadruped
 defaults:
   # see https://hydra.cc/docs/advanced/overriding_packages/
   - /task/Velocity@_here_
+  - override action: null
   - _self_
 
 robot: aliengo
