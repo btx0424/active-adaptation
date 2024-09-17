@@ -101,7 +101,7 @@ A1_CFG = ArticulationCfg(
             effort_limit=200.0,
             velocity_limit=5.0,
             stiffness={
-                "arm_joint[1-3]": 40.0,
+                "arm_joint[1-3]": 80.0,
                 "arm_joint[4-6]": 30.0,
             },
             damping={
