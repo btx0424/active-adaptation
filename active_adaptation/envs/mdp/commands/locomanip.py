@@ -1487,7 +1487,7 @@ class BaseEEImpedance(Command):
         #     dim=1,
         # )
         command_setpoint_pos_ee_b = torch.empty(len(env_ids), 3, device=self.device)
-        command_setpoint_pos_ee_b[:, 0].uniform_(0.2, 0.6)
+        command_setpoint_pos_ee_b[:, 0].uniform_(0.2, 0.7)
         command_setpoint_pos_ee_b[:, 1].uniform_(-0.2, 0.2)
         command_setpoint_pos_ee_b[:, 2].uniform_(0.3, 0.7)
         self.command_setpoint_pos_ee_b[env_ids] = command_setpoint_pos_ee_b
@@ -2016,9 +2016,14 @@ class BaseEEImpedance(Command):
             command_pos_ee_w_rew, color=(0.0, 1.0, 0.0, 1.0), size=20.0
         )
         self.env.debug_draw.vector(
-            command_pos_ee_w_rew,
+            self.asset.ee_pos_w,
             self.command_linvel_ee_w,
             color=(0.0, 1.0, 0.0, 1.0),
+        )
+        self.env.debug_draw.vector(
+            self.asset.ee_pos_w,
+            self.asset.ee_lin_vel_w,
+            color=(1.0, 0.0, 1.0, 1.0),
         )
         # real pos for ee (yellow)
         self.env.debug_draw.point(

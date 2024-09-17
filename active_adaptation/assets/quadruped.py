@@ -18,20 +18,21 @@ class QuadrupedManipulator(Articulation):
         super()._create_buffers()
 
         self.ee_body_id = self.find_bodies(self.cfg.ee_body_name)[0][0]
-        self.ee_pos_w = self.data.body_pos_w[:, self.ee_body_id]
+        self.ee_pos_w = self.data.body_pos_w[:, self.ee_body_id].clone()
         self.ee_pos_b = torch.zeros_like(self.ee_pos_w)
         self._ee_pos_w_buffer = torch.zeros(self.num_instances, 4, 3, device=self.device)
         self.ee_lin_vel_w = torch.zeros(self.num_instances, 3, device=self.device)
 
     def update(self, dt: float):
         super().update(dt)
+        self.ee_pos_w[:] = self.data.body_pos_w[:, self.ee_body_id]
         self.ee_pos_b = quat_rotate_inverse(
             self.data.root_quat_w,
             self.ee_pos_w - self.data.root_pos_w
         )
         self._ee_pos_w_buffer = self._ee_pos_w_buffer.roll(1, dims=1)
         self._ee_pos_w_buffer[:, 0] = self.ee_pos_w
-        self.ee_lin_vel_w[:] = torch.mean(self._ee_pos_w_buffer.diff(dim=1) / dt, dim=1)
+        self.ee_lin_vel_w[:] = torch.mean(-self._ee_pos_w_buffer.diff(dim=1) / dt, dim=1)
 
 
 ASSET_PATH = os.path.dirname(__file__)
