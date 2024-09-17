@@ -48,7 +48,7 @@ command:
   max_force_acc_ee: 20.0
   compliant_ratio: 0.2
   ext_force_ratio: 0.5
-  future: 3
+  future: 16
   mix_openloop_base: false
   mix_openloop_ee: false
   mix_openloop_yaw: false
@@ -92,10 +92,10 @@ reward:
     angvel_z_exp:       {weight: 1.0, enabled: false}
     linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
     # impedance pos&vel tracking
-    impedance_base_pos:      {weight: 1.0, enabled: true, l: 0.05}
+    impedance_base_pos:      {weight: 0.5, enabled: true, l: 0.1}
     impedance_base_vel:      {weight: 1.0, enabled: true, l: 0.25}
-    impedance_ee_pos_b:      {weight: 0.5, enabled: true, l: 0.01}
-    impedance_ee_vel_b:      {weight: 1.0, enabled: true, l: 0.05}
+    impedance_ee_pos_b:      {weight: 0.5, enabled: true, l: 0.1}
+    impedance_ee_vel_b:      {weight: 1.0, enabled: true, l: 0.25}
     impedance_yaw_pos:      {weight: 0.5, enabled: true, l: 0.25}
     impedance_yaw_vel:      {weight: 1.0, enabled: true, l: 0.25}
     
@@ -107,7 +107,7 @@ reward:
     energy_dist_lr:     {weight: 0.0002, enabled: false}
     energy_dist_fb:     {weight: 0.0002, enabled: false}
     joint_acc_l2:       {weight: 2.5e-7, enabled: true, joint_names: ["(F|R)(L|R)_(hip|thigh|calf)_joint", "arm_joint[1-5]"]}
-    joint_torques_l2:   {weight: 2.0e-4, enabled: true, joint_names: ["(F|R)(L|R)_(hip|thigh|calf)_joint", "arm_joint[1-5]"]}
+    joint_torques_l2:   {weight: 1.0e-4, enabled: true, joint_names: ["(F|R)(L|R)_(hip|thigh|calf)_joint", "arm_joint[1-5]"]}
     # quadruped_stand:    {weight: 0.5}
     # stance_width:       {weight: 0.5, enabled: false, target_width: 0.15}
     survival:           {weight: 1.0, enabled: true}

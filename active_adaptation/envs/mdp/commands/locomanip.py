@@ -1335,7 +1335,6 @@ class BaseEEImpedance(Command):
         command_acc: bool = False,
     ) -> None:
         super().__init__(env)
-        self.robot: Articulation = env.scene["robot"]
         self.base_body_id = self.asset.find_bodies("base")[0][0]
         self.ee_body_id = self.asset.find_bodies(ee_name)[0][0]
         self.ee_base_body_id = self.asset.find_bodies(ee_base_name)[0][0]
@@ -1364,6 +1363,10 @@ class BaseEEImpedance(Command):
         self.mix_openloop_ee = mix_openloop_ee
         self.mix_openloop_yaw = mix_openloop_yaw
         self.command_acc = command_acc
+
+        from active_adaptation.assets.quadruped import QuadrupedManipulator
+        
+        self.asset: QuadrupedManipulator
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 23)
@@ -1832,30 +1835,19 @@ class BaseEEImpedance(Command):
 
         # if env is reset last step, reset cum error and the desired pos and linvel buffers
         env_ids = self.need_reset_mask.squeeze(-1)
-        self._cum_error[env_ids] = 0.0
-        self._cum_count[env_ids] = 0.0
-        # print((self._cum_error / self._cum_count / self.env.step_dt).mean(0))
-        self.desired_linacc_base_w[env_ids] = 0.0
-        self.desired_linvel_base_w[env_ids] = (
-            self.asset.data.root_lin_vel_w[env_ids, None] * self.xy
-        )
-        self.desired_pos_base_w[env_ids] = self.asset.data.root_pos_w[env_ids, None]
+        if env_ids.any():
+            self._cum_error[env_ids] = 0.0
+            self._cum_count[env_ids] = 0.0
 
-        self.desired_lin_acc_ee_w[env_ids] = 0.0
-        self.desired_linvel_ee_w[env_ids] = self.asset.data.body_lin_vel_w[
-            env_ids, None, self.ee_body_id
-        ]
-        self.desired_pos_ee_w[env_ids] = self.asset.data.body_pos_w[
-            env_ids, None, self.ee_body_id
-        ]
+            self.desired_linvel_base_w[env_ids] = 0.0
+            self.desired_pos_base_w[env_ids] = self.asset.data.root_pos_w[env_ids].unsqueeze(1)
 
-        self.desired_yawacc_w[env_ids] = 0.0
-        self.desired_yawvel_w[env_ids] = self.asset.data.root_ang_vel_w[
-            env_ids, None, 2:3
-        ]
-        self.desired_yaw_w[env_ids] = self.asset.data.heading_w[env_ids, None, None]
-        self.need_reset_mask[:] = False
+            self.desired_linvel_ee_w[env_ids] = 0.0
+            self.desired_pos_ee_w[env_ids] = self.asset.ee_pos_w[env_ids].unsqueeze(1)
 
+            self.desired_yawvel_w[env_ids] = 0.0
+            self.desired_yaw_w[env_ids] = self.asset.data.heading_w[env_ids, None, None]
+            self.need_reset_mask[:] = False
 
         # resample command and force
         sample_command = (
@@ -1865,31 +1857,28 @@ class BaseEEImpedance(Command):
         if len(sample_command):
             self._sample_command(sample_command)
 
-        sample_force = (
-            torch.rand(self.num_envs, device=self.device) < self.resample_prob
-        )
-        sample_force = sample_force.nonzero().squeeze(-1)
-        if len(sample_force):
-            self._sample_force(sample_force)
+        # sample_force = (
+        #     torch.rand(self.num_envs, device=self.device) < self.resample_prob
+        # )
+        # sample_force = sample_force.nonzero().squeeze(-1)
+        # if len(sample_force):
+        #     self._sample_force(sample_force)
 
-        if not self.mix_openloop_base:
-            self.desired_linvel_base_w[:] = self.desired_linvel_base_w.roll(1, dims=1)
-            self.desired_pos_base_w[:] = self.desired_pos_base_w.roll(1, dims=1)
+        self.desired_linvel_base_w[:] = self.desired_linvel_base_w.roll(1, dims=1)
+        self.desired_pos_base_w[:] = self.desired_pos_base_w.roll(1, dims=1)
 
-        if not self.mix_openloop_ee:
-            self.desired_linvel_ee_w[:] = self.desired_linvel_ee_w.roll(1, dims=1)
-            self.desired_pos_ee_w[:] = self.desired_pos_ee_w.roll(1, dims=1)
+        self.desired_linvel_ee_w[:] = self.desired_linvel_ee_w.roll(1, dims=1)
+        self.desired_pos_ee_w[:] = self.desired_pos_ee_w.roll(1, dims=1)
 
-        if not self.mix_openloop_yaw:
-            self.desired_yawvel_w[:] = self.desired_yawvel_w.roll(1, dims=1)
-            self.desired_yaw_w[:] = self.desired_yaw_w.roll(1, dims=1)
+        self.desired_yawvel_w[:] = self.desired_yawvel_w.roll(1, dims=1)
+        self.desired_yaw_w[:] = self.desired_yaw_w.roll(1, dims=1)
 
         self.desired_linvel_base_w[:, 0] = self.asset.data.root_lin_vel_w * self.xy
         self.desired_pos_base_w[:, 0] = self.asset.data.root_pos_w
-        self.desired_linvel_ee_w[:, 0] = self.asset.data.body_lin_vel_w[
-            :, self.ee_body_id
-        ]
-        self.desired_pos_ee_w[:, 0] = self.asset.data.body_pos_w[:, self.ee_body_id]
+        
+        self.desired_linvel_ee_w[:, 0] = self.asset.ee_lin_vel_w
+        self.desired_pos_ee_w[:, 0] = self.asset.ee_pos_w
+
         self.desired_yawvel_w[:, 0] = self.asset.data.root_ang_vel_w[:, 2:3]
         self.desired_yaw_w[:, 0] = self.asset.data.heading_w.unsqueeze(1)
 

@@ -198,6 +198,7 @@ def LocomotionEnvCfg(task_cfg):
     randomizations = dict(task_cfg.get("randomization", {}))
     scale_range = randomizations.pop("random_scale", (1.0, 1.0))
     robot_cfg.spawn.scale_range = scale_range
+    robot_cfg.prim_path = "{ENV_REGEX_NS}/Robot"
 
     scene_cfg_class = {
         "locomotion": LocomotionSceneCfg,
@@ -210,7 +211,7 @@ def LocomotionEnvCfg(task_cfg):
         payload=task_cfg.payload,
         scene = scene_cfg_class(
             num_envs=task_cfg.num_envs,                                                                                                                                                         
-            robot=robot_cfg.replace(prim_path="{ENV_REGEX_NS}/Robot"),
+            robot=robot_cfg,
             terrain=terrain_cfg,
             replicate_physics=False,
         ),
