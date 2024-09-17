@@ -667,6 +667,11 @@ class Impedance(Command):
     def reset(self, env_ids: torch.Tensor):
         self._sample_command(env_ids)
         self._cum_error[env_ids] = 0.
+
+        self.desired_pos_w[env_ids] = self.asset.data.root_pos_w[env_ids].unsqueeze(1)
+        self.desired_lin_vel_w[env_ids] = 0.
+        self.desired_yaw_w[env_ids] = self.asset.data.heading_w[env_ids].unsqueeze(1)
+        self.desired_yaw_vel_w[env_ids] = 0.
     
     def step(self, substep: int):
         forces_b = self.asset._external_force_b.clone()

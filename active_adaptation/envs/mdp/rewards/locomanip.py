@@ -40,7 +40,8 @@ class impedance_base_vel(Reward):
     
     def compute(self) -> torch.Tensor:
         diff = (self.command_manager.command_linvel_base_w[:, :2] - self.asset.data.root_lin_vel_w[:, :2])
-        r = torch.exp(- diff.square().sum(dim=-1, keepdim=True) / self.l)
+        error_l2 = diff.square().sum(dim=-1, keepdim=True)
+        r = torch.exp(- error_l2 / self.l) - error_l2
         return r
     
 class impedance_ee_pos_b(Reward):
