@@ -575,9 +575,10 @@ class Impedance(Command):
         constant_force_scale = (50, 50, 10),
         constant_force_duration_range = (1, 4),
         temporal_smoothing: int = 5,
-        force_offset_scale = (0.3, 0.2, 0.1)
+        force_offset_scale = (0.3, 0.2, 0.1),
+        teleop: bool = False
     ) -> None:
-        super().__init__(env)
+        super().__init__(env, teleop)
         self.robot: Articulation = env.scene["robot"]
         
         self.virtual_mass_range = virtual_mass_range
@@ -664,6 +665,18 @@ class Impedance(Command):
         self.decimation = int(self.env.step_dt / self.env.physics_dt)
         self.cnt = 0
 
+        if self.teleop:
+            self.key_mappings_pos = {
+                "W": torch.tensor([1., 0., 0.], device=self.device),
+                "S": torch.tensor([-1., 0., 0.], device=self.device),
+                "A": torch.tensor([0., 1., 0.], device=self.device),
+                "D": torch.tensor([0., -1., 0.], device=self.device),
+            }
+            self.key_mappings_rpy = {
+                "Q": torch.tensor([0., 0., +torch.pi], device=self.device),
+                "E": torch.tensor([0., 0., -torch.pi], device=self.device),
+            }
+
     def reset(self, env_ids: torch.Tensor):
         self._sample_command(env_ids)
         self._cum_error[env_ids] = 0.
@@ -745,12 +758,6 @@ class Impedance(Command):
             & (self.command_angvel.abs() < 0.1).unsqueeze(1)
         )
 
-        self.command_setpos_w[:] = torch.where(
-            self.use_set_linvel.unsqueeze(1),
-            self.command_setpos_w.lerp(self.kd / self.kp * self.set_linvel + self.asset.data.root_pos_w, 0.5),
-            self.command_setpos_w
-        )
-
         command_pos_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_pos_w - self.asset.data.root_pos_w)
         command_setpos_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_setpos_w - self.asset.data.root_pos_w)
 
@@ -770,10 +777,24 @@ class Impedance(Command):
         self.command_hidden[:, 3:6] = self.command_linvel
         self.command_hidden[:, 6] = self.command_angvel
 
-        sample_command = torch.rand(self.num_envs, device=self.device) < self.resample_prob
-        sample_command = sample_command.nonzero().squeeze(-1)
-        if len(sample_command) > 0:
-            self._sample_command(sample_command)
+        if self.teleop:
+            for key, vec in self.key_mappings_pos.items():
+                if self.key_pressed[key]:
+                    self.command_setpos_w.add_(vec * self.env.step_dt)
+            for key, delta in self.key_mappings_rpy.items():
+                if self.key_pressed[key]:
+                    self.command_setrpy_w.add_(delta * self.env.step_dt)
+                    self.command_setrpy_w[:] = math_utils.wrap_to_pi(self.command_setrpy_w)
+        else:
+            sample_command = torch.rand(self.num_envs, device=self.device) < self.resample_prob
+            sample_command = sample_command.nonzero().squeeze(-1)
+            if len(sample_command) > 0:
+                self._sample_command(sample_command)
+            self.command_setpos_w[:] = torch.where(
+                self.use_set_linvel.unsqueeze(1),
+                self.command_setpos_w.lerp(self.kd / self.kp * self.set_linvel + self.asset.data.root_pos_w, 0.5),
+                self.command_setpos_w
+            )
         
         sample_force = torch.rand(self.num_envs, device=self.device) <  self.resample_prob
         force_type = torch.multinomial(self.force_type_probs, self.num_envs, replacement=True)
@@ -863,8 +884,8 @@ class Impedance(Command):
             color=(0., 1., 0., 1.),
             size=2.0
         )
-        # desired_pos in yellow
         self.env.debug_draw.point(self.desired_pos_w[:, -1], color=(0., 0., 1., 1.), size=40.)
+        self.env.debug_draw.point(self.command_setpos_w, color=(1., 0., 0., 1.), size=40.)
 
 
 class ImpedanceTeleOp(Command):

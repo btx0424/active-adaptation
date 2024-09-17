@@ -48,7 +48,7 @@ class LocomotionEnv(Env):
 
     def _reset_idx(self, env_ids: torch.Tensor):
         init_root_state = self.command_manager.sample_init(env_ids)
-        if not self.fix_root_link:
+        if not self.robot.is_fixed_base:
             self.robot.write_root_state_to_sim(
                 init_root_state, 
                 env_ids=env_ids

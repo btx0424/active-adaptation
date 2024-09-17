@@ -30,6 +30,7 @@ command:
   impulse_force_duration_range: [0.1, 0.4]
   temporal_smoothing: 16
   force_offset_scale: [0.3, 0.2, 0.1]
+  teleop: false
 
 observation:
   command:

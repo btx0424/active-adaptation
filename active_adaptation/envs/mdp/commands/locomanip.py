@@ -4,7 +4,7 @@ import warp as wp
 
 from torchrl.data import UnboundedContinuousTensorSpec
 from omni.isaac.lab.assets import Articulation
-from omni.isaac.lab.utils.math import yaw_quat, wrap_to_pi, quat_from_euler_xyz, quat_mul, quat_inv, euler_xyz_from_quat, normalize
+from omni.isaac.lab.utils.math import yaw_quat, quat_from_euler_xyz, quat_mul, quat_inv, euler_xyz_from_quat, normalize
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from active_adaptation.utils.helpers import batchify
 from .locomotion import Command, sample_quat_yaw, sample_uniform, clamp_norm
@@ -16,6 +16,21 @@ import wandb
 
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
+
+@torch.jit.script
+def wrap_to_pi(angles: torch.Tensor) -> torch.Tensor:
+    """Wraps input angles (in radians) to the range [-pi, pi].
+
+    Args:
+        angles: Input angles of any shape.
+
+    Returns:
+        Angles in the range [-pi, pi].
+    """
+    angles = angles.clone()
+    angles = angles % (2 * torch.pi)
+    angles -= 2 * torch.pi * (angles > torch.pi)
+    return angles
 
 @batchify
 def yaw_rotate(yaw: torch.Tensor, vec: torch.Tensor):
@@ -1341,6 +1356,7 @@ class BaseEEImpedance(Command):
 
         self.compliant_ratio = compliant_ratio
         self.ext_force_ratio = ext_force_ratio
+        self.ext_force_ratio = 0
 
         self.resample_prob = 0.005
         self.future = future
@@ -1880,6 +1896,11 @@ class BaseEEImpedance(Command):
         for _ in range(int(self.env.step_dt / self.env.physics_dt)):
             self._integrate()
 
+        yaw_diff = self.desired_yaw_w - self.desired_yaw_w[:, 0:1]
+        self.desired_yaw_w[:] = self.desired_yaw_w[:, 0:1] + wrap_to_pi(yaw_diff)
+        if not torch.all((self.desired_yaw_w - self.desired_yaw_w[:, 0:1]).abs() < torch.pi):
+            breakpoint()
+
         self._update_command()
 
     """
@@ -1963,6 +1984,19 @@ class BaseEEImpedance(Command):
             ),
             color=(1.0, 1.0, 0.0, 1.0),
         )
+
+    def _debug_draw_desired_yaw(self):
+        yaw_headings = yaw_rotate(
+            self.desired_yaw_w,
+            torch.tensor([1.0, 0.0, 0.0], device=self.device)[None, None, :],
+        ) # [n, h, 3]
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w.unsqueeze(1).repeat(1, self.future, 1).view(-1, 3),
+            yaw_headings.view(-1, 3),
+            color=(0.0, 1.0, 0.0, 1.0),
+            size=2.0,
+        )
+        
         
     def _debug_draw_ee(self):
         # setpoint pos for ee (red/blue for stiff/compliant)
@@ -2165,6 +2199,9 @@ class BaseEEImpedanceMixed(Command):
         ee_name: str = "arm_link06",
         ee_base_name: str = "arm_link00",
         base_setpoint_radius_range: tuple = (2.0, 3.0),
+        base_setpoint_radius_range_arm_activated: tuple = (1.0, 2.0),
+        yaw_setpoint_range: tuple = (-torch.pi / 2, torch.pi / 2),
+        yaw_setpoint_range_arm_activated: tuple = (-torch.pi / 4, torch.pi / 4),
         kp_base_range: tuple = (2.0, 12.0),
         kp_yaw_range: tuple = (2.0, 12.0),
         kp_ee_range: tuple = (100.0, 150.0),
@@ -2193,6 +2230,9 @@ class BaseEEImpedanceMixed(Command):
         self.body_ids = [self.base_body_id, self.ee_body_id]
 
         self.base_setpoint_radius_range = base_setpoint_radius_range
+        self.base_setpoint_radius_range_arm_activated = base_setpoint_radius_range_arm_activated
+        self.yaw_setpoint_range = yaw_setpoint_range
+        self.yaw_setpoint_range_arm_activated = yaw_setpoint_range_arm_activated
 
         self.kp_base_range = kp_base_range
         self.kp_yaw_range = kp_yaw_range
@@ -2240,8 +2280,6 @@ class BaseEEImpedanceMixed(Command):
             # command setpoints in world/body frame
             self.command_setpoint_pos_base_w = torch.zeros(self.num_envs, 3)
             self.command_setpoint_pos_base_diff_b = torch.zeros(self.num_envs, 3)
-            # for arm activated, we sample a small velocity in the world frame and compute the setpoint in each update
-            self.command_setpoint_linvel_base_w = torch.zeros(self.num_envs, 3)
 
             self.command_setpoint_pos_ee_b = torch.zeros(self.num_envs, 3)
             self.command_setpoint_pos_ee_diff_b = torch.zeros(self.num_envs, 3)
@@ -2334,10 +2372,18 @@ class BaseEEImpedanceMixed(Command):
         self.cnt = 0
 
     def _sample_command(self, env_ids: torch.Tensor):
-        # base setpoint w: used when arm is not activated
-        setpoint_pos_base_radius = torch.empty(len(env_ids), 1, device=self.device).uniform_(
-            *self.base_setpoint_radius_range
-        )
+        # sample arm activation: if not activated, the arm setpoint should be set to near rest pose, no forces on arm, no reward on arm
+        self.is_arm_activated[env_ids] = torch.rand(len(env_ids), 1, device=self.device) < self.arm_activated_prob
+        
+        setpoint_pos_base_radius = torch.empty(len(env_ids), 1, device=self.device)
+        activated_mask = self.is_arm_activated[env_ids].squeeze(-1)
+        if activated_mask.sum() > 0:
+            setpoint_pos_base_radius[activated_mask] = torch.empty(activated_mask.sum(), 1, device=self.device).uniform_(*self.base_setpoint_radius_range_arm_activated)
+        
+        non_activated_mask = ~activated_mask
+        if non_activated_mask.sum() > 0:
+            setpoint_pos_base_radius[non_activated_mask] = torch.empty(non_activated_mask.sum(), 1, device=self.device).uniform_(*self.base_setpoint_radius_range)
+
         setpoint_pos_base_yaw = torch.empty(len(env_ids), 1, device=self.device).uniform_(-torch.pi, torch.pi)
         command_setpoint_pos_base_w = torch.cat(
             [
@@ -2350,27 +2396,22 @@ class BaseEEImpedanceMixed(Command):
         self.command_setpoint_pos_base_w[env_ids] = command_setpoint_pos_base_w
         self.command_setpoint_pos_base_w[env_ids] += self.asset.data.root_pos_w[env_ids]    
         
-        # base setpoint velocity w: used when arm is activated
-        command_setpoint_speed = torch.empty(len(env_ids), 1, device=self.device).uniform_(0.0, self.arm_activated_base_vel_max)
-        command_setpoint_speed[command_setpoint_speed < self.arm_activated_base_vel_min] = 0.0
-        command_setpoint_vel_yaw = torch.empty(len(env_ids), 1, device=self.device).uniform_(-torch.pi, torch.pi)
-        command_setpoint_linvel_base_w = torch.cat(
-            [
-                command_setpoint_speed * torch.cos(command_setpoint_vel_yaw),
-                command_setpoint_speed * torch.sin(command_setpoint_vel_yaw),
-                torch.zeros(len(env_ids), 1, device=self.device),
-            ],
-            dim=1,
-        )
-        self.command_setpoint_linvel_base_w[env_ids] = command_setpoint_linvel_base_w
-
         command_setpoint_pos_ee_b = torch.empty(len(env_ids), 3, device=self.device)
         command_setpoint_pos_ee_b[:, 0].uniform_(0.2, 0.6)
         command_setpoint_pos_ee_b[:, 1].uniform_(-0.2, 0.2)
         command_setpoint_pos_ee_b[:, 2].uniform_(0.3, 0.7)
+        if non_activated_mask.sum() > 0:
+            command_setpoint_pos_ee_b[non_activated_mask, 0] = 0.16
+            command_setpoint_pos_ee_b[non_activated_mask, 1] = 0.0
+            command_setpoint_pos_ee_b[non_activated_mask, 2] = 0.3
         self.command_setpoint_pos_ee_b[env_ids] = command_setpoint_pos_ee_b
 
-        setpoint_yaw_w = torch.empty(len(env_ids), 1, device=self.device).uniform_(-torch.pi / 2, torch.pi / 2)
+        setpoint_yaw_w = torch.empty(len(env_ids), 1, device=self.device)
+        if activated_mask.sum() > 0:
+            setpoint_yaw_w[activated_mask] = torch.empty(activated_mask.sum(), 1, device=self.device).uniform_(*self.yaw_setpoint_range_arm_activated)
+        if non_activated_mask.sum() > 0:
+            setpoint_yaw_w[non_activated_mask] = torch.empty(non_activated_mask.sum(), 1, device=self.device).uniform_(*self.yaw_setpoint_range)
+        setpoint_yaw_w += self.asset.data.heading_w[env_ids].unsqueeze(1)
         self.command_setpoint_yaw_w[env_ids] = setpoint_yaw_w
 
         empty = torch.empty(len(env_ids), 1, device=self.device)
@@ -2401,12 +2442,7 @@ class BaseEEImpedanceMixed(Command):
 
         self.virtual_mass_base[env_ids] = self.default_mass_base * empty.uniform_(*self.virtual_mass_range)
         self.virtual_mass_ee[env_ids] = self.default_mass_ee * empty.uniform_(*self.virtual_mass_range)
-
-        # sample arm activation: if not activated, no internal forces (kp and kd = 0), no forces on arm, no reward on arm
-        self.is_arm_activated[env_ids] = torch.rand(len(env_ids), 1, device=self.device) < self.arm_activated_prob
-        self.kp_ee[~self.is_arm_activated.squeeze(-1)] = 0.0
-        self.kd_ee[~self.is_arm_activated.squeeze(-1)] = 0.0
-        self.compliant_ee[~self.is_arm_activated.squeeze(-1)] = True
+        self.virtual_inertia_z[env_ids] = self.default_inertia_z * empty.uniform_(*self.virtual_mass_range)
 
     def reset(self, env_ids: torch.Tensor):
         """body related quantities are updated in the next step, can not use them."""
@@ -2637,9 +2673,6 @@ class BaseEEImpedanceMixed(Command):
         self.command_hidden[:, 8:9] = self.command_yawvel
         self.command_hidden[:, 9:12] = self.command_linvel_ee_b
 
-        self.command_hidden[~self.is_arm_activated.squeeze(-1), 3:6] = 0.0
-        self.command_hidden[~self.is_arm_activated.squeeze(-1), 9:12] = 0.0
-
     def update(self):
         self._update_buffers()
         self._compute_error()
@@ -2765,19 +2798,12 @@ class BaseEEImpedanceMixed(Command):
         self.impulse_force_ee_time.add_(self.env.step_dt)
         self.force_ext_ee_w *= self.is_arm_activated
 
-        # update base setpoint for arm activated envs
-        command_setpoint_pos_base_diff_w = self.command_setpoint_linvel_base_w * self.kd_base / self.kp_base.clamp_min(1e-5)
-        command_setpoint_pos_base_diff_w[self.compliant_base.squeeze(-1)] = 0.0
-        is_arm_activated = self.is_arm_activated.squeeze(-1)
-        self.command_setpoint_pos_base_w[is_arm_activated] = (self.asset.data.root_pos_w + command_setpoint_pos_base_diff_w)[is_arm_activated]
-        
         for _ in range(int(self.env.step_dt / self.env.physics_dt)):
             self._integrate()
-        
-        # set the desired ee pos for arm not activated envs
-        self.desired_pos_ee_w[~is_arm_activated] = self.asset.data.body_pos_w[~is_arm_activated, None, self.ee_body_id]
-        self.desired_linvel_ee_w[~is_arm_activated] = self.asset.data.body_lin_vel_w[~is_arm_activated, None, self.ee_body_id]
 
+        yaw_diff = self.desired_yaw_w - self.desired_yaw_w[:, 0:1]
+        self.desired_yaw_w[:] = self.desired_yaw_w[:, 0:1] + wrap_to_pi(yaw_diff)
+        
         self._update_command()
 
     """
@@ -2868,11 +2894,11 @@ class BaseEEImpedanceMixed(Command):
             self.asset.data.heading_w.unsqueeze(1), self.command_setpoint_pos_ee_b
         )
         self.env.debug_draw.point(
-            setpoint_ee_w[~self.compliant_ee.squeeze(-1) & self.is_arm_activated.squeeze(-1)], 
+            setpoint_ee_w[~self.compliant_ee.squeeze(-1)], 
             color=(1.0, 0.0, 0.0, 1.0), size=20.0
         )
         self.env.debug_draw.point(
-            setpoint_ee_w[self.compliant_ee.squeeze(-1) & self.is_arm_activated.squeeze(-1)], 
+            setpoint_ee_w[self.compliant_ee.squeeze(-1)], 
             color=(0.0, 0.0, 1.0, 1.0), size=20.0
         )
         # imaginary setpoint pos for ee (red/blue for stiff/compliant)
@@ -2880,11 +2906,11 @@ class BaseEEImpedanceMixed(Command):
             self.command_yaw_w, self.command_setpoint_pos_ee_b
         )
         self.env.debug_draw.point(
-            command_setpoint_ee_w[~self.compliant_ee.squeeze(-1) & self.is_arm_activated.squeeze(-1)], 
+            command_setpoint_ee_w[~self.compliant_ee.squeeze(-1)], 
             color=(1.0, 0.0, 0.0, 0.5), size=30.0
         )
         self.env.debug_draw.point(
-            command_setpoint_ee_w[self.compliant_ee.squeeze(-1) & self.is_arm_activated.squeeze(-1)], 
+            command_setpoint_ee_w[self.compliant_ee.squeeze(-1)], 
             color=(0.0, 0.0, 1.0, 0.5), size=30.0
         )
         # desired pos and linvel for ee (green)
@@ -2895,8 +2921,8 @@ class BaseEEImpedanceMixed(Command):
             command_pos_ee_w_rew, color=(0.0, 1.0, 0.0, 1.0), size=20.0
         )
         self.env.debug_draw.vector(
-            command_pos_ee_w_rew[self.is_arm_activated.squeeze(-1)],
-            self.command_linvel_ee_w[self.is_arm_activated.squeeze(-1)],
+            command_pos_ee_w_rew,
+            self.command_linvel_ee_w,
             color=(0.0, 1.0, 0.0, 1.0),
         )
         # real pos for ee (yellow)
@@ -2931,7 +2957,7 @@ class BaseEEImpedanceMixed(Command):
         )
     
     def debug_draw(self):
-        # self._debug_draw_ee()
+        self._debug_draw_ee()
         self._debug_draw_base()
         self._debug_draw_yaw()
         self._debug_draw_forces()
