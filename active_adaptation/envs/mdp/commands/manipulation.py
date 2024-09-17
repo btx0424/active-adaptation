@@ -92,6 +92,7 @@ class EEImpedance(Command):
             if self.fix_reset_body_pos:
                 self.need_reset_mask = torch.ones(self.num_envs, dtype=torch.bool)
             self._cum_error = torch.zeros(self.num_envs, 2)
+            self._cum_count = torch.zeros(self.num_envs, 1)
 
     def sample_init(self, env_ids: torch.Tensor) -> torch.Tensor:
         return self.init_root_state[env_ids]
@@ -198,6 +199,7 @@ class EEImpedance(Command):
         self._sample_force(env_ids)
 
         self._cum_error[env_ids] = 0.0
+        self._cum_error[env_ids] = 0.0
 
         if self.fix_reset_body_pos:
             self.command[env_ids] = 0.0
@@ -263,6 +265,7 @@ class EEImpedance(Command):
         ).norm(dim=-1)
         self._cum_error[:, 0].add_(linvel_ee_error * self.env.step_dt).mul_(0.99)
         self._cum_error[:, 1].add_(pos_ee_error * self.env.step_dt).mul_(0.99)
+        self._cum_count.add_(1).mul_(0.99)
 
     def update(self):
         self._compute_error()
@@ -270,6 +273,7 @@ class EEImpedance(Command):
         if self.fix_reset_body_pos:
             env_ids = self.need_reset_mask.squeeze(-1)
             self._cum_error[env_ids] = 0.0
+            self._cum_count[env_ids] = 0.0
             self.desired_linacc_ee_w[env_ids] = 0.0
             self.desired_linvel_ee_w[env_ids] = self.asset.data.body_lin_vel_w[
                 env_ids, None, self.ee_body_id
@@ -278,6 +282,8 @@ class EEImpedance(Command):
                 env_ids, None, self.ee_body_id
             ]
             self.need_reset_mask[env_ids] = False
+        
+        # print((self._cum_error / self._cum_count / self.env.step_dt).mean(0))
 
         # resample command and force
         # sim step -> compute reward -> command_manager.update() -> compute obs
