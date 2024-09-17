@@ -14,20 +14,20 @@ terrain: plane
 payload: false
 homogeneous: false
 
-action:
-  _target_: active_adaptation.envs.mdp.action.IKResidual
-  action_scaling:
-    arm_joint[1-6]: 0.5
-  max_delay: 1
-  alpha: 0.8
-  fwd: false
-
 # action:
-#   _target_: active_adaptation.envs.mdp.action.JointPosition
+#   _target_: active_adaptation.envs.mdp.action.IKResidual
 #   action_scaling:
-#     arm_joint[1-5]: 0.5
+#     arm_joint[1-6]: 0.5
 #   max_delay: 1
-#   alpha: 0.5
+#   alpha: 0.8
+#   fwd: false
+
+action:
+  _target_: active_adaptation.envs.mdp.action.JointPosition
+  action_scaling:
+    arm_joint[1-5]: 0.5
+  max_delay: 1
+  alpha: 0.5
 
 command:
   _target_: active_adaptation.envs.mdp.EEImpedance
@@ -57,8 +57,8 @@ observation:
   command:
     command:
   policy:
-    joint_pos:    {noise_std: 0.05}
-    joint_vel:    {noise_std: 0.2}
+    joint_pos:    {joint_names: ["arm_joint[1-5]"], noise_std: 0.05}
+    joint_vel:    {joint_names: ["arm_joint[1-5]"], noise_std: 0.2}
     prev_actions: {steps: 3}
   priv:
     command_hidden:
