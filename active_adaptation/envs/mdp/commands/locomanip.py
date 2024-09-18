@@ -1308,6 +1308,9 @@ class BaseEEImpedance(Command):
     1. stiff mode: large base kp, sample setpoint in the root pos, use force to check if it can resist the force
     2. stiff mode: sample setpoint around the root pos, check if it can return to setpoint
     3. compliant mode: 0 base kp, use force to check if it can follow the force
+
+    If continuous_waking=False, a position setpoint will not move until resampled
+
     """
 
     def __init__(
@@ -1329,10 +1332,9 @@ class BaseEEImpedance(Command):
         compliant_ratio: float = 0.2,
         ext_force_ratio: float = 0.5,
         future: int = 3,
-        mix_openloop_base: bool = False,
-        mix_openloop_ee: bool = False,
-        mix_openloop_yaw: bool = False,
         command_acc: bool = False,
+        continuous_walking_ratio: float=0.25,
+        **kwargs, # unused, for compatibility
     ) -> None:
         super().__init__(env)
         self.base_body_id = self.asset.find_bodies("base")[0][0]
@@ -1358,10 +1360,8 @@ class BaseEEImpedance(Command):
         self.ext_force_ratio = 0
 
         self.resample_prob = 0.005
+        self.decimation = int(self.env.step_dt / self.env.physics_dt)
         self.future = future
-        self.mix_openloop_base = mix_openloop_base
-        self.mix_openloop_ee = mix_openloop_ee
-        self.mix_openloop_yaw = mix_openloop_yaw
         self.command_acc = command_acc
 
         from active_adaptation.assets.quadruped import QuadrupedManipulator
@@ -1451,41 +1451,28 @@ class BaseEEImpedance(Command):
             self._cum_error = torch.zeros(self.num_envs, 6)
             self._cum_count = torch.zeros(self.num_envs, 1)
 
+            self.continuous_walking_ratio = continuous_walking_ratio
+            self.continuous_walking = torch.zeros(self.num_envs, 1, dtype=bool)
+            self.continuous_walking_vel = torch.zeros(self.num_envs, 3)
+
             self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
             self.xy = torch.tensor([1.0, 1.0, 0.0])
             self.is_arm_activated = torch.ones(self.num_envs, 1, dtype=bool)
 
     def _sample_command(self, env_ids: torch.Tensor):
-        setpoint_pos_base_radius = torch.empty(len(env_ids), 1, device=self.device).uniform_(
-            *self.base_setpoint_radius_range
-        )
-        setpoint_pos_base_yaw = torch.empty(len(env_ids), 1, device=self.device).uniform_(-torch.pi, torch.pi)
-        command_setpoint_pos_base_w = torch.cat(
-            [
-                setpoint_pos_base_radius * torch.cos(setpoint_pos_base_yaw),
-                setpoint_pos_base_radius * torch.sin(setpoint_pos_base_yaw),
-                torch.zeros(len(env_ids), 1, device=self.device),
-            ],
-            dim=1,
-        )
-        self.command_setpoint_pos_base_w[env_ids] = command_setpoint_pos_base_w
-        self.command_setpoint_pos_base_w[env_ids] += self.asset.data.root_pos_w[env_ids]    
+        
+        continuous_walking_vel = torch.zeros(len(env_ids), 3, device=self.device)
+        continuous_walking_vel[:, 0].uniform_(0.2, 1.4)
+        self.continuous_walking[env_ids, 0] = torch.rand(len(env_ids), device=self.device) < self.continuous_walking_ratio
+        self.continuous_walking_vel[env_ids] = continuous_walking_vel
 
-        # ee_yaw = torch.empty(len(env_ids), 1, device=self.device).uniform_(
-        #     -torch.pi / 2, torch.pi / 2
-        # )
-        # ee_pitch = torch.empty(len(env_ids), 1, device=self.device).uniform_(
-        #     torch.pi / 6, torch.pi / 2
-        # )
-        # ee_radius = torch.empty(len(env_ids), 1, device=self.device).uniform_(0.2, 0.6)
-        # ee_xyz = torch.cat(
-        #     [
-        #         ee_radius * torch.cos(ee_yaw) * torch.cos(ee_pitch),
-        #         ee_radius * torch.sin(ee_yaw) * torch.cos(ee_pitch),
-        #         ee_radius * torch.sin(ee_pitch),
-        #     ],
-        #     dim=1,
-        # )
+        command_setpoint_pos_base_w = sample_disk(
+            size=len(env_ids), 
+            radius_range=self.base_setpoint_radius_range,
+            device= self.device
+        )
+        self.command_setpoint_pos_base_w[env_ids] = command_setpoint_pos_base_w + self.asset.data.root_pos_w[env_ids]
+
         command_setpoint_pos_ee_b = torch.empty(len(env_ids), 3, device=self.device)
         command_setpoint_pos_ee_b[:, 0].uniform_(0.2, 0.7)
         command_setpoint_pos_ee_b[:, 1].uniform_(-0.2, 0.2)
@@ -1850,12 +1837,19 @@ class BaseEEImpedance(Command):
             self.need_reset_mask[:] = False
 
         # resample command and force
-        sample_command = (
-            torch.rand(self.num_envs, device=self.device) < self.resample_prob
-        )
-        sample_command = sample_command.nonzero().squeeze(-1)
-        if len(sample_command):
-            self._sample_command(sample_command)
+        if self.teleop:
+            pass
+        else:
+            sample_command = torch.rand(self.num_envs, device=self.device) < self.resample_prob
+            sample_command = sample_command.nonzero().squeeze(-1)
+            if len(sample_command):
+                self._sample_command(sample_command)
+            
+            self.command_setpoint_pos_base_w[:] = torch.where(
+                self.continuous_walking & ~self.compliant_base,
+                self.kd_base / self.kp_base * self.continuous_walking_vel + self.asset.data.root_pos_w,
+                self.command_setpoint_pos_base_w,
+            )
 
         # sample_force = (
         #     torch.rand(self.num_envs, device=self.device) < self.resample_prob
@@ -1882,7 +1876,7 @@ class BaseEEImpedance(Command):
         self.desired_yawvel_w[:, 0] = self.asset.data.root_ang_vel_w[:, 2:3]
         self.desired_yaw_w[:, 0] = self.asset.data.heading_w.unsqueeze(1)
 
-        for _ in range(int(self.env.step_dt / self.env.physics_dt)):
+        for _ in range(self.decimation):
             self._integrate()
 
         yaw_diff = self.desired_yaw_w - self.desired_yaw_w[:, 0:1]
@@ -2955,6 +2949,17 @@ class BaseEEImpedanceMixed(Command):
         self._debug_draw_base()
         self._debug_draw_yaw()
         self._debug_draw_forces()
+
+
+def sample_disk(size, radius_range=(0., 1.0), device=None):
+    r = torch.rand(size, device=device) * (radius_range[1] - radius_range[0]) + radius_range[0]
+    theta = torch.rand(size, device=device) * 2 * torch.pi
+    return torch.stack([
+        r * torch.cos(theta), 
+        r * torch.sin(theta), 
+        torch.zeros_like(theta)
+    ], dim=-1)
+
 
 @wp.func
 def sample_uniform(rng: wp.uint32, range: wp.vec2) -> float:
