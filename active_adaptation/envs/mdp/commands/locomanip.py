@@ -1367,6 +1367,7 @@ class BaseEEImpedance(Command):
         self.resample_prob = 0.005
         self.decimation = int(self.env.step_dt / self.env.physics_dt)
         self.future = future
+        self.temporal_smoothing = future
         self.command_acc = command_acc
 
         from active_adaptation.assets.quadruped import QuadrupedManipulator
@@ -1395,6 +1396,9 @@ class BaseEEImpedance(Command):
             self.desired_yawvel_w = self.desired_angvel_w[:, :, 2:3]
             self.desired_yaw_w = torch.zeros(self.num_envs, self.future, 1)
 
+            self.smoothing_weight = torch.full((1, self.temporal_smoothing), 0.9).cumprod(1)
+            self.smoothing_weight = self.smoothing_weight.flip(dims=(1,)) / self.smoothing_weight.sum()
+
             # command setpoints in world/body frame
             self.command_setpoint_pos_base_w = torch.zeros(self.num_envs, 3)
             self.command_setpoint_pos_base_diff_b = torch.zeros(self.num_envs, 3)
@@ -1419,12 +1423,12 @@ class BaseEEImpedance(Command):
             self.command_yaw_w = torch.zeros(self.num_envs, 1)
             self.command_yaw_diff = torch.zeros(self.num_envs, 1)
             self.command_angvel_w = torch.zeros(self.num_envs, 3)
-            self.command_yawvel = self.command_angvel_w[:, 2:3]
+            self.command_yaw_vel = self.command_angvel_w[:, 2:3]
 
             # for reward computation (legacy)
             self.command_linvel = self.command_linvel_base_b
             self.command_speed = torch.zeros(self.num_envs, 1)
-            self.command_angvel = self.command_yawvel[:, 0]
+            self.command_angvel = self.command_yaw_vel[:, 0]
 
             self.command_pos_ee_b = torch.zeros(self.num_envs, 3)
             self.linvel_ee_b = torch.zeros(self.num_envs, 3)
@@ -1660,7 +1664,7 @@ class BaseEEImpedance(Command):
         pos_ee_error = (self.command_pos_ee_b - self.pos_ee_b).norm(dim=-1)
 
         angvel_error = (
-            self.command_yawvel.squeeze() - self.asset.data.root_ang_vel_w[:, 2]
+            self.command_yaw_vel.squeeze() - self.asset.data.root_ang_vel_w[:, 2]
         ).abs()
         yaw_error = wrap_to_pi(
             self.command_yaw_w.squeeze() - self.asset.data.heading_w
@@ -1746,12 +1750,12 @@ class BaseEEImpedance(Command):
 
     def _update_command(self):
         # smooth desired command
-        self.command_pos_base_w[:] = self.desired_pos_base_w.mean(1)
-        self.command_linvel_base_w[:] = self.desired_linvel_base_w.mean(1)
-        self.command_pos_ee_w[:] = self.desired_pos_ee_w.mean(1)
-        self.command_linvel_ee_w[:] = self.desired_linvel_ee_w.mean(1)
-        self.command_yaw_w[:] = self.desired_yaw_w.mean(1)
-        self.command_yawvel[:] = self.desired_yawvel_w.mean(1)
+        self.command_pos_base_w[:]    = self._smooth(self.desired_pos_base_w)
+        self.command_linvel_base_w[:] = self._smooth(self.desired_linvel_base_w)
+        self.command_pos_ee_w[:]      = self._smooth(self.desired_pos_ee_w)
+        self.command_linvel_ee_w[:]   = self._smooth(self.desired_linvel_ee_w)
+        self.command_yaw_w[:]         = self._smooth(self.desired_yaw_w)
+        self.command_yaw_vel[:]       = self._smooth(self.desired_yawvel_w)
 
         assert torch.all(self.command_linvel_base_w[:, 2] == 0.0)
 
@@ -1822,7 +1826,7 @@ class BaseEEImpedance(Command):
         self.command_hidden[:, 2:3] = self.command_yaw_diff
         self.command_hidden[:, 3:6] = self.command_pos_ee_diff_b
         self.command_hidden[:, 6:8] = self.command_linvel_base_b[:, :2]
-        self.command_hidden[:, 8:9] = self.command_yawvel
+        self.command_hidden[:, 8:9] = self.command_yaw_vel
         self.command_hidden[:, 9:12] = self.command_linvel_ee_b
 
     def update(self):
@@ -1921,6 +1925,9 @@ class BaseEEImpedance(Command):
 
         self._update_command()
 
+    def _smooth(self, q: torch.Tensor):
+        return (q * self.smoothing_weight.unsqueeze(-1)).sum(1)
+    
     """
     --------------------------------------------------------------------------------
     |   setpoint_pos_ee_b --> desired_ee_pos_w --|--> desired_ee_pos_b --> reward  |
@@ -2324,12 +2331,12 @@ class BaseEEImpedanceMixed(Command):
             self.command_yaw_w = torch.zeros(self.num_envs, 1)
             self.command_yaw_diff = torch.zeros(self.num_envs, 1)
             self.command_angvel_w = torch.zeros(self.num_envs, 3)
-            self.command_yawvel = self.command_angvel_w[:, 2:3]
+            self.command_yaw_vel = self.command_angvel_w[:, 2:3]
 
             # for reward computation (legacy)
             self.command_linvel = self.command_linvel_base_b
             self.command_speed = torch.zeros(self.num_envs, 1)
-            self.command_angvel = self.command_yawvel[:, 0]
+            self.command_angvel = self.command_yaw_vel[:, 0]
 
             self.command_pos_ee_b = torch.zeros(self.num_envs, 3)
             self.linvel_ee_b = torch.zeros(self.num_envs, 3)
@@ -2530,7 +2537,7 @@ class BaseEEImpedanceMixed(Command):
         pos_ee_error = (self.command_pos_ee_b - self.pos_ee_b).norm(dim=-1)
 
         angvel_error = (
-            self.command_yawvel.squeeze() - self.asset.data.root_ang_vel_w[:, 2]
+            self.command_yaw_vel.squeeze() - self.asset.data.root_ang_vel_w[:, 2]
         ).abs()
         yaw_error = wrap_to_pi(
             self.command_yaw_w.squeeze() - self.asset.data.heading_w
@@ -2625,7 +2632,7 @@ class BaseEEImpedanceMixed(Command):
         self.command_pos_ee_w[:] = (self.desired_pos_ee_w * self.smoothing_weight).sum(1)
         self.command_linvel_ee_w[:] = (self.desired_linvel_ee_w * self.smoothing_weight).sum(1)
         self.command_yaw_w[:] = (self.desired_yaw_w * self.smoothing_weight).sum(1)
-        self.command_yawvel[:] = (self.desired_yawvel_w * self.smoothing_weight).sum(1)
+        self.command_yaw_vel[:] = (self.desired_yawvel_w * self.smoothing_weight).sum(1)
 
         assert torch.all(self.command_linvel_base_w[:, 2] == 0.0)
 
@@ -2693,7 +2700,7 @@ class BaseEEImpedanceMixed(Command):
         self.command_hidden[:, 2:3] = self.command_yaw_diff
         self.command_hidden[:, 3:6] = self.command_pos_ee_diff_b
         self.command_hidden[:, 6:8] = self.command_linvel_base_b[:, :2]
-        self.command_hidden[:, 8:9] = self.command_yawvel
+        self.command_hidden[:, 8:9] = self.command_yaw_vel
         self.command_hidden[:, 9:12] = self.command_linvel_ee_b
 
     def update(self):

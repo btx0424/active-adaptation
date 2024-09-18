@@ -40,6 +40,8 @@ class impedance_base_vel(Reward):
     
     def compute(self) -> torch.Tensor:
         diff = (self.command_manager.command_linvel_base_w[:, :2] - self.asset.data.root_lin_vel_w[:, :2])
+        command_speed = self.command_manager.command_speed
+        diff = torch.where(command_speed > 1.0, diff / command_speed, diff)
         error_l2 = diff.square().sum(dim=-1, keepdim=True)
         r = torch.exp(- error_l2 / self.l) - error_l2
         return r
@@ -111,7 +113,7 @@ class impedance_yaw_vel(Reward):
         self.l = l
     
     def compute(self) -> torch.Tensor:
-        diff = (self.command_manager.command_yawvel - self.asset.data.root_ang_vel_w[:, 2:3])
+        diff = (self.command_manager.command_yaw_vel - self.asset.data.root_ang_vel_w[:, 2:3])
         r = torch.exp(- diff.abs() / self.l)
         return r
 
