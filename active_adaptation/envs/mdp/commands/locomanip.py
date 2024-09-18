@@ -1334,6 +1334,13 @@ class BaseEEImpedance(Command):
         future: int = 3,
         command_acc: bool = False,
         continuous_walking_ratio: float=0.25,
+        # force randomization
+        force_type_probs = (0.4, 0.3, 0.3),
+        impulse_force_momentum_scale = (5.0, 5.0, 1.0),
+        impulse_force_duration_range = (0.1, 0.5),
+        constant_force_scale = (50, 50, 10),
+        constant_force_duration_range = (1, 4),
+        force_offset_scale = (0.3, 0.2, 0.1),
         **kwargs, # unused, for compatibility
     ) -> None:
         super().__init__(env)
@@ -1356,8 +1363,6 @@ class BaseEEImpedance(Command):
         self.max_force_acc_ee = max_force_acc_ee
 
         self.compliant_ratio = compliant_ratio
-        self.ext_force_ratio = ext_force_ratio
-        self.ext_force_ratio = 0
 
         self.resample_prob = 0.005
         self.decimation = int(self.env.step_dt / self.env.physics_dt)
@@ -1459,6 +1464,47 @@ class BaseEEImpedance(Command):
             self.xy = torch.tensor([1.0, 1.0, 0.0])
             self.is_arm_activated = torch.ones(self.num_envs, 1, dtype=bool)
 
+            """
+            Force Types:
+            0: None
+            1: Constant
+            2: Impulse
+            """
+            # force parameters
+            self.impulse_force_momentum_scale = torch.tensor(impulse_force_momentum_scale) * self.default_mass_base
+            self.impulse_force_duration_range = impulse_force_duration_range
+
+            self.constant_force_scale = torch.tensor(constant_force_scale)
+            self.constant_force_duration_range = constant_force_duration_range
+
+            self.force_offset_scale = torch.tensor(force_offset_scale)
+
+            self.force_type_probs = torch.tensor(force_type_probs)
+            self.force_type = torch.zeros(self.num_envs, 1, dtype=torch.int64)
+            
+            self.constant_force_struct = torch.zeros(self.num_envs, 3 + 1 + 1) # force, duration, time
+            self.constant_force_duration = self.constant_force_struct[:, -2].unsqueeze(1)
+            self.constant_force_time = self.constant_force_struct[:, -1].unsqueeze(1)
+            
+            self.impulse_force_struct = torch.zeros(self.num_envs, 3 + 1 + 1) # force, duration, time
+            self.impulse_force_duration = self.impulse_force_struct[:, -2].unsqueeze(1)
+            self.impulse_force_duration.fill_(0.1) # non-zero placeholder
+            self.impulse_force_time = self.impulse_force_struct[:, -1].unsqueeze(1)
+        
+        self.cnt = 0
+
+        if self.teleop:
+            self.key_mappings_pos = {
+                "W": torch.tensor([1., 0., 0.], device=self.device),
+                "S": torch.tensor([-1., 0., 0.], device=self.device),
+                "A": torch.tensor([0., 1., 0.], device=self.device),
+                "D": torch.tensor([0., -1., 0.], device=self.device),
+            }
+            self.key_mappings_rpy = {
+                "Q": torch.tensor([0., 0., +torch.pi], device=self.device),
+                "E": torch.tensor([0., 0., -torch.pi], device=self.device),
+            }
+
     def _sample_command(self, env_ids: torch.Tensor):
         
         continuous_walking_vel = torch.zeros(len(env_ids), 3, device=self.device)
@@ -1543,46 +1589,9 @@ class BaseEEImpedance(Command):
             len(env_ids), 1, device=self.device
         ).uniform_(*self.virtual_mass_range)
 
-    def _sample_force(self, env_ids: torch.Tensor):
-        # TODO: check force sample range
-        # TODO: interaction model selection
-        # the current model assumes the force is static in the world frame and the offset is static in the body frame
-        # other model are also available, force static in world/body frame, offset/torque static in body frame
-        # which is most realistic (to reduce sim2real ood)?
-        # and now resample both, maybe should resample force more frequently than offset?
-        force_ext_base_w = torch.empty(len(env_ids), 3, device=self.device)
-        force_ext_base_w[:, :2].uniform_(-50.0, 50.0)
-        force_ext_base_w[:, 2].uniform_(-20.0, 20.0)
-        force_ext_base_w = clamp_norm(
-            force_ext_base_w,
-            max=self.virtual_mass_base[env_ids] * self.max_force_acc_base,
-        )
-        apply_force_base = (
-            torch.rand(len(env_ids), 1, device=self.device) < self.ext_force_ratio
-        )
-        self.force_ext_base_w[env_ids] = force_ext_base_w * apply_force_base
-
-        force_ext_ee_w = torch.empty(len(env_ids), 3, device=self.device).uniform_(
-            -50.0, 50.0
-        )
-        force_ext_ee_w = clamp_norm(
-            force_ext_ee_w, max=self.virtual_mass_ee[env_ids] * self.max_force_acc_ee
-        )
-        apply_force_ee = (
-            torch.rand(len(env_ids), 1, device=self.device) < self.ext_force_ratio
-        )
-        self.force_ext_ee_w[env_ids] = force_ext_ee_w * apply_force_ee
-
-        force_base_offset_b = torch.zeros(len(env_ids), 3, device=self.device)
-        force_base_offset_b[:, 0].uniform_(-0.3, 0.3)
-        force_base_offset_b[:, 1].uniform_(-0.2, 0.2)
-        self.force_base_offset_b[env_ids] = force_base_offset_b
-        self.force_base_offset_b[env_ids] = 0.0
-
     def reset(self, env_ids: torch.Tensor):
         """body related quantities are updated in the next step, can not use them."""
         self._sample_command(env_ids)
-        self._sample_force(env_ids)
 
         self._cum_error[env_ids] = 0.0
         
@@ -1851,12 +1860,38 @@ class BaseEEImpedance(Command):
                 self.command_setpoint_pos_base_w,
             )
 
-        # sample_force = (
-        #     torch.rand(self.num_envs, device=self.device) < self.resample_prob
-        # )
-        # sample_force = sample_force.nonzero().squeeze(-1)
-        # if len(sample_force):
-        #     self._sample_force(sample_force)
+        sample_force = torch.rand(self.num_envs, device=self.device) <  self.resample_prob
+        force_type = torch.multinomial(self.force_type_probs, self.num_envs, replacement=True)
+        
+        wp.launch(
+            maybe_sample_force,
+            dim=self.num_envs,
+            inputs=[
+                self.cnt,
+                self.constant_force_scale,
+                self.constant_force_duration_range,
+                self.impulse_force_momentum_scale,
+                self.impulse_force_duration_range,
+                self.force_offset_scale,
+                wp.from_torch(sample_force, dtype=wp.bool),
+                wp.from_torch(force_type.int(), dtype=wp.int32),
+                wp.from_torch(self.constant_force_struct, dtype=vec5f),
+                wp.from_torch(self.impulse_force_struct, dtype=vec5f),
+                wp.from_torch(self.force_base_offset_b, dtype=wp.vec3),
+            ],
+            device=str(self.device)
+        )
+
+        constant_force = self.constant_force_struct[:, 0:3] * (self.constant_force_time < self.constant_force_duration)
+        impulse_force_t = (self.impulse_force_time / self.impulse_force_duration).clamp(0., 1.)
+        impulse_force = torch.where(
+            impulse_force_t < 0.5,
+            impulse_force_t * self.impulse_force_struct[:, 0:3] * 2,
+            (1 - impulse_force_t) * self.impulse_force_struct[:, 0:3] * 2
+        )
+        self.force_ext_base_w[:] = constant_force + impulse_force
+        self.constant_force_time.add_(self.env.step_dt)
+        self.impulse_force_time.add_(self.env.step_dt)
 
         self.desired_linvel_base_w[:] = self.desired_linvel_base_w.roll(1, dims=1)
         self.desired_pos_base_w[:] = self.desired_pos_base_w.roll(1, dims=1)
@@ -2972,27 +3007,31 @@ def maybe_sample_force(
     kernel_seed: int,
     const_force_scale: wp.vec3,
     const_force_duration_range: wp.vec2,
-    impulse_force_momentum_scale: wp.vec3,
+    impulse_force_scale: wp.vec3,
     impulse_force_duration_range: wp.vec2,
-    sample_force: wp.array(dtype=wp.bool), # type: ignore
-    force_type: wp.array(dtype=wp.int32), # type: ignore
-    const_force_struct: wp.array(dtype=vec5f), # type: ignore
-    impulse_force_struct: wp.array(dtype=vec5f), # type: ignore
+    force_offset_scale: wp.vec3,
+    sample_force: wp.array(dtype=wp.bool),
+    force_type: wp.array(dtype=wp.int32),
+    const_force: wp.array(dtype=vec5f),
+    impulse_force: wp.array(dtype=vec5f),
+    force_offset: wp.array(dtype=wp.vec3),
 ):
     tid = wp.tid()
 
     if sample_force[tid]:
-        # sample force_offset
         if force_type[tid] == 0:
             pass
-        elif (force_type[tid] == 1) and (const_force_struct[tid][4] > const_force_struct[tid][3]):
+        elif (force_type[tid] == 1) and (const_force[tid][4] > const_force[tid][3]):
             rng = wp.rand_init(kernel_seed, tid)
             xy = wp.cw_mul(wp.sample_unit_cube(rng), const_force_scale)
             duration = sample_uniform(rng, const_force_duration_range)
-            const_force_struct[tid] = vec5f(xy[0], xy[1], 0., duration, 0.)
-        elif (force_type[tid] == 2) and (impulse_force_struct[tid][4] > impulse_force_struct[tid][3]):
+            const_force[tid] = vec5f(xy[0], xy[1], 0., duration, 0.)
+        elif (force_type[tid] == 2) and (impulse_force[tid][4] > impulse_force[tid][3]):
             rng = wp.rand_init(kernel_seed, tid)
-            xy = wp.cw_mul(wp.sample_unit_cube(rng), impulse_force_momentum_scale)
+            xy = wp.cw_mul(wp.sample_unit_cube(rng), impulse_force_scale)
             duration = sample_uniform(rng, impulse_force_duration_range)
             xy = xy / duration
-            impulse_force_struct[tid] = vec5f(xy[0], xy[1], 0., duration, 0.)
+            impulse_force[tid] = vec5f(xy[0], xy[1], 0., duration, 0.)
+        
+        rng = wp.rand_init(kernel_seed, tid + 1)
+        force_offset[tid] = wp.cw_mul(wp.sample_unit_cube(rng), force_offset_scale)
