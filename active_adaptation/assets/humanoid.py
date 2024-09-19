@@ -1,8 +1,31 @@
 import os
 import copy
 import omni.isaac.lab.sim as sim_utils
+import torch
 from omni.isaac.lab_assets import ArticulationCfg, H1_CFG
 from omni.isaac.lab.actuators import DCMotorCfg
+from omni.isaac.lab.assets import Articulation
+
+
+class Humanoid(Articulation):
+    def _create_buffers(self):
+        super()._create_buffers()
+
+        if hasattr(self.cfg, "hand_body_name"):
+            self.hand_body_ids = self.find_bodies(self.cfg.hand_body_name)[0]
+            self.hand_pos_w = self.data.body_pos_w[:, self.hand_body_ids]
+
+        if hasattr(self.cfg, "foot_body_name"):
+            self.foot_body_ids = self.find_bodies(self.cfg.foot_body_name)[0]
+            self.foot_pos_w = self.data.body_pos_w[:, self.foot_body_ids]
+    
+    def update(self, dt: float):
+        super().update(dt)
+        if hasattr(self.cfg, "hand_body_name"):
+            self.hand_pos_w[:] = self.data.body_pos_w[:, self.hand_body_ids]
+        if hasattr(self.cfg, "foot_body_name"):
+            self.foot_pos_w[:] = self.data.body_pos_w[:, self.foot_body_ids]
+
 
 ASSET_PATH = os.path.dirname(__file__)
 
@@ -35,9 +58,9 @@ H1_CFG.actuators = {
 }
 
 CY1_CFG = ArticulationCfg(
+    class_type=Humanoid,
     spawn=sim_utils.UsdFileCfg(
-        # usd_path=f"{ASSET_PATH}/cy1_description_new.usd",
-        usd_path=f"{ASSET_PATH}/ORCA/orca_ndescription.usd",
+        usd_path=f"{ASSET_PATH}/ORCA/orca_stable_mesh.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -96,7 +119,7 @@ CY1_CFG = ArticulationCfg(
                 "[l,r]leg_joint3": 50.,
                 "[l,r]leg_joint4": 30.,
                 "[l,r]leg_joint5": 30.,
-                "[l,r]leg_joint6": 30.,
+                "[l,r]leg_joint6": 5.,
             },
             damping={
                 "waist_yaw_joint": 3.,
