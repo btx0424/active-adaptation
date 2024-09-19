@@ -3,7 +3,7 @@ import torch
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.utils.math import wrap_to_pi, quat_rotate
 from active_adaptation.utils.helpers import batchify
-from ..commands import BaseEEImpedance
+from ..commands import BaseEEImpedance, Impedance
 from .locomotion import Reward
 
 @batchify
@@ -23,7 +23,7 @@ class impedance_base_pos(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: BaseEEImpedance = self.env.command_manager
+        self.command_manager: BaseEEImpedance | Impedance = self.env.command_manager
         self.l = l
     
     def compute(self) -> torch.Tensor:
@@ -35,12 +35,15 @@ class impedance_base_vel(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: BaseEEImpedance = self.env.command_manager
+        self.command_manager: BaseEEImpedance | Impedance = self.env.command_manager
         self.l = l
     
     def compute(self) -> torch.Tensor:
         diff = (self.command_manager.command_linvel_base_w[:, :2] - self.asset.data.root_lin_vel_w[:, :2])
-        r = torch.exp(- diff.square().sum(dim=-1, keepdim=True) / self.l)
+        command_speed = self.command_manager.command_speed
+        diff = torch.where(command_speed > 1.0, diff / command_speed, diff)
+        error_l2 = diff.square().sum(dim=-1, keepdim=True)
+        r = torch.exp(- error_l2 / self.l) - error_l2
         return r
     
 class impedance_ee_pos_b(Reward):
@@ -61,7 +64,7 @@ class impedance_ee_pos_b(Reward):
     def compute(self) -> torch.Tensor:
         diff = (self.command_manager.command_pos_ee_b - self.pos_ee_b)
         r = torch.exp(- diff.norm(dim=-1, keepdim=True) / self.l)
-        return r
+        return r * self.command_manager.is_arm_activated
 
 class impedance_ee_vel_b(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.05):
@@ -88,13 +91,13 @@ class impedance_ee_vel_b(Reward):
     def compute(self) -> torch.Tensor:
         diff = (self.command_manager.command_linvel_ee_b - self.linvel_ee_b)
         r = torch.exp(- diff.square().sum(dim=-1, keepdim=True) / self.l)
-        return r
+        return r * self.command_manager.is_arm_activated
 
 class impedance_yaw_pos(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: BaseEEImpedance = self.env.command_manager
+        self.command_manager: BaseEEImpedance | Impedance = self.env.command_manager
         self.l = l
     
     def compute(self) -> torch.Tensor:
@@ -106,11 +109,11 @@ class impedance_yaw_vel(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: BaseEEImpedance = self.env.command_manager
+        self.command_manager: BaseEEImpedance | Impedance = self.env.command_manager
         self.l = l
     
     def compute(self) -> torch.Tensor:
-        diff = (self.command_manager.command_yawvel - self.asset.data.root_ang_vel_w[:, 2:3])
+        diff = (self.command_manager.command_yaw_vel - self.asset.data.root_ang_vel_w[:, 2:3])
         r = torch.exp(- diff.abs() / self.l)
         return r
 

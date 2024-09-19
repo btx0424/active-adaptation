@@ -1,6 +1,11 @@
 import torch
+import carb
+import omni
+import weakref
+
 from omni.isaac.lab.assets import Articulation
 from typing import Sequence, TYPE_CHECKING
+from collections import defaultdict
 
 if TYPE_CHECKING:
     from active_adaptation.envs.base import Env
@@ -21,12 +26,25 @@ def sample_quat_yaw(size, yaw_range=(0, torch.pi * 2), device: torch.device = "c
 
 
 class Command:
-    def __init__(self, env) -> None:
+    def __init__(self, env, teleop: bool=False) -> None:
         self.env: Env = env
         self.asset: Articulation = env.scene["robot"]
         self.init_root_state = self.asset.data.default_root_state.clone()
         self.init_joint_pos = self.asset.data.default_joint_pos.clone()
         self.init_joint_vel = self.asset.data.default_joint_vel.clone()
+        self.teleop = teleop
+
+        if self.teleop:
+            # acquire omniverse interfaces
+            self._appwindow = omni.appwindow.get_default_app_window()
+            self._input = carb.input.acquire_input_interface()
+            self._keyboard = self._appwindow.get_keyboard()
+            # note: Use weakref on callbacks to ensure that this object can be deleted when its destructor is called.
+            self._keyboard_sub = self._input.subscribe_to_keyboard_events(
+                self._keyboard,
+                lambda event, *args, obj=weakref.proxy(self): obj._on_keyboard_event(event, *args),
+            )
+            self.key_pressed = defaultdict(lambda: False)
 
     @property
     def num_envs(self):
@@ -61,3 +79,9 @@ class Command:
         init_root_state[:, :3] += origins
         init_root_state[:, 3:7] = sample_quat_yaw(len(env_ids), device=self.device)
         return init_root_state
+
+    def _on_keyboard_event(self, event, *args, **kwargs):
+        if event.type == carb.input.KeyboardEventType.KEY_PRESS:
+            self.key_pressed[event.input.name] = True
+        if event.type == carb.input.KeyboardEventType.KEY_RELEASE:
+            self.key_pressed[event.input.name] = False

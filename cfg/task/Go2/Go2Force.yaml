@@ -14,10 +14,14 @@ homogeneous: false
 
 command:
   _target_: active_adaptation.envs.mdp.Impedance
-  virtual_mass_range: [0.2, 1.0]
-  compliant_ratio: 1.0
-  force_type_probs: [0.4, 0.3, 0.3]
-  delta_vel_xy_range: [-5.0, 5.0]
+  virtual_mass_range: [0.25, 1.0]
+  compliant_ratio: 0.25
+  force_type_probs: [0.0, 0.5, 0.5]
+  constant_force_scale: [80., 80., 20.]
+  constant_force_duration_range: [1, 4]
+  impulse_force_momentum_scale: [5.0, 5.0, 1.0]
+  impulse_force_duration_range: [0.1, 0.4]
+  temporal_smoothing: 4
 
 observation:
   command:
@@ -100,9 +104,4 @@ randomization:
   reset_joint_states_scale:
     pos_scales:
       .*: [0.8, 1.2]
-  # push: {body_names: ["base"], force_range: [0.2, 0.8], min_interval: 200}
-  # drag: {body_names: base, drag_range: [0.2, 0.4]}
-  # pull:
-  #   drag_prob: 1.0
-  #   drag_range: [0.2, 0.4]
   stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.4, 0.4]}

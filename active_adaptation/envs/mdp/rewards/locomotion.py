@@ -681,6 +681,25 @@ class base_height_l1(Reward):
         return (height - target_height).clamp_max(0.)
 
 
+class quadruped_stand_always(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf)):
+        super().__init__(env, weight, enabled, clip_range)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids = self.asset.actuators["base_legs"].joint_indices
+
+    def compute(self):
+        jpos_error = (
+            self.asset.data.joint_pos[:, self.joint_ids] - 
+            self.asset.data.default_joint_pos[:, self.joint_ids]
+        ).abs().sum(dim=1, keepdim=True)
+
+        front_symmetry = self.asset.data.feet_pos_b[:, [0, 1], 1].sum(dim=1, keepdim=True).abs()
+        back_symmetry = self.asset.data.feet_pos_b[:, [2, 3], 1].sum(dim=1, keepdim=True).abs()
+        cost = - (jpos_error + front_symmetry + back_symmetry)
+
+        return cost
+
+
 class quadruped_stand(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf)):
         super().__init__(env, weight, enabled, clip_range)
@@ -699,6 +718,20 @@ class quadruped_stand(Reward):
 
         return cost * self.env.command_manager.is_standing_env.reshape(self.num_envs, 1)
 
+
+class stance_width(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf), target_width=0.15):
+        """penalize stance width smaller than target_width"""
+        super().__init__(env, weight, enabled, clip_range)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.target_width = target_width
+    
+    def compute(self) -> torch.Tensor:
+        front_width = self.asset.data.feet_pos_b[:, [0, 1], 0].diff(dim=1).norm(dim=1, keepdim=True)
+        back_width = self.asset.data.feet_pos_b[:, [2, 3], 0].diff(dim=1).norm(dim=1, keepdim=True)
+        width = torch.cat([front_width, back_width], dim=1)
+        return -(self.target_width - width).clamp_min(0.).sum(1, keepdim=True)
+    
 
 class stand_up_height(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf)):
@@ -751,7 +784,10 @@ class impedance_vel(Reward):
     
     def compute(self) -> torch.Tensor:
         diff = (self.command_manager.command_linvel_w - self.asset.data.root_lin_vel_w)
-        r = torch.exp(- diff.square().sum(dim=-1, keepdim=True) / 0.25)
+        command_speed = self.command_manager.command_speed
+        diff = torch.where(command_speed < 1.0, diff, diff / command_speed)
+        error_l2 = diff.square().sum(dim=-1, keepdim=True)
+        r = torch.exp(- error_l2 / 0.25) - error_l2
         return r
 
 

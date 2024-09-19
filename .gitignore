@@ -180,5 +180,6 @@ scripts/eval
 scripts/*.yaml
 scripts/file/
 scripts/plot/
+scripts/policies/
 checkpoint*.pt
 *.csv

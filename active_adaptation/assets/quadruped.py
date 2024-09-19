@@ -1,9 +1,39 @@
 import os
 import copy
+import torch
 
 import omni.isaac.lab.sim as sim_utils
 from omni.isaac.lab_assets import UNITREE_GO2_CFG, UNITREE_A1_CFG, ArticulationCfg
 from omni.isaac.lab.actuators import DCMotorCfg, ImplicitActuatorCfg
+from omni.isaac.lab.assets import Articulation
+from omni.isaac.lab.utils.math import quat_rotate_inverse
+
+
+class Quadruped(Articulation):
+    pass
+
+
+class QuadrupedManipulator(Articulation):
+    def _create_buffers(self):
+        super()._create_buffers()
+
+        self.ee_body_id = self.find_bodies(self.cfg.ee_body_name)[0][0]
+        self.ee_pos_w = self.data.body_pos_w[:, self.ee_body_id].clone()
+        self.ee_pos_b = torch.zeros_like(self.ee_pos_w)
+        self._ee_pos_w_buffer = torch.zeros(self.num_instances, 4, 3, device=self.device)
+        self.ee_lin_vel_w = torch.zeros(self.num_instances, 3, device=self.device)
+
+    def update(self, dt: float):
+        super().update(dt)
+        self.ee_pos_w[:] = self.data.body_pos_w[:, self.ee_body_id]
+        self.ee_pos_b = quat_rotate_inverse(
+            self.data.root_quat_w,
+            self.ee_pos_w - self.data.root_pos_w
+        )
+        self._ee_pos_w_buffer = self._ee_pos_w_buffer.roll(1, dims=1)
+        self._ee_pos_w_buffer[:, 0] = self.ee_pos_w
+        self.ee_lin_vel_w[:] = torch.mean(-self._ee_pos_w_buffer.diff(dim=1) / dt, dim=1)
+
 
 ASSET_PATH = os.path.dirname(__file__)
 
@@ -93,9 +123,10 @@ UNITREE_ALIENGO_CFG = copy.deepcopy(UNITREE_GO2_CFG)
 UNITREE_ALIENGO_CFG.spawn.usd_path = f"{ASSET_PATH}/Aliengo/aliengo.usd"
 UNITREE_ALIENGO_CFG.init_state.pos = (0., 0., 0.40)
 UNITREE_ALIENGO_CFG.init_state.joint_pos = {
-    ".*hip_joint": 0,
-    ".*thigh_joint": 0.8,
-    ".*calf_joint": -1.5,
+    ".*L_hip_joint": 0.2,
+    ".*R_hip_joint": -0.2,
+    ".*_thigh_joint": 0.8,
+    ".*_calf_joint": -1.5,
 }
 UNITREE_ALIENGO_CFG.actuators["base_legs"] = DCMotorCfg(
     joint_names_expr=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
@@ -106,12 +137,14 @@ UNITREE_ALIENGO_CFG.actuators["base_legs"] = DCMotorCfg(
     },
     saturation_effort=60.,
     velocity_limit=30.0,
-    stiffness=40.0,
+    stiffness=60.0,
     damping=2,
     friction=0.0,
 )
 
 UNITREE_ALIENGO_A1_CFG = copy.deepcopy(UNITREE_ALIENGO_CFG)
+UNITREE_ALIENGO_A1_CFG.class_type = QuadrupedManipulator
+UNITREE_ALIENGO_A1_CFG.ee_body_name = "arm_link6"
 UNITREE_ALIENGO_A1_CFG.spawn.usd_path = f"{ASSET_PATH}/Aliengo/aliengo_a1.usd"
 UNITREE_ALIENGO_A1_CFG.actuators["arm"] = ImplicitActuatorCfg(
     joint_names_expr=["arm_joint[1-6]"],
@@ -133,6 +166,9 @@ UNITREE_ALIENGO_A1_CFG.actuators["gripper"] = ImplicitActuatorCfg(
     damping=100.0,
     friction=0.001,
 )
+
+UNITREE_ALIENGO_A1_FIX_CFG = copy.deepcopy(UNITREE_ALIENGO_A1_CFG)
+UNITREE_ALIENGO_A1_FIX_CFG.spawn.articulation_props.fix_root_link = True
 
 CYBERDOG_CFG = copy.deepcopy(UNITREE_A1_CFG)
 CYBERDOG_CFG.spawn.usd_path = f"{ASSET_PATH}/cyberdog2_v3.usd"

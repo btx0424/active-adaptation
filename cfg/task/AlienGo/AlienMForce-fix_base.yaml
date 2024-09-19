@@ -1,0 +1,155 @@
+# @package task
+name: AlienMForce
+task: QuadrupedManip
+
+defaults:
+  # see https://hydra.cc/docs/advanced/overriding_packages/
+  - /task/Velocity@_here_
+  - override action: null
+  - _self_
+
+robot: aliengo-a1-fix
+terrain: plane
+payload: false
+homogeneous: false
+
+# action:
+#   _target_: active_adaptation.envs.mdp.action.QuadrupedWithArm
+#   joint_names: ^(?!joint6$|endleft$|endright$).*
+#   action_scaling:
+#     (F|R)(L|R)_(hip|thigh|calf)_joint: 0.5
+#     joint[1-5]: 0.25
+#   max_delay: 1
+#   alpha: 0.8
+#   arm_joint_names: ^joint1$
+
+action:
+  _target_: active_adaptation.envs.mdp.action.JointPosition
+  action_scaling:
+    (F|R)(L|R)_(hip|thigh|calf)_joint: 0.5
+    arm_joint[1-5]: 0.5
+  max_delay: 1
+  alpha: 0.8
+
+command:
+  _target_: active_adaptation.envs.mdp.BaseEEImpedance
+  ee_name: 'arm_link6'
+  ee_base_name: 'base'
+  base_setpoint_radius_range: [1.0, 3.0]
+  kp_base_range: [0.5, 5.0]
+  kp_yaw_range: [0.5, 5.0]
+  kp_ee_range: [100.0, 150.0]
+  damping_ratio_range: [0.7, 1.5]
+  default_mass_base: 10.0
+  default_mass_ee: 1.0
+  default_inertia_z: 1.0
+  virtual_mass_range: [0.5, 1.5]  
+  max_force_acc_base: 5.0
+  max_force_acc_ee: 20.0
+  compliant_ratio: 0.2
+  ext_force_ratio: 0.5
+  future: 3
+  mix_openloop_base: false
+  mix_openloop_ee: false
+  mix_openloop_yaw: false
+  command_acc: true
+
+observation:
+  command:
+    command:
+  policy:
+    # root_angvel_b: {noise_std: 0.05}
+    projected_gravity_b: {noise_std: 0.05}
+    joint_pos:    {noise_std: 0.05}
+    joint_vel:    {noise_std: 0.2}
+    prev_actions: {steps: 3}
+  priv:
+    command_hidden:
+    root_linvel_b:    {yaw_only: true}
+    root_angvel_b:
+
+    feet_pos_b:
+    feet_vel_b:
+    feet_height_map:  {feet_names: .*foot }
+    contact_indicator: {body_names: [".*_foot"], timing: true}
+
+    applied_action:
+    applied_torques:  {actuator_name: base_legs}
+    joint_forces:     {}
+
+    jacobians_b:      {body_names: "arm_link6", joint_names: "arm_joint[1-5]"}
+    body_pos:         {body_names: "arm_link6", yaw_only: true}
+    body_vel:         {body_names: "arm_link6", yaw_only: true}
+    cum_error:        {}
+  ext:
+    external_forces:  {body_names: ["base", "arm_link6"]}
+    external_torques: {body_names: ["base"]}
+
+reward:
+  all:
+    # common loco rewards just for sanity check
+    # linvel_exp:         {weight: 1.5, enabled: true, dim: 3, yaw_only: true}
+    # angvel_z_exp:       {weight: 1.0, enabled: true}
+    # linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
+    # impedance pos&vel tracking
+    # impedance_base_pos:      {weight: 0.5, enabled: true, l: 0.01}
+    # impedance_base_vel:      {weight: 1.0, enabled: true, l: 0.1}
+    impedance_ee_pos_b:      {weight: 0.5, enabled: true, l: 0.01}
+    impedance_ee_vel_b:      {weight: 1.0, enabled: true, l: 0.25}
+    joint_acc_l2:            {weight: 1.0e-5, enabled: true, joint_names: "arm_joint[1-5]"}
+    survival:                {weight: 1.0, enabled: true}
+    # impedance_yaw_pos:      {weight: 0.5, enabled: true, l: 0.01}
+    # impedance_yaw_vel:      {weight: 1.0, enabled: true, l: 0.1}
+    
+    # # regularizarions
+    # ee_forward:         {weight: 0.2, enabled: false}
+    # ee_angvel_penalty:  {weight: 0.01, enabled: false, ee_name: 'arm_link6'}
+    # angvel_xy_l2:       {weight: 0.02, enabled: true}
+    # linvel_z_l2:        {weight: 2.0, enabled: true}
+    # base_height_l1:     {weight: 0.5, enabled: true, target_height: 0.4}
+    # energy_l1:          {weight: 0.0002, enabled: true}
+    # energy_dist_lr:     {weight: 0.0002, enabled: false}
+    # energy_dist_fb:     {weight: 0.0002, enabled: false}
+    # joint_acc_l2:       {weight: 2.5e-7, enabled: true}
+    # joint_torques_l2:   {weight: 2.0e-4, enabled: false}
+    # quadruped_stand:    {weight: 0.5, enabled: true}
+    # stance_width:       {weight: 0.5, enabled: false, target_width: 0.15}
+    # survival:           {weight: 1.0, enabled: true}
+    # action_rate_l2:     {weight: 0.01, enabled: true}
+    # action_rate2_l2:    {weight: 0.005, enabled: true}
+    # feet_air_time:      {weight: 0.4, enabled: true, body_names: .*_foot, thres: 0.4}
+    # feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
+    # feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
+    # undesired_contact:  {body_names: [.*_calf, .*thigh], weight: 0.25, enabled: true}
+    # feet_swing_height:  {weight: 0.1, enabled: false, target_height: 0.1}
+    # com_support:        {weight: 1.0, enabled: true}
+
+termination:
+  crash: {body_names_expr: ["base", "arm_link[1-6]"], t_thres: 0.5, z_thres: 0.}
+  # joint_acc_exceeds: {thres: 5000}
+  # cum_error: {thres: 1.0}
+
+randomization:
+  random_scale: [1.0, 1.0]
+  perturb_body_mass:
+    (?!(payload|base.*)).*: [0.8, 1.2]
+    base: [0.8, 1.2]
+  perturb_body_materials:
+    body_names: ".*_foot"
+    static_friction_range:  [0.6, 2.0]
+    dynamic_friction_range: [0.6, 2.0]
+    restitution_range:      [0.0, 0.2]
+    homogeneous: true # ${task.homogeneous}
+  motor_params:
+    actuator_name: base_legs
+    stiffness_range:  [0.8, 1.2]
+    damping_range:    [0.8, 1.2]
+    armature_range:   [0.0, 0.02]
+    homogeneous: ${task.homogeneous}
+  reset_joint_states_uniform:
+    pos_ranges:
+      .*_thigh_joint: [-0.2, 0.2]
+      .*_calf_joint: [-0.2, 0.2]
+      .*_hip_joint: [-0.2, 0.2]
+    rel: true
+  stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.4, 0.4]}
