@@ -290,13 +290,13 @@ class JointPosition(ActionManager):
         env,
         joint_names: str = ".*",
         action_scaling: Dict[str, float] = 0.5,
-        offset_ranges: Dict[str, Tuple[float]] = None,
         left_joints = None,
         right_joints = None,
         asym_joints = None,
         max_delay: int = 4,
         alpha: Tuple[float, float] = (0.5, 1.0),
-        cumstom_command: Dict[str, float] = None
+        cumstom_command: Dict[str, float] = None,
+        clip_joint_targets: float = None
     ):
         super().__init__(env)
         self.joint_ids, self.joint_names, self.action_scaling = string_utils.resolve_matching_names_values(
@@ -326,10 +326,13 @@ class JointPosition(ActionManager):
             cumstom_command = dict(cumstom_command)
             self.cumstom_command_joint_ids, _, self.cumstom_command = string_utils.resolve_matching_names_values(cumstom_command, self.asset.joint_names)
             self.cumstom_command = torch.tensor(self.cumstom_command, device=self.device)
-
+        if clip_joint_targets is not None:
+            self.clip_joint_targets = clip_joint_targets
+            
         self.action_dim = len(self.joint_ids)
         
         self.default_joint_pos = self.asset.data.default_joint_pos.clone()
+        self.offset = torch.zeros_like(self.default_joint_pos)
         self.joint_limits = self.asset.data.joint_limits.clone().unbind(-1)
 
         with torch.device(self.device):
@@ -338,12 +341,6 @@ class JointPosition(ActionManager):
             self.alpha = torch.ones(self.num_envs, 1)
             self.delay = torch.zeros(self.num_envs, 1, dtype=int)
 
-        if offset_ranges is not None:
-            joint_ids, _, self.offset_ranges = string_utils.resolve_matching_names_values(
-                dict(offset_ranges), self.asset.joint_names)
-            assert self.joint_ids == joint_ids, "Joint names in action_scaling and offset must match."
-            self.offset_ranges = torch.as_tensor(self.offset_ranges, device=self.device).unbind(-1)
-            
     
     def fliplr(self, action: torch.Tensor):
         """
@@ -363,14 +360,11 @@ class JointPosition(ActionManager):
         self.action_buf[env_ids] = 0
         self.applied_action[env_ids] = 0
 
+        self.default_joint_pos[env_ids] = self.asset.data.default_joint_pos[env_ids].clone()
+        self.default_joint_pos[env_ids] += self.offset[env_ids]
+
         alpha = torch.empty(len(env_ids), 1, device=self.device).uniform_(*self.alpha_range)
         self.alpha[env_ids] = alpha
-
-        if hasattr(self, "offset_ranges"):
-            shape = (len(env_ids), self.offset_ranges[0].shape[0])
-            offset = self.offset_ranges[0] + torch.rand(shape, device=self.device) * (self.offset_ranges[1] - self.offset_ranges[0])
-            self.default_joint_pos[env_ids] = self.asset.data.default_joint_pos[env_ids].clone()
-            self.default_joint_pos[env_ids.unsqueeze(1), [self.joint_ids]] += offset
 
     def __call__(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
@@ -386,6 +380,8 @@ class JointPosition(ActionManager):
             pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
             if hasattr(self, "cumstom_command"):
                 pos_target[:, self.cumstom_command_joint_ids] = self.cumstom_command
+            if hasattr(self, "clip_joint_targets"):
+                pos_target = self.asset.data.joint_pos + (pos_target - self.asset.data.joint_pos).clamp(-self.clip_joint_targets, self.clip_joint_targets)
             self.asset.set_joint_position_target(pos_target.clamp(*self.joint_limits))
         self.asset.write_data_to_sim()
 

@@ -388,7 +388,7 @@ class PPOAdaptPolicy(TensorDictModuleBase):
 
         if self.phase == "train":
             modules.append(self._actor_expert)
-        elif self.phase == "adapt" or self.phase == "finetune":
+        elif self.phase == "adapt" or self.phase == "finetune" or self.phase == "deploy":
             modules.append(self._actor_adapt)
         
         if mode == "eval":
