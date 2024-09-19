@@ -471,9 +471,10 @@ class applied_torques(JointObs):
         )
         
         self.joint_indices = self.actuator.joint_indices
-        self.effort_limit = self.actuator.effort_limit
+        self.effort_limit = self.actuator.effort_limit.clamp_min(1e-6)
     
     def compute(self) -> torch.Tensor:
+        # TODO: deprecate normalization to avoid division by zero
         applied_efforts = self.asset.data.applied_torque
         return applied_efforts[:, self.joint_indices] / self.effort_limit
 
