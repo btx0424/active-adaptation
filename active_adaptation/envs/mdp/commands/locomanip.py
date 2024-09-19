@@ -3032,10 +3032,10 @@ def maybe_sample_force(
             rng = wp.rand_init(kernel_seed, tid)
             xy = wp.cw_mul(wp.sample_unit_cube(rng), const_force_scale)
             duration = sample_uniform_wp(rng, const_force_duration_range)
-            const_force_struct[tid] = vec5f(xy[0], xy[1], 0., duration, 0.)
-        elif (force_type[tid] == 2) and (impulse_force_struct[tid][4] > impulse_force_struct[tid][3]):
+            const_force[tid] = vec5f(xy[0], xy[1], 0., duration, 0.)
+        elif (force_type[tid] == 2) and (impulse_force[tid][4] > impulse_force[tid][3]):
             rng = wp.rand_init(kernel_seed, tid)
-            xy = wp.cw_mul(wp.sample_unit_cube(rng), impulse_force_momentum_scale)
+            xy = wp.cw_mul(wp.sample_unit_cube(rng), impulse_force_scale)
             duration = sample_uniform_wp(rng, impulse_force_duration_range)
             xy = xy / duration
             impulse_force[tid] = vec5f(xy[0], xy[1], 0., duration, 0.)
