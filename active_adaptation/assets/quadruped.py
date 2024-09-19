@@ -123,9 +123,10 @@ UNITREE_ALIENGO_CFG = copy.deepcopy(UNITREE_GO2_CFG)
 UNITREE_ALIENGO_CFG.spawn.usd_path = f"{ASSET_PATH}/Aliengo/aliengo.usd"
 UNITREE_ALIENGO_CFG.init_state.pos = (0., 0., 0.40)
 UNITREE_ALIENGO_CFG.init_state.joint_pos = {
-    ".*hip_joint": 0,
-    ".*thigh_joint": 0.8,
-    ".*calf_joint": -1.5,
+    ".*L_hip_joint": 0.2,
+    ".*R_hip_joint": -0.2,
+    ".*_thigh_joint": 0.8,
+    ".*_calf_joint": -1.5,
 }
 UNITREE_ALIENGO_CFG.actuators["base_legs"] = DCMotorCfg(
     joint_names_expr=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
@@ -136,7 +137,7 @@ UNITREE_ALIENGO_CFG.actuators["base_legs"] = DCMotorCfg(
     },
     saturation_effort=60.,
     velocity_limit=30.0,
-    stiffness=40.0,
+    stiffness=60.0,
     damping=2,
     friction=0.0,
 )

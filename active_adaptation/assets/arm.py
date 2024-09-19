@@ -88,7 +88,12 @@ A1_CFG = ArticulationCfg(
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 1.0),
         joint_pos={
-            "arm_joint.*": 0.0,
+            "arm_joint1": 0.0,
+            "arm_joint2": 0.2,
+            "arm_joint3": -0.3,
+            "arm_joint4": 0.0,
+            "arm_joint5": 0.0,
+            "arm_joint6": 0.0,
         },
         joint_vel={
             "arm_joint.*": 0.0,
@@ -101,7 +106,7 @@ A1_CFG = ArticulationCfg(
             effort_limit=200.0,
             velocity_limit=5.0,
             stiffness={
-                "arm_joint[1-3]": 40.0,
+                "arm_joint[1-3]": 80.0,
                 "arm_joint[4-6]": 30.0,
             },
             damping={

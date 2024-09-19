@@ -15,6 +15,7 @@ setup(
         "einops",
         "av", # for moviepy
         "pandas",
+        "termcolor",
         # install by cloning from github
         # "tensordict" 
         # "torchrl",
