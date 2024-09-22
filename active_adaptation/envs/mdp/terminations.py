@@ -32,16 +32,29 @@ class crash(Termination):
         self.asset: Articulation = self.env.scene["robot"]
         self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
         self.body_indices, self.body_names = self.contact_sensor.find_bodies(body_names_expr)
-        self.z_thres = z_thres
         self.t_thres = t_thres
         print(f"Terminate upon contact on {self.body_names}")
     
     def __call__(self):
-        fall_over = self.asset.data.projected_gravity_b[:, 2] >= self.z_thres
         contact_times = self.contact_sensor.data.current_contact_time[:, self.body_indices]
-        undesired_contact = (contact_times > self.t_thres).any(dim=-1)
-        terminated = (fall_over | undesired_contact).unsqueeze(1)
-        return terminated
+        undesired_contact = (contact_times > self.t_thres).any(dim=-1, keepdim=True)
+        return undesired_contact
+
+
+class fall_over(Termination):
+    def __init__(
+        self, 
+        env, 
+        xy_thres: float=0.8,
+    ):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.xy_thres = xy_thres
+    
+    def __call__(self):
+        gravity_xy: torch.Tensor = self.asset.data.projected_gravity_b[:, :2]
+        fall_over = gravity_xy.norm(dim=1, keepdim=True) >= self.xy_thres
+        return fall_over
 
 
 class tracking_error(Termination):

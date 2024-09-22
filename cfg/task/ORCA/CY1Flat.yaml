@@ -97,6 +97,7 @@ reward:
     joint_pos_default:  {weight: 0.25, enabled: true, joint_names: ".*arm_joint[1,2]"}
     joint_vel_l2:       {weight: 0.002, enabled: true, joint_names: .*arm_joint.*}
     feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}
+    undesired_contact:  {weight: 0.2, enabled: true, body_names: .*arm_link6}
 
 randomization:
   push:     {body_names: ["base_link", "waist_yaw_link"], force_range: [0.0, 0.1]}
@@ -120,6 +121,6 @@ randomization:
 termination:
   crash: 
     body_names_expr: ["base_link", "[l,r]arm_link4"]
-    z_thres: -0.6
+  fall_over: {xy_thres: 0.8}
   # feet_too_close: {feet_names: ".*leg_link6", thres: 0.11}
   cum_error: {thres: 0.9}
