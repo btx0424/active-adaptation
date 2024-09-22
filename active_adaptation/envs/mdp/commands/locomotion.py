@@ -887,6 +887,15 @@ class Impedance(Command):
         )
         self.env.debug_draw.point(self.desired_pos_w[:, -1], color=(0., 0., 1., 1.), size=40.)
         self.env.debug_draw.point(self.command_setpos_w, color=(1., 0., 0., 1.), size=40.)
+        ext_pred = self.env.input_tensordict.get("ext_rec", None)
+        if ext_pred is not None:
+            force_pred_w = quat_rotate(self.asset.data.root_quat_w, ext_pred[:, 0:3]) * self.default_mass * 9.81
+            self.env.debug_draw.vector(
+                self.asset.data.root_pos_w,
+                force_pred_w / self.virtual_mass,
+                color=(.0, 1., .2, 1.),
+                size=4.0
+            )
 
 
 def sample_uniform(size, low: float, high: float, device: torch.device = "cpu"):

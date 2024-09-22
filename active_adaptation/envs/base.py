@@ -225,6 +225,7 @@ class Env(EnvBase):
         self.record_now = False
         self.render_decimation = 1
         self.last_recording_it = 0
+        self.input_tensordict = None
 
         self.lookat_env_i = 0
 
@@ -275,6 +276,7 @@ class Env(EnvBase):
         raise NotImplementedError
     
     def apply_action(self, tensordict: TensorDictBase, substep: int):
+        self.input_tensordict = tensordict
         self.action_manager(tensordict, substep)
 
     def _compute_observation(self) -> TensorDictBase:

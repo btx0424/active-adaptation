@@ -161,6 +161,7 @@ class PPODICPolicy(TensorDictModuleBase):
     * cleanup imitation stuff
     * add finetune phase
     * report ext_rec_error instead of ext_rec_loss
+    * fix explicit force est
 
     """
     def __init__(
@@ -260,7 +261,7 @@ class PPODICPolicy(TensorDictModuleBase):
                 ext_decoder_in_keys.append("ext_pred")
         self.ext_decoder = TensorDictSequential(
             CatTensors(ext_decoder_in_keys, "_ext_dec_input", del_keys=False),
-            TensorDictModule(_ext_decoder, ["_ext_dec_input"], ["ext_pred"])
+            TensorDictModule(_ext_decoder, ["_ext_dec_input"], ["ext_rec"])
         ).to(self.device)
 
         self.encoder_priv(fake_input)
@@ -386,7 +387,7 @@ class PPODICPolicy(TensorDictModuleBase):
                     ext_loss = F.mse_loss(minibatch["ext_pred"], minibatch["_ext_feature"])
                     if self.ext_rec_lambda > 0:
                         self.ext_decoder(minibatch)
-                        ext_rec_error = F.mse_loss(minibatch["ext_pred"], minibatch["ext_"])
+                        ext_rec_error = F.mse_loss(minibatch["ext_rec"], minibatch["ext_"])
                     else:
                         ext_rec_error = 0.
                     self.opt_adapt.zero_grad()
