@@ -76,10 +76,10 @@ CY1_CFG = ArticulationCfg(
             solver_position_iteration_count=8, 
             solver_velocity_iteration_count=2
         ),
-        # collision_props=sim_utils.CollisionPropertiesCfg(
-        #     contact_offset=0.02,
-        #     rest_offset=0.0,
-        # )
+        collision_props=sim_utils.CollisionPropertiesCfg(
+            contact_offset=0.01,
+            rest_offset=0.0,
+        )
     ),
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 0.92),
@@ -108,31 +108,33 @@ CY1_CFG = ArticulationCfg(
             saturation_effort=100.0,
             velocity_limit=30.0,
             stiffness={
-                "waist_yaw_joint": 50.,
-                "[l,r]arm_joint1": 50.,
+                "waist_yaw_joint": 75.,
+                "[l,r]arm_joint1": 75.,
                 "[l,r]arm_joint2": 50.,
-                "[l,r]arm_joint3": 20.,
-                "[l,r]arm_joint4": 20.,
-                "[l,r]arm_joint5": 20.,
-                "[l,r]leg_joint1": 50.,
+                "[l,r]arm_joint3": 30.,
+                "[l,r]arm_joint4": 30.,
+                "[l,r]arm_joint5": 15.,
+                "[l,r]arm_joint6": 15.,
+                "[l,r]leg_joint1": 75.,
                 "[l,r]leg_joint2": 50.,
                 "[l,r]leg_joint3": 50.,
-                "[l,r]leg_joint4": 30.,
+                "[l,r]leg_joint4": 75.,
                 "[l,r]leg_joint5": 30.,
                 "[l,r]leg_joint6": 5.,
             },
             damping={
                 "waist_yaw_joint": 3.,
-                "[l,r]arm_joint1": 2.,
-                "[l,r]arm_joint2": 2.,
-                "[l,r]arm_joint3": 1.,
+                "[l,r]arm_joint1": 6.,
+                "[l,r]arm_joint2": 3.,
+                "[l,r]arm_joint3": 0.5,
                 "[l,r]arm_joint4": 1.,
                 "[l,r]arm_joint5": 1.,
-                "[l,r]leg_joint1": 3., # 6.
+                "[l,r]arm_joint6": 1.,
+                "[l,r]leg_joint1": 6., # 6.
                 "[l,r]leg_joint2": 3.,
                 "[l,r]leg_joint3": 3.,
-                "[l,r]leg_joint4": 1., # 6.
-                "[l,r]leg_joint5": 1.,
+                "[l,r]leg_joint4": 6., # 6.
+                "[l,r]leg_joint5": 2.,
                 "[l,r]leg_joint6": 1.,
             },
             friction=0.0,

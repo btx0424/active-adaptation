@@ -37,7 +37,7 @@ class Reward:
     def reset(self, env_ids):
         pass
     
-    def __call__(self, *args: torch.Any, **kwds: torch.Any) -> torch.Any:
+    def __call__(self) -> torch.Tensor:
         return (self.weight * self.compute()).clip(*self.clip_range)
     
     @abc.abstractmethod
