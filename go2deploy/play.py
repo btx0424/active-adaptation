@@ -8,6 +8,7 @@ import torch
 import itertools
 import h5py
 import argparse
+import os
 
 from scipy.spatial.transform import Rotation as R
 from tensordict import TensorDict
@@ -34,10 +35,11 @@ def normalize(v: np.ndarray):
     return v / np.linalg.norm(v)
 
 
-class Robot:
+class Go2Iface:
 
     smoothing_length: int = 5
     smoothing_ratio: float = 0.4
+    command_dim: int
 
     def __init__(self, cfg, log_file: h5py.File=None):
         self.cfg = cfg
@@ -60,7 +62,7 @@ class Robot:
         self.projected_gravity_history = np.zeros((3, self.smoothing_length))
         self.angvel = np.zeros(3)
         self.action_buf = np.zeros((12, 4))
-        self.command = np.zeros(4) # linvel_xy, angvel_z, base_height
+        self.command = np.zeros(self.command_dim)
         self.lxy = 0.
         self.rxy = 0.
         self.action_buf_steps = 3
@@ -69,7 +71,8 @@ class Robot:
         self.timestamp = time.perf_counter()
         self.step_count = 0
 
-        self.update()
+        self.update_state()
+        self.update_command()
         _obs = self._compute_obs()
         self.obs_dim = _obs.shape[0]
         self.obs_buf = np.zeros((self.obs_dim * 6))
@@ -80,25 +83,22 @@ class Robot:
             log_file.create_dataset("observation", (default_len, self.obs_dim), maxshape=(None, self.obs_dim))
             log_file.create_dataset("action", (default_len, 12), maxshape=(None, 12))
 
+            log_file.create_dataset("rpy", (default_len, 3), maxshape=(None, 3))
             log_file.create_dataset("jpos", (default_len, 12), maxshape=(None, 12))
             log_file.create_dataset("jvel", (default_len, 12), maxshape=(None, 12))
+            log_file.create_dataset("jpos_des", (default_len, 12), maxshape=(None, 12))
+            log_file.create_dataset("tau_est", (default_len, 12), maxshape=(None, 12))
             log_file.create_dataset("quat", (default_len, 4), maxshape=(None, 4))
             log_file.create_dataset("linvel", (default_len, 3), maxshape=(None, 3))
             log_file.create_dataset("angvel", (default_len, 3), maxshape=(None, 3))
     
     def reset(self):
         self.start_t = time.perf_counter()
-        self.update()
+        self.update_state()
+        self.update_command()
         return self._compute_obs()
     
-    def update(self):
-        # self.linvel = self._robot.get_velocity()
-        # self.feet_pos_b = self._robot.get_feet_pos().reshape(4, 3)
-        # self.quat = self._robot.get_quat()
-        # self.rot = R.from_quat(self.quat[[1, 2, 3, 0]])
-        # self.jpos_sdk = self._robot.get_joint_pos()
-        # self.jvel_sdk = self._robot.get_joint_vel()
-        # self.yaw_speed = self._robot.get_yaw_speed()
+    def update_state(self):
         
         self.prev_rpy = self.rpy
         # self.rpy = self._robot.get_rpy()
@@ -109,6 +109,7 @@ class Robot:
         
         self.jpos_sim = self.sdk_to_orbit(self.jpos_sdk)
         self.jvel_sim = self.sdk_to_orbit(self.jvel_sdk)
+        self.tau_sim = self.sdk_to_orbit(self.tau_sdk)
 
         dt = time.perf_counter() - self.timestamp
         
@@ -125,18 +126,8 @@ class Robot:
         self.rxy = mix(self.rxy, self._robot.rxy(), 0.5)
         self.latency = (datetime.datetime.now() - self._robot.timestamp).total_seconds()
 
-        t = time.perf_counter() - self.start_t
-        vx = np.sin(t * 0.75)
-        self.command[0] = mix(self.command[0] * 0.95, self.lxy[1] * 1.0, 0.2)
-        self.command[1] = mix(self.command[1], -self.lxy[0], 0.2)
-
-        self.command[2] = -self.rxy[0] * 1.2
-        self.command[3] = 0.0 #
-        # heading = np.array([1., -self.rxy[0] * 1.3])
-        # heading = heading / np.linalg.norm(heading)
-        # heading = np.array([1., 0.])
-        # self.command[2:4] = heading
-        self.timestamp = time.perf_counter()
+    def update_command(self):
+        pass
     
     def step(self, action=None):
         if action is not None:
@@ -147,8 +138,10 @@ class Robot:
             self.last_action = self.last_action * 0.2 + self.action_buf[:, 0] * 0.8
             jpos_target = self.last_action * 0.5 + self.default_joint_pos
             jpos_target = jpos_target.clip(-np.pi, np.pi)
+            self.jpos_target = jpos_target
             self._robot.set_command(self.orbit_to_sdk(jpos_target))
-        self.update()
+        self.update_state()
+        self.update_command()
         self._maybe_log()
         self.step_count += 1
         obs = self._compute_obs()
@@ -159,30 +152,7 @@ class Robot:
         return obs
 
     def _compute_obs(self):
-        # self.rot = R.from_euler("xyz", self.rpy)
-        # angvel = self.rot.inv().apply(self.angvel)
-        angvel = self.angvel
-        
-        obs = [
-            self.command,
-            # angvel,
-            self.projected_gravity,
-            self.jpos_sim,
-            self.jvel_sim,
-            self.action_buf[:, :self.action_buf_steps].reshape(-1),
-        ]
-        # obs = [
-        #     self.command,
-        #     # np.array([self.yaw_speed]),
-        #     angvel[2:],
-        #     self.projected_gravity,
-        #     self.sdk_to_orbit(self.jpos_sdk),
-        #     self.sdk_to_orbit(self.jvel_sdk),
-        #     self.action_buf[:, :self.action_buf_steps].reshape(-1),
-        #     self.linvel
-        # ]
-        obs = np.concatenate(obs, dtype=np.float32)
-        return obs
+        raise NotImplementedError
     
     def _maybe_log(self):
         if self.log_file is None:
@@ -190,8 +160,11 @@ class Robot:
         self.log_file["action"][self.step_count] = self.action_buf[:, 0]
         self.log_file["angvel"][self.step_count] = self.angvel
         self.log_file["linvel"][self.step_count] = self._robot.get_velocity()
+        self.log_file["rpy"][self.step_count] = self.rpy
         self.log_file["jpos"][self.step_count] = self.jpos_sim
         self.log_file["jvel"][self.step_count] = self.jvel_sim
+        self.log_file["jpos_des"][self.step_count] = self.jpos_target
+        self.log_file["tau_est"][self.step_count] = self.tau_sim
         self.log_file.attrs["cursor"] = self.step_count
 
         if self.step_count == self.log_file["jpos"].len() - 1:
@@ -218,10 +191,74 @@ class Robot:
 def mix(a, b, alpha):
     return a * (1 - alpha) + alpha * b
 
+
+class Go2Vel(Go2Iface):
+    
+    command_dim: int = 4 # linvel_xy, angvel_z, base_height
+
+    def update_command(self):
+        t = time.perf_counter() - self.start_t
+        vx = np.sin(t * 0.75)
+        self.command[0] = mix(self.command[0] * 0.95, self.lxy[1] * 2.0, 0.2)
+        self.command[1] = mix(self.command[1], -self.lxy[0], 0.2)
+
+        self.command[2] = -self.rxy[0] * 1.2
+        self.command[3] = 0.75 #
+
+    def _compute_obs(self):
+        # self.rot = R.from_euler("xyz", self.rpy)
+        # angvel = self.rot.inv().apply(self.angvel)
+        angvel = self.angvel
+        
+        obs = [
+            self.command,
+            # angvel,
+            self.projected_gravity,
+            self.jpos_sim,
+            self.jvel_sim,
+            self.action_buf[:, :self.action_buf_steps].reshape(-1),
+        ]
+        obs = np.concatenate(obs, dtype=np.float32)
+        return obs
+
+
+class Go2Impd(Go2Iface):
+
+    command_dim: int = 10 # setpose_xy, setpose_yaw, kp_xy, kp_yaw, kd_xyz, vmass
+
+    def update_command(self):
+        kp = (self.rxy[1] + 1) / 2 * (10 - 2) + 2
+        kd = 2 * math.sqrt(kp)
+        self.command[0] = self.lxy[1]
+        self.command[1] = 0.0
+        self.command[2] = 0.0
+        self.command[3:5] = self.command[:2] * kp
+        self.command[5:8] = kd
+        self.command[8:9] = self.command[2] * kp
+        self.command[9:10] = 4.0
+
+    def _compute_obs(self):
+        # self.rot = R.from_euler("xyz", self.rpy)
+        # angvel = self.rot.inv().apply(self.angvel)
+        angvel = self.angvel
+        
+        obs = [
+            # angvel,
+            self.projected_gravity,
+            self.jpos_sim,
+            self.jvel_sim,
+            self.action_buf[:, :self.action_buf_steps].reshape(-1),
+        ]
+        obs = np.concatenate(obs, dtype=np.float32)
+        return obs
+
+
 from torchrl.envs.utils import set_exploration_type, ExplorationType
+
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("-p", "--path", type=str)
     parser.add_argument("-l", "--log", action="store_true", default=False)
     args = parser.parse_args()
 
@@ -238,16 +275,17 @@ def main():
     ])
 
     if args.log:
-        log_file = h5py.File(f"log_{timestr}.h5py", "a")
+        os.makedirs("logs", exist_ok=True)
+        log_file = h5py.File(f"logs/{timestr}.h5py", "a")
     else:
         log_file = None
 
-    robot = Robot({}, log_file)
+    robot = Go2Impd({}, log_file)
     
-    robot._robot.set_kp(20.)
+    robot._robot.set_kp(25.)
     robot._robot.set_kd(0.5)
 
-    path = "policy_noangvel.pt"
+    path = args.path
     policy = torch.load(path)
     policy.module[0].set_missing_tolerance(True)
     # policy = lambda td: torch.zeros(12)
@@ -261,9 +299,10 @@ def main():
 
     try:
         td = TensorDict({
+            "command": torch.as_tensor(robot.command, dtype=torch.float32),
             "policy": torch.as_tensor(obs),
             "is_init": torch.tensor(1, dtype=bool),
-            "context_adapt_hx": torch.zeros(128),
+            "adapt_hx": torch.zeros(128),
             "estimator_hx": torch.zeros(128),
         }, []).unsqueeze(0)
         with torch.inference_mode(), set_exploration_type(ExplorationType.MODE):
@@ -278,6 +317,7 @@ def main():
                 # obs = torch.as_tensor(robot._compute_obs())
 
                 obs = torch.as_tensor(robot.step(action))
+                td["next", "command"] = torch.as_tensor(robot.command, dtype=torch.float32).unsqueeze(0)
                 td["next", "policy"] = obs.unsqueeze(0)
                 td["next", "is_init"] = torch.tensor([0], dtype=bool)
 
