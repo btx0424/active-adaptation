@@ -588,14 +588,17 @@ class com(Observation):
 
 
 class external_forces(Observation):
-    def __init__(self, env, body_names):
+    def __init__(self, env, body_names, divide_by_mass: bool=True):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.body_indices, self.body_names = self.asset.find_bodies(body_names)
         self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum() * 9.81
+        self.divide_by_mass = divide_by_mass
 
     def compute(self) -> torch.Tensor:
         forces_b = self.asset._external_force_b[:, self.body_indices]
+        if not self.divide_by_mass:
+            return forces_b.reshape(self.env.num_envs, -1)
         return (forces_b / self.default_mass_total).reshape(self.env.num_envs, -1)
 
     def fliplr(self, obs: torch.Tensor) -> torch.Tensor:

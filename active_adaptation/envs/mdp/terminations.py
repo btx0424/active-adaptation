@@ -73,10 +73,19 @@ class cum_error(Termination):
         from .commands import Command2
         self.thres = torch.tensor(thres, device=self.env.device)
         self.min_steps = min_steps # tolerate the first few steps
+        self.error_exceeded_count = torch.zeros(self.env.num_envs, 1, device=self.env.device, dtype=torch.int32)
         self.command_manager: Command2 = self.env.command_manager
     
+    def reset(self, env_ids):
+        self.error_exceeded_count[env_ids] = 0
+
+    def update(self):
+        error_exceeded = (self.command_manager._cum_error > self.thres).any(-1, True)
+        self.error_exceeded_count[error_exceeded] += 1
+        self.error_exceeded_count[~error_exceeded] = 0
+    
     def __call__(self) -> torch.Tensor:
-        return ((self.command_manager._cum_error > self.thres).any(-1, True) & (self.env.episode_length_buf > self.min_steps).unsqueeze(-1))
+        return (self.error_exceeded_count > self.min_steps).reshape(-1, 1)
 
 class ee_cum_error(Termination):
     def __init__(self, env, thres: float = 1.0, min_steps: int = 50):

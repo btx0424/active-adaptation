@@ -1,5 +1,5 @@
 # @package task
-name: A1-Arm
+name: A1-Position
 task: Manipulation
 scene: manipulation
 
@@ -31,64 +31,40 @@ action:
   clip_joint_targets: 0.2
 
 command:
-  _target_: active_adaptation.envs.mdp.EEImpedance
+  _target_: active_adaptation.envs.mdp.EEPosition
   ee_name: 'arm_link6'
   ee_base_name: 'arm_base'
   setpoint_x_range: [0.2, 0.6]
   setpoint_y_range: [-0.2, 0.2]
   setpoint_z_range: [0.3, 0.7]
-  relative_setpoint: false
-  # setpoint_x_range: [-0.2, 0.2]
-  # setpoint_y_range: [-0.2, 0.2]
-  # setpoint_z_range: [-0.2, 0.2]
-  # relative_setpoint: true
-  kp_range: [30., 50.]
-  damping_ratio_range: [0.7, 1.5]
-  default_mass_ee: 1.
-  virtual_mass_range: [0.5, 1.5]
-  max_force_acc: 20.
-  compliant_ratio: 0.2
-  ext_force_ratio: 0.5
-  future: 10
-  mix_openloop: false
-  command_acc: true
-  fix_reset_body_pos: false
 
 observation:
-  command:
-    command:
   policy:
+    command:
     joint_pos:    {joint_names: ["arm_joint[1-5]"], noise_std: 0.05}
     joint_vel:    {joint_names: ["arm_joint[1-5]"], noise_std: 0.2}
     prev_actions: {steps: 3}
   priv:
-    command_hidden:
     applied_action:
     applied_torques:  {actuator_name: arm}
     joint_forces:     {}
     jacobians_b:      {body_names: ["arm_link6"], joint_names: ["arm_joint[1-5]"]}
-    # jacobians:        {body_names: ["arm_link6"]}
     body_pos:         {body_names: ["arm_link6"]}
     body_vel:         {body_names: ["arm_link6"]}
     cum_error:        {}
-  ext:
-    external_forces: {body_names: ["arm_link6"]}
-  ext_:
-    external_forces: {body_names: ["arm_link6"], divide_by_mass: false}
-
+ 
 reward:
   manip:
     # common loco rewards just for sanity check
     survival:           {weight: 1.0, enabled: true}
-    impedance_ee_pos:   {weight: 0.5, enabled: true, ee_name: 'arm_link6', l: 0.01}
-    impedance_ee_vel:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.15}
+    impedance_ee_pos:   {weight: 0.5, enabled: true, ee_name: 'arm_link6', l: 0.25}
     ee_angvel_penalty:  {weight: 1.0e-3, enabled: true, ee_name: 'arm_link6'}
     joint_acc_l2:       {weight: 1.0e-5, enabled: true, joint_names: "arm_joint[1-5]"}
     joint_vel_l2:       {weight: 1.0e-2, enabled: true, joint_names: "arm_joint[1-5]"}
 
 termination:
   # joint_acc_exceeds: {thres: 5000.}
-  cum_error: {thres: 1.0, min_steps: 10}
+  cum_error: {thres: 0.5, min_steps: 50}
 
 randomization:
   reset_joint_states_uniform:
