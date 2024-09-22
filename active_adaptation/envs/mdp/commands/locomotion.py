@@ -588,7 +588,7 @@ class Impedance(Command):
         self.temporal_smoothing = temporal_smoothing
         
         with torch.device(self.device):
-            self.command = torch.zeros(self.num_envs, 9)
+            self.command = torch.zeros(self.num_envs, 10)
             self.command_hidden = torch.zeros(self.num_envs, 7)
             
             self.command_linvel = torch.zeros(self.num_envs, 3)
@@ -771,7 +771,8 @@ class Impedance(Command):
         self.command[:, 2] = yaw_diff
         self.command[:, 3:5] = self.kp * command_setpos_b[:, :2]
         self.command[:, 5:8] = self.kd # * - (self.asset.data.root_lin_vel_b + linvel_noise)
-        self.command[:, 8:9] = self.virtual_mass
+        self.command[:, 8:9] = self.kp * yaw_diff
+        self.command[:, 9:10] = self.virtual_mass
 
         self.command_hidden[:, 0:3] = command_pos_b
         self.command_hidden[:, 3:6] = self.command_linvel
