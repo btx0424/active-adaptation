@@ -21,7 +21,9 @@ command:
   constant_force_duration_range: [1, 4]
   impulse_force_momentum_scale: [5.0, 5.0, 1.0]
   impulse_force_duration_range: [0.1, 0.4]
-  temporal_smoothing: 4
+  temporal_smoothing: 12
+  force_offset_scale: [0.3, 0.2, 0.1]
+  teleop: false
 
 observation:
   command:
@@ -45,10 +47,9 @@ observation:
   ext:
     external_forces:  {body_names: ["base"]}
     external_torques: {body_names: ["base"]}
-  params:
-    motor_params:     {actuator_name: base_legs, homogeneous: "${task.homogeneous}"}
-    body_materials:   {body_names: .*foot, homogeneous: "${task.homogeneous}"}
-    body_mass:        {body_names: [Head.*, "base", ".*_hip", ".*_thigh"]}
+  ext_:
+    external_forces:  {body_names: ["base"]}
+    external_torques: {body_names: ["base"]}
 
 reward:
   loco:
@@ -56,18 +57,15 @@ reward:
     angvel_z_exp:       {weight: 1.0, enabled: true}
     impedance_pos:      {weight: 1.0, enabled: true}
     impedance_vel:      {weight: 1.5, enabled: true}
-    # angvel_z_exp_shaped: {weight: 0.75, enabled: false}
     linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
-    # linacc_z_l2:        {weight: 0.005, enabled: false}
     angvel_xy_l2:       {weight: 0.02, enabled: true}
     # linvel_z_l2:        {weight: 2.0, enabled: true}
     base_height_l1:     {weight: 0.5, enabled: true, target_height: 0.35}
     energy_l1:          {weight: 0.0002, enabled: true}
     energy_dist_lr:     {weight: 0.0002, enabled: false}
-    # energy_dist_fb:     {weight: 0.0002, enabled: false}
     joint_acc_l2:       {weight: 2.5e-7, enabled: true}
     joint_torques_l2:   {weight: 2.0e-4, enabled: true}
-    # quadruped_stand:    {weight: 0.5}
+    quadruped_stand:    {weight: 0.5}
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.01, enabled: true}
     action_rate2_l2:    {weight: 0.005, enabled: true}
@@ -81,11 +79,11 @@ reward:
 
 termination:
   crash: {body_names_expr: [Head.*, "base"], t_thres: 0.1, z_thres: -0.2}
+  fall_over: {xy_thres: 0.7}
   # joint_acc_exceeds: {thres: 5000}
   # cum_error: {thres: 1.0}
 
 randomization:
-  random_scale: [1.0, 1.0]
   perturb_body_mass:
     (?!(payload|base|Head.*)).*: [0.8, 1.2]
     base: [0.8, 1.2]
@@ -104,4 +102,9 @@ randomization:
   reset_joint_states_scale:
     pos_scales:
       .*: [0.8, 1.2]
+  random_joint_offset:
+    .*hip_joint: [-0.05, 0.05]
+    F[L,R]_thigh_joint: [-0.05, 0.05]
+    R[L,R]_thigh_joint: [-0.05, 0.05]
+    .*calf_joint: [-0.05, 0.05]
   stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.4, 0.4]}
