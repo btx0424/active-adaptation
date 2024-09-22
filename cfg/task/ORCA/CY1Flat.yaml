@@ -87,14 +87,14 @@ reward:
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.02, enabled: true}
     action_rate2_l2:    {weight: 0.01, enabled: true}
-    feet_air_time:      {weight: 1.0, enabled: true, body_names: .*leg_link6, thres: 0.4}
-    feet_slip:          {weight: 0.5, enabled: true, body_names: .*leg_link6}
+    feet_air_time:      {weight: 1.0, enabled: true,  body_names: .*leg_link6, thres: 0.4}
+    feet_slip:          {weight: 0.5, enabled: true,  body_names: .*leg_link6}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*leg_link6}
-    feet_swing:         {weight: 1.1, enabled: true, feet_names: .*leg_link6}
-    feet_orientation:   {weight: 0.2, enabled: true, feet_names: .*leg_link6}
-    feet_step:          {weight: 1.0, enabled: true, feet_names: .*leg_link6}
+    feet_swing:         {weight: 1.1, enabled: true,  feet_names: .*leg_link6}
+    feet_orientation:   {weight: 0.2, enabled: false, feet_names: .*leg_link6}
+    feet_step:          {weight: 1.0, enabled: true,  feet_names: .*leg_link6}
     # arm_swing:          {weight: 1.0, enabled: true, arm_names: .*arm_link5}
-    joint_pos_default:  {weight: 0.25, enabled: true, joint_names: ".*arm_joint[1,2]"}
+    joint_pos_default:  {weight: 0.25, enabled: true, joint_names: ".*arm_joint[2,4]"}
     joint_vel_l2:       {weight: 0.002, enabled: true, joint_names: .*arm_joint.*}
     feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}
     undesired_contact:  {weight: 0.2, enabled: true, body_names: .*arm_link6}
