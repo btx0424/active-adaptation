@@ -28,6 +28,7 @@ import torch.distributions as D
 import warnings
 import functools
 import einops
+import copy
 
 from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuousTensorSpec
 from torchrl.modules import ProbabilisticActor
@@ -77,7 +78,7 @@ class PPOConfig:
 cs = ConfigStore.instance()
 cs.store("ppo_dic_train", node=PPOConfig(phase="train", vecnorm="train"), group="algo")
 cs.store("ppo_dic_adapt", node=PPOConfig(phase="adapt", vecnorm="eval"), group="algo")
-
+cs.store("ppo_dic_finetune", node=PPOConfig(phase="finetune", vecnorm="eval"), group="algo")
 
 class GRU(nn.Module):
     def __init__(
@@ -138,8 +139,30 @@ class GRUModule(nn.Module):
         return out1, out2, hx.contiguous()
 
 
-class PPODICPolicy(TensorDictModuleBase):
+class PolicyUpdateInferenceMod:
+    def __init__(self, actor: ProbabilisticActor, encoder: TensorDictModule=None) -> None:
+        self.actor = actor
+        self.encoder = encoder
+    
+    def __call__(self, tensordict: TensorDictBase):
+        # TODO@botian: write to tensordict?
+        if self.encoder is not None:
+            self.encoder(tensordict)
+        dist = self.actor.get_dist(tensordict)
+        log_probs = dist.log_prob(tensordict[ACTION_KEY])
+        entropy = dist.entropy().mean()
+        return log_probs, entropy
 
+
+class PPODICPolicy(TensorDictModuleBase):
+    """
+    
+    version: 0.1.0, 2024.9.22 @botian
+    * cleanup imitation stuff
+    * add finetune phase
+    * report ext_rec_error instead of ext_rec_loss
+
+    """
     def __init__(
         self, 
         cfg: PPOConfig, 
@@ -152,7 +175,7 @@ class PPODICPolicy(TensorDictModuleBase):
         self.cfg = cfg
         self.device = device
         self.observation_spec = observation_spec
-        assert self.cfg.phase in ["train", "adapt"]
+        assert self.cfg.phase in ["train", "adapt", "finetune"]
 
         self.entropy_coef = self.cfg.entropy_coef
         self.max_grad_norm = 1.0
@@ -181,7 +204,7 @@ class PPODICPolicy(TensorDictModuleBase):
         self.adapt_module =  TensorDictModule(
             GRUModule(128 + 32, split=[128, 32]), 
             [OBS_KEY, "is_init", "adapt_hx"], 
-            ["priv_pred", "_ext_pred", ("next", "adapt_hx")]
+            ["priv_pred", "ext_pred", ("next", "adapt_hx")]
         ).to(self.device)
         
         in_keys = [CMD_KEY, OBS_KEY, "_priv_feature", "_ext_feature"]
@@ -198,7 +221,7 @@ class PPODICPolicy(TensorDictModuleBase):
             return_log_prob=True
         ).to(self.device)
 
-        in_keys = [CMD_KEY, OBS_KEY, "priv_pred", "_ext_pred"]
+        in_keys = [CMD_KEY, OBS_KEY, "priv_pred", "ext_pred"]
         self.actor_adapt: ProbabilisticActor = ProbabilisticActor(
             module=TensorDictSequential(
                 CatTensors(in_keys, "_actor_feature", del_keys=False, sort=False),
@@ -234,7 +257,7 @@ class PPODICPolicy(TensorDictModuleBase):
                 ext_decoder_in_keys.append("priv_pred")
             if "_ext_feature" in ext_decoder_in_keys:
                 ext_decoder_in_keys.remove("_ext_feature")
-                ext_decoder_in_keys.append("_ext_pred")
+                ext_decoder_in_keys.append("ext_pred")
         self.ext_decoder = TensorDictSequential(
             CatTensors(ext_decoder_in_keys, "_ext_dec_input", del_keys=False),
             TensorDictModule(_ext_decoder, ["_ext_dec_input"], ["ext_pred"])
@@ -247,6 +270,12 @@ class PPODICPolicy(TensorDictModuleBase):
         self.actor_adapt(fake_input)
         self.ext_decoder(fake_input)
 
+        self.policy_train_inference = PolicyUpdateInferenceMod(self.actor, self.encoder_priv)
+        self.policy_adapt_inference = PolicyUpdateInferenceMod(self.actor_adapt, None)
+        
+        self.adapt_ema = copy.deepcopy(self.adapt_module)
+        self.adapt_ema.requires_grad_(False)
+
         self.opt = torch.optim.Adam(
             [
                 {"params": self.actor.parameters()},
@@ -257,12 +286,18 @@ class PPODICPolicy(TensorDictModuleBase):
         )
 
         self.opt_adapt = torch.optim.Adam(
-            self.adapt_module.parameters(),
+            [
+                {"params": self.adapt_module.parameters()},
+                {"params": self.ext_decoder.parameters()},
+            ],
             lr=cfg.lr
         )
 
-        self.opt_ext_decoder = torch.optim.Adam(
-            self.ext_decoder.parameters(),
+        self.opt_finetune = torch.optim.Adam(
+            [
+                {"params": self.actor_adapt.parameters()},
+                {"params": self.critic.parameters()},
+            ],
             lr=cfg.lr
         )
         
@@ -277,53 +312,28 @@ class PPODICPolicy(TensorDictModuleBase):
         self.adapt_module.apply(init_)
         self.num_updates = 0
     
-    def set_two_teacher(
-        self,
-        teacher_legs, 
-        teacher_arm,
-        legs_joint_ids,
-        arm_joint_ids,
-        reg_lambda_legs,
-        reg_lambda_arm,
-        vecnorm_legs, 
-        vecnorm_arm, 
-        vecnorm,
-
-    ):
-        self.teacher_arm = teacher_arm
-        self.teacher_legs = teacher_legs
-        self.legs_joint_ids = legs_joint_ids
-        self.arm_joint_ids = arm_joint_ids
-        self.reg_lambda_legs = reg_lambda_legs
-        self.reg_lambda_arm = reg_lambda_arm
-        self.vecnorm_legs = vecnorm_legs
-        self.vecnorm_arm = vecnorm_arm
-        self.vecnorm = vecnorm
-        
-        teacher_legs.module[2].module[1].out_keys = ['action_legs', 'sample_log_prob']
-        teacher_legs.module[2].out_keys = ['_actor_feature', 'loc', 'scale', 'action_legs', 'sample_log_prob']
-        teacher_arm.module[2].module[1].out_keys = ['action_arm', 'sample_log_prob']
-        teacher_arm.module[2].out_keys = ['_actor_feature', 'loc', 'scale', 'action_arm', 'sample_log_prob']
-    
     def make_tensordict_primer(self):
         num_envs = self.observation_spec.shape[0]
         spec = UnboundedContinuousTensorSpec((num_envs, 128), device=self.device)
         return TensorDictPrimer({"adapt_hx": spec}, reset_key="done")
 
     def get_rollout_policy(self, mode: str="train"):
-        modules = [self.adapt_module]
+        modules = []
+        
         if self.cfg.phase == "train":
             modules.append(self.encoder_priv)
             modules.append(self.actor)
-        else:
-            # modules.append(self.encoder_priv)
-            # def hack(tensordict):
-            #     tensordict["priv_pred"] = tensordict["_priv_feature"]
-            #     tensordict["_ext_pred"] = tensordict["_ext_feature"]
-            #     return tensordict
-            # modules.append(hack)
+            modules.append(self.adapt_module)
+        elif self.cfg.phase == "adapt":
+            modules.append(self.adapt_module)
             modules.append(self.actor_adapt)
+        elif self.cfg.phase == "finetune":
+            modules.append(self.adapt_ema)
+            modules.append(self.actor_adapt)
+        
+        if mode != "train": # for evaluation
             modules.append(self.ext_decoder)
+            
         policy = TensorDictSequential(*modules)
         return policy
     
@@ -337,6 +347,9 @@ class PPODICPolicy(TensorDictModuleBase):
             info.update(self.train_adapt(tensordict.copy()))
         elif self.cfg.phase == "adapt":
             info.update(self.train_adapt(tensordict.copy()))
+        elif self.cfg.phase == "finetune":
+            info.update(self.train_policy(tensordict.copy()))
+            info.update(self.train_adapt(tensordict.copy()))
         self.num_updates += 1
         return info
     
@@ -346,10 +359,14 @@ class PPODICPolicy(TensorDictModuleBase):
         self._compute_advantage(tensordict, self.critic, "adv", "ret", update_value_norm=True)
         tensordict["adv"] = normalize(tensordict["adv"], subtract_mean=True)
 
+        policy_inference = self.policy_train_inference if self.cfg.phase == "train" else self.policy_adapt_inference
+        opt = self.opt if self.cfg.phase == "train" else self.opt_finetune
+
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches)
             for minibatch in batch:
-                infos.append(TensorDict(self._update(minibatch), []))
+                info = self._update(minibatch, policy_inference, opt)
+                infos.append(TensorDict(info, []))
         
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         infos["critic/value_mean"] = tensordict["ret"].mean().item()
@@ -366,22 +383,22 @@ class PPODICPolicy(TensorDictModuleBase):
                 for minibatch in make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every):
                     self.adapt_module(minibatch)
                     priv_loss = F.mse_loss(minibatch["priv_pred"], minibatch["_priv_feature"])
-                    ext_loss = F.mse_loss(minibatch["_ext_pred"], minibatch["_ext_feature"])
+                    ext_loss = F.mse_loss(minibatch["ext_pred"], minibatch["_ext_feature"])
                     if self.ext_rec_lambda > 0:
                         self.ext_decoder(minibatch)
-                        ext_rec_loss = self.ext_rec_lambda * F.mse_loss(minibatch["ext_"], minibatch["ext_pred"])
+                        ext_rec_error = F.mse_loss(minibatch["ext_pred"], minibatch["ext_"])
                     else:
-                        ext_rec_loss = 0.
+                        ext_rec_error = 0.
                     self.opt_adapt.zero_grad()
-                    self.opt_ext_decoder.zero_grad()
-                    (priv_loss + ext_loss + ext_rec_loss).backward()
+                    (priv_loss + ext_loss + self.ext_rec_lambda * ext_rec_error).backward()
                     self.opt_adapt.step()
-                    self.opt_ext_decoder.step()
                     infos.append(TensorDict({
                         "adapt/priv_loss": priv_loss,
                         "adapt/ext_loss": ext_loss,
-                        "adapt/ext_rec_loss": ext_rec_loss,
+                        "adapt/ext_rec_loss": ext_rec_error,
                     }, []))
+        
+        soft_copy_(self.adapt_module, self.adapt_ema, 0.05)
         
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         return infos
@@ -420,11 +437,8 @@ class PPODICPolicy(TensorDictModuleBase):
         return tensordict
 
     # @torch.compile
-    def _update(self, tensordict: TensorDict):
-        self.encoder_priv(tensordict)
-        dist = self.actor.get_dist(tensordict)
-        log_probs = dist.log_prob(tensordict[ACTION_KEY])
-        entropy = dist.entropy().mean()
+    def _update(self, tensordict: TensorDict, policy_inference: PolicyUpdateInferenceMod, opt: torch.optim.Optimizer):
+        log_probs, entropy = policy_inference(tensordict)
 
         adv = tensordict["adv"]
         log_ratio = (log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
@@ -439,32 +453,19 @@ class PPODICPolicy(TensorDictModuleBase):
         value_loss = self.critic_loss_fn(b_returns, values)
         value_loss = (value_loss * (~tensordict["is_init"])).mean()
 
-        if self.reg_lambda > 0:
+        if self.cfg.phase == "train" and self.reg_lambda > 0:
             reg_loss = self.reg_lambda * F.mse_loss(tensordict["_priv_feature"], tensordict["priv_pred"])
         else:
             reg_loss = 0.
-
-        if hasattr(self, "teacher_arm"):
-            # add regression loss on action
-            with torch.no_grad():
-                self.teacher_arm(tensordict)
-                self.teacher_legs(tensordict)
-            action_arm = tensordict["action_arm"]
-            action_legs = tensordict["action_legs"]
-            action = dist.rsample()
-            imitation_arm_loss = self.reg_lambda_arm * F.mse_loss(action[:, self.arm_joint_ids], action_arm[:, self.arm_joint_ids])
-            imitation_legs_loss = self.reg_lambda_legs * F.mse_loss(action[:, self.legs_joint_ids], action_legs[:, self.legs_joint_ids])
-            imitation_loss = imitation_arm_loss + imitation_legs_loss
-        else:
-            imitation_loss = 0.
             
-        loss = policy_loss + entropy_loss + value_loss + reg_loss + imitation_loss
-        # loss = imitation_loss
-        self.opt.zero_grad()
+        loss = policy_loss + entropy_loss + value_loss + reg_loss
+        
+        opt.zero_grad()
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
         critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
-        self.opt.step()
+        opt.step()
+        
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
         info = {
             "actor/policy_loss": policy_loss,
@@ -477,10 +478,6 @@ class PPODICPolicy(TensorDictModuleBase):
             "critic/grad_norm": critic_grad_norm,
             "critic/explained_var": explained_var,
         }
-        if hasattr(self, "teacher_arm"):
-            info["imitation/loss"] = imitation_loss
-            info["imitation/arm_loss"] = imitation_arm_loss
-            info["imitation/legs_loss"] = imitation_legs_loss
         return info
 
     def state_dict(self):
