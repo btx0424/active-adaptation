@@ -199,12 +199,12 @@ class EEImpedance(Command):
         self._sample_force(env_ids)
 
         self._cum_error[env_ids] = 0.0
-        self._cum_error[env_ids] = 0.0
+        self._cum_count[env_ids] = 0.0
 
         if self.fix_reset_body_pos:
             self.command[env_ids] = 0.0
             self.command_hidden[env_ids] = 0.0
-            
+
             self.need_reset_mask[env_ids] = True
         else:
             self.desired_linacc_ee_w[env_ids] = 0.0
@@ -214,9 +214,9 @@ class EEImpedance(Command):
             self.desired_pos_ee_w[env_ids] = self.asset.data.body_pos_w[
                 env_ids, None, self.ee_body_id
             ]
-            
-            for _ in range(int(self.env.step_dt / self.env.physics_dt)):
-                self._integrate()
+
+            # for _ in range(int(self.env.step_dt / self.env.physics_dt)):
+            #     self._integrate()
 
             # sim reset -> command_manager.reset() -> compute obs ->  sim step -> compute reward
             self._update_command()
@@ -282,7 +282,7 @@ class EEImpedance(Command):
                 env_ids, None, self.ee_body_id
             ]
             self.need_reset_mask[env_ids] = False
-        
+
         # print((self._cum_error / self._cum_count / self.env.step_dt).mean(0))
 
         # resample command and force
@@ -311,7 +311,6 @@ class EEImpedance(Command):
         ]
         self.desired_pos_ee_w[:, 0] = self.asset.data.body_pos_w[:, self.ee_body_id]
 
-        assert int(self.env.step_dt / self.env.physics_dt) == 4
         for _ in range(int(self.env.step_dt / self.env.physics_dt)):
             self._integrate()
 
@@ -442,6 +441,80 @@ class EEImpedance(Command):
         )
 
 
+class EEPosition(Command):
+    """Command for a single end-effector position"""
+    def __init__(
+        self,
+        env,
+        ee_name: str,
+        ee_base_name: str,
+        setpoint_x_range: tuple = (0.2, 0.6),
+        setpoint_y_range: tuple = (-0.2, 0.2),
+        setpoint_z_range: tuple = (0.2, 0.6),
+        teleop: bool = False,
+    ) -> None:
+        super().__init__(env, teleop)
+        self.robot: Articulation = env.scene["robot"]
+        self.ee_name = ee_name
+        self.ee_base_name = ee_base_name
+        self.ee_body_id = self.robot.find_bodies(ee_name)[0][0]
+        self.ee_base_body_id = self.robot.find_bodies(ee_base_name)[0][0]
+
+        self.setpoint_x_range = setpoint_x_range
+        self.setpoint_y_range = setpoint_y_range
+        self.setpoint_z_range = setpoint_z_range
+        
+        self.resample_prob = 0.005
+
+        with torch.device(self.device):
+            self.command = torch.zeros(self.num_envs, 3, device=self.device)
+            
+            self.command_pos_ee_b = torch.zeros(self.num_envs, 3, device=self.device)
+            self.command_pos_ee_w = torch.zeros(self.num_envs, 3, device=self.device)
+
+            self._cum_error = torch.zeros(self.num_envs, 1, device=self.device)
+            self._cum_count = torch.zeros(self.num_envs, 1, device=self.device)
+        
+    def _sample_command(self, env_ids: torch.Tensor):
+        command_pos_ee_b = torch.empty(len(env_ids), 3, device=self.device)
+        command_pos_ee_b[:, 0].uniform_(*self.setpoint_x_range)
+        command_pos_ee_b[:, 1].uniform_(*self.setpoint_y_range)
+        command_pos_ee_b[:, 2].uniform_(*self.setpoint_z_range)
+        self.command_pos_ee_b[env_ids] = command_pos_ee_b
+        self.command_pos_ee_w[env_ids] = self.robot.data.root_pos_w[env_ids] + quat_rotate(self.robot.data.root_quat_w[env_ids], command_pos_ee_b)
+    
+    def _update_command(self):
+        self.command[:] = self.command_pos_ee_b
+    
+    def reset(self, env_ids: torch.Tensor):
+        self._sample_command(env_ids)
+
+        self._cum_error[env_ids] = 0.0
+        self._cum_count[env_ids] = 0.0
+        
+        self._update_command()
+    
+    def _compute_error(self):
+        pos_ee_error = (self.robot.data.body_pos_w[:, self.ee_body_id] - self.command_pos_ee_w).norm(dim=-1)
+        self._cum_error[:, 0].add_(pos_ee_error * self.env.step_dt).mul_(0.99)
+        self._cum_count[:, 0].add_(1.0).mul_(0.99)
+    
+    def update(self):
+        self._compute_error()
+        
+        sample_command = torch.rand(self.num_envs, device=self.device) < self.resample_prob
+        sample_command = sample_command.nonzero().squeeze(-1)
+        if len(sample_command) > 0:
+            self._sample_command(sample_command)
+        
+        self._update_command()
+    
+    def debug_draw(self):
+        self.env.debug_draw.point(
+            self.command_pos_ee_w,
+            color=(1.0, 0.0, 0.0, 1.0),
+            size=10.0,
+        )
 
 class PushWall(Command):
     """Same as above, except that the force is replaced by a wall simulated with large penetration kp and the command setpoit is programmed to reach the wall."""

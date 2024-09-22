@@ -1,7 +1,7 @@
 import torch
 from .locomotion import Reward
 from omni.isaac.lab.assets import Articulation
-from ..commands import EEImpedance
+from ..commands import EEImpedance, EEPosition
 
 
 class impedance_ee_pos(Reward):
@@ -11,7 +11,7 @@ class impedance_ee_pos(Reward):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.body_id = self.asset.find_bodies(ee_name)[0][0]
-        self.command_manager: EEImpedance = self.env.command_manager
+        self.command_manager: EEImpedance | EEPosition = self.env.command_manager
         self.l = l
 
     def compute(self) -> torch.Tensor:

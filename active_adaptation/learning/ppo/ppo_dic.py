@@ -63,7 +63,15 @@ class PPOConfig:
     phase: str = "train"
     vecnorm: Union[str, None] = None
     checkpoint_path: Union[str, None] = None
-    in_keys: List[str] = field(default_factory=lambda: [CMD_KEY, OBS_KEY, OBS_PRIV_KEY, "ext"])
+    in_keys: List[str] = field(default_factory=lambda: [CMD_KEY, OBS_KEY, OBS_PRIV_KEY, "ext", "ext_"])
+    ext_decoder_in_keys: List[str] = field(
+        default_factory=lambda: [
+            CMD_KEY,
+            OBS_KEY,
+            "_priv_feature",
+            "_ext_feature",
+        ]
+    )
 
 
 cs = ConfigStore.instance()
@@ -151,8 +159,11 @@ class PPODICPolicy(TensorDictModuleBase):
         self.clip_param = self.cfg.clip_param
         self.critic_loss_fn = nn.MSELoss(reduction="none")
         self.action_dim = action_spec.shape[-1]
+        self.ext_dim = observation_spec["ext_"].shape[-1]
         self.gae = GAE(0.99, 0.95)
         self.reg_lambda = 0.0
+        self.ext_rec_lambda = 0.001
+        # TODO: now the adapt actor is not updated during any phase
         
         if cfg.value_norm:
             value_norm_cls = ValueNorm1
@@ -211,11 +222,30 @@ class PPODICPolicy(TensorDictModuleBase):
             fake_input["is_init"] = torch.ones(fake_input.shape[0], 1, dtype=torch.bool)
             fake_input["adapt_hx"] = torch.zeros(fake_input.shape[0], 128)
 
+        # external forces estimation decoder
+        _ext_decoder = nn.Sequential(
+            make_mlp([128]), 
+            nn.LazyLinear(self.ext_dim)
+        )
+        ext_decoder_in_keys = list(self.cfg.ext_decoder_in_keys)
+        if self.cfg.phase == "adapt":
+            if "_priv_feature" in ext_decoder_in_keys:
+                ext_decoder_in_keys.remove("_priv_feature")
+                ext_decoder_in_keys.append("priv_pred")
+            if "_ext_feature" in ext_decoder_in_keys:
+                ext_decoder_in_keys.remove("_ext_feature")
+                ext_decoder_in_keys.append("_ext_pred")
+        self.ext_decoder = TensorDictSequential(
+            CatTensors(ext_decoder_in_keys, "_ext_dec_input", del_keys=False),
+            TensorDictModule(_ext_decoder, ["_ext_dec_input"], ["ext_pred"])
+        ).to(self.device)
+
         self.encoder_priv(fake_input)
         self.actor(fake_input)
         self.critic(fake_input)
         self.adapt_module(fake_input)
         self.actor_adapt(fake_input)
+        self.ext_decoder(fake_input)
 
         self.opt = torch.optim.Adam(
             [
@@ -228,6 +258,11 @@ class PPODICPolicy(TensorDictModuleBase):
 
         self.opt_adapt = torch.optim.Adam(
             self.adapt_module.parameters(),
+            lr=cfg.lr
+        )
+
+        self.opt_ext_decoder = torch.optim.Adam(
+            self.ext_decoder.parameters(),
             lr=cfg.lr
         )
         
@@ -288,6 +323,7 @@ class PPODICPolicy(TensorDictModuleBase):
             #     return tensordict
             # modules.append(hack)
             modules.append(self.actor_adapt)
+            modules.append(self.ext_decoder)
         policy = TensorDictSequential(*modules)
         return policy
     
@@ -331,12 +367,20 @@ class PPODICPolicy(TensorDictModuleBase):
                     self.adapt_module(minibatch)
                     priv_loss = F.mse_loss(minibatch["priv_pred"], minibatch["_priv_feature"])
                     ext_loss = F.mse_loss(minibatch["_ext_pred"], minibatch["_ext_feature"])
+                    if self.ext_rec_lambda > 0:
+                        self.ext_decoder(minibatch)
+                        ext_rec_loss = self.ext_rec_lambda * F.mse_loss(minibatch["ext_"], minibatch["ext_pred"])
+                    else:
+                        ext_rec_loss = 0.
                     self.opt_adapt.zero_grad()
-                    (priv_loss + ext_loss).backward()
+                    self.opt_ext_decoder.zero_grad()
+                    (priv_loss + ext_loss + ext_rec_loss).backward()
                     self.opt_adapt.step()
+                    self.opt_ext_decoder.step()
                     infos.append(TensorDict({
                         "adapt/priv_loss": priv_loss,
                         "adapt/ext_loss": ext_loss,
+                        "adapt/ext_rec_loss": ext_rec_loss,
                     }, []))
         
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
