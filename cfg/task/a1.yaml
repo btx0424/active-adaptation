@@ -26,30 +26,25 @@ action:
   _target_: active_adaptation.envs.mdp.action.JointPosition
   action_scaling:
     arm_joint[1-5]: 0.5
-  max_delay: 1
-  alpha: 0.5
+  max_delay: 3
+  alpha: 0.8
   clip_joint_targets: 0.2
 
 command:
   _target_: active_adaptation.envs.mdp.EEImpedance
   ee_name: 'arm_link6'
   ee_base_name: 'arm_base'
-  setpoint_x_range: [0.2, 0.6]
-  setpoint_y_range: [-0.2, 0.2]
+  setpoint_x_range: [0.2, 0.8]
+  setpoint_y_range: [-0.4, 0.4]
   setpoint_z_range: [0.3, 0.7]
-  relative_setpoint: false
-  # setpoint_x_range: [-0.2, 0.2]
-  # setpoint_y_range: [-0.2, 0.2]
-  # setpoint_z_range: [-0.2, 0.2]
-  # relative_setpoint: true
   kp_range: [30., 50.]
   damping_ratio_range: [0.7, 1.5]
   default_mass_ee: 1.
   virtual_mass_range: [0.5, 1.5]
-  max_force_acc: 20.
-  compliant_ratio: 0.2
-  ext_force_ratio: 0.5
-  future: 10
+  max_force_acc: 10.
+  compliant_ratio: 0.
+  ext_force_ratio: 0.
+  future: 9
   mix_openloop: false
   command_acc: true
   fix_reset_body_pos: false
@@ -79,26 +74,31 @@ observation:
 reward:
   manip:
     # common loco rewards just for sanity check
-    survival:           {weight: 1.0, enabled: true}
-    impedance_ee_pos:   {weight: 0.5, enabled: true, ee_name: 'arm_link6', l: 0.01}
-    impedance_ee_vel:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.15}
+    impedance_ee_pos:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.1}
+    impedance_ee_vel:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 1.5}
     ee_angvel_penalty:  {weight: 1.0e-3, enabled: true, ee_name: 'arm_link6'}
     joint_acc_l2:       {weight: 1.0e-5, enabled: true, joint_names: "arm_joint[1-5]"}
     joint_vel_l2:       {weight: 1.0e-2, enabled: true, joint_names: "arm_joint[1-5]"}
+  error:
+    survival:             {weight: 1.0, enabled: true}
+    impedance_ee_pos_err: {weight: 1.0, enabled: false, ee_name: 'arm_link6'}
+    impedance_ee_vel_err: {weight: 1.0, enabled: false, ee_name: 'arm_link6'}
+    action_rate_l2:     {weight: 1.0e-2, enabled: true}
+    action_rate2_l2:    {weight: 1.0e-2, enabled: true}
 
 termination:
   # joint_acc_exceeds: {thres: 5000.}
-  cum_error: {thres: 1.0, min_steps: 10}
+  cum_error: {thres: 0.01, min_steps: 50}
 
 randomization:
-  reset_joint_states_uniform:
-    pos_ranges:
-      arm_joint1: [-1.5, 1.5]
-      arm_joint2: [0.0, 1.5]
-      arm_joint3: [-1.5, 0.0]
-      arm_joint4: [-1.0, 1.0]
-      arm_joint5: [-1.0, 1.0]
-    rel: true
+  # reset_joint_states_uniform:
+  #   pos_ranges:
+  #     arm_joint1: [-1.5, 1.5]
+  #     arm_joint2: [0.0, 1.5]
+  #     arm_joint3: [-1.5, 0.0]
+  #     arm_joint4: [-1.0, 1.0]
+  #     arm_joint5: [-1.0, 1.0]
+  #   rel: true
   perturb_body_mass:
     arm_link[1-6]: [0.8, 1.2]
   motor_params:

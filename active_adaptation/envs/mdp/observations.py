@@ -594,15 +594,33 @@ class external_forces(Observation):
         self.body_indices, self.body_names = self.asset.find_bodies(body_names)
         self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum() * 9.81
         self.divide_by_mass = divide_by_mass
+        self.forces_w = torch.zeros(self.env.num_envs, len(self.body_indices) * 3, device=self.device)
+        self.forces_b = torch.zeros(self.env.num_envs, len(self.body_indices) * 3, device=self.device)
+    
+    def update(self):
+        forces_b = self.asset._external_force_b[:, self.body_indices]
+        forces_w = quat_rotate(self.asset.data.body_quat_w[:, self.body_indices], forces_b)
+        forces_b = quat_rotate_inverse(
+            self.asset.data.root_quat_w.unsqueeze(1),
+            forces_w
+        )
+        if self.divide_by_mass:
+            forces_b /= self.default_mass_total
+        self.forces_w[:] = forces_w.reshape(self.env.num_envs, -1)
+        self.forces_b[:] = forces_b.reshape(self.env.num_envs, -1)
 
     def compute(self) -> torch.Tensor:
-        forces_b = self.asset._external_force_b[:, self.body_indices]
-        if not self.divide_by_mass:
-            return forces_b.reshape(self.env.num_envs, -1)
-        return (forces_b / self.default_mass_total).reshape(self.env.num_envs, -1)
+        return self.forces_b
 
     def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
         return obs * torch.tensor([1., -1., 1.], device=self.device)
+    
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.asset.data.body_pos_w[:, self.body_indices].view(-1, 3),
+            self.forces_w.view(-1, 3),
+            color=(1., 0., 0., 1.)
+        )
 
 
 class external_torques(Observation):

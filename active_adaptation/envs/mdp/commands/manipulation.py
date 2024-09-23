@@ -14,10 +14,9 @@ class EEImpedance(Command):
         env,
         ee_name: str,
         ee_base_name: str,
-        setpoint_x_range: tuple = (0.2, 0.6),
-        setpoint_y_range: tuple = (-0.2, 0.2),
-        setpoint_z_range: tuple = (0.2, 0.6),
-        relative_setpoint: bool = False,
+        setpoint_x_range: tuple = (0.2, 0.8),
+        setpoint_y_range: tuple = (-0.4, 0.4),
+        setpoint_z_range: tuple = (0.3, 0.7),
         kp_range: tuple = (100.0, 150.0),
         damping_ratio_range: tuple = (0.7, 1.5),
         default_mass_ee: float = 1.0,
@@ -29,28 +28,32 @@ class EEImpedance(Command):
         mix_openloop: bool = False,
         command_acc: bool = False,
         fix_reset_body_pos: bool = False,
+        teleop: bool = False,
+        record_forces: bool = False,
     ) -> None:
-        super().__init__(env)
+        super().__init__(env, teleop)
         self.robot: Articulation = env.scene["robot"]
         self.ee_name = ee_name
         self.ee_base_name = ee_base_name
         self.ee_body_id = self.robot.find_bodies(ee_name)[0][0]
         self.ee_base_body_id = self.robot.find_bodies(ee_base_name)[0][0]
 
+        # command sample ranges and ratio
         self.setpoint_x_range = setpoint_x_range
         self.setpoint_y_range = setpoint_y_range
         self.setpoint_z_range = setpoint_z_range
-        self.relative_setpoint = relative_setpoint
 
         self.kp_range = kp_range
         self.damping_ratio_range = damping_ratio_range
         self.virtual_mass_range = virtual_mass_range
-        self.max_force_acc = max_force_acc
-
         self.compliant_ratio = compliant_ratio
+
+        # force sample ranges and ratio
+        self.max_force_acc = max_force_acc
         self.ext_force_ratio = ext_force_ratio
 
-        self.resample_prob = 0.005
+        self.resample_prob_command = 0.005
+        self.resample_prob_force = 0.02
         self.future = future
         self.mix_openloop = mix_openloop
         self.command_acc = command_acc
@@ -67,7 +70,8 @@ class EEImpedance(Command):
             self.desired_pos_ee_w = torch.zeros(self.num_envs, self.future, 3)
 
             self.smoothing_weight = torch.full((1, self.future, 1), 0.9).cumprod(1)
-            self.smoothing_weight /= self.smoothing_weight.sum()
+            self.smoothing_weight = self.smoothing_weight.flip(dims=(1,)) / self.smoothing_weight.sum()
+            # self.smoothing_weight /= self.smoothing_weight.sum()
 
             # command setpoints
             self.command_setpoint_pos_ee_b = torch.zeros(self.num_envs, 3)
@@ -94,6 +98,40 @@ class EEImpedance(Command):
             self._cum_error = torch.zeros(self.num_envs, 2)
             self._cum_count = torch.zeros(self.num_envs, 1)
 
+        if self.teleop:
+            self.key_mappings_pos = {
+                "W": torch.tensor([1., 0., 0.], device=self.device),
+                "S": torch.tensor([-1., 0., 0.], device=self.device),
+                "A": torch.tensor([0., 1., 0.], device=self.device),
+                "D": torch.tensor([0., -1., 0.], device=self.device),
+                "E": torch.tensor([0., 0., 1.], device=self.device),
+                "Q": torch.tensor([0., 0., -1.], device=self.device),
+            }
+
+            self.teleop_force = True # initially teleop interface controls the setpoint
+            self.F_pressed = False
+            self.teleop_force_setpoint_w = torch.zeros(self.num_envs, 3, device=self.device)
+            self.teleop_force_kp = 20.0
+        
+        self.record_forces = record_forces
+        if self.record_forces:
+            self.actual_ext_forces = []
+            self.desired_kp_forces = []
+            self.pred_ext_forces = []
+            self.log_file = "forces.pkl"
+
+    def save_logs(self):
+        print("Saving log file to", self.log_file)
+        actual_forces = torch.stack(self.actual_ext_forces, dim=0).cpu().numpy()
+        desired_forces = torch.stack(self.desired_kp_forces, dim=0).cpu().numpy()
+        pred_forces = torch.stack(self.pred_ext_forces, dim=0).cpu().numpy()
+        with open(self.log_file, "wb") as f:
+            import pickle
+
+            pickle.dump(
+                (actual_forces, desired_forces, pred_forces), f
+            )
+        
     def sample_init(self, env_ids: torch.Tensor) -> torch.Tensor:
         return self.init_root_state[env_ids]
 
@@ -102,16 +140,6 @@ class EEImpedance(Command):
         command_setpoint_pos_ee_b[:, 0].uniform_(*self.setpoint_x_range)
         command_setpoint_pos_ee_b[:, 1].uniform_(*self.setpoint_y_range)
         command_setpoint_pos_ee_b[:, 2].uniform_(*self.setpoint_z_range)
-        if self.relative_setpoint:
-            ee_pos_b = quat_rotate_inverse(
-                self.asset.data.root_quat_w[env_ids],
-                self.asset.data.body_pos_w[env_ids, self.ee_body_id]
-                - self.asset.data.root_pos_w[env_ids],
-            )
-            command_setpoint_pos_ee_b += ee_pos_b
-            command_setpoint_pos_ee_b[:, 0].clamp_(0.0, 0.8)
-            command_setpoint_pos_ee_b[:, 1].clamp_(-0.4, 0.4)
-            command_setpoint_pos_ee_b[:, 2].clamp_(0.2, 0.8)
         self.command_setpoint_pos_ee_b[env_ids] = command_setpoint_pos_ee_b
 
         kp_ee = torch.empty(len(env_ids), 3, device=self.device).uniform_(
@@ -197,6 +225,10 @@ class EEImpedance(Command):
     def reset(self, env_ids: torch.Tensor):
         self._sample_command(env_ids)
         self._sample_force(env_ids)
+        if self.teleop:
+            self.teleop_force_setpoint_w[env_ids] = self.asset.data.body_pos_w[env_ids, self.ee_body_id]
+            if self.teleop_force:
+                self.apply_force[env_ids] = True
 
         self._cum_error[env_ids] = 0.0
         self._cum_count[env_ids] = 0.0
@@ -221,7 +253,14 @@ class EEImpedance(Command):
             # sim reset -> command_manager.reset() -> compute obs ->  sim step -> compute reward
             self._update_command()
 
+        if self.record_forces and len(self.desired_kp_forces):
+            self.save_logs()
+
     def step(self, substep: int):
+        if self.teleop and self.teleop_force:
+            self.force_ext_ee_w[:] = self.teleop_force_kp * (
+                self.teleop_force_setpoint_w - self.asset.data.body_pos_w[:, self.ee_body_id]
+            )
         force_ext_ee_w = self.force_ext_ee_w
         force_ext_ee_w *= self.apply_force
         forces_ee_b = self.asset._external_force_b[:, [self.ee_body_id]].clone()
@@ -263,7 +302,7 @@ class EEImpedance(Command):
         pos_ee_error = (
             self.asset.data.body_pos_w[:, self.ee_body_id] - self.command_pos_ee_w
         ).norm(dim=-1)
-        self._cum_error[:, 0].add_(linvel_ee_error * self.env.step_dt).mul_(0.99)
+        self._cum_error[:, 0].add_(linvel_ee_error * self.env.step_dt * self.env.step_dt).mul_(0.99)
         self._cum_error[:, 1].add_(pos_ee_error * self.env.step_dt).mul_(0.99)
         self._cum_count.add_(1).mul_(0.99)
 
@@ -283,24 +322,41 @@ class EEImpedance(Command):
             ]
             self.need_reset_mask[env_ids] = False
 
-        # print((self._cum_error / self._cum_count / self.env.step_dt).mean(0))
+        # print("step error", (self._cum_error / self._cum_count / self.env.step_dt).mean(0))
+        # print("cum error", self._cum_error.mean(0))
 
         # resample command and force
         # sim step -> compute reward -> command_manager.update() -> compute obs
         # the command/forces will be issued/applied in the next time step
-        sample_command = (
-            torch.rand(self.num_envs, device=self.device) < self.resample_prob
-        )
-        sample_command = sample_command.nonzero().squeeze(-1)
-        if len(sample_command) > 0:
-            self._sample_command(sample_command)
+        if self.teleop:
+            if self.key_pressed["F"] and not self.F_pressed:
+                self.teleop_force = not self.teleop_force
+                if self.teleop_force:
+                    self.apply_force[:] = True
+            self.F_pressed = self.key_pressed["F"]
+        if self.teleop and not self.teleop_force:
+            for key, vec in self.key_mappings_pos.items():
+                if self.key_pressed[key]:
+                    self.command_setpoint_pos_ee_b.add_(vec * self.env.step_dt)
+        else:
+            sample_command = (
+                torch.rand(self.num_envs, device=self.device) < self.resample_prob_command
+            )
+            sample_command = sample_command.nonzero().squeeze(-1)
+            if len(sample_command) > 0:
+                self._sample_command(sample_command)
 
-        sample_force = (
-            torch.rand(self.num_envs, device=self.device) < self.resample_prob
-        )
-        sample_force = sample_force.nonzero().squeeze(-1)
-        if len(sample_force) > 0:
-            self._sample_force(sample_force)
+        if self.teleop and self.teleop_force:
+            for key, vec in self.key_mappings_pos.items():
+                if self.key_pressed[key]:
+                    self.teleop_force_setpoint_w.add_(vec * self.env.step_dt)
+        else:
+            sample_force = (
+                torch.rand(self.num_envs, device=self.device) < self.resample_prob_force
+            )
+            sample_force = sample_force.nonzero().squeeze(-1)
+            if len(sample_force) > 0:
+                self._sample_force(sample_force)
 
         # update desired quantities under the current command and forces
         if not self.mix_openloop:
@@ -315,6 +371,17 @@ class EEImpedance(Command):
             self._integrate()
 
         self._update_command()
+
+        if self.record_forces:
+            actual_ext_force = self.force_ext_ee_w.clone()
+            desired_kp_force = self.command_kp * self.command_setpoint_pos_ee_diff_b * self.virtual_mass_ee
+            ext_rec = self.env.input_tensordict.get("ext_rec", None)
+            ext_rec = quat_rotate(self.asset.data.root_quat_w, ext_rec)
+
+            self.actual_ext_forces.append(actual_ext_force)
+            self.desired_kp_forces.append(desired_kp_force)
+            self.pred_ext_forces.append(ext_rec)
+            
 
     def _debug_draw_setpoint_boundaries(self):
         # draw the 8 setpoint boundaries
@@ -419,6 +486,9 @@ class EEImpedance(Command):
         force_ext_ee_w = self.force_ext_ee_w
         force_ext_ee_w *= self.apply_force
 
+        if self.teleop and self.teleop_force:
+            force_ext_ee_w = force_ext_ee_w / self.teleop_force_kp
+
         # draw external force on desired ee (orange)
         self.env.debug_draw.vector(
             self.asset.data.body_pos_w[:, self.ee_body_id],
@@ -426,6 +496,15 @@ class EEImpedance(Command):
             color=(1.0, 0.5, 0.0, 1.0),
             size=4.0,
         )
+        ext_rec = self.env.input_tensordict.get("ext_rec", None)
+        if ext_rec is not None:
+            force_pred_w = quat_rotate(self.asset.data.root_quat_w, ext_rec[:, 0:3])
+            self.env.debug_draw.vector(
+                self.asset.data.body_pos_w[:, self.ee_body_id],
+                force_pred_w,
+                color=(1.0, 0.0, 0.5, 1.0),
+                size=4.0,
+            )
         # draw a point to indicate if the manipulator is compliant (green for compliant, red for non-compliant)
         self.env.debug_draw.point(
             self.asset.data.root_pos_w[self.compliant_ee.squeeze(-1)]
@@ -501,6 +580,7 @@ class EEPosition(Command):
     
     def update(self):
         self._compute_error()
+        # print((self._cum_error / self._cum_count / self.env.step_dt).mean(0))
         
         sample_command = torch.rand(self.num_envs, device=self.device) < self.resample_prob
         sample_command = sample_command.nonzero().squeeze(-1)
