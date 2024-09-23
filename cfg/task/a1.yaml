@@ -79,26 +79,26 @@ reward:
     ee_angvel_penalty:  {weight: 1.0e-3, enabled: true, ee_name: 'arm_link6'}
     joint_acc_l2:       {weight: 1.0e-5, enabled: true, joint_names: "arm_joint[1-5]"}
     joint_vel_l2:       {weight: 1.0e-2, enabled: true, joint_names: "arm_joint[1-5]"}
+    action_rate_l2:     {weight: 1.0e-2, enabled: true}
+    action_rate2_l2:    {weight: 1.0e-2, enabled: true}
   error:
     survival:             {weight: 1.0, enabled: true}
     impedance_ee_pos_err: {weight: 1.0, enabled: false, ee_name: 'arm_link6'}
     impedance_ee_vel_err: {weight: 1.0, enabled: false, ee_name: 'arm_link6'}
-    action_rate_l2:     {weight: 1.0e-2, enabled: true}
-    action_rate2_l2:    {weight: 1.0e-2, enabled: true}
 
 termination:
   # joint_acc_exceeds: {thres: 5000.}
   cum_error: {thres: 0.01, min_steps: 50}
 
 randomization:
-  # reset_joint_states_uniform:
-  #   pos_ranges:
-  #     arm_joint1: [-1.5, 1.5]
-  #     arm_joint2: [0.0, 1.5]
-  #     arm_joint3: [-1.5, 0.0]
-  #     arm_joint4: [-1.0, 1.0]
-  #     arm_joint5: [-1.0, 1.0]
-  #   rel: true
+  reset_joint_states_uniform:
+    pos_ranges:
+      arm_joint1: [-1.5, 1.5]
+      arm_joint2: [0.0, 1.5]
+      arm_joint3: [-1.5, 0.0]
+      arm_joint4: [-1.0, 1.0]
+      arm_joint5: [-1.0, 1.0]
+    rel: false
   perturb_body_mass:
     arm_link[1-6]: [0.8, 1.2]
   motor_params:
