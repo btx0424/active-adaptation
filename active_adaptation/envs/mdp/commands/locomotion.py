@@ -149,6 +149,7 @@ class Command2(Command):
 
         if body_name is not None:
             self.body_id = self.asset.find_bodies(body_name)[0][0]
+            self.FWDVEC = torch.tensor([1., 0., 0.], device=self.device).expand(self.num_envs, 3)
         else:
             self.body_id = None
 
@@ -189,7 +190,7 @@ class Command2(Command):
     def update(self):
         if self.body_id is not None:
             self.body_quat_w = self.asset.data.body_quat_w[:, self.body_id]
-            forward_w = quat_rotate(self.body_quat_w, torch.tensor([[1., 0., 0.]], device=self.device))
+            forward_w = quat_rotate(self.body_quat_w, self.FWDVEC)
             self.body_heading_w = torch.atan2(forward_w[:, 1], forward_w[:, 0])
         else:
             self.body_heading_w = self.asset.data.heading_w
