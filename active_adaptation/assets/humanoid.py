@@ -120,7 +120,7 @@ CY1_CFG = ArticulationCfg(
                 "[l,r]leg_joint3": 50.,
                 "[l,r]leg_joint4": 75.,
                 "[l,r]leg_joint5": 30.,
-                "[l,r]leg_joint6": 5.,
+                "[l,r]leg_joint6": 15.,
             },
             damping={
                 "waist_yaw_joint": 3.,
