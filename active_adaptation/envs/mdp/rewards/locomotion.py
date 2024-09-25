@@ -845,7 +845,7 @@ class impedance_yaw_pos(Reward):
     
     def compute(self) -> torch.Tensor:
         diff = wrap_to_pi(self.command_manager.command_yaw_w - self.asset.data.heading_w.unsqueeze(1))
-        error_l2 = diff.quare().sum(dim=-1, keepdim=True)
+        error_l2 = diff.square().sum(dim=-1, keepdim=True)
         r = torch.exp(- error_l2 / 0.25) - error_l2
         return r
 

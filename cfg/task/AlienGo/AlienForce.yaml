@@ -9,7 +9,7 @@ defaults:
   - _self_
 
 robot: aliengo
-terrain: plane
+terrain: easy
 payload: false
 homogeneous: false
 
