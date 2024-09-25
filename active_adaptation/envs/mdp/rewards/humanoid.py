@@ -82,19 +82,26 @@ class feet_swing(Reward):
 
 class feet_orientation(Reward):
 
-    def __init__(self, env, feet_names: str, weight: float, enabled: bool = True):
+    def __init__(self, env, feet_names: str, weight: float, enabled: bool = True, body_name: str=None):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.feet_id = self.asset.find_bodies(feet_names)[0]
         self.heading_feet = torch.tensor([[[1., 0., 0.]]], device=self.device)
         self.heading_root = torch.tensor([[[1., 0., 0.]]], device=self.device)
+        if body_name is not None:
+            self.body_id = self.asset.find_bodies(body_name)[0][0]
+        else:
+            self.body_id = None
     
     def compute(self) -> torch.Tensor:
         quat_feet = yaw_quat(self.asset.data.body_quat_w[:, self.feet_id])
-        quat_root = yaw_quat(self.asset.data.root_quat_w).unsqueeze(1)
+        if self.body_id is not None:
+            quat_body = yaw_quat(self.asset.data.body_quat_w[:, self.body_id]).unsqueeze(1)
+        else:
+            quat_body = yaw_quat(self.asset.data.root_quat_w).unsqueeze(1)
         reward = dot(
             quat_rotate(quat_feet, self.heading_feet), 
-            quat_rotate(quat_root, self.heading_root)
+            quat_rotate(quat_body, self.heading_root)
         )
         return (reward.square() * reward.sign()).mean(1)
 

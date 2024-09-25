@@ -128,7 +128,8 @@ class Command2(Command):
         resample_prob: float = 0.75, 
         stand_prob=0.2,
         target_yaw_range=(0, torch.pi * 2),
-        adaptive: bool = False
+        adaptive: bool = False,
+        body_name: str = None
     ):
         super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
@@ -145,6 +146,12 @@ class Command2(Command):
 
         if self.adaptive:
             self.ground_mesh = _initialize_warp_meshes("/World/ground", "cuda")
+
+        if body_name is not None:
+            self.body_id = self.asset.find_bodies(body_name)[0][0]
+            self.FWDVEC = torch.tensor([1., 0., 0.], device=self.device).expand(self.num_envs, 3)
+        else:
+            self.body_id = None
 
         with torch.device(self.device):
             if all(isinstance(r, Sequence) for r in target_yaw_range):
@@ -181,14 +188,20 @@ class Command2(Command):
         self._cum_angvel_error[env_ids] = 0.
     
     def update(self):
+        if self.body_id is not None:
+            self.body_quat_w = self.asset.data.body_quat_w[:, self.body_id]
+            forward_w = quat_rotate(self.body_quat_w, self.FWDVEC)
+            self.body_heading_w = torch.atan2(forward_w[:, 1], forward_w[:, 0])
+        else:
+            self.body_heading_w = self.asset.data.heading_w
         interval_reached = (self.env.episode_length_buf + 1) % self.resample_interval == 0
         resample_vel = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
         resample_yaw = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
         self.sample_vel_command(resample_vel.nonzero().squeeze(-1))
         self.sample_yaw_command(resample_yaw.nonzero().squeeze(-1))
 
-        self.target_yaw[~self.use_stiffness] = self.robot.data.heading_w[~self.use_stiffness]
-        yaw_diff = self.target_yaw - self.robot.data.heading_w
+        self.target_yaw[~self.use_stiffness] = self.body_heading_w[~self.use_stiffness]
+        yaw_diff = self.target_yaw - self.body_heading_w
         command_yaw_speed = torch.clamp(
             self.yaw_stiffness * math_utils.wrap_to_pi(yaw_diff), 
             min=self.angvel_range[0],

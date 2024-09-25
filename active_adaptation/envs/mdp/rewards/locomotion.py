@@ -94,12 +94,32 @@ class linvel_z_l2(Reward):
         return - linvel_z.square() * self.coeff
 
 
-@reward_func
-def angvel_xy_l2(self):
-    asset: Articulation = self.scene["robot"]
-    r = - asset.data.root_ang_vel_b[:, :2].square().sum(-1, True)
-    return r * (0.5 + 0.5 * asset.data.linvel_exp)
-
+class angvel_xy_l2(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True, body_name: str=None):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        if body_name is not None:
+            self.body_id = self.asset.find_bodies(body_name)[0][0]
+        else:
+            self.body_id = None
+        self.world_frame = False
+            
+    def update(self):
+        if self.body_id is not None:
+            angvel = self.asset.data.body_ang_vel_w[:, self.body_id]
+            if not self.world_frame:
+                angvel = quat_rotate_inverse(self.asset.data.root_quat_w, angvel)
+        else:
+            if self.world_frame:
+                angvel = self.asset.data.root_ang_vel_w
+            else:
+                angvel = self.asset.data.root_ang_vel_b
+        self.angvel = angvel
+    
+    def compute(self) -> torch.Tensor:
+        r = - self.angvel[:, :2].square().sum(-1, True)
+        return r
+        
 
 @reward_func
 def heading_yaw(self):
@@ -388,26 +408,52 @@ class angvel_z_exp(Reward):
         env, 
         weight: float, 
         enabled: bool = True, 
-        world_frame: bool=False
+        world_frame: bool=False,
+        body_name: str=None,
     ):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.world_frame = world_frame
         self.target_angvel: torch.Tensor = self.env.command_manager.command_angvel
-    
-    def compute(self) -> torch.Tensor:
-        if self.world_frame:
-            angvel_z = self.asset.data.root_ang_vel_w[:, 2]
+        
+        if body_name is not None:
+            self.body_id = self.asset.find_bodies(body_name)[0][0]
         else:
-            angvel_z = self.asset.data.root_ang_vel_b[:, 2]
+            self.body_id = None
+
+    def update(self):
+        if self.body_id is not None:
+            angvel = self.asset.data.body_ang_vel_w[:, self.body_id]
+            if not self.world_frame:
+                angvel = quat_rotate_inverse(self.asset.data.root_quat_w, angvel)
+        else:
+            if self.world_frame:
+                angvel = self.asset.data.root_ang_vel_w
+            else:
+                angvel = self.asset.data.root_ang_vel_b
+        self.angvel = angvel
+
+    def compute(self) -> torch.Tensor:
         angvel_error = (
-            (self.target_angvel - angvel_z)
+            (self.target_angvel - self.angvel[:, 2])
             .square()
             .unsqueeze(1)
         )
         r = torch.exp(- angvel_error / 0.25)
         return r
 
+    def debug_draw(self):
+        if self.body_id is not None:
+            fwd = torch.tensor([1., 0., 0.], device=self.device)
+            body_quat_w = self.asset.data.body_quat_w[:, self.body_id]
+            fwd = quat_rotate(body_quat_w, fwd.expand(self.num_envs, 3))
+            
+            self.env.debug_draw.vector(
+                self.asset.data.root_pos_w,
+                fwd,
+                color=(1., 0., 0., 1.),
+                size=2.0
+            )
 
 class angvel_z_exp_shaped(Reward):
     def __init__(
