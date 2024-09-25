@@ -125,8 +125,8 @@ UNITREE_ALIENGO_CFG.init_state.pos = (0., 0., 0.40)
 UNITREE_ALIENGO_CFG.init_state.joint_pos = {
     ".*L_hip_joint": 0.2,
     ".*R_hip_joint": -0.2,
-    ".*_thigh_joint": 0.8,
-    ".*_calf_joint": -1.5,
+    ".*_thigh_joint": 1.0,
+    ".*_calf_joint": -1.8,
 }
 UNITREE_ALIENGO_CFG.actuators["base_legs"] = DCMotorCfg(
     joint_names_expr=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
