@@ -54,7 +54,9 @@ observation:
 reward:
   loco:
     linvel_exp:         {weight: 1.5, enabled: false, dim: 3, yaw_only: true}
-    angvel_z_exp:       {weight: 1.0, enabled: true}
+    angvel_z_exp:       {weight: 1.0, enabled: false}
+    impedance_yaw_pos:      {weight: 1.0, enabled: true}
+    impedance_yaw_vel:      {weight: 1.5, enabled: true}
     impedance_pos:      {weight: 1.0, enabled: true}
     impedance_vel:      {weight: 1.5, enabled: true}
     linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
@@ -78,10 +80,11 @@ reward:
     com_support:        {weight: 1.0, enabled: true}
 
 termination:
-  crash: {body_names_expr: [Head.*, "base"], t_thres: 0.1, z_thres: -0.2}
+  # crash: {body_names_expr: [Head.*, "base"], t_thres: 0.1, z_thres: -0.2}
+  crash: {body_names_expr: [Head.*, "base", ".*_calf"], t_thres: 0.1, z_thres: -0.2}
   fall_over: {xy_thres: 0.7}
   # joint_acc_exceeds: {thres: 5000}
-  # cum_error: {thres: 1.0}
+  cum_error: {thres: 0.5, min_steps: 100}
 
 randomization:
   perturb_body_mass:

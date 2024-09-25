@@ -209,13 +209,12 @@ class Env(EnvBase):
             device=self.device
         )
 
-        self.termination_funcs = OrderedDict(
-            {
-                key: TERM_FUNCS[key](self, **params) 
-                for key, params in self.cfg.termination.items()
-            }
-        )
-
+        self.termination_funcs = OrderedDict()
+        for key, params in self.cfg.termination.items():
+            term_func = TERM_FUNCS[key](self, **params)
+            self.termination_funcs[key] = term_func
+            self._update_callbacks.append(term_func.update)
+            self._reset_callbacks.append(term_func.reset)
         
         self.time_stamp = 0
     

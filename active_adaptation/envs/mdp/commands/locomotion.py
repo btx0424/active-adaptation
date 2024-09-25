@@ -589,7 +589,7 @@ class Impedance(Command):
         
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 10)
-            self.command_hidden = torch.zeros(self.num_envs, 7)
+            self.command_hidden = torch.zeros(self.num_envs, 8)
             
             self.command_linvel = torch.zeros(self.num_envs, 3)
             self.command_speed = torch.zeros(self.num_envs, 1)
@@ -597,6 +597,8 @@ class Impedance(Command):
             self.command_pos_w = torch.zeros(self.num_envs, 3)
             self.command_linvel_w = torch.zeros(self.num_envs, 3)
 
+            self.command_yaw_w = torch.zeros(self.num_envs, 1)
+            self.command_angvel = torch.zeros(self.num_envs)
             # integration
             self.desired_lin_acc_w = torch.zeros(self.num_envs, self.temporal_smoothing, 3)
             self.desired_lin_vel_w = torch.zeros(self.num_envs, self.temporal_smoothing, 3)
@@ -609,7 +611,6 @@ class Impedance(Command):
             self.smoothing_weight = torch.full((1, self.temporal_smoothing), 0.9).cumprod(1)
             self.smoothing_weight = self.smoothing_weight.flip(dims=(1,)) / self.smoothing_weight.sum()
 
-            self.command_angvel = torch.zeros(self.num_envs)
             self.command_setpos_w = torch.zeros(self.num_envs, 3)
             self.command_setrpy_w = torch.zeros(self.num_envs, 3)
             
@@ -722,13 +723,18 @@ class Impedance(Command):
     def update(self):
         self._compute_errors()
 
-        self.desired_lin_vel_w[:, :-1] = self.desired_lin_vel_w[:, :-1].roll(1, dims=1)
-        self.desired_pos_w[:, :-1] = self.desired_pos_w[:, :-1].roll(1, dims=1)
-        self.desired_pos_w[:, -1].lerp_(self.asset.data.root_pos_w, 0.01)
+        # self.desired_lin_vel_w[:, :-1] = self.desired_lin_vel_w[:, :-1].roll(1, dims=1)
+        # self.desired_pos_w[:, :-1] = self.desired_pos_w[:, :-1].roll(1, dims=1)
+        # self.desired_yaw_vel_w[:, :-1] = self.desired_yaw_vel_w[:, :-1].roll(1, dims=1)
+        # self.desired_yaw_w[:, :-1] = self.desired_yaw_w[:, :-1].roll(1, dims=1)
         
-        self.desired_yaw_vel_w[:, :-1] = self.desired_yaw_vel_w[:, :-1].roll(1, dims=1)
-        self.desired_yaw_w[:, :-1] = self.desired_yaw_w[:, :-1].roll(1, dims=1)
-        self.desired_yaw_vel_w[:, -1].lerp_(self.asset.data.root_ang_vel_w[:, 2:3], 0.01)
+        # self.desired_pos_w[:, -1].lerp_(self.asset.data.root_pos_w, 0.01)
+        # self.desired_yaw_vel_w[:, -1].lerp_(self.asset.data.root_ang_vel_w[:, 2:3], 0.01)
+
+        self.desired_lin_vel_w[:] = self.desired_lin_vel_w.roll(1, dims=1)
+        self.desired_pos_w[:] = self.desired_pos_w.roll(1, dims=1)
+        self.desired_yaw_vel_w[:] = self.desired_yaw_vel_w.roll(1, dims=1)
+        self.desired_yaw_w[:] = self.desired_yaw_w.roll(1, dims=1)
         
         self.desired_lin_vel_w[:, 0] = self.asset.data.root_lin_vel_w
         self.desired_pos_w[:, 0] = self.asset.data.root_pos_w
@@ -753,6 +759,10 @@ class Impedance(Command):
         self.command_linvel_w[:] = self._smooth(self.desired_lin_vel_w)
         self.command_angvel[:] = self._smooth(self.desired_yaw_vel_w).squeeze(-1)
         self.command_pos_w[:] = self._smooth(self.desired_pos_w)
+        _yaw_diff = self.desired_yaw_w - self.desired_yaw_w[:, 0:1]
+        self.desired_yaw_w[:] = self.desired_yaw_w[:, 0:1] + math_utils.wrap_to_pi(_yaw_diff)
+        self.command_yaw_w[:] = self._smooth(self.desired_yaw_w)
+        
         self.is_standing_env[:] = (
             (self.command_linvel_w.norm(dim=-1, keepdim=True) < 0.1)
             & (self.command_angvel.abs() < 0.1).unsqueeze(1)
@@ -766,6 +776,7 @@ class Impedance(Command):
         
         linvel_noise = torch.randn_like(self.asset.data.root_lin_vel_b).clip(-1, 1) * 0.1
         yaw_diff = math_utils.wrap_to_pi(self.command_setrpy_w[:, 2] - self.asset.data.heading_w)
+        command_yaw_diff = math_utils.wrap_to_pi(self.command_yaw_w - self.asset.data.heading_w.unsqueeze(1))
         
         self.command[:, :2] = command_setpos_b[:, :2]
         self.command[:, 2] = yaw_diff
@@ -777,6 +788,7 @@ class Impedance(Command):
         self.command_hidden[:, 0:3] = command_pos_b
         self.command_hidden[:, 3:6] = self.command_linvel
         self.command_hidden[:, 6] = self.command_angvel
+        self.command_hidden[:, 7:8] = command_yaw_diff
 
         if self.teleop:
             for key, vec in self.key_mappings_pos.items():

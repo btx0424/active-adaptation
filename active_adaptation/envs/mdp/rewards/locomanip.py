@@ -93,29 +93,29 @@ class impedance_ee_vel_b(Reward):
         r = torch.exp(- diff.square().sum(dim=-1, keepdim=True) / self.l)
         return r * self.command_manager.is_arm_activated
 
-class impedance_yaw_pos(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
-        super().__init__(env, weight, enabled)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: BaseEEImpedance | Impedance = self.env.command_manager
-        self.l = l
+# class impedance_yaw_pos(Reward):
+#     def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
+#         super().__init__(env, weight, enabled)
+#         self.asset: Articulation = self.env.scene["robot"]
+#         self.command_manager: BaseEEImpedance | Impedance = self.env.command_manager
+#         self.l = l
     
-    def compute(self) -> torch.Tensor:
-        diff = wrap_to_pi(self.command_manager.command_yaw_w - self.asset.data.heading_w[:, None])
-        r = torch.exp(- diff.abs() / self.l)
-        return r
+#     def compute(self) -> torch.Tensor:
+#         diff = wrap_to_pi(self.command_manager.command_yaw_w - self.asset.data.heading_w[:, None])
+#         r = torch.exp(- diff.abs() / self.l)
+#         return r
 
-class impedance_yaw_vel(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
-        super().__init__(env, weight, enabled)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: BaseEEImpedance | Impedance = self.env.command_manager
-        self.l = l
+# class impedance_yaw_vel(Reward):
+#     def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
+#         super().__init__(env, weight, enabled)
+#         self.asset: Articulation = self.env.scene["robot"]
+#         self.command_manager: BaseEEImpedance | Impedance = self.env.command_manager
+#         self.l = l
     
-    def compute(self) -> torch.Tensor:
-        diff = (self.command_manager.command_yaw_vel - self.asset.data.root_ang_vel_w[:, 2:3])
-        r = torch.exp(- diff.abs() / self.l)
-        return r
+#     def compute(self) -> torch.Tensor:
+#         diff = (self.command_manager.command_yaw_vel - self.asset.data.root_ang_vel_w[:, 2:3])
+#         r = torch.exp(- diff.abs() / self.l)
+#         return r
 
 class ee_forward(Reward):
     def __init__(self, env, weight: float, enabled: bool = True):
