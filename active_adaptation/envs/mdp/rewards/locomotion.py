@@ -4,7 +4,7 @@ import abc
 
 from omni.isaac.lab.sensors import ContactSensor
 from omni.isaac.lab.assets import Articulation
-from omni.isaac.lab.utils.math import yaw_quat
+from omni.isaac.lab.utils.math import yaw_quat, wrap_to_pi
 import omni.isaac.lab.utils.string as string_utils
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from active_adaptation.utils.helpers import batchify
@@ -832,6 +832,32 @@ class impedance_vel(Reward):
         diff = (self.command_manager.command_linvel_w - self.asset.data.root_lin_vel_w)
         command_speed = self.command_manager.command_speed
         diff = torch.where(command_speed < 1.0, diff, diff / command_speed)
+        error_l2 = diff.square().sum(dim=-1, keepdim=True)
+        r = torch.exp(- error_l2 / 0.25) - error_l2
+        return r
+
+
+class impedance_yaw_pos(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.command_manager: Impedance = self.env.command_manager
+    
+    def compute(self) -> torch.Tensor:
+        diff = wrap_to_pi(self.command_manager.command_yaw_w - self.asset.data.heading_w.unsqueeze(1))
+        error_l2 = diff.square().sum(dim=-1, keepdim=True)
+        r = torch.exp(- error_l2 / 0.25) - error_l2
+        return r
+
+
+class impedance_yaw_vel(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.command_manager: Impedance = self.env.command_manager
+    
+    def compute(self) -> torch.Tensor:
+        diff = (self.command_manager.command_angvel.unsqueeze(1) - self.asset.data.root_ang_vel_b[:, 2:3])
         error_l2 = diff.square().sum(dim=-1, keepdim=True)
         r = torch.exp(- error_l2 / 0.25) - error_l2
         return r

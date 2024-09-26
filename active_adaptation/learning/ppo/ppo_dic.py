@@ -383,11 +383,14 @@ class PPODICPolicy(TensorDictModuleBase):
             for epoch in range(2):
                 for minibatch in make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every):
                     self.adapt_module(minibatch)
-                    priv_loss = F.mse_loss(minibatch["priv_pred"], minibatch["_priv_feature"])
-                    ext_loss = F.mse_loss(minibatch["ext_pred"], minibatch["_ext_feature"])
+                    priv_loss = F.mse_loss(minibatch["priv_pred"], minibatch["_priv_feature"], reduce="none")
+                    priv_loss = (priv_loss * (~minibatch["is_init"])).mean()
+                    ext_loss = F.mse_loss(minibatch["ext_pred"], minibatch["_ext_feature"], reduce="none")
+                    ext_loss = (ext_loss * (~minibatch["is_init"])).mean()
                     if self.ext_rec_lambda > 0:
                         self.ext_decoder(minibatch)
-                        ext_rec_error = F.mse_loss(minibatch["ext_rec"], minibatch["ext_"])
+                        ext_rec_error = F.mse_loss(minibatch["ext_rec"], minibatch["ext_"], reduce="none")
+                        ext_rec_error = (ext_rec_error * (~minibatch["is_init"])).mean()
                     else:
                         ext_rec_error = 0.
                     self.opt_adapt.zero_grad()
@@ -455,7 +458,8 @@ class PPODICPolicy(TensorDictModuleBase):
         value_loss = (value_loss * (~tensordict["is_init"])).mean()
 
         if self.cfg.phase == "train" and self.reg_lambda > 0:
-            reg_loss = self.reg_lambda * F.mse_loss(tensordict["_priv_feature"], tensordict["priv_pred"])
+            reg_loss = F.mse_loss(tensordict["_priv_feature"], tensordict["priv_pred"], reduce="none")
+            reg_loss = self.reg_lambda * (reg_loss * (~tensordict["is_init"])).mean()
         else:
             reg_loss = 0.
             

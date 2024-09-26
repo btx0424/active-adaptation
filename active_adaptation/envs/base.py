@@ -212,7 +212,10 @@ class Env(EnvBase):
         for key, params in self.cfg.termination.items():
             term_func = TERM_FUNCS[key](self, **params)
             self.termination_funcs[key] = term_func
+            self._update_callbacks.append(term_func.update)
+            self._reset_callbacks.append(term_func.reset)
             self.reward_spec["stats", "termination", key] = UnboundedContinuousTensorSpec((self.num_envs, 1), device=self.device)
+        
         self.time_stamp = 0
 
         self.stats = self.reward_spec["stats"].zero()
