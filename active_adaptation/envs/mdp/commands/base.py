@@ -4,6 +4,7 @@ import omni
 import weakref
 
 from omni.isaac.lab.assets import Articulation
+from omni.isaac.lab.utils.math import quat_mul
 from typing import Sequence, TYPE_CHECKING
 from collections import defaultdict
 
@@ -30,6 +31,7 @@ class Command:
         self.env: Env = env
         self.asset: Articulation = env.scene["robot"]
         self.init_root_state = self.asset.data.default_root_state.clone()
+        self.init_root_state[:, 3:7] = self.asset.data.root_state_w[:, 3:7]
         self.init_joint_pos = self.asset.data.default_joint_pos.clone()
         self.init_joint_vel = self.asset.data.default_joint_vel.clone()
         self.teleop = teleop
@@ -77,7 +79,10 @@ class Command:
                 )
             ]
         init_root_state[:, :3] += origins
-        init_root_state[:, 3:7] = sample_quat_yaw(len(env_ids), device=self.device)
+        init_root_state[:, 3:7] = quat_mul(
+            init_root_state[:, 3:7],
+            sample_quat_yaw(len(env_ids), device=self.device)
+        )
         return init_root_state
 
     def _on_keyboard_event(self, event, *args, **kwargs):

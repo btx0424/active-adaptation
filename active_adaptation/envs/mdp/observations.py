@@ -290,10 +290,11 @@ class projected_gravity_b(Observation):
     def __init__(self, env, noise_std: float=0.):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
+        self.init_quat = self.asset.data.root_quat_w.clone()
         self.noise_std = noise_std
     
     def compute(self):
-        projected_gravity_b = self.asset.data.projected_gravity_b
+        projected_gravity_b = quat_rotate_inverse(self.init_quat, self.asset.data.projected_gravity_b)
         noise = torch.randn_like(projected_gravity_b).clip(-3., 3.) * self.noise_std
         projected_gravity_b += noise
         return projected_gravity_b / projected_gravity_b.norm(dim=-1, keepdim=True)
