@@ -73,13 +73,18 @@ observation:
 
 reward:
   loco:
-    linvel_exp:         {weight: 1.5, enabled: true, body_names: waist_yaw_link, yaw_only: true}
+    linvel_exp:         {weight: 1.5, enabled: true, body_names: waist_yaw_link, yaw_only: true, dim: 2}
+    angvel_z_exp:       {weight: 1.5, enabled: true, body_name: waist_yaw_link,  world_frame: true}
+    angvel_xy_l2:       {weight: 0.2, enabled: true, body_name: waist_yaw_link}
+
+    # linvel_exp:         {weight: 1.5, enabled: true, yaw_only: true, dim: 2}
+    # angvel_z_exp:       {weight: 1.5, enabled: true, world_frame: true}
+    # angvel_xy_l2:       {weight: 0.2, enabled: true}
+
     linacc_z_l2:        {weight: 0.005, enabled: false}
     linvel_projection:  {weight: 1.0, enabled: true, yaw_only: true}
-    angvel_z_exp:       {weight: 1.5, enabled: true, body_name: waist_yaw_link,  world_frame: true}
     angvel_z_exp_shaped: {weight: 1.0, enabled: false}
     linvel_z_l2:        {weight: 0.5, enabled: true}
-    angvel_xy_l2:       {weight: 0.2, enabled: true, body_name: waist_yaw_link}
     energy_l1:          {weight: 5.0e-4, enabled: true}
     joint_acc_l2:       {weight: 1.0e-8, enabled: true}
     joint_torques_l2:   {weight: 1.0e-5, enabled: true, joint_names: .*arm_joint.*}
@@ -95,7 +100,7 @@ reward:
     feet_orientation:   {weight: 0.2, enabled: true, feet_names: .*leg_link5, body_name: waist_yaw_link}
     feet_step:          {weight: 1.0, enabled: true,  feet_names: .*leg_link6}
     # arm_swing:          {weight: 1.0, enabled: true, arm_names: .*arm_link5}
-    joint_pos_default:  {weight: 0.25, enabled: true, joint_names: ".*arm_joint[2,4]"}
+    joint_pos_default:  {weight: 0.25, enabled: true, joint_names: [.*arm_joint1, waist_yaw_joint]}
     joint_vel_l2:       {weight: 0.002, enabled: true, joint_names: .*arm_joint.*}
     feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}
     undesired_contact:  {weight: 0.2, enabled: true, body_names: .*arm_link6}
@@ -106,8 +111,8 @@ randomization:
     .*: [0.9, 1.1]
   perturb_body_materials:
     body_names: ".*leg_link6"
-    static_friction_range: [0.6, 2.0]
-    dynamic_friction_range: [0.6, 2.0]
+    static_friction_range: [0.6, 4.0]
+    dynamic_friction_range: [0.6, 4.0]
     restitution_range: [0.0, 0.2]
   motor_params:
     actuator_name:    base_legs
