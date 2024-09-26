@@ -6,9 +6,9 @@ import cv2
 from tensordict.tensordict import TensorDictBase, TensorDict
 from torchrl.envs import EnvBase
 from torchrl.data import (
-    CompositeSpec, 
-    BinaryDiscreteTensorSpec, 
-    UnboundedContinuousTensorSpec
+    Composite, 
+    Binary, 
+    UnboundedContinuousTensorSpec,
 )
 import builtins
 
@@ -80,18 +80,18 @@ class Env(EnvBase):
 
         # parse obs and reward functions
         self.done_spec = (
-            CompositeSpec(
+            Composite(
                 {
-                    "done": BinaryDiscreteTensorSpec(1, dtype=bool),
-                    "terminated": BinaryDiscreteTensorSpec(1, dtype=bool),
-                    "truncated": BinaryDiscreteTensorSpec(1, dtype=bool),
+                    "done": Binary(1, dtype=bool),
+                    "terminated": Binary(1, dtype=bool),
+                    "truncated": Binary(1, dtype=bool),
                 },
             )
             .expand(self.num_envs)
             .to(self.device)
         )
 
-        self.reward_spec = CompositeSpec(
+        self.reward_spec = Composite(
             {
                 "stats": {
                     "episode_len": UnboundedContinuousTensorSpec([self.num_envs, 1]),
@@ -130,7 +130,7 @@ class Env(EnvBase):
         self.action_manager: mdp.ActionManager = hydra.utils.instantiate(self.cfg.action, env=self)
         self._reset_callbacks.append(self.action_manager.reset)
         
-        self.action_spec = CompositeSpec(
+        self.action_spec = Composite(
             {
                 "action": UnboundedContinuousTensorSpec((self.num_envs, self.action_dim))
             },
@@ -160,7 +160,7 @@ class Env(EnvBase):
         for callback in self._startup_callbacks:
             callback()        
        
-        reward_spec = CompositeSpec({})
+        reward_spec = Composite({})
 
         # parse rewards
         self.clip_rewards = self.cfg.reward.pop("_clip_", True)
@@ -184,7 +184,6 @@ class Env(EnvBase):
         reward_spec["reward"] = UnboundedContinuousTensorSpec(len(self.reward_groups), device=self.device)
 
         self.reward_spec.update(reward_spec.expand(self.num_envs).to(self.device))
-        self.stats = self.reward_spec["stats"].zero()
 
         observation_spec = {}
         for group, funcs in self.observation_funcs.items():
@@ -196,28 +195,27 @@ class Env(EnvBase):
                 print(f"\t{obs_name}: \t{tensor.shape}, \tmask_ratio {func.mask_ratio:.2f}")
             tensor = torch.cat(tensors, -1)
             observation_spec[group] = UnboundedContinuousTensorSpec(tensor.shape, device=self.device)
-            observation_spec[group + "_mask_"] = BinaryDiscreteTensorSpec(
+            observation_spec[group + "_mask_"] = Binary(
                 len(funcs), 
                 (self.num_envs, len(funcs)), 
                 device=self.device, dtype=bool
             )
             print("\t Split: ", [t.shape[-1] for t in tensors])
 
-        self.observation_spec = CompositeSpec(
+        self.observation_spec = Composite(
             observation_spec, 
             shape=[self.num_envs],
             device=self.device
         )
 
-        self.termination_funcs = OrderedDict(
-            {
-                key: TERM_FUNCS[key](self, **params) 
-                for key, params in self.cfg.termination.items()
-            }
-        )
-
-        
+        self.termination_funcs = OrderedDict()
+        for key, params in self.cfg.termination.items():
+            term_func = TERM_FUNCS[key](self, **params)
+            self.termination_funcs[key] = term_func
+            self.reward_spec["stats", "termination", key] = UnboundedContinuousTensorSpec((self.num_envs, 1), device=self.device)
         self.time_stamp = 0
+
+        self.stats = self.reward_spec["stats"].zero()
     
         # Video recording variables
         self.video_frames = []
@@ -318,10 +316,15 @@ class Env(EnvBase):
 
         self.stats["episode_len"][:] = self.episode_length_buf.unsqueeze(1)
         self.stats["success"][:] = (self.episode_length_buf >= self.max_episode_length * 0.9).unsqueeze(1).float()
-        return {"reward": rewards, "stats": self.stats.clone()}
+        return {"reward": rewards}
     
     def _compute_termination(self) -> TensorDictBase:
-        flags = torch.cat([func() for func in self.termination_funcs.values()], dim=-1)
+        flags = []
+        for key, func in self.termination_funcs.items():
+            flag = func()
+            self.stats["termination", key][:] = flag.float()
+            flags.append(flag)
+        flags = torch.cat(flags, dim=-1)
         return flags.any(dim=-1, keepdim=True)
 
     def _update(self):
@@ -362,6 +365,7 @@ class Env(EnvBase):
         tensordict.set("terminated", terminated)
         tensordict.set("truncated", truncated)
         tensordict.set("done", terminated | truncated)
+        tensordict["stats"] = self.stats.clone()
 
         if self.sim.has_gui() and hasattr(self, "debug_draw"):
             self.debug_draw.clear()
