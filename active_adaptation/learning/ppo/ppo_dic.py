@@ -252,7 +252,7 @@ class PPODICPolicy(TensorDictModuleBase):
             nn.LazyLinear(self.ext_dim)
         )
         ext_decoder_in_keys = list(self.cfg.ext_decoder_in_keys)
-        if self.cfg.phase != "train":
+        if self.cfg.phase in ("adapt", "finetune"):
             if "_priv_feature" in ext_decoder_in_keys:
                 ext_decoder_in_keys.remove("_priv_feature")
                 ext_decoder_in_keys.append("priv_pred")
