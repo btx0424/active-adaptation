@@ -88,7 +88,7 @@ reward:
 
 termination:
   # joint_acc_exceeds: {thres: 5000.}
-  cum_error: {thres: 0.01, min_steps: 50}
+  cum_error: {thres: 0.15, min_steps: 50}
 
 randomization:
   reset_joint_states_uniform:
