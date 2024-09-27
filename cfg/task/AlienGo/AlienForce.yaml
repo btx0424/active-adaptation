@@ -9,7 +9,7 @@ defaults:
   - _self_
 
 robot: aliengo
-terrain: easy
+terrain: plane
 payload: false
 homogeneous: false
 
@@ -55,8 +55,8 @@ observation:
     external_forces:  {body_names: ["base"]}
     external_torques: {body_names: ["base"]}
   ext_:
-    external_forces:  {body_names: ["base"]}
-    external_torques: {body_names: ["base"]}
+    external_forces:  {body_names: ["base"], divide_by_mass: false}
+    external_torques: {body_names: ["base"], divide_by_mass: false}
 
 reward:
   loco:
