@@ -232,6 +232,7 @@ class Env(EnvBase):
 
         self.use_flipping = False
         self.fliplr = torch.zeros(self.num_envs, dtype=bool, device=self.device)
+        self.extra = {}
 
     @property
     def action_dim(self) -> int:
@@ -438,6 +439,9 @@ class Env(EnvBase):
             self.sim.clear_instance()
             # update closing status
             super().close()
+
+    def get_extra_state(self) -> dict:
+        return dict(self.extra)
 
 
 def generate_mask(size: int, split: torch.Tensor, device: str):
