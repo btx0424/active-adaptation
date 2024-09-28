@@ -17,6 +17,10 @@ class Termination:
     @abc.abstractmethod
     def __call__(self) -> torch.Tensor:
         raise NotImplementedError
+    
+    @property
+    def num_envs(self) -> int:
+        return self.env.num_envs
 
 
 def termination_func(func):
@@ -40,14 +44,23 @@ class crash(Termination):
         self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
         self.body_indices, self.body_names = self.contact_sensor.find_bodies(body_names_expr)
         self.t_thres = t_thres
+        self._decay = 0.98
+        self._thres = (self.t_thres / self.env.physics_dt) * 0.9
+        self.count = torch.zeros(self.num_envs, len(self.body_indices), device=self.env.device)
         self.min_steps = int(min_time / self.env.step_dt)
         print(f"Terminate upon contact on {self.body_names}")
     
+    def reset(self, env_ids):
+        self.count[env_ids] = 0.
+    
+    def update(self):
+        in_contact = self.contact_sensor.data.net_forces_w[:, self.body_indices].norm(dim=-1) > 1.0
+        self.count.add_(in_contact.float()).mul_(self._decay)
+        
     def __call__(self):
-        contact_times = self.contact_sensor.data.current_contact_time[:, self.body_indices]
-        undesired_contact = (contact_times > self.t_thres).any(dim=-1)
         valid = (self.env.episode_length_buf > self.min_steps)
-        return (undesired_contact & valid).unsqueeze(1)
+        undesired_contact = (self.count > self._thres).any(-1)
+        return (undesired_contact & valid).reshape(self.num_envs, 1)
 
 
 class fall_over(Termination):
