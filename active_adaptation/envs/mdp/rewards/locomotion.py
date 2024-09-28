@@ -299,7 +299,8 @@ class linvel_exp(Reward):
         sigma: float=0.25, 
         dim: int=3,
         yaw_only: bool=False,
-        gamma: float=0.0
+        gamma: float=0.0,
+        upright: bool=False
     ):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
@@ -307,6 +308,7 @@ class linvel_exp(Reward):
         self.dim = dim
         self.yaw_only = yaw_only
         self.gamma = gamma
+        self.upright = upright
         if body_names is not None:
             self.body_ids, self.body_names = self.asset.find_bodies(body_names)
             self.body_masses = self.asset.root_physx_view.get_masses()[0, self.body_ids]
@@ -317,7 +319,8 @@ class linvel_exp(Reward):
         self.linvel_w = torch.zeros(self.num_envs, 3, device=self.device)
         self.linvel_b = torch.zeros(self.num_envs, 3, device=self.device)
         self.count = torch.zeros(self.num_envs, 1, device=self.device)
-    
+        self.command_manager: Command2 = self.env.command_manager
+
     def reset(self, env_ids):
         self.linvel_w[env_ids] = 0.
         self.count[env_ids] = 0.
@@ -338,12 +341,15 @@ class linvel_exp(Reward):
         
     def compute(self) -> torch.Tensor:
         linvel_error = (
-            (self.linvel_b[:, :self.dim] - self.env.command_manager.command_linvel[:, :self.dim])
+            (self.linvel_b[:, :self.dim] - self.command_manager.command_linvel[:, :self.dim])
             .square()
             .sum(-1, True)
         )
         self.asset.data.linvel_exp = torch.exp(- linvel_error / self.sigma)
-        return self.asset.data.linvel_exp * -self.asset.data.projected_gravity_b[:, 2].unsqueeze(1)
+        if self.upright:
+            return self.asset.data.linvel_exp * -self.asset.data.projected_gravity_b[:, 2].unsqueeze(1)
+        else:
+            return self.asset.data.linvel_exp
 
     def debug_draw(self):
         self.env.debug_draw.vector(

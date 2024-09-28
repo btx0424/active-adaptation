@@ -179,6 +179,11 @@ class Command2(Command):
             self._cum_error = torch.zeros(self.num_envs, 2)
             self._cum_linvel_error = self._cum_error[:, 0].unsqueeze(1)
             self._cum_angvel_error = self._cum_error[:, 1].unsqueeze(1)
+            
+        self._decay = 0.999
+        self._sum_error = torch.tensor(0.0, device=self.device)
+        self._count = torch.tensor(0.0, device=self.device)
+        self._avg_error = torch.tensor(0.0, device=self.device)
         
     def reset(self, env_ids, reward_stats = None):
         self.command[env_ids] = 0.
@@ -186,6 +191,7 @@ class Command2(Command):
         self.sample_yaw_command(env_ids)
         self._cum_linvel_error[env_ids] = 0.
         self._cum_angvel_error[env_ids] = 0.
+        self.env.extra["stats/avg_error"] = self._avg_error.item()
     
     def update(self):
         if self.body_id is not None:
@@ -210,9 +216,13 @@ class Command2(Command):
         self.command_angvel[:] = torch.where(self.use_stiffness, command_yaw_speed, self.fixed_yaw_speed)
 
         # this is used for terminating episodes where the robot is inactive due to whatever reason
-        linvel_error = (self.robot.data.root_lin_vel_b[:, :2] - self.command[:, :2]).norm(dim=-1, keepdim=True)
+        linvel_error = (self.robot.data.root_lin_vel_w[:, :2] - self.command_linvel_w[:, :2]).norm(dim=-1, keepdim=True)
         angvel_error = (self.command_angvel - self.robot.data.root_ang_vel_w[:, 2]).abs().unsqueeze(1)
-        
+
+        self._sum_error.add_(linvel_error.sum()).mul_(self._decay)
+        self._count.add_(self.num_envs).mul_(self._decay)
+        self._avg_error.copy_(self._sum_error / self._count)
+
         if self.adaptive:
             self.ray_start_w = self.robot.data.root_pos_w + torch.tensor([0., 0., -0.2], device=self.device)
             ray_direction = quat_rotate(self.asset.data.root_quat_w, self._target_direction)

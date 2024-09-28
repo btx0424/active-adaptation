@@ -116,8 +116,9 @@ reward:
     com_support:        {weight: 1.0, enabled: true}
 
 termination:
-  crash: {body_names_expr: [Head.*, "base"], t_thres: 0.5, z_thres: 0.}
+  crash: {body_names_expr: [Head.*, "base"], t_thres: 0.5}
   # joint_acc_exceeds: {thres: 5000}
+  fall_over: {xy_thres: 0.9}
   cum_error: {thres: 1.0}
 
 randomization:

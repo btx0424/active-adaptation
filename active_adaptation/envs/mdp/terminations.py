@@ -27,18 +27,27 @@ def termination_func(func):
 
 
 class crash(Termination):
-    def __init__(self, env, body_names_expr, t_thres: float = 0., z_thres: float=-0.3):
+    def __init__(
+        self, 
+        env, 
+        body_names_expr: str,
+        t_thres: float = 0.,
+        min_time: float = 0.,
+        **kwargs
+    ):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
         self.body_indices, self.body_names = self.contact_sensor.find_bodies(body_names_expr)
         self.t_thres = t_thres
+        self.min_steps = int(min_time / self.env.step_dt)
         print(f"Terminate upon contact on {self.body_names}")
     
     def __call__(self):
         contact_times = self.contact_sensor.data.current_contact_time[:, self.body_indices]
-        undesired_contact = (contact_times > self.t_thres).any(dim=-1, keepdim=True)
-        return undesired_contact
+        undesired_contact = (contact_times > self.t_thres).any(dim=-1)
+        valid = (self.env.episode_length_buf > self.min_steps)
+        return (undesired_contact & valid).unsqueeze(1)
 
 
 class fall_over(Termination):
