@@ -73,13 +73,13 @@ observation:
 
 reward:
   loco:
-    linvel_exp:         {weight: 1.5, enabled: true, body_names: waist_yaw_link, yaw_only: true, dim: 2}
-    angvel_z_exp:       {weight: 1.5, enabled: true, body_name: waist_yaw_link,  world_frame: true}
-    angvel_xy_l2:       {weight: 0.2, enabled: true, body_name: waist_yaw_link}
+    # linvel_exp:         {weight: 1.5, enabled: true, body_names: waist_yaw_link, yaw_only: true, dim: 2}
+    # angvel_z_exp:       {weight: 1.5, enabled: true, body_name: waist_yaw_link,  world_frame: true}
+    # angvel_xy_l2:       {weight: 0.2, enabled: true, body_name: waist_yaw_link}
 
-    # linvel_exp:         {weight: 1.5, enabled: true, yaw_only: true, dim: 2}
-    # angvel_z_exp:       {weight: 1.5, enabled: true, world_frame: true}
-    # angvel_xy_l2:       {weight: 0.2, enabled: true}
+    linvel_exp:         {weight: 1.5, enabled: true, yaw_only: true, dim: 3, gamma: 0.9, upright: true}
+    angvel_z_exp:       {weight: 1.5, enabled: true, world_frame: true}
+    angvel_xy_l2:       {weight: 0.2, enabled: true}
 
     linacc_z_l2:        {weight: 0.005, enabled: false}
     linvel_projection:  {weight: 1.0, enabled: true, yaw_only: true}
@@ -120,13 +120,17 @@ randomization:
     damping_range:    [0.7, 1.0]
   reset_joint_states_uniform:
     pos_ranges:
-      .*: [-0.3, 0.3]
+      .*arm_joint.*: [-0., 0.]
+      .*leg_joint.*: [-0.3, 0.3]
+      waist_yaw_joint: [-0.3, 0.3]
     rel: true
   # stumble:  {body_names: ".*leg_link6", stumble_height: 0.045, friction_range: [0.4, 1.8]}
 
 termination:
   crash: 
-    body_names_expr: ["base_link", "[l,r]arm_link6"]
+    body_names_expr: ["base_link", "[l,r]leg_link4", "[l,r]arm_link6"]
+    t_thres: 0.1
+    min_time: 0.5
   fall_over: {xy_thres: 0.8}
   # feet_too_close: {feet_names: ".*leg_link6", thres: 0.11}
   cum_error: {thres: 0.9}

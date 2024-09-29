@@ -105,6 +105,7 @@ class Env(EnvBase):
         members = dict(inspect.getmembers(self.__class__, inspect.isclass))
 
         RAND_FUNCS = mdp.RAND_FUNCS
+        RAND_FUNCS.update(mdp.get_obj_by_class(members, mdp.Randomization))
         OBS_FUNCS = mdp.OBS_FUNCS
         OBS_FUNCS.update(mdp.get_obj_by_class(members, mdp.Observation))
         REW_FUNCS = mdp.REW_FUNCS

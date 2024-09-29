@@ -5,6 +5,7 @@ from omni.isaac.lab.sensors import ContactSensor, RayCaster
 from omni.isaac.lab.actuators import DCMotor
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.utils.math import yaw_quat
+from omni.isaac.lab.utils.warp import raycast_mesh
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 
@@ -234,4 +235,57 @@ class Humanoid(LocomotionEnv):
             )
             diff = hand_pos - hand_pos_target
             return - diff.square().sum(dim=-1).sum(1, True)
+
+
+    class attach_z(mdp.Reward):
+        def __init__(self, env, weight, enabled: bool, target_height: float):
+            super().__init__(env, weight, enabled)
+            self.asset: Articulation = self.env.scene["robot"]
+            self.target_height = target_height
             
+            from .mdp.observations import _initialize_warp_meshes
+            self.body_ids = self.asset.find_bodies(".*attach_point.*")[0]
+            self.num_attach_points = len(self.body_ids)
+            self.mesh = _initialize_warp_meshes("/World/ground", "cuda")
+
+            with torch.device(self.device):
+                self.attach_point_height = torch.full((self.num_envs, self.num_attach_points), self.target_height)
+                self.ray_direction = torch.tensor([0., 0., -1.]).expand(self.num_envs, self.num_attach_points, 3)
+                self.kp = torch.zeros(self.num_envs, 1)
+                self.kd = 20
+
+        def reset(self, env_ids):
+            kp = 1200
+            self.kp[env_ids] = kp
+
+        def update(self):
+            self.ray_hit_w = raycast_mesh(
+                self.asset.data.root_pos_w,
+                self.ray_direction,
+                self.mesh,
+                max_dist=100.0
+            )[0]
+            self.attach_point_height = self.asset.data.body_pos_w[:, self.body_ids, 2] - self.ray_hit_w[:, 2].unsqueeze(1)
+
+        def step(self, substep):
+            attach_point_linvel = self.asset.data.body_lin_vel_w[:, self.body_ids]
+            self.force = torch.zeros(self.num_envs, 4, 3, device=self.device)
+            self.force[:, :, 2] = (
+                self.kp * (self.target_height - self.attach_point_height) + 
+                self.kd * (0. - attach_point_linvel[:, :, 2])
+            ) * (self.target_height > self.attach_point_height)
+            self.force[:, :, :2] = - 1.0 * attach_point_linvel[:, :, :2] * self.force[:, :, 2].unsqueeze(2)
+            force = quat_rotate_inverse(self.asset.data.body_quat_w[:, self.body_ids], self.force)
+            self.asset._external_force_b[:, self.body_ids] += force
+            self.asset.has_external_wrench = True
+
+        def compute(self) -> torch.Tensor:
+            return -(self.force / 50).square().sum(dim=-1).mean(1, True)
+
+        def debug_draw(self):
+            self.env.debug_draw.vector(
+                self.asset.data.body_pos_w[:, self.body_ids],
+                self.force / 100,
+                color=(1., 0., 0., 1.),
+                size=5.,
+            )
