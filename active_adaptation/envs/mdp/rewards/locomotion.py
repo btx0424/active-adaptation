@@ -352,6 +352,7 @@ class linvel_exp(Reward):
             return self.asset.data.linvel_exp
 
     def debug_draw(self):
+        # draw smoothed lin vel (purple)
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
             self.linvel_w / self.count,

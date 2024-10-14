@@ -14,7 +14,7 @@ homogeneous: false
 
 command:
   _target_: active_adaptation.envs.mdp.Impedance
-  virtual_mass_range: [0.25, 1.0]
+  virtual_mass_range: [5, 15]
   compliant_ratio: 0.25
   force_type_probs: [0.0, 0.5, 0.5]
   constant_force_scale: [80., 80., 20.]
@@ -48,8 +48,8 @@ observation:
     external_forces:  {body_names: ["base"]}
     external_torques: {body_names: ["base"]}
   ext_:
-    external_forces:  {body_names: ["base"]}
-    external_torques: {body_names: ["base"]}
+    external_forces:  {body_names: ["base"], divide_by_mass: false}
+    external_torques: {body_names: ["base"], divide_by_mass: false, scale: 0.2}
 
 reward:
   loco:

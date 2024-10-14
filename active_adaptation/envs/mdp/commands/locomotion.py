@@ -791,6 +791,7 @@ class Impedance(Command):
             & (self.command_angvel.abs() < 0.1).unsqueeze(1)
         )
 
+        # check if here should be yaw rotate
         command_pos_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_pos_w - self.asset.data.root_pos_w)
         command_setpos_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.command_setpos_w - self.asset.data.root_pos_w)
 
@@ -899,36 +900,44 @@ class Impedance(Command):
         self._cum_error[:, 2].add_(angvel_error * self.env.step_dt).mul_(0.99)
 
     def debug_draw(self):
+        # draw command linvel (green)
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
             self.command_linvel_w,
-            color=(1., 1., 1., 1.)
+            color=(0., 1., 0., 1.)
         )
+        # draw vector to setpoint pos (red)
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w,
             self.command_setpos_w - self.asset.data.root_pos_w,
             color=(1., 0., 0., 1.)
         )
+        # draw desired pos (green)
+        self.env.debug_draw.point(self.desired_pos_w[:, -1], color=(0., 1., 0., 1.), size=40.)
+        # draw setpoint pos (red)
+        self.env.debug_draw.point(self.command_setpos_w, color=(1., 0., 0., 1.), size=40.)
+
+        # draw setpoint rpy (red)
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w,
             yaw_rotate(self.command_setrpy_w[:, 2:3], torch.tensor([[1., 0., 0.]], device=self.device)),
-            color=(1., 0., 1., 1.)
+            color=(1., 0., 0., 1.)
         )
+        # draw external forces (orange)
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w + yaw_rotate(self.asset.data.heading_w.unsqueeze(1), self.force_offset_b),
             self.force_ext_w / self.virtual_mass,
-            color=(0., 1., 0., 1.),
+            color=(1., 0.5, 0., 1.),
             size=2.0
         )
-        self.env.debug_draw.point(self.desired_pos_w[:, -1], color=(0., 0., 1., 1.), size=40.)
-        self.env.debug_draw.point(self.command_setpos_w, color=(1., 0., 0., 1.), size=40.)
         ext_pred = self.env.input_tensordict.get("ext_rec", None)
         if ext_pred is not None:
-            force_pred_w = quat_rotate(self.asset.data.root_quat_w, ext_pred[:, 0:3]) * self.default_mass * 9.81
+            force_pred_w = quat_rotate(self.asset.data.root_quat_w, ext_pred[:, 0:3])
+            # draw predicted external forces (blue)
             self.env.debug_draw.vector(
                 self.asset.data.root_pos_w,
                 force_pred_w / self.virtual_mass,
-                color=(.0, 1., .2, 1.),
+                color=(0., 0., 1., 1.),
                 size=4.0
             )
 
