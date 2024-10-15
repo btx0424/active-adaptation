@@ -887,6 +887,10 @@ class Impedance(Command):
         self.use_set_linvel[env_ids] = use_set_linvel
         self.command_setpos_w[env_ids] = command_setpoint_w
 
+        # sample yaw in setpoint_rpy
+        command_setpoint_yaw = torch.zeros(len(env_ids), device=self.device).uniform_(-torch.pi, torch.pi)
+        self.command_setrpy_w[env_ids, 2] = command_setpoint_yaw
+
         virtual_mass = torch.empty(len(env_ids), 1, device=self.device).uniform_(*self.virtual_mass_range)
         self.virtual_mass[env_ids] = self.default_mass * virtual_mass
         self.virtual_inertia[env_ids] = self.default_inertia
