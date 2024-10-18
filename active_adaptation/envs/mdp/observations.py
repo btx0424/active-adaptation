@@ -593,11 +593,12 @@ class external_forces(Observation):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.body_indices, self.body_names = self.asset.find_bodies(body_names)
-        self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum() * 9.81
-        self.divide_by_mass = divide_by_mass
         self.forces_w = torch.zeros(self.env.num_envs, len(self.body_indices) * 3, device=self.device)
         self.forces_b = torch.zeros(self.env.num_envs, len(self.body_indices) * 3, device=self.device)
     
+        default_mass_total = self.asset.root_physx_view.get_masses()[0].sum() * 9.81
+        self.denom = default_mass_total if divide_by_mass else 1.
+
     def update(self):
         forces_b = self.asset._external_force_b[:, self.body_indices]
         forces_w = quat_rotate(self.asset.data.body_quat_w[:, self.body_indices], forces_b)
@@ -605,10 +606,11 @@ class external_forces(Observation):
             self.asset.data.root_quat_w.unsqueeze(1),
             forces_w
         )
-        if self.divide_by_mass:
-            forces_b /= self.default_mass_total
+        forces_b /= self.denom
         self.forces_w[:] = forces_w.reshape(self.env.num_envs, -1)
         self.forces_b[:] = forces_b.reshape(self.env.num_envs, -1)
+
+        # print("external forces: ", self.forces_b * self.denom)
 
     def compute(self) -> torch.Tensor:
         return self.forces_b
@@ -629,17 +631,13 @@ class external_torques(Observation):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.body_indices, self.body_names = self.asset.find_bodies(body_names)
-        self.default_inertia = self.asset.root_physx_view.get_inertias()[0, 0, [0, 4, 8]].to(self.device)
-        self.divide_by_mass = divide_by_mass
-        self.scale = scale
         self.torques_b = torch.zeros(self.env.num_envs, len(self.body_indices) * 3, device=self.device)
+        default_inertia = self.asset.root_physx_view.get_inertias()[0, 0, [0, 4, 8]].to(self.device)
+        self.denom = default_inertia if divide_by_mass else scale
     
     def update(self):
         torques_b = self.asset._external_torque_b[:, self.body_indices]
-        if self.divide_by_mass:
-            torques_b = torques_b / self.default_inertia
-        else:
-            torques_b = torques_b / self.scale
+        torques_b = torques_b / self.denom
         self.torques_b[:] = torques_b.reshape(self.env.num_envs, -1)
     
     def compute(self) -> torch.Tensor:

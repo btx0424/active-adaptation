@@ -772,6 +772,41 @@ class quadruped_stand(Reward):
         return cost * self.env.command_manager.is_standing_env.reshape(self.num_envs, 1)
 
 
+class quadruped_stand_feet_contact_force(Reward):
+    # expecting the foot to contact the ground firmly but not with too much force
+
+    def __init__(self, env, weight, body_names, enabled=True, force_range=(10., 80.)):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+        self.force_range = force_range
+    
+        self.articulation_body_ids = self.asset.find_bodies(body_names)[0]
+
+        self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names)
+        self.body_ids = torch.tensor(self.body_ids, device=self.env.device)
+    
+    def compute(self):
+        contact_forces = self.contact_sensor.data.net_forces_w[:, self.body_ids]
+        lower_bound, upper_bound = self.force_range
+        force_penalty = (contact_forces < lower_bound).float() + (contact_forces > upper_bound).float()
+        # force_penalty = (contact_forces - contact_forces.clamp(lower_bound, upper_bound)).abs()
+        total_penalty = torch.sum(force_penalty, dim=(1, 2)).reshape(self.num_envs, 1)
+        return - total_penalty * self.env.command_manager.is_standing_env.reshape(self.num_envs, 1)
+    
+    def debug_draw(self):
+        # draw contact forces on each of the body (orange)
+        contact_forces = self.contact_sensor.data.net_forces_w_history.mean(1)[:, self.body_ids]
+        body_pos_w = self.asset.data.body_pos_w[:, self.articulation_body_ids]
+        is_standing = self.env.command_manager.is_standing_env.squeeze(1)
+        self.env.debug_draw.vector(
+            body_pos_w[is_standing].view(-1, 3),
+            contact_forces[is_standing].view(-1, 3),
+            # orange
+            color=(1., 0.1, 0.1, 1.),
+            size=5.0
+        )
+
 class stance_width(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf), target_width=0.15):
         """penalize stance width smaller than target_width"""

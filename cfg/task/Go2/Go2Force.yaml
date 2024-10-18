@@ -87,6 +87,7 @@ reward:
     # step_up:            {weight: 2.0, enabled: true}
     # step_up_needed:     {weight: 1.0, enabled: false}
     com_support:        {weight: 1.0, enabled: true}
+    quadruped_stand_feet_contact_force: {weight: 1.0, enabled: true, body_names: .*_foot}
 
 termination:
   # crash: {body_names_expr: [Head.*, "base"], t_thres: 0.1, z_thres: -0.2}
