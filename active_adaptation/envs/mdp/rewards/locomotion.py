@@ -806,6 +806,13 @@ class quadruped_stand_feet_contact_force(Reward):
             color=(1., 0.1, 0.1, 1.),
             size=5.0
         )
+    
+class is_standing_env(Reward):
+    def __init__(self, env, weight: float, enabled: bool = False, clip_range=(-torch.inf, +torch.inf)):
+        super().__init__(env, weight, enabled, clip_range)
+    
+    def compute(self) -> torch.Tensor:
+        return self.env.command_manager.is_standing_env.reshape(self.num_envs, 1)
 
 class stance_width(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf), target_width=0.15):

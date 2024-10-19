@@ -787,7 +787,7 @@ class Impedance(Command):
         self.command_yaw_w[:] = self._smooth(self.desired_yaw_w)
         
         self.is_standing_env[:] = (
-            (self.command_linvel_w.norm(dim=-1, keepdim=True) < 0.1)
+            (self.command_linvel_w[:, :2].norm(dim=-1, keepdim=True) < 0.1)
             & (self.command_angvel.abs() < 0.1).unsqueeze(1)
         )
 

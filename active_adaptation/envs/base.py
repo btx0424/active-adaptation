@@ -467,6 +467,9 @@ class RewardGroup:
         rewards = []
         for key, func in self.funcs.items():
             reward = func()
+            if key == "quadruped_stand_feet_contact_force":
+                is_standing = self.env.command_manager.is_standing_env.squeeze(1)
+                reward[is_standing] -= reward[is_standing].mean(0)
             self.env.stats[self.name, key].add_(reward)
             if func.enabled:
                 rewards.append(reward)
