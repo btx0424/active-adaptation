@@ -57,7 +57,9 @@ class PPOConfig:
     num_minibatches: int = 8
     lr: float = 5e-4
     clip_param: float = 0.2
-    entropy_coef: float = 0.002
+    # entropy_coef: float = 0.004
+    # entropy_coef: float = 0.002
+    entropy_coef: float = 0.001
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
@@ -65,15 +67,6 @@ class PPOConfig:
     vecnorm: Union[str, None] = None
     checkpoint_path: Union[str, None] = None
     in_keys: List[str] = field(default_factory=lambda: [CMD_KEY, OBS_KEY, OBS_PRIV_KEY, "ext", "ext_"])
-    ext_decoder_in_keys: List[str] = field(
-        default_factory=lambda: [
-            CMD_KEY,
-            OBS_KEY,
-            "_priv_feature",
-            "_ext_feature",
-        ]
-    )
-
 
 cs = ConfigStore.instance()
 cs.store("ppo_dic_train", node=PPOConfig(phase="train", vecnorm="train"), group="algo")
@@ -135,8 +128,9 @@ class GRUModule(nn.Module):
     def forward(self, x, is_init, hx):
         x = self.mlp(x)
         x, hx = self.gru(x, is_init, hx)
-        out1, out2 = torch.split(self.out(x), self.split, dim=-1)
-        return out1, out2, hx.contiguous()
+        out = torch.split(self.out(x), self.split, dim=-1)
+        out = list(out) + [hx.contiguous()]
+        return tuple(out)
 
 
 class PolicyUpdateInferenceMod:
@@ -187,7 +181,6 @@ class PPODICPolicy(TensorDictModuleBase):
         self.gae = GAE(0.99, 0.95)
         self.reg_lambda = 0.0
         self.ext_rec_lambda = 0.001
-        # TODO: now the adapt actor is not updated during any phase
         
         if cfg.value_norm:
             value_norm_cls = ValueNorm1
@@ -203,9 +196,9 @@ class PPODICPolicy(TensorDictModuleBase):
         ).to(self.device)
 
         self.adapt_module =  TensorDictModule(
-            GRUModule(128 + 32, split=[128, 32]), 
+            GRUModule(128 + 32 + 6, split=[128, 32, 6]), 
             [OBS_KEY, "is_init", "adapt_hx"], 
-            ["priv_pred", "ext_pred", ("next", "adapt_hx")]
+            ["priv_pred", "ext_pred", "ext_rec", ("next", "adapt_hx")]
         ).to(self.device)
         
         in_keys = [CMD_KEY, OBS_KEY, "_priv_feature", "_ext_feature"]
@@ -246,30 +239,11 @@ class PPODICPolicy(TensorDictModuleBase):
             fake_input["is_init"] = torch.ones(fake_input.shape[0], 1, dtype=torch.bool)
             fake_input["adapt_hx"] = torch.zeros(fake_input.shape[0], 128)
 
-        # external forces estimation decoder
-        _ext_decoder = nn.Sequential(
-            make_mlp([128]), 
-            nn.LazyLinear(self.ext_dim)
-        )
-        ext_decoder_in_keys = list(self.cfg.ext_decoder_in_keys)
-        if self.cfg.phase in ("adapt", "finetune"):
-            if "_priv_feature" in ext_decoder_in_keys:
-                ext_decoder_in_keys.remove("_priv_feature")
-                ext_decoder_in_keys.append("priv_pred")
-            if "_ext_feature" in ext_decoder_in_keys:
-                ext_decoder_in_keys.remove("_ext_feature")
-                ext_decoder_in_keys.append("ext_pred")
-        self.ext_decoder = TensorDictSequential(
-            CatTensors(ext_decoder_in_keys, "_ext_dec_input", del_keys=False),
-            TensorDictModule(_ext_decoder, ["_ext_dec_input"], ["ext_rec"])
-        ).to(self.device)
-
         self.encoder_priv(fake_input)
         self.actor(fake_input)
         self.critic(fake_input)
         self.adapt_module(fake_input)
         self.actor_adapt(fake_input)
-        self.ext_decoder(fake_input)
 
         self.policy_train_inference = PolicyUpdateInferenceMod(self.actor, self.encoder_priv)
         self.policy_adapt_inference = PolicyUpdateInferenceMod(self.actor_adapt, None)
@@ -289,7 +263,6 @@ class PPODICPolicy(TensorDictModuleBase):
         self.opt_adapt = torch.optim.Adam(
             [
                 {"params": self.adapt_module.parameters()},
-                {"params": self.ext_decoder.parameters()},
             ],
             lr=cfg.lr
         )
@@ -332,9 +305,6 @@ class PPODICPolicy(TensorDictModuleBase):
             modules.append(self.adapt_ema)
             modules.append(self.actor_adapt)
         
-        if mode != "train": # for evaluation
-            modules.append(self.ext_decoder)
-            
         policy = TensorDictSequential(*modules)
         return policy
     
@@ -388,7 +358,6 @@ class PPODICPolicy(TensorDictModuleBase):
                     ext_loss = F.mse_loss(minibatch["ext_pred"], minibatch["_ext_feature"], reduce="none")
                     ext_loss = (ext_loss * (~minibatch["is_init"])).mean()
                     if self.ext_rec_lambda > 0:
-                        self.ext_decoder(minibatch)
                         ext_rec_error = F.mse_loss(minibatch["ext_rec"], minibatch["ext_"], reduce="none")
                         ext_rec_error = (ext_rec_error * (~minibatch["is_init"])).mean()
                     else:
