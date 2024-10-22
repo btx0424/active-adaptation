@@ -76,7 +76,11 @@ public:
         if (buf.size != robot_interface.jpos_des.size()) {
             throw std::runtime_error("Command size must be 12");
         }
-        std::copy(input_cmd.data(), input_cmd.data() + input_cmd.size(), robot_interface.jpos_des.begin());
+        
+        std::copy(jpos_des.begin(), jpos_des.begin() + jpos_des.size(), jpos_des_prev.begin());
+        std::copy(input_cmd.data(), input_cmd.data() + input_cmd.size(), jpos_des.begin());
+
+        timestamp_command = std::chrono::high_resolution_clock::now();
     }
 
     py::array_t<float> GetJointPos() {
@@ -197,8 +201,10 @@ public:
         robot_interface.kd.fill(value);
     }
 
-    std::chrono::time_point<std::chrono::high_resolution_clock> timestamp;
-    double interval;
+    std::chrono::time_point<std::chrono::high_resolution_clock> timestamp_state, timestamp_command;
+    double interval_state, interval_command;
+    bool lerp_command = false;  // whether to interpolate command between two control steps
+    bool explicit_pd = false;   // whether to explicitly compute the torques from PD gains
 
 private:
     void LowStateMessageHandler(const void *message)
@@ -212,8 +218,8 @@ private:
             gamepad.update(rx.RF_RX);
         }
         auto now = std::chrono::high_resolution_clock::now();
-        interval = std::chrono::duration_cast<std::chrono::duration<double>>(now - timestamp).count();
-        timestamp = std::chrono::high_resolution_clock::now();
+        interval_state = std::chrono::duration_cast<std::chrono::duration<double>>(now - timestamp_state).count();
+        timestamp_state = std::chrono::high_resolution_clock::now();
     }
 
     void HighStateMessageHandler(const void *message)
@@ -246,6 +252,25 @@ private:
         // write low-level command
         if (control_mode == 1) {
             std::lock_guard<std::mutex> lock(cmd_mutex);
+            for (int i = 0; i < 12; i++) {
+                auto des = jpos_des[i];
+
+                if (lerp_command) {
+                    auto now = std::chrono::high_resolution_clock::now();
+                    auto t = std::chrono::duration_cast<std::chrono::duration<double>>(now - timestamp_command).count();
+                    t = std::min(t / 0.02, 1.0);
+                    des = jpos_des_prev[i] + (jpos_des[i] - jpos_des_prev[i]) * t;
+                }
+
+                if (explicit_pd) {
+                    robot_interface.jpos_des[i] = robot_interface.jpos[i];
+                    robot_interface.jvel_des[i] = robot_interface.jvel[i];
+                    robot_interface.tau_ff[i] = robot_interface.kp[i] * (des - robot_interface.jpos[i]) + robot_interface.kd[i] * (0. - robot_interface.jvel[i]);
+                } else {
+                    robot_interface.jpos_des[i] = des;
+                }
+            }
+
             robot_interface.SetCommand(cmd);
             lowcmd_publisher->Write(cmd);
 
@@ -295,6 +320,8 @@ protected:
     std::mutex state_mutex, cmd_mutex;
 
     int control_mode=0; // 0: sportmode, 1: usermode
+
+    std::array<float, 12> jpos_des, jpos_des_prev;
 };
 
 void InitChannel(const std::string &networkinterface) {
@@ -323,8 +350,11 @@ PYBIND11_MODULE(go2py, m)
         .def("get_feet_pos", &RobotIface::GetFootPos)
         .def("get_yaw_speed", &RobotIface::GetYawSpeed)
         .def("get_full_state", &RobotIface::GetFullState)
-        .def_readonly("timestamp", &RobotIface::timestamp)
-        .def_readonly("interval", &RobotIface::interval)
+        .def_readwrite("lerp_command", &RobotIface::lerp_command)
+        .def_readwrite("explicit_pd", &RobotIface::explicit_pd)
+        .def_readonly("timestamp_state", &RobotIface::timestamp_state)
+        .def_readonly("timestamp_command", &RobotIface::timestamp_command)
+        .def_readonly("interval_state", &RobotIface::interval_state)
         ;
     
     m.def("init_channel", &InitChannel, py::arg("networkinterface"));
