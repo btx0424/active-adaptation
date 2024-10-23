@@ -9,7 +9,7 @@ defaults:
   - _self_
 
 robot: go2
-terrain: plane
+terrain: slopes_boxes
 payload: false
 homogeneous: false
 

@@ -185,24 +185,6 @@ ROUGH_HARD.sub_terrains["boxes"].grid_height_range = (0.025, 0.025)
 ROUGH_HARD.sub_terrains["random_rough"].noise_range = (0.01, 0.06)
 ROUGH_HARD.sub_terrains["random_rough"].noise_step = 0.01
 
-ROUGH_TERRAIN_CFG = TerrainImporterCfg(
-    prim_path="/World/ground",
-    terrain_type="generator",
-    terrain_generator=MISSING,
-    max_init_terrain_level=None,
-    collision_group=-1,
-    physics_material=sim_utils.RigidBodyMaterialCfg(
-        friction_combine_mode="multiply",
-        restitution_combine_mode="multiply",
-        static_friction=1.0,
-        dynamic_friction=1.0,
-    ),
-    # visual_material=sim_utils.MdlFileCfg(
-    #     mdl_path="{NVIDIA_NUCLEUS_DIR}/Materials/Base/Architecture/Shingles_01.mdl",
-    #     project_uvw=True,
-    # ),
-    debug_vis=False,
-)
 
 STAIRS = TerrainGeneratorCfg(
     seed=0,
@@ -356,6 +338,54 @@ STAIRS_EASY = TerrainGeneratorCfg(
     },
 )
 
+SLOPES_AND_BOXES = TerrainGeneratorCfg(
+    seed=0,
+    size=(8.0, 8.0),
+    border_width=65.0,
+    num_rows=10,
+    num_cols=20,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    use_cache=False,
+    sub_terrains={
+        "flat": MeshPlaneTerrainCfg(
+            proportion=0.1,
+        ),
+        "boxes": MeshRandomGridTerrainCfg(
+            proportion=0.5, 
+            grid_width=0.60, 
+            grid_height_range=(0.02, 0.2), 
+            platform_width=2.0
+        ),
+        "pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
+            proportion=0.2,
+            slope_range=(0.10, 0.20),
+            platform_width=1.0,
+            border_width=0.25
+        ),
+        "pyramid_slope": HfPyramidSlopedTerrainCfg(
+            proportion=0.2,
+            slope_range=(0.10, 0.20),
+            platform_width=1.0,
+            border_width=0.25
+        ),
+    },
+)
+
+
+TERRAINS = {
+    "medium": ROUGH_MEDIUM,
+    "easy": ROUGH_EASY,
+    "hard": ROUGH_HARD,
+    "flat": FLAT,
+    "stairs": STAIRS,
+    "snc": SLOPES_AND_CURBS,
+    "stairs_test": STAIRS_TEST,
+    "stairs_easy": STAIRS_EASY,
+    "slopes_boxes": SLOPES_AND_BOXES,
+}
+
 FLAT_TERRAIN_CFG = TerrainImporterCfg(
     prim_path="/World/ground",
     terrain_type="plane",
@@ -368,13 +398,21 @@ FLAT_TERRAIN_CFG = TerrainImporterCfg(
     ),
 )
 
-TERRAINS = {
-    "medium": ROUGH_MEDIUM,
-    "easy": ROUGH_EASY,
-    "hard": ROUGH_HARD,
-    "flat": FLAT,
-    "stairs": STAIRS,
-    "snc": SLOPES_AND_CURBS,
-    "stairs_test": STAIRS_TEST,
-    "stairs_easy": STAIRS_EASY,
-}
+ROUGH_TERRAIN_CFG = TerrainImporterCfg(
+    prim_path="/World/ground",
+    terrain_type="generator",
+    terrain_generator=MISSING,
+    max_init_terrain_level=None,
+    collision_group=-1,
+    physics_material=sim_utils.RigidBodyMaterialCfg(
+        friction_combine_mode="multiply",
+        restitution_combine_mode="multiply",
+        static_friction=1.0,
+        dynamic_friction=1.0,
+    ),
+    # visual_material=sim_utils.MdlFileCfg(
+    #     mdl_path="{NVIDIA_NUCLEUS_DIR}/Materials/Base/Architecture/Shingles_01.mdl",
+    #     project_uvw=True,
+    # ),
+    debug_vis=False,
+)
