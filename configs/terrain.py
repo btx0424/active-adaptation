@@ -355,7 +355,7 @@ SLOPES_AND_BOXES = TerrainGeneratorCfg(
         "boxes": MeshRandomGridTerrainCfg(
             proportion=0.5, 
             grid_width=0.60, 
-            grid_height_range=(0.02, 0.2), 
+            grid_height_range=(0.02, 0.1), 
             platform_width=2.0
         ),
         "pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(

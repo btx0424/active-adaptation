@@ -59,8 +59,8 @@ class PPOConfig:
     clip_param: float = 0.2
     # entropy_coef: float = 0.004
     # entropy_coef: float = 0.002
-    entropy_coef_start: float = 0.002
-    entropy_coef_end: float = 0.002
+    entropy_coef_start: float = 0.001
+    entropy_coef_end: float = 0.001
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
