@@ -103,7 +103,10 @@ def make_env_policy(cfg: DictConfig):
     policy_in_keys = cfg.algo.get("in_keys", ["policy", "priv"])
 
     for obs_group_key in list(cfg.task.observation.keys()):
-        if obs_group_key not in policy_in_keys:
+        if (
+            obs_group_key not in policy_in_keys
+            and not obs_group_key.endswith("_")
+        ):
             cfg.task.observation.pop(obs_group_key)
             print(colored(f"Discard obs group {obs_group_key} as it is not used.", "yellow"))
     
