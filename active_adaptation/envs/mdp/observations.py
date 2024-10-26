@@ -12,6 +12,7 @@ from omni.isaac.lab.sensors import Camera, TiledCamera
 import omni.isaac.lab.sim as sim_utils
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
+from active_adaptation.assets import Quadruped
 from omni.isaac.lab.terrains.trimesh.utils import make_plane
 from omni.isaac.lab.utils.math import convert_quat, quat_apply, quat_apply_yaw, yaw_quat
 from omni.isaac.lab.utils.warp import convert_to_warp_mesh, raycast_mesh
@@ -240,11 +241,6 @@ def observation_func(func):
             return func(self.env, **self.params)
     
     return ObsFunc
-
-
-@observation_func
-def root_quat_w(self):
-    return self.scene["robot"].data.root_quat_w
 
 
 class command(Observation):
@@ -494,21 +490,21 @@ class contact_indicator(Observation):
         self.forces = torch.zeros(self.num_envs, len(self.body_ids), 3, device=self.device)
 
     def update(self):
-        self.forces[:] = self.contact_sensor.data.net_forces_w_history[:, :, self.body_ids].mean(1)
+        contact_forces = self.contact_sensor.data.net_forces_w_history[:, :, self.body_ids].mean(1)
+        self.forces[:] = quat_rotate_inverse(self.asset.data.root_quat_w.unsqueeze(1), contact_forces)
         # self.forces[:] = self.contact_sensor.data.net_forces_w[:, self.body_ids]
 
     def compute(self):
-        forces = quat_rotate_inverse(self.asset.data.root_quat_w.unsqueeze(1), self.forces) / self.default_mass_total
         if self.timing:
             current_air_time = self.contact_sensor.data.current_air_time[:, self.body_ids].clamp_max(1.)
             current_contact_time = self.contact_sensor.data.current_contact_time[:, self.body_ids].clamp_max(1.)
             return torch.cat([
                 current_air_time,
                 current_contact_time,
-                forces.reshape(self.num_envs, -1).clip(-5., 5.)
+                self.forces.reshape(self.num_envs, -1).clip(-5., 5.)
             ], dim=-1)
         else:
-            return forces.reshape(self.num_envs, -1).clip(-5., 5.)
+            return self.forces.reshape(self.num_envs, -1).clip(-5., 5.)
 
     def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
         if self.timing:
@@ -780,10 +776,9 @@ class feet_height_map(Observation):
     
     def update(self):
         self.feet_pos_w = self.asset.data.body_pos_w[:, self.body_ids]
-        self.feet_quat_w = self.asset.data.body_quat_w[:, self.body_ids]
         shape = (self.num_envs, self.num_feet, self.num_rays, -1)
         ray_starts_w = quat_apply_yaw(
-            self.feet_quat_w.unsqueeze(-2).expand(shape),
+            self.asset.data.root_quat_w.reshape(self.num_envs, 1, 1, 4).expand(shape),
             self.ray_starts.reshape(1, 1, -1, 3).expand(shape),
         )
         ray_starts_w += self.feet_pos_w.unsqueeze(-2)
@@ -1240,3 +1235,42 @@ def _initialize_warp_meshes(mesh_prim_path, device):
     # add the warp mesh to the list
     RayCaster.meshes[mesh_prim_path] = wp_mesh
     return wp_mesh
+
+
+class root_pos_w(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Quadruped = self.env.scene["robot"]
+
+    def compute(self):
+        return self.asset.data.root_pos_w
+
+class root_quat_w(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Quadruped = self.env.scene["robot"]
+
+    def compute(self):
+        return self.asset.data.root_quat_w
+
+class impact_point_w(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Quadruped = self.env.scene["robot"]
+
+    def compute(self):
+        impact_point = self.asset.impact_point_w.reshape(self.num_envs, -1)
+        return torch.cat([impact_point, self.asset.impact], dim=1)
+
+class feet_orientation(Observation):
+    def __init__(self, env, feet_names: str):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.feet_id = self.asset.find_bodies(feet_names)[0]
+        self.heading_feet = torch.tensor([[[1., 0., 0.]]], device=self.device)
+    
+    def compute(self):
+        self.quat_feet = yaw_quat(self.asset.data.body_quat_w[:, self.feet_id])
+        feet_fwd = quat_rotate(self.quat_feet, self.heading_feet)
+        return feet_fwd.reshape(self.num_envs, -1)
+
