@@ -18,8 +18,12 @@ action:
   action_scaling: 
     .*_(thigh|calf)_joint: 0.5
     .*_(hip)_joint: 0.25
-  max_delay: 1
+  max_delay: 3
+  fixed_delay: true
   alpha: [0.5, 1.0]
+  # alpha:
+  #   .*_(thigh|calf)_joint: 0.8
+  #   .*_(hip)_joint: 0.5
 
 command:
   _target_: active_adaptation.envs.mdp.Impedance

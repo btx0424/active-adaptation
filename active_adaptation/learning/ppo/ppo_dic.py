@@ -59,7 +59,8 @@ class PPOConfig:
     clip_param: float = 0.2
     # entropy_coef: float = 0.004
     # entropy_coef: float = 0.002
-    entropy_coef: float = 0.001
+    entropy_coef_start: float = 0.001
+    entropy_coef_end: float = 0.001
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
@@ -172,7 +173,7 @@ class PPODICPolicy(TensorDictModuleBase):
         self.observation_spec = observation_spec
         assert self.cfg.phase in ["train", "adapt", "finetune"]
 
-        self.entropy_coef = self.cfg.entropy_coef
+        self.entropy_coef = self.cfg.entropy_coef_start
         self.max_grad_norm = 1.0
         self.clip_param = self.cfg.clip_param
         self.critic_loss_fn = nn.MSELoss(reduction="none")
@@ -310,6 +311,7 @@ class PPODICPolicy(TensorDictModuleBase):
     
     def step_schedule(self, progress: float):
         self.reg_lambda = progress
+        self.entropy_coef = self.cfg.entropy_coef_start + (self.cfg.entropy_coef_end - self.cfg.entropy_coef_start) * progress
 
     def train_op(self, tensordict: TensorDict):
         info = {}

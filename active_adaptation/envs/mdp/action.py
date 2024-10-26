@@ -294,7 +294,8 @@ class JointPosition(ActionManager):
         right_joints = None,
         asym_joints = None,
         max_delay: int = 4,
-        alpha: Tuple[float, float] = (0.5, 1.0),
+        fixed_delay: bool = False,
+        alpha: Union[float, Tuple[float, float], Dict[str, float], Dict[str, Tuple[float, float]]] = (0.5, 1.0),
         cumstom_command: Dict[str, float] = None,
         clip_joint_targets: float = None
     ):
@@ -316,11 +317,22 @@ class JointPosition(ActionManager):
         
         self.action_scaling = torch.tensor(self.action_scaling, device=self.device)
         self.max_delay = max_delay
+        self.fixed_delay = fixed_delay
         
+        self.action_dim = len(self.joint_ids)
+        
+        import omegaconf
         if isinstance(alpha, float):
-            self.alpha_range = (alpha, alpha)
+            self.alpha_range = torch.tensor([[alpha, alpha]], device=self.device).expand(self.action_dim, -1)
+        elif isinstance(alpha, omegaconf.listconfig.ListConfig):
+            self.alpha_range = torch.tensor(list(alpha), device=self.device).expand(self.action_dim, -1)
+        elif isinstance(alpha, omegaconf.dictconfig.DictConfig):
+            _, _, alpha_list = string_utils.resolve_matching_names_values(dict(alpha), self.asset.joint_names)
+            if isinstance(alpha_list[0], float):
+                alpha_list = [[alpha_list[i], alpha_list[i]] for i in range(len(alpha_list))]
+            self.alpha_range = torch.tensor(alpha_list, device=self.device)
         else:
-            self.alpha_range = tuple(alpha)
+            raise ValueError(f"Invalid alpha type: {type(alpha)}")
 
         if cumstom_command is not None:
             cumstom_command = dict(cumstom_command)
@@ -329,16 +341,15 @@ class JointPosition(ActionManager):
         if clip_joint_targets is not None:
             self.clip_joint_targets = clip_joint_targets
             
-        self.action_dim = len(self.joint_ids)
-        
         self.default_joint_pos = self.asset.data.default_joint_pos.clone()
         self.offset = torch.zeros_like(self.default_joint_pos)
         self.joint_limits = self.asset.data.joint_limits.clone().unbind(-1)
 
         with torch.device(self.device):
-            self.action_buf = torch.zeros(self.num_envs, self.action_dim, max(max_delay + 1, 3)) # at least 3 for action_rate_2_l2 reward
+            action_buf_hist = max(max_delay + 1, 3) if max_delay is not None else 3
+            self.action_buf = torch.zeros(self.num_envs, self.action_dim, action_buf_hist) # at least 3 for action_rate_2_l2 reward
             self.applied_action = torch.zeros(self.num_envs, self.action_dim)
-            self.alpha = torch.ones(self.num_envs, 1)
+            self.alpha = torch.ones(self.num_envs, self.action_dim)
             self.delay = torch.zeros(self.num_envs, 1, dtype=int)
 
     
@@ -356,14 +367,18 @@ class JointPosition(ActionManager):
         return (action_flipped * self.signs.unsqueeze(-1)).reshape(action.shape)
 
     def reset(self, env_ids: torch.Tensor):
-        self.delay[env_ids] = torch.randint(0, self.max_delay + 1, (len(env_ids), 1), device=self.device)
+        if self.fixed_delay:
+            self.delay[env_ids] = torch.full((len(env_ids), 1), self.max_delay, device=self.device)
+        else:
+            self.delay[env_ids] = torch.randint(0, self.max_delay + 1, (len(env_ids), 1), device=self.device)
         self.action_buf[env_ids] = 0
         self.applied_action[env_ids] = 0
 
         self.default_joint_pos[env_ids] = self.asset.data.default_joint_pos[env_ids].clone()
         self.default_joint_pos[env_ids] += self.offset[env_ids]
 
-        alpha = torch.empty(len(env_ids), 1, device=self.device).uniform_(*self.alpha_range)
+        alpha = torch.empty(len(env_ids), self.action_dim, device=self.device).uniform_(0, 1)
+        alpha = self.alpha_range[:, 0] + alpha * (self.alpha_range[:, 1] - self.alpha_range[:, 0])
         self.alpha[env_ids] = alpha
 
     def __call__(self, tensordict: TensorDictBase, substep: int):
