@@ -7,10 +7,46 @@ from omni.isaac.lab_assets import UNITREE_GO2_CFG, UNITREE_A1_CFG, ArticulationC
 from omni.isaac.lab.actuators import DCMotorCfg, ImplicitActuatorCfg
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.utils.math import quat_rotate_inverse
-
+from omni.isaac.lab.sensors import ContactSensor
 
 class Quadruped(Articulation):
-    pass
+    def _create_buffers(self):
+        super()._create_buffers()
+        self.feet_ids, self.feet_names = self.find_bodies(".*_foot")
+        self.feet_ids = torch.tensor(self.feet_ids, device=self.device)
+
+        self.contact_sensor: ContactSensor = self._env.scene.sensors.get("contact_forces", None)
+        if self.contact_sensor is not None:
+            shape = (self.num_instances, len(self.feet_ids))
+            self._feet_contact_ids = None
+            self.in_contact = torch.zeros(*shape, dtype=bool, device=self.device)
+            self.impact = torch.zeros(*shape, dtype=bool, device=self.device)
+            self.detach = torch.zeros(*shape, dtype=bool, device=self.device)
+            self.has_impact = torch.zeros(*shape, dtype=bool, device=self.device)
+            self.impact_point_w = torch.zeros(*shape, 3, device=self.device)
+            self.detach_point_w = torch.zeros(*shape, 3, device=self.device)
+
+    def update(self, dt):
+        super().update(dt)
+        self.feet_pos_w = self.data.body_pos_w[:, self.feet_ids]
+        self.feet_pos_b = quat_rotate_inverse(
+            self.data.root_quat_w.unsqueeze(1),
+            self.feet_pos_w - self.data.root_pos_w.unsqueeze(1)
+        )
+        self.feet_lin_vel_w = self.data.body_lin_vel_w[:, self.feet_ids]
+
+        if self.contact_sensor.is_initialized and self._feet_contact_ids is None:
+            self._feet_contact_ids = self.contact_sensor.find_bodies(".*_foot")[0]
+
+        if self.contact_sensor.is_initialized:
+            contact_force = self.contact_sensor.data.net_forces_w_history[:, :, self._feet_contact_ids]
+            in_contact = (contact_force.norm(dim=-1) > 0.01).any(dim=1)
+            self.impact = (~self.in_contact) & in_contact
+            self.detach = self.in_contact & (~in_contact)
+            self.in_contact = in_contact
+            self.has_impact.logical_or_(self.impact)
+            self.impact_point_w[self.impact] = self.feet_pos_w[self.impact]
+            self.detach_point_w[self.detach] = self.feet_pos_w[self.detach]
 
 
 class QuadrupedManipulator(Articulation):
@@ -38,6 +74,7 @@ class QuadrupedManipulator(Articulation):
 ASSET_PATH = os.path.dirname(__file__)
 
 UNITREE_GO2_CFG = copy.deepcopy(UNITREE_GO2_CFG)
+# UNITREE_GO2_CFG.class_type = Quadruped
 UNITREE_GO2_CFG.spawn.usd_path = f"{ASSET_PATH}/Go2/go2.usd"
 UNITREE_GO2_CFG.init_state.pos = (0., 0., 0.35)
 UNITREE_GO2_CFG.init_state.joint_pos["F[L,R]_thigh_joint"] = 0.78
@@ -123,10 +160,10 @@ UNITREE_ALIENGO_CFG = copy.deepcopy(UNITREE_GO2_CFG)
 UNITREE_ALIENGO_CFG.spawn.usd_path = f"{ASSET_PATH}/Aliengo/aliengo.usd"
 UNITREE_ALIENGO_CFG.init_state.pos = (0., 0., 0.35)
 UNITREE_ALIENGO_CFG.init_state.joint_pos = {
-    ".*L_hip_joint": 0.2,
-    ".*R_hip_joint": -0.2,
-    ".*_thigh_joint": 1.0,
-    ".*_calf_joint": -1.8,
+    ".*L_hip_joint": 0.1,
+    ".*R_hip_joint": -0.1,
+    ".*thigh_joint": 0.8,
+    ".*calf_joint": -1.5,
 }
 UNITREE_ALIENGO_CFG.actuators["base_legs"] = DCMotorCfg(
     joint_names_expr=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
