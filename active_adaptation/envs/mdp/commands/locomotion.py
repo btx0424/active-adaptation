@@ -129,9 +129,10 @@ class Command2(Command):
         stand_prob=0.2,
         target_yaw_range=(0, torch.pi * 2),
         adaptive: bool = False,
-        body_name: str = None
+        body_name: str = None,
+        teleop: bool = False,
     ):
-        super().__init__(env)
+        super().__init__(env, teleop=teleop)
         self.robot: Articulation = env.scene["robot"]
         self.linvel_x_range = linvel_x_range
         self.linvel_y_range = linvel_y_range
@@ -184,11 +185,20 @@ class Command2(Command):
         self._sum_error = torch.tensor(0.0, device=self.device)
         self._count = torch.tensor(0.0, device=self.device)
         self._avg_error = torch.tensor(0.0, device=self.device)
+
+        if self.teleop:
+            self.key_mappings_pos = {
+                "W": torch.tensor([self.linvel_x_range[1], 0., 0.], device=self.device),
+                "S": torch.tensor([self.linvel_x_range[0], 0., 0.], device=self.device),
+                "A": torch.tensor([0., self.linvel_y_range[1], 0.], device=self.device),
+                "D": torch.tensor([0., self.linvel_y_range[0], 0.], device=self.device),
+            }
         
     def reset(self, env_ids, reward_stats = None):
         self.command[env_ids] = 0.
-        self.sample_vel_command(env_ids)
-        self.sample_yaw_command(env_ids)
+        if not self.teleop:
+            self.sample_vel_command(env_ids)
+            self.sample_yaw_command(env_ids)
         self._cum_linvel_error[env_ids] = 0.
         self._cum_angvel_error[env_ids] = 0.
         self.env.extra["stats/avg_error"] = self._avg_error.item()
@@ -200,11 +210,20 @@ class Command2(Command):
             self.body_heading_w = torch.atan2(forward_w[:, 1], forward_w[:, 0])
         else:
             self.body_heading_w = self.asset.data.heading_w
-        interval_reached = (self.env.episode_length_buf + 1) % self.resample_interval == 0
-        resample_vel = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
-        resample_yaw = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
-        self.sample_vel_command(resample_vel.nonzero().squeeze(-1))
-        self.sample_yaw_command(resample_yaw.nonzero().squeeze(-1))
+        if self.teleop:
+            command_linvel_target = torch.tensor([0., 0., 0.], device=self.device)
+            for key, vec in self.key_mappings_pos.items():
+                if self.key_pressed[key]:
+                    command_linvel_target.add_(vec)
+            if not self.key_pressed["LEFT_SHIFT"]:
+                command_linvel_target *= 0.6
+            self.command_linvel.lerp_(command_linvel_target, 0.5)
+        else:
+            interval_reached = (self.env.episode_length_buf + 1) % self.resample_interval == 0
+            resample_vel = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
+            resample_yaw = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
+            self.sample_vel_command(resample_vel.nonzero().squeeze(-1))
+            self.sample_yaw_command(resample_yaw.nonzero().squeeze(-1))
 
         self.target_yaw[~self.use_stiffness] = self.body_heading_w[~self.use_stiffness]
         yaw_diff = self.target_yaw - self.body_heading_w
@@ -244,6 +263,11 @@ class Command2(Command):
         self.command[:, 2] = self.command_angvel
         self.command[:, 3] = self.aux_input.squeeze(1)
         # self.command[:, :2] = torch.tensor([1.0, 0.], device=self.device)
+        self.is_standing_env[:, 0] = (
+            (self.command_linvel.norm(dim=-1) < 0.1)
+            & (self.command_angvel < 0.1)
+        )
+
     
     def sample_vel_command(self, env_ids: torch.Tensor):
         linvel = torch.zeros(len(env_ids), 2, device=self.device)
@@ -261,7 +285,6 @@ class Command2(Command):
         self.command_speed[env_ids] = speed
         self._target_direction[env_ids, :2] = direction
         self._target_linvel[env_ids, :2] = direction * speed
-        self.is_standing_env[env_ids] = stand
 
         self.aux_input[env_ids] = sample_uniform(env_ids.shape, *self.aux_input_range, self.device).unsqueeze(1)
 

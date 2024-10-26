@@ -173,7 +173,7 @@ class PPODICPolicy(TensorDictModuleBase):
         self.observation_spec = observation_spec
         assert self.cfg.phase in ["train", "adapt", "finetune"]
 
-        self.entropy_coef = self.cfg.entropy_coef_start
+        self.entropy_coef = self.cfg.get("entropy_coef_start", 0.001)
         self.max_grad_norm = 1.0
         self.clip_param = self.cfg.clip_param
         self.critic_loss_fn = nn.MSELoss(reduction="none")
