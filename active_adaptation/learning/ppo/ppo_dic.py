@@ -126,11 +126,11 @@ class GRUModule(nn.Module):
         self.out = nn.LazyLinear(dim)
     
     def forward(self, x, is_init, hx):
-        x = self.mlp(x)
-        x, hx = self.gru(x, is_init, hx)
-        out = torch.split(self.out(x), self.split, dim=-1)
-        out = list(out) + [hx.contiguous()]
-        return tuple(out)
+        out1 = self.mlp(x)
+        out2, hx = self.gru(out1, is_init, hx)
+        out3 = self.out(out2 + out1)
+        out = torch.split(out3, self.split, dim=-1)
+        return out + (hx.contiguous(),)
 
 
 class PolicyUpdateInferenceMod:
@@ -180,7 +180,7 @@ class PPODICPolicy(TensorDictModuleBase):
         self.ext_dim = observation_spec["ext_"].shape[-1]
         self.gae = GAE(0.99, 0.95)
         self.reg_lambda = 0.0
-        self.ext_rec_lambda = 0.001
+        self.ext_rec_lambda = 0.1
         
         if cfg.value_norm:
             value_norm_cls = ValueNorm1
@@ -421,6 +421,26 @@ class PPODICPolicy(TensorDictModuleBase):
         policy_loss = - torch.mean(torch.min(surr1, surr2) * (~tensordict["is_init"]))
         entropy_loss = - self.entropy_coef * entropy
 
+        # tensordict[CMD_KEY].requires_grad_(True)
+        # tensordict[OBS_KEY].requires_grad_(True)
+        # tensordict["priv"].requires_grad_(True)
+        # tensordict["ext"].requires_grad_(True)
+
+        # policy_inference.encoder(tensordict)
+        # dist = policy_inference.actor.get_dist(tensordict)
+        # action = dist.rsample()
+
+        # gradient = torch.autograd.grad(
+        #     outputs=action,
+        #     inputs=[tensordict[CMD_KEY], tensordict[OBS_KEY], tensordict["priv"], tensordict["ext"]],
+        #     grad_outputs=torch.ones_like(action),
+        #     retain_graph=True,
+        #     create_graph=True,
+        # )
+        # gradient = torch.cat(gradient, dim=-1)
+        # gradient_penalty = gradient.square().sum(-1).mean()
+        gradient_penalty = 0.
+
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["state_value"]
         value_loss = self.critic_loss_fn(b_returns, values)
@@ -432,7 +452,7 @@ class PPODICPolicy(TensorDictModuleBase):
         else:
             reg_loss = 0.
             
-        loss = policy_loss + entropy_loss + value_loss + reg_loss
+        loss = policy_loss + entropy_loss + value_loss + reg_loss + gradient_penalty * 0.002
         
         opt.zero_grad()
         loss.backward()
@@ -440,13 +460,14 @@ class PPODICPolicy(TensorDictModuleBase):
         critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
         opt.step()
         
-        explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
+        explained_var = 1 - value_loss / b_returns[~tensordict["is_init"]].var()
         info = {
             "actor/policy_loss": policy_loss,
             "actor/entropy": entropy,
             "actor/noise_std": tensordict["scale"].mean(),
             "actor/grad_norm": actor_grad_norm,
             'actor/approx_kl': ((ratio - 1) - log_ratio).mean(),
+            "actor/gradient_penalty": gradient_penalty,
             "adapt/reg_loss": reg_loss,
             "critic/value_loss": value_loss,
             "critic/grad_norm": critic_grad_norm,
