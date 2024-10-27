@@ -25,7 +25,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tensordict import TensorDict, TensorDictBase
-from tensordict.nn import TensorDictModuleBase
+from tensordict.nn import TensorDictModuleBase as ModBase
 from torchrl.modules import ProbabilisticActor
 from torchrl.data import CompositeSpec
 
@@ -214,7 +214,7 @@ def compute_policy_loss(
 
 def compute_value_loss(
     tensordict: TensorDictBase, 
-    critic: TensorDictModuleBase,
+    critic: ModBase,
     clip_param: float,
     critic_loss_fn: nn.Module,
     discard_init: bool=True,
@@ -314,6 +314,25 @@ class NormalExtractor(nn.Module):
         if self.include_loc:
             x_sample = torch.cat([x_sample, x_loc.unsqueeze(-2)], dim=-2)
         return x_sample.flatten(-2), x_loc, x_scale
+
+
+class CatTensors(ModBase):
+    def __init__(self, in_keys, out_key, del_keys=False, sort=True):
+        super().__init__()
+        self.in_keys = in_keys
+        self.out_keys = [out_key]
+
+        self.del_keys = del_keys
+        self.sort = sort
+        if self.sort:
+            self.in_keys = sorted(self.in_keys)
+
+    def forward(self, tensordict: TensorDictBase):
+        out = torch.cat([tensordict.get(k) for k in self.in_keys], dim=-1)
+        tensordict.set(self.out_keys[0], out)
+        if self.del_keys:
+            tensordict.exclude(*self.in_keys, inplace=True)
+        return tensordict
 
 
 def collect_info(infos, prefix=""):
