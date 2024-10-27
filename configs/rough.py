@@ -4,7 +4,7 @@ from omni.isaac.lab.utils import configclass
 from omni.isaac.lab.terrains import TerrainImporterCfg
 from omni.isaac.lab.envs import ViewerCfg
 from omni.isaac.lab.assets import AssetBaseCfg
-from omni.isaac.lab.sensors import ContactSensorCfg, RayCasterCfg, patterns, TiledCameraCfg
+from omni.isaac.lab.sensors import ContactSensorCfg, RayCasterCfg, patterns, TiledCameraCfg, ImuCfg
 import omni.isaac.lab.sim as sim_utils
 
 from dataclasses import MISSING
@@ -85,6 +85,11 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
 
     robot: ArticulationCfg = MISSING
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
+    imu = ImuCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/base", 
+        offset=ImuCfg.OffsetCfg(pos=(-0.02557, 0.0, 0.04232), rot=(1.0, 0.0, 0.0, 0.0)),
+        gravity_bias=(0.0, 0.0, 9.81),
+        history_length=3)
     
     light_0: AssetBaseCfg = AssetBaseCfg(
         prim_path="/World/light_0",
