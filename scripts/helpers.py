@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import hydra
 import numpy as np
 import time
@@ -8,7 +9,10 @@ import os
 import datetime
 
 from typing import Sequence
-from tensordict import TensorDictBase
+from tensordict import TensorDictBase, TensorDict
+from tensordict.nn import TensorDictModuleBase as ModBase
+from torchrl.envs.transforms import VecNorm
+
 from termcolor import colored
 from collections import OrderedDict
 from torchvision.io import write_video
@@ -26,6 +30,36 @@ class Every:
         if self.i % self.steps == 0:
             self.func(*args, **kwargs)
         self.i += 1
+
+
+class ObsNorm(ModBase):
+    def __init__(self, in_keys, out_keys, locs, scales):
+        super().__init__()
+        self.in_keys = in_keys
+        self.out_keys = out_keys
+        
+        self.loc = nn.ParameterDict({k: nn.Parameter(locs[k]) for k in in_keys})
+        self.scale = nn.ParameterDict({k: nn.Parameter(scales[k]) for k in out_keys})
+        self.requires_grad_(False)
+
+    def forward(self, tensordict: TensorDictBase):
+        for in_key, out_key in zip(self.in_keys, self.out_keys):
+            obs = tensordict.get(in_key, None)
+            if obs is not None:
+                loc = self.loc[in_key]
+                scale = self.scale[out_key]
+                tensordict.set(out_key, (obs - loc) / scale)
+        return tensordict
+    
+    @classmethod
+    def from_vecnorm(cls, vecnorm: VecNorm):
+        return cls(
+            in_keys=vecnorm.in_keys,
+            out_keys=vecnorm.out_keys,
+            locs=vecnorm.loc,
+            scales=vecnorm.scale
+        )
+
 
 class EpisodeStats:
     def __init__(self, in_keys: Sequence[str] = None):
@@ -241,3 +275,43 @@ def evaluate(
 
     info["episode_cnt"] = episode_cnt
     return dict(sorted(info.items())), trajs, stats
+
+
+@torch.inference_mode()
+def export_onnx(module: ModBase, td: TensorDictBase, path: str):
+    td = td.select(*module.in_keys).cpu()
+    module = module.cpu()
+    onnx_program = torch.onnx.dynamo_export(module, **td.to_dict())
+    onnx_program.save(path)
+    print(f"Exported ONNX model to {path}.")
+
+    import onnxruntime as ort
+    import json
+    json.dump(
+        {
+            "in_keys": module.in_keys,
+            "out_keys": module.out_keys
+        }, 
+        open(path.replace(".pt", ".json"), "w")
+    )
+
+    from torch.utils._pytree import tree_map
+
+    ort_session = ort.InferenceSession(path.replace(".pt", ".onnx"), providers=["CPUExecutionProvider"])
+
+    def to_numpy(tensor):
+        return (
+            tensor.detach().cpu().numpy()
+            if tensor.requires_grad
+            else tensor.cpu().numpy()
+        )
+    
+    onnx_input = tuple(td[k] for k in module.in_keys)
+    onnxruntime_input = {
+        k.name: to_numpy(v) for k, v in 
+        zip(ort_session.get_inputs(), onnx_input)
+    }
+
+    ort_output = ort_session.run(None, onnxruntime_input)
+    assert len(ort_output) == len(module.out_keys)
+
