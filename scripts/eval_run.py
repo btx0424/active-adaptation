@@ -23,6 +23,7 @@ def main():
     # whether to override terrain and command
     parser.add_argument("-t", "--terrain", action="store_true", default=False)
     parser.add_argument("-c", "--command", action="store_true", default=False)
+    parser.add_argument("-o", "--teleop", action="store_true", default=False)
     
     parser.add_argument("-e", "--export", action="store_true", default=False)
     parser.add_argument("-v", "--video", action="store_true", default=False)
@@ -77,8 +78,10 @@ def main():
 
     cfg["checkpoint_path"] = os.path.join(root, checkpoint.name)
     cfg["vecnorm"] = "eval"
-    cfg["algo"]["phase"] = "adapt"
+    # cfg["algo"]["phase"] = "adapt"
     # cfg['algo']["phase"] = "finetune"
+    if args.teleop:
+        cfg["task"]["command"]["teleop"] = True
 
     if args.task is not None:
         with hydra.initialize(config_path="../cfg", job_name="eval", version_base=None):

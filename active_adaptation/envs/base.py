@@ -7,8 +7,8 @@ from tensordict.tensordict import TensorDictBase, TensorDict
 from torchrl.envs import EnvBase
 from torchrl.data import (
     Composite, 
-    Binary, 
-    UnboundedContinuousTensorSpec,
+    Binary,
+    UnboundedContinuous,
 )
 import builtins
 
@@ -18,12 +18,75 @@ from omni.isaac.lab.utils.timer import Timer
 from collections import OrderedDict
 
 from abc import abstractmethod
+from typing import NamedTuple, Dict
 import time
 
 import active_adaptation.envs.mdp as mdp
 
-class Env(EnvBase):
 
+class ObsGroup:
+    
+    def __init__(
+        self,
+        name: str,
+        funcs: Dict[str, mdp.Observation],
+        max_delay: int,
+        use_flip: bool = False,
+    ):
+        self.name = name
+        self.funcs = funcs
+        self.max_delay = max_delay
+        self.use_flip = use_flip
+        self.buf_obs = OrderedDict()
+        self.buf_mask = OrderedDict()
+        self.timestamp = -1
+
+    @property
+    def keys(self):
+        return self.funcs.keys()
+
+    @property
+    def spec(self):
+        if not hasattr(self, "_spec"):
+            foo = self.compute({}, 0)
+            spec = {}
+            spec[self.name] = UnboundedContinuous(foo[self.name].shape, dtype=foo[self.name].dtype)
+            spec[self.name + "_mask_"] = Binary(len(self.keys), foo[self.name + "_mask_"].shape, dtype=bool)
+            if self.use_flip:
+                spec[self.name + "_flipped"] = spec[self.name]
+            self._spec = Composite(spec, shape=[foo[self.name].shape[0]]).to(foo[self.name].device)
+        return self._spec
+
+    def compute(self, tensordict: TensorDictBase, timestamp: int) -> torch.Tensor:
+        # update only if outdated
+        if timestamp > self.timestamp:
+            for obs_key, func in self.funcs.items():
+                tensor, mask = func()
+                self.buf_obs[obs_key] = tensor
+                self.buf_mask[obs_key] = mask
+        self.timestamp = timestamp
+        
+        tensors = torch.cat([self.buf_obs[key] for key in self.funcs.keys()], dim=-1)
+        masks = torch.stack([self.buf_mask[key] for key in self.funcs.keys()], dim=-1)
+        tensordict[self.name] = tensors
+        tensordict[self.name + "_mask_"] = masks
+
+        if self.use_flip:
+            tensors = torch.cat([func.fliplr(self.buf_obs[key]) for key, func in self.funcs.items()], dim=-1)
+            tensordict[self.name + "_flipped"] = tensors
+        
+        return tensordict
+
+
+class Env(EnvBase):
+    """
+    
+    2024.10.10
+    - disable delay
+    - refactor flipping
+    - no longer recompute observation upon reset
+
+    """
     def __init__(self, cfg):
         super().__init__(
             device=cfg.sim.device,
@@ -64,6 +127,8 @@ class Env(EnvBase):
         # generate scene
         with Timer("[INFO]: Time taken for scene creation"):
             self.scene = InteractiveScene(self.cfg.scene)
+            for k, v in self.scene.articulations.items():
+                v._env = self
         print("[INFO]: Scene manager: ", self.scene)
 
         if builtins.ISAAC_LAUNCHED_FROM_TERMINAL is False:
@@ -94,8 +159,8 @@ class Env(EnvBase):
         self.reward_spec = Composite(
             {
                 "stats": {
-                    "episode_len": UnboundedContinuousTensorSpec([self.num_envs, 1]),
-                    "success": UnboundedContinuousTensorSpec([self.num_envs, 1]),
+                    "episode_len": UnboundedContinuous([self.num_envs, 1]),
+                    "success": UnboundedContinuous([self.num_envs, 1]),
                 },
             },
             shape=[self.num_envs]
@@ -114,7 +179,7 @@ class Env(EnvBase):
         TERM_FUNCS.update(mdp.get_obj_by_class(members, mdp.Termination))
 
         self.randomizations = OrderedDict()
-        self.observation_funcs = OrderedDict()
+        self.observation_funcs: Dict[str, ObsGroup] = OrderedDict()
         self.reward_funcs = OrderedDict()
         self._startup_callbacks = []
         self._update_callbacks = []
@@ -133,7 +198,7 @@ class Env(EnvBase):
         
         self.action_spec = Composite(
             {
-                "action": UnboundedContinuousTensorSpec((self.num_envs, self.action_dim))
+                "action": UnboundedContinuous((self.num_envs, self.action_dim))
             },
             shape=[self.num_envs]
         ).to(self.device)
@@ -148,15 +213,21 @@ class Env(EnvBase):
             self._step_callbacks.append(rand.step)
             self._update_callbacks.append(rand.update)
 
-        for group, funcs in self.cfg.observation.items():
-            self.observation_funcs[group] = OrderedDict()
-            for key, params in funcs.items():
-                obs = OBS_FUNCS[key](self, **(params if params is not None else {}))
-                self.observation_funcs[group][key] = obs
+        for group_key, params in self.cfg.observation.items():
+            max_delay = params.pop("_max_delay_", 0)
+            use_flip = params.pop("_use_flip_", False)
+            funcs = OrderedDict()
+            
+            for key, kwargs in params.items():
+                obs = OBS_FUNCS[key](self, **(kwargs if kwargs is not None else {}))
+                funcs[key] = obs
+
                 self._startup_callbacks.append(obs.startup)
                 self._update_callbacks.append(obs.update)
                 self._reset_callbacks.append(obs.reset)
                 self._debug_draw_callbacks.append(obs.debug_draw)
+            
+            self.observation_funcs[group_key] = ObsGroup(group_key, funcs, max_delay=max_delay, use_flip=use_flip)
         
         for callback in self._startup_callbacks:
             callback()        
@@ -172,36 +243,23 @@ class Env(EnvBase):
             for key, params in func_specs.items():
                 reward: mdp.Reward = REW_FUNCS[key](self, **params)
                 funcs[key] = reward
-                reward_spec["stats", group_name, key] = UnboundedContinuousTensorSpec(1, device=self.device)
+                reward_spec["stats", group_name, key] = UnboundedContinuous(1, device=self.device)
                 self._update_callbacks.append(reward.update)
                 self._reset_callbacks.append(reward.reset)
                 self._debug_draw_callbacks.append(reward.debug_draw)
                 self._step_callbacks.append(reward.step)
                 print(f"\t{key}: \t{reward.weight:.2f}, \t{reward.enabled}")
             self.reward_groups[group_name] = RewardGroup(self, group_name, funcs)
-            reward_spec["stats", group_name, "return"] = UnboundedContinuousTensorSpec(1, device=self.device)
-            reward_spec["stats", group_name, "reward_clip_ratio"] = UnboundedContinuousTensorSpec(1, device=self.device)
+            reward_spec["stats", group_name, "return"] = UnboundedContinuous(1, device=self.device)
+            reward_spec["stats", group_name, "reward_clip_ratio"] = UnboundedContinuous(1, device=self.device)
 
-        reward_spec["reward"] = UnboundedContinuousTensorSpec(len(self.reward_groups), device=self.device)
-
+        reward_spec["reward"] = UnboundedContinuous(len(self.reward_groups), device=self.device)
+        # reward_spec["discount"] = UnboundedContinuous(1, device=self.device)
         self.reward_spec.update(reward_spec.expand(self.num_envs).to(self.device))
 
         observation_spec = {}
-        for group, funcs in self.observation_funcs.items():
-            print(f"Observation group: {group}")
-            tensors = []
-            for obs_name, func in funcs.items():
-                tensor, mask = func()
-                tensors.append(tensor)
-                print(f"\t{obs_name}: \t{tensor.shape}, \tmask_ratio {func.mask_ratio:.2f}")
-            tensor = torch.cat(tensors, -1)
-            observation_spec[group] = UnboundedContinuousTensorSpec(tensor.shape, device=self.device)
-            observation_spec[group + "_mask_"] = Binary(
-                len(funcs), 
-                (self.num_envs, len(funcs)), 
-                device=self.device, dtype=bool
-            )
-            print("\t Split: ", [t.shape[-1] for t in tensors])
+        for group_key, group in self.observation_funcs.items():
+            observation_spec.update(group.spec)
 
         self.observation_spec = Composite(
             observation_spec, 
@@ -215,9 +273,9 @@ class Env(EnvBase):
             self.termination_funcs[key] = term_func
             self._update_callbacks.append(term_func.update)
             self._reset_callbacks.append(term_func.reset)
-            self.reward_spec["stats", "termination", key] = UnboundedContinuousTensorSpec((self.num_envs, 1), device=self.device)
+            self.reward_spec["stats", "termination", key] = UnboundedContinuous((self.num_envs, 1), device=self.device)
         
-        self.time_stamp = 0
+        self.timestamp = 0
 
         self.stats = self.reward_spec["stats"].zero()
     
@@ -231,9 +289,8 @@ class Env(EnvBase):
 
         self.lookat_env_i = 0
 
-        self.use_flipping = False
-        self.fliplr = torch.zeros(self.num_envs, dtype=bool, device=self.device)
         self.extra = {}
+        self.observation_prev = TensorDict({}, [self.num_envs])
 
     @property
     def action_dim(self) -> int:
@@ -254,18 +311,18 @@ class Env(EnvBase):
         else:
             env_mask = torch.ones(self.num_envs, dtype=bool, device=self.device)
         env_ids = env_mask.nonzero().squeeze(-1)
-        self._reset_idx(env_ids)
+        if len(env_ids):
+            self._reset_idx(env_ids)
         self.episode_length_buf[env_ids] = 0
         for callback in self._reset_callbacks:
             callback(env_ids)
-        if self.use_flipping:
-            self.fliplr[env_ids] = torch.rand(env_ids.shape, device=self.device) < 0.5
+
         self.scene.update(self.step_dt)
-        tensordict = TensorDict(
-            self._compute_observation(), 
-            self.num_envs,
-            device=self.device
-        )
+        if tensordict is None:
+            tensordict = TensorDict({}, self.num_envs, device=self.device)
+            self._compute_observation(tensordict)
+        else:
+            tensordict.update(self.observation_spec.zero())
         if self.record_now and env_mask[self.lookat_env_i]:
             if self.complete_video_frames is None:
                 self.complete_video_frames = []
@@ -282,28 +339,15 @@ class Env(EnvBase):
         self.input_tensordict = tensordict
         self.action_manager(tensordict, substep)
 
-    def _compute_observation(self) -> TensorDictBase:
-        observation = TensorDict({}, [self.num_envs])
+    def _compute_observation(self, tensordict: TensorDictBase):
+        observation_this = TensorDict({}, [self.num_envs])
         try:
-            for group, funcs in self.observation_funcs.items():
-                tensors = []
-                masks = []
-                for obs_name, func in funcs.items():
-                    tensor, mask = func()
-                    if self.use_flipping:
-                        tensor = torch.where(
-                            self.fliplr.reshape((self.num_envs,) + (1,) * (tensor.ndim - 1)),
-                            func.fliplr(tensor),
-                            tensor
-                        )
-                    tensors.append(tensor)
-                    masks.append(mask)
-                observation[group] = torch.cat(tensors, dim=-1)
-                observation[group + "_mask_"] = torch.stack(masks, dim=-1)
+            for group_key, obs_group in self.observation_funcs.items():
+                obs_group.compute(tensordict, self.timestamp)
         except Exception as e:
-            print(f"Error in computing observation for {group}.{obs_name}: {e}")
+            print(f"Error in computing observation for {group_key}: {e}")
             raise e
-        return observation
+        self.observation_prev = observation_this.clone()
     
     def _compute_reward(self) -> TensorDictBase:
         rewards = []
@@ -338,7 +382,7 @@ class Env(EnvBase):
         if self.sim.has_gui() or self.sim.has_rtx_sensors():
             self.sim.render()
         self.episode_length_buf.add_(1)
-        self.time_stamp += 1
+        self.timestamp += 1
 
     def _step(self, tensordict: TensorDictBase) -> TensorDictBase:
         # start = time.perf_counter()
@@ -358,13 +402,13 @@ class Env(EnvBase):
         # print(end - start, self.cfg.decimation)
         self._update()
         
-        if self.time_stamp % self.render_decimation == 0:
+        if self.timestamp % self.render_decimation == 0:
             self._render_headless()
         
         tensordict = TensorDict({}, self.num_envs, device=self.device)
         tensordict.update(self._compute_reward())
         self.command_manager.update()
-        tensordict.update(self._compute_observation())
+        self._compute_observation(tensordict)
         terminated = self._compute_termination()
         truncated = (self.episode_length_buf >= self.max_episode_length).unsqueeze(1)
         tensordict.set("terminated", terminated)
@@ -405,7 +449,7 @@ class Env(EnvBase):
         if self.record_now and self.complete_video_frames is not None and len(self.complete_video_frames) == 0:
             frame = self.render(mode="rgb_array")
             # font = cv2.FONT_HERSHEY_SIMPLEX
-            # cv2.putText(frame, f'Timestamp: {self.time_stamp}', (10, 30), font, 1, (255, 255, 255), 2, cv2.LINE_AA)
+            # cv2.putText(frame, f'Timestamp: {self.timestamp}', (10, 30), font, 1, (255, 255, 255), 2, cv2.LINE_AA)
             self.video_frames.append(frame)
 
     def render(self, mode: str = "human"):
@@ -440,6 +484,13 @@ class Env(EnvBase):
             self.sim.clear_instance()
             # update closing status
             super().close()
+
+    def state_dict(self):
+        sd = super().state_dict()
+        sd["observation_spec"] = self.observation_spec
+        sd["action_spec"] = self.action_spec
+        sd["reward_spec"] = self.reward_spec
+        return sd
 
     def get_extra_state(self) -> dict:
         return dict(self.extra)

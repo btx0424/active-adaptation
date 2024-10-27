@@ -145,7 +145,7 @@ class Actor(nn.Module):
             loc, scale = self.actor_mean(features).chunk(2, dim=-1)
         else:
             loc = self.actor_mean(features)
-            scale = self.actor_std.expand_as(loc)
+            scale = torch.ones_like(loc) * self.actor_std
         scale = self.scale_mapping(scale)
         return loc, scale
 
