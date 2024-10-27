@@ -70,7 +70,7 @@ def energy_l2(self):
 def joint_acc_l2(self):
     asset: Articulation = self.scene["robot"]
     r = - asset.data.joint_acc.square().sum(dim=-1, keepdim=True)
-    return r * (0.5 + 0.5 * asset.data.linvel_exp)
+    return r
 
 
 @reward_func
@@ -417,12 +417,15 @@ class angvel_z_exp(Reward):
         enabled: bool = True, 
         world_frame: bool=False,
         body_name: str=None,
+        gamma: float = 0.0
     ):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.world_frame = world_frame
+        self.gamma = gamma
         self.target_angvel: torch.Tensor = self.env.command_manager.command_angvel
-        
+        self.count = torch.zeros(self.num_envs, 1, device=self.device)
+        self.angvel_sum = torch.zeros(self.num_envs, 3, device=self.device)
         if body_name is not None:
             self.body_id = self.asset.find_bodies(body_name)[0][0]
         else:
@@ -438,7 +441,9 @@ class angvel_z_exp(Reward):
                 angvel = self.asset.data.root_ang_vel_w
             else:
                 angvel = self.asset.data.root_ang_vel_b
-        self.angvel = angvel
+        self.angvel_sum.mul_(self.gamma).add_(angvel)
+        self.count.mul_(self.gamma).add_(1)
+        self.angvel = self.angvel_sum / self.count
 
     def compute(self) -> torch.Tensor:
         angvel_error = (
@@ -607,9 +612,114 @@ class feet_air_time(Reward):
         last_air_time = self.contact_sensor.data.last_air_time[:, self.body_ids]
         self.reward = torch.sum((last_air_time - self.thres).clamp_max(0.) * first_contact, dim=1, keepdim=True)
         self.reward *= (~self.env.command_manager.is_standing_env)
-        if self.condition_on_linvel:
+        if self.condition_on_linvel and hasattr(self.asset.data, "linvel_exp"):
             self.reward *= self.asset.data.linvel_exp
         return self.reward
+
+class max_feet_height(Reward):
+    def __init__(
+        self,
+        env,
+        body_names: str,
+        target_height: float,
+        weight: float,
+        enabled: bool = True
+    ):
+        super().__init__(env, weight, enabled)
+        self.target_height = target_height
+
+        self.asset: Articulation = self.env.scene["robot"]
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+        self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names)
+        self.body_ids = torch.tensor(self.body_ids, device=self.device)
+
+        self.asset_body_ids, self.asset_body_names = self.asset.find_bodies(body_names)
+
+        self.in_contact = torch.zeros(self.num_envs, len(self.body_ids), dtype=bool, device=self.device)
+        self.impact = torch.zeros(self.num_envs, len(self.body_ids), dtype=bool, device=self.device)
+        self.detach = torch.zeros(self.num_envs, len(self.body_ids), dtype=bool, device=self.device)
+        self.has_impact = torch.zeros(self.num_envs, len(self.body_ids), dtype=bool, device=self.device)
+        self.max_height = torch.zeros(self.num_envs, len(self.body_ids), device=self.device)
+        self.impact_point = torch.zeros(self.num_envs, len(self.body_ids), 3, device=self.device)
+        self.detach_point = torch.zeros(self.num_envs, len(self.body_ids), 3, device=self.device)
+
+    def reset(self, env_ids):
+        self.has_impact[env_ids] = False
+    
+    def update(self):
+        contact_force = self.contact_sensor.data.net_forces_w_history[:, :, self.body_ids]
+        feet_pos_w = self.asset.data.body_pos_w[:, self.asset_body_ids]
+        in_contact = (contact_force.norm(dim=-1) > 0.01).any(dim=1)
+        self.impact = (~self.in_contact) & in_contact
+        self.detach = self.in_contact & (~in_contact)
+        self.in_contact = in_contact
+        self.has_impact.logical_or_(self.impact)
+        self.impact_point[self.impact] = feet_pos_w[self.impact]
+        self.detach_point[self.detach] = feet_pos_w[self.detach]
+        self.max_height = torch.where(
+            self.detach,
+            feet_pos_w[:, :, 2],
+            torch.maximum(self.max_height, feet_pos_w[:, :, 2])
+        )
+
+    def compute(self) -> torch.Tensor:
+        reference_height = torch.maximum(self.impact_point[:, :, 2], self.detach_point[:, :, 2])
+        max_height = self.max_height - reference_height
+        r = self.impact * (max_height / self.target_height).clamp_max(1.0) 
+        return r.sum(dim=1, keepdim=True)
+
+    def debug_draw(self):
+        feet_pos_w = self.asset.data.body_pos_w[:, self.asset_body_ids]
+        self.env.debug_draw.point(
+            feet_pos_w[self.impact],
+            color=(1.0, 0., 0., 1.),
+            size=30,
+        )
+
+
+# class linvel_exp2(Reward):
+#     def __init__(self, env, weight: float, enabled: bool = True):
+#         super().__init__(env, weight, enabled)
+#         self.feet_names = ".*_foot"
+#         self.asset: Articulation = self.env.scene["robot"]
+#         self.body_ids = self.asset.find_bodies(self.feet_names)[0]
+#         self.center_pos_history = torch.zeros(self.num_envs, 3, 8, device=self.device)
+#         self.command_manager: Command2 = self.env.command_manager
+
+#     def update(self):
+#         root_quat = self.asset.data.root_quat_w
+#         feet_pos_w = self.asset.data.body_pos_w[:, self.body_ids]
+#         feet_pos = feet_pos_w # quat_rotate_inverse(root_quat.unsqueeze(1), feet_pos_w)
+#         feet_pos = quat_rotate_inverse(root_quat.unsqueeze(1), feet_pos - self.asset.data.root_pos_w.unsqueeze(1))
+#         # find the bounding rectangle
+#         min_x = feet_pos[:, :, 0].min(1)[0]
+#         max_x = feet_pos[:, :, 0].max(1)[0]
+#         min_y = feet_pos[:, :, 1].min(1)[0]
+#         max_y = feet_pos[:, :, 1].max(1)[0]
+#         y = 0.5 * torch.ones_like(min_y)
+#         # rotate back to world frame
+#         self.ul_corner = quat_rotate(root_quat, torch.stack([min_x, min_y, y], dim=-1)) + self.asset.data.root_pos_w
+#         self.ur_corner = quat_rotate(root_quat, torch.stack([max_x, min_y, y], dim=-1)) + self.asset.data.root_pos_w
+#         self.lr_corner = quat_rotate(root_quat, torch.stack([max_x, max_y, y], dim=-1)) + self.asset.data.root_pos_w
+#         self.ll_corner = quat_rotate(root_quat, torch.stack([min_x, max_y, y], dim=-1)) + self.asset.data.root_pos_w
+#         self.center = torch.stack([self.ul_corner, self.ur_corner, self.lr_corner, self.ll_corner], dim=1).mean(1)
+#         self.center = 0.5 * (self.center + self.asset.data.root_pos_w)
+#         self.center_pos_history[:, :, 1:] = self.center_pos_history[:, :, :-1]
+#         self.center_pos_history[:, :, 0] = self.center
+#         self.center_vel = torch.mean((self.center_pos_history[:, :, :-2] - self.center_pos_history[:, :, 2:]) / (self.env.step_dt * 2), dim=2)
+
+#     def compute(self) -> torch.Tensor:
+#         linvel_diff = self.center_vel - self.command_manager.command_linvel_w
+#         linvel_error = linvel_diff[:, :2].square().sum(-1, keepdim=True)
+#         return torch.exp(- linvel_error / 0.25)
+
+#     def debug_draw(self):
+#         # draw
+#         self.env.debug_draw.vector(self.ul_corner, self.ur_corner - self.ul_corner, color=(1.0, 0., 0., 1.))
+#         self.env.debug_draw.vector(self.ur_corner, self.lr_corner - self.ur_corner, color=(1.0, 0., 0., 1.))
+#         self.env.debug_draw.vector(self.lr_corner, self.ll_corner - self.lr_corner, color=(1.0, 0., 0., 1.))
+#         self.env.debug_draw.vector(self.ll_corner, self.ul_corner - self.ll_corner, color=(1.0, 0., 0., 1.))
+#         self.env.debug_draw.vector(self.center, self.center_vel, color=(1.0, 0., 0., 1.))
 
 
 class feet_contact_count(Reward):
@@ -879,7 +989,7 @@ class impedance_vel(Reward):
     
     def compute(self) -> torch.Tensor:
         diff = (self.command_manager.command_linvel_w - self.asset.data.root_lin_vel_w)
-        command_speed = self.command_manager.command_speed
+        command_speed = self.command_manager.command_speed.reshape(-1, 1)
         diff = torch.where(command_speed < 1.0, diff, diff / command_speed)
         error_l2 = diff.square().sum(dim=-1, keepdim=True)
         r = torch.exp(- error_l2 / 0.25) - error_l2
@@ -906,7 +1016,8 @@ class impedance_yaw_vel(Reward):
         self.command_manager: Impedance = self.env.command_manager
     
     def compute(self) -> torch.Tensor:
-        diff = (self.command_manager.command_angvel.unsqueeze(1) - self.asset.data.root_ang_vel_b[:, 2:3])
+        command_angvel = self.command_manager.command_angvel.reshape(self.num_envs, 1)
+        diff = (command_angvel - self.asset.data.root_ang_vel_b[:, 2:3])
         error_l2 = diff.square().sum(dim=-1, keepdim=True)
         r = torch.exp(- error_l2 / 0.25) - error_l2
         return r
@@ -984,6 +1095,21 @@ class com_linvel_exp(Reward):
         )
         error = (com_linvel_b[:, :2] - self.env.command_manager.command_linvel[:, :2]).square().sum(1, keepdim=True)
         return torch.exp(- error / 0.25)
+
+class joint_limits(Reward):
+    def __init__(self, env, joint_names: str, offset: float, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids = self.asset.find_joints(joint_names)[0]
+        self.joint_limits = self.asset.data.joint_limits[:, self.joint_ids].clone()
+        self.joint_limits_max = self.joint_limits[:, :, 1] - offset
+        self.joint_limits_min = self.joint_limits[:, :, 0] + offset
+
+    def compute(self) -> torch.Tensor:
+        joint_pos = self.asset.data.joint_pos[:, self.joint_ids]
+        violation_min = (joint_pos - self.joint_limits_min).clamp_max(0.)
+        violation_max = (self.joint_limits_max - joint_pos).clamp_max(0.)
+        return (violation_min + violation_max).sum(1, keepdim=True)
 
 
 def normalize(x: torch.Tensor):

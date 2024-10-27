@@ -12,6 +12,7 @@ from omni.isaac.lab.sensors import Camera, TiledCamera
 import omni.isaac.lab.sim as sim_utils
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
+from active_adaptation.assets import Quadruped
 from omni.isaac.lab.terrains.trimesh.utils import make_plane
 from omni.isaac.lab.utils.math import convert_quat, quat_apply, quat_apply_yaw, yaw_quat
 from omni.isaac.lab.utils.warp import convert_to_warp_mesh, raycast_mesh
@@ -152,6 +153,22 @@ class CartesianObs(Observation):
         obs_flipped[:, self.left_ids] = right * fliplr
         obs_flipped[:, self.right_ids] = left * fliplr
         return obs_flipped.reshape(self.num_envs, -1)
+
+
+class root_acc_b(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self._prev_lin_vel_w = self.asset.data.root_lin_vel_w.clone()
+        self.lin_acc_b = torch.zeros_like(self.asset.data.root_lin_vel_b)
+    
+    def update(self):
+        self.lin_acc_w = (self.asset.data.root_lin_vel_w - self._prev_lin_vel_w) / self.env.step_dt
+        self.lin_acc_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.lin_acc_w)
+        self._prev_lin_vel_w = self.asset.data.root_lin_vel_w.clone()
+
+    def compute(self):
+        return self.lin_acc_b.reshape(self.num_envs, -1)
 
 
 class body_pos(CartesianObs):
@@ -795,7 +812,7 @@ class feet_height_map(Observation):
         self._init_raycaster(resolution, size)
     
     def _init_raycaster(self, resolution, size):
-        _initialize_warp_meshes("/World/ground", "cuda")
+        self.mesh = _initialize_warp_meshes("/World/ground", "cuda")
 
         # pattern_cfg = patterns.GridPatternCfg(resolution=resolution, size=size)
         # self.ray_starts, self.ray_directions = pattern_cfg.func(pattern_cfg, self.device)
@@ -840,7 +857,7 @@ class feet_height_map(Observation):
             ray_starts_w,
             self.ray_directions.expand_as(ray_starts_w).clone(),
             max_dist=100.,
-            mesh=RayCaster.meshes["/World/ground"],
+            mesh=self.mesh,
         )[0]
 
         self.feet_height_map[:] = (self.feet_pos_w.unsqueeze(-2)[..., 2] - self.ray_hits_w[..., 2]).nan_to_num(nan=0., posinf=0., neginf=0.)
@@ -1087,12 +1104,26 @@ class incoming_wrench(Observation):
             self.asset.root_physx_view.get_masses()[0]
             .sum().to(self.env.device) * 9.81
         )
+        self.child_ids = self.asset.find_bodies(".*_hip")[0]
 
+    def update(self):
+        self.forces = self.asset.root_physx_view.get_link_incoming_joint_force()
+        self.child_forces = self.forces[:, self.child_ids, :3]
+        self.child_forces = quat_rotate(self.asset.data.body_quat_w[:, self.child_ids], self.child_forces)
+    
     def compute(self) -> torch.Tensor:
         # measured_forces = self.asset.root_physx_view.get_dof_projected_joint_forces()
         self.forces = self.asset.root_physx_view.get_link_incoming_joint_force()
         return (self.forces / self.default_mass_total).reshape(self.num_envs, -1)
 
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            # self.asset.data.body_pos_w[:, self.child_ids],
+            self.asset.data.root_pos_w,
+            self.child_forces.sum(1),
+            color=(0., 0., 1., 1.),
+            size=10.
+        )
 
 class applied_action(JointObs):
 
@@ -1258,10 +1289,11 @@ def symlog(x: torch.Tensor, a: float=1.):
 def random_noise(x: torch.Tensor, std: float):
     return x + torch.randn_like(x).clamp(-3., 3.) * std
 
+meshes = {}
 
 def _initialize_warp_meshes(mesh_prim_path, device):
-    if mesh_prim_path in RayCaster.meshes:
-        return RayCaster.meshes[mesh_prim_path]
+    if mesh_prim_path in meshes:
+        return meshes[mesh_prim_path]
 
     # check if the prim is a plane - handle PhysX plane as a special case
     # if a plane exists then we need to create an infinite mesh that is a plane
@@ -1287,5 +1319,44 @@ def _initialize_warp_meshes(mesh_prim_path, device):
         mesh = make_plane(size=(2e6, 2e6), height=0.0, center_zero=True)
         wp_mesh = convert_to_warp_mesh(mesh.vertices, mesh.faces, device=device)
     # add the warp mesh to the list
-    RayCaster.meshes[mesh_prim_path] = wp_mesh
+    meshes[mesh_prim_path] = wp_mesh
     return wp_mesh
+
+
+class root_pos_w(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Quadruped = self.env.scene["robot"]
+
+    def compute(self):
+        return self.asset.data.root_pos_w
+
+class root_quat_w(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Quadruped = self.env.scene["robot"]
+
+    def compute(self):
+        return self.asset.data.root_quat_w
+
+class impact_point_w(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Quadruped = self.env.scene["robot"]
+
+    def compute(self):
+        impact_point = self.asset.impact_point_w.reshape(self.num_envs, -1)
+        return torch.cat([impact_point, self.asset.impact], dim=1)
+
+class feet_orientation(Observation):
+    def __init__(self, env, feet_names: str):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.feet_id = self.asset.find_bodies(feet_names)[0]
+        self.heading_feet = torch.tensor([[[1., 0., 0.]]], device=self.device)
+    
+    def compute(self):
+        self.quat_feet = yaw_quat(self.asset.data.body_quat_w[:, self.feet_id])
+        feet_fwd = quat_rotate(self.quat_feet, self.heading_feet)
+        return feet_fwd.reshape(self.num_envs, -1)
+
