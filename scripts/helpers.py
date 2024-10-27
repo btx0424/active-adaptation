@@ -279,24 +279,25 @@ def evaluate(
 
 @torch.inference_mode()
 def export_onnx(module: ModBase, td: TensorDictBase, path: str):
+    if not path.endswith(".onnx"):
+        raise ValueError(f"Export path must end with .onnx, got {path}.")
+    
     td = td.select(*module.in_keys).cpu()
     module = module.cpu()
     onnx_program = torch.onnx.dynamo_export(module, **td.to_dict())
     onnx_program.save(path)
     print(f"Exported ONNX model to {path}.")
 
-    import onnxruntime as ort
     import json
-    json.dump(
-        {
-            "in_keys": module.in_keys,
-            "out_keys": module.out_keys
-        }, 
-        open(path.replace(".pt", ".json"), "w")
-    )
+    meta_path = path.replace(".onnx", ".json")
+    meta = {
+        "in_keys": module.in_keys,
+        "out_keys": module.out_keys
+    }
+    json.dump(meta, open(meta_path, "w"))
+    print(f"Exported metadata to {meta_path}.")
 
-    from torch.utils._pytree import tree_map
-
+    import onnxruntime as ort
     ort_session = ort.InferenceSession(path.replace(".pt", ".onnx"), providers=["CPUExecutionProvider"])
 
     def to_numpy(tensor):
