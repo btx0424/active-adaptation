@@ -7,7 +7,7 @@ from torchvision.utils import make_grid
 from torchvision.io import write_jpeg
 
 from omni.isaac.lab.assets import Articulation
-from omni.isaac.lab.sensors import ContactSensor, RayCaster, patterns, RayCasterData
+from omni.isaac.lab.sensors import ContactSensor, RayCaster, patterns, RayCasterData, Imu
 from omni.isaac.lab.sensors import Camera, TiledCamera
 import omni.isaac.lab.sim as sim_utils
 from active_adaptation.utils.helpers import batchify
@@ -227,6 +227,42 @@ class body_acc(Observation):
         
     def compute(self):
         return self.body_acc_b.reshape(self.env.num_envs, -1)
+
+
+class imu_acc(Observation):
+    def __init__(self, env, smoothing_window: int=3):
+        super().__init__(env)
+        self.imu: Imu = self.env.scene["imu"]
+        self.smoothing_window = smoothing_window
+        self.acc_buf = torch.zeros(self.env.num_envs, 3, smoothing_window, device=self.env.device)
+
+    def reset(self, env_ids):
+        self.acc_buf[env_ids] = 0.0
+
+    def update(self):
+        self.acc_buf[:, :, 1:] = self.acc_buf[:, :, :-1]
+        self.acc_buf[:, :, 0] = self.imu.data.lin_acc_b
+
+    def compute(self):
+        return self.acc_buf.mean(dim=2).view(self.env.num_envs, -1)
+    
+
+class imu_angvel(Observation):
+    def __init__(self, env, smoothing_window: int=3):
+        super().__init__(env)
+        self.imu: Imu = self.env.scene["imu"]
+        self.smoothing_window = smoothing_window
+        self.angvel_buf = torch.zeros(self.env.num_envs, 3, smoothing_window, device=self.env.device)
+    
+    def reset(self, env_ids):
+        self.angvel_buf[env_ids] = 0.0
+
+    def update(self):
+        self.angvel_buf[:, :, 1:] = self.angvel_buf[:, :, :-1]
+        self.angvel_buf[:, :, 0] = self.imu.data.ang_vel_b
+
+    def compute(self):
+        return self.angvel_buf.mean(dim=2).view(self.env.num_envs, -1)
 
 
 def observation_func(func):
@@ -646,6 +682,19 @@ class external_torques(Observation):
     def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
         return obs * torch.tensor([1., 1., -1.], device=self.device)
 
+class contact_forces(Observation):
+    def __init__(self, env, body_names, divide_by_mass: bool=True):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum() * 9.81
+        self.denom = self.default_mass_total if divide_by_mass else 1.
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+        self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names)
+
+    def compute(self) -> torch.Tensor:
+        contact_forces = self.contact_sensor.data.net_forces_w_history.mean(1)
+        force = contact_forces[:, self.body_ids] / self.denom
+        return force.view(self.num_envs, -1)
 
 
 class body_materials(Observation):

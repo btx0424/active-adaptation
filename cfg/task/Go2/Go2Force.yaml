@@ -9,7 +9,8 @@ defaults:
   - _self_
 
 robot: go2
-terrain: plane
+# terrain: slopes_boxes
+terrain: easy
 payload: false
 homogeneous: false
 
@@ -18,8 +19,8 @@ action:
   action_scaling: 
     .*_(thigh|calf)_joint: 0.5
     .*_(hip)_joint: 0.25
-  max_delay: 3
-  fixed_delay: true
+  max_delay: 1
+  # fixed_delay: true
   alpha: [0.5, 1.0]
   # alpha:
   #   .*_(thigh|calf)_joint: 0.8
@@ -42,10 +43,12 @@ observation:
   command:
     command:
   policy:
-    projected_gravity_b: {noise_std: 0.05}
-    joint_pos:    {noise_std: 0.05}
-    joint_vel:    {noise_std: 0.2}
+    projected_gravity_b: {noise_std: 0.00}
+    joint_pos:    {noise_std: 0.00}
+    joint_vel:    {noise_std: 0.00}
     prev_actions: {steps: 3}
+    imu_angvel:   {smoothing_window: 6}
+    imu_acc:      {smoothing_window: 6}
   priv:
     command_hidden:
     applied_action:
@@ -63,6 +66,13 @@ observation:
   ext_:
     external_forces:  {body_names: ["base"], divide_by_mass: false}
     external_torques: {body_names: ["base"], divide_by_mass: false, scale: 0.2}
+  state_:
+    projected_gravity_b: {noise_std: 0.00}
+    joint_pos:    {noise_std: 0.00}
+    joint_vel:    {noise_std: 0.00}
+    prev_actions: {steps: 3}
+    imu_angvel:   {smoothing_window: 6}
+    imu_acc:      {smoothing_window: 6}
 
 reward:
   loco:
