@@ -70,7 +70,7 @@ def energy_l2(self):
 def joint_acc_l2(self):
     asset: Articulation = self.scene["robot"]
     r = - asset.data.joint_acc.square().sum(dim=-1, keepdim=True)
-    return r * (0.5 + 0.5 * asset.data.linvel_exp)
+    return r
 
 
 @reward_func
@@ -612,7 +612,7 @@ class feet_air_time(Reward):
         last_air_time = self.contact_sensor.data.last_air_time[:, self.body_ids]
         self.reward = torch.sum((last_air_time - self.thres).clamp_max(0.) * first_contact, dim=1, keepdim=True)
         self.reward *= (~self.env.command_manager.is_standing_env)
-        if self.condition_on_linvel:
+        if self.condition_on_linvel and hasattr(self.asset.data, "linvel_exp"):
             self.reward *= self.asset.data.linvel_exp
         return self.reward
 
@@ -989,7 +989,7 @@ class impedance_vel(Reward):
     
     def compute(self) -> torch.Tensor:
         diff = (self.command_manager.command_linvel_w - self.asset.data.root_lin_vel_w)
-        command_speed = self.command_manager.command_speed
+        command_speed = self.command_manager.command_speed.reshape(-1, 1)
         diff = torch.where(command_speed < 1.0, diff, diff / command_speed)
         error_l2 = diff.square().sum(dim=-1, keepdim=True)
         r = torch.exp(- error_l2 / 0.25) - error_l2
@@ -1016,7 +1016,8 @@ class impedance_yaw_vel(Reward):
         self.command_manager: Impedance = self.env.command_manager
     
     def compute(self) -> torch.Tensor:
-        diff = (self.command_manager.command_angvel.unsqueeze(1) - self.asset.data.root_ang_vel_b[:, 2:3])
+        command_angvel = self.command_manager.command_angvel.reshape(self.num_envs, 1)
+        diff = (command_angvel - self.asset.data.root_ang_vel_b[:, 2:3])
         error_l2 = diff.square().sum(dim=-1, keepdim=True)
         r = torch.exp(- error_l2 / 0.25) - error_l2
         return r
