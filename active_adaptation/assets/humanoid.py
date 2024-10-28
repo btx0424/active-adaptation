@@ -89,7 +89,7 @@ CY1_CFG = ArticulationCfg(
             ".*leg_joint[1,2,3,5,6]": 0.0,
             "[l,r]arm_joint2": 0.1,
             "[l,r]leg_joint4": -0.1,
-            "[l,r]arm_joint4": 0.1,
+            "[l,r]arm_joint4": 0.3,
         },
         joint_vel={".*": 0.0},
     ),

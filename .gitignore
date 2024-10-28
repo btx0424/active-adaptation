@@ -175,6 +175,8 @@ artifacts/
 *.sh
 scripts/*.png
 scripts/*.pt
+scripts/*.onnx
+scripts/*.json
 scripts/*.txt
 scripts/eval
 scripts/*.yaml
