@@ -344,6 +344,7 @@ class JointPosition(ActionManager):
         self.default_joint_pos = self.asset.data.default_joint_pos.clone()
         self.offset = torch.zeros_like(self.default_joint_pos)
         self.joint_limits = self.asset.data.joint_limits.clone().unbind(-1)
+        self.decimation = int(self.env.step_dt / self.env.physics_dt)
 
         with torch.device(self.device):
             action_buf_hist = max(max_delay + 1, 3) if max_delay is not None else 3
@@ -379,25 +380,27 @@ class JointPosition(ActionManager):
 
         alpha = torch.empty(len(env_ids), self.action_dim, device=self.device).uniform_(0, 1)
         alpha = self.alpha_range[:, 0] + alpha * (self.alpha_range[:, 1] - self.alpha_range[:, 0])
-        self.alpha[env_ids] = alpha
+        self.alpha[env_ids] = alpha.pow(1.0 / self.decimation)
 
     def __call__(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
             action = tensordict["action"].clamp(-10, 10)
-            if self.env.use_flipping:
-                action = torch.where(self.env.fliplr.unsqueeze(1), self.fliplr(action), action)
+            # if self.env.use_flipping:
+            #     action = torch.where(self.env.fliplr.unsqueeze(1), self.fliplr(action), action)
             self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
             self.action_buf[:, :, 0] = action
-            action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
-            self.applied_action.lerp_(action.squeeze(-1), self.alpha)
+            self.delay[:] = torch.randint(0, self.max_delay + 1, (self.num_envs, 1), device=self.device)
+        dim = (self.delay - substep + self.decimation) // self.decimation
+        action = self.action_buf.take_along_dim(dim.unsqueeze(1), dim=-1)
+        self.applied_action.lerp_(action.squeeze(-1), self.alpha)
 
-            pos_target = self.default_joint_pos.clone()
-            pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
-            if hasattr(self, "cumstom_command"):
-                pos_target[:, self.cumstom_command_joint_ids] = self.cumstom_command
-            if hasattr(self, "clip_joint_targets"):
-                pos_target = self.asset.data.joint_pos + (pos_target - self.asset.data.joint_pos).clamp(-self.clip_joint_targets, self.clip_joint_targets)
-            self.asset.set_joint_position_target(pos_target.clamp(*self.joint_limits))
+        pos_target = self.default_joint_pos.clone()
+        pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
+        if hasattr(self, "cumstom_command"):
+            pos_target[:, self.cumstom_command_joint_ids] = self.cumstom_command
+        if hasattr(self, "clip_joint_targets"):
+            pos_target = self.asset.data.joint_pos + (pos_target - self.asset.data.joint_pos).clamp(-self.clip_joint_targets, self.clip_joint_targets)
+        self.asset.set_joint_position_target(pos_target.clamp(*self.joint_limits))
         self.asset.write_data_to_sim()
 
 class QuadrupedWithArm(JointPosition):
