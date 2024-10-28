@@ -8,7 +8,7 @@ from typing import Union
 import logging
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from active_adaptation.utils.helpers import batchify
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Union
 
 quat_rotate_inverse = batchify(quat_rotate_inverse)
 
@@ -40,65 +40,99 @@ class Randomization:
         pass
 
 
+RangeType = Tuple[float, float]
+NestedRangeType = Union[RangeType, Dict[str, RangeType]]
+
+
 class motor_params(Randomization):
+    """
+    2024.10.28
+    - refactor to grouped randomization.
+
+
+    Example usage in the config file:
+
+      actuator_name: base_legs
+        stiffness_range:  
+          F[L,R]_hip:   [0.8, 1.2]
+          F[L,R]_thigh: [0.8, 1.2]
+          ...
+        damping_range:
+          F[L,R]_hip:   [0.8, 1.2]
+          F[L,R]_thigh: [0.8, 1.2]
+          ...
+        scale_factor_range:
+          .*_hip:   [0.8, 1.2]
+          .*_thigh: [0.8, 1.2]
+          .*_calf:  [0.8, 1.2]
+    
+    """
     def __init__(
         self, 
         env,
         actuator_name,
-        stiffness_range = (1.0, 1.0),
-        damping_range = (1.0, 1.0),
-        strength_range = (1.0, 1.0),
-        armature_range = (0.0, 0.1),
-        homogeneous: bool = False,
+        stiffness_range: NestedRangeType = (1.0, 1.0),
+        damping_range: NestedRangeType = (1.0, 1.0),
+        scale_factor_range: NestedRangeType = (1.0, 1.0),
+        strength_range: NestedRangeType = (1.0, 1.0),
+        **kwargs
     ):
         super().__init__(env)
+        if len(kwargs) > 0:
+            import warnings
+            warnings.warn(f"Got unexpected keyword arguments: {kwargs}")
+        
         self.asset: Articulation = self.env.scene["robot"]
         self.actuator_name = actuator_name
         self.stiffness_range = stiffness_range
         self.damping_range = damping_range
         self.strength_range = strength_range
-        self.armature_range = armature_range
 
-        self.homogeneous = homogeneous
-        self.motors: Union[DCMotor, ImplicitActuator] = self.asset.actuators[self.actuator_name]
-        self.num_joints = self.motors.num_joints
+        self.actuator: Union[DCMotor, ImplicitActuator] = self.asset.actuators[self.actuator_name]
+        self.num_joints = len(self.actuator.joint_names)
+        self.default_stiffness  = self.actuator.stiffness[0].clone()
+        self.default_damping    = self.actuator.damping[0].clone()
         
-        self.default_stiffness = self.motors.default_stiffness = self.motors.stiffness.clone()
-        self.default_damping = self.motors.default_damping = self.motors.damping.clone()
-        self.default_strength = torch.ones_like(self.default_stiffness)
-        self.default_armature = self.motors.armature.clone()
-        
-        if isinstance(self.motors, DCMotor):
-            if isinstance(self.motors._saturation_effort, float):
-                self.default_strength.fill_(self.motors._saturation_effort)
-                self.motors._saturation_effort = self.default_strength.clone()
-        elif isinstance(self.motors, ImplicitActuator):
-            self.default_strength[:] = self.motors.effort_limit
-        
-        armature = self.default_armature.clone().uniform_(*self.armature_range)
-        if self.homogeneous:
-            armature[:] = armature.mean(-1, keepdim=True)
-        self.asset.write_joint_armature_to_sim(armature, joint_ids=self.motors.joint_indices)
+        from omegaconf import ListConfig
+        def parse(range: NestedRangeType, default: torch.Tensor):
+            if isinstance(range, (tuple, list, ListConfig)):
+                range = {".*": range}
+            result = {}
+            for key, value in range.items():
+                ids, names = string_utils.resolve_matching_names(key, self.actuator.joint_names)
+                result[key] = (ids, names, value, default[ids])
+            return result
+
+        self.stiffness_range    = parse(stiffness_range, self.default_stiffness)
+        self.damping_range      = parse(damping_range, self.default_damping)
+        self.scale_factor_range = parse(scale_factor_range, torch.ones(self.num_joints, device=self.device))
         
     def reset(self, env_ids: torch.Tensor=slice(None)):
-        stiffness, _ = random_scale(
-            self.default_stiffness[env_ids], *self.stiffness_range, self.homogeneous
-        )
-        damping, _ = random_scale(
-            self.default_damping[env_ids], *self.damping_range, self.homogeneous
-        )
-        strength, _ = random_scale(
-            self.default_strength[env_ids], *self.strength_range, self.homogeneous
-        )
-        self.motors.stiffness[env_ids] = stiffness
-        self.motors.damping[env_ids] = damping
 
-        if isinstance(self.motors, DCMotor):
-            self.motors._saturation_effort[env_ids] = strength
-        elif isinstance(self.motors, ImplicitActuator):
-            self.asset.write_joint_stiffness_to_sim(self.motors.stiffness, self.motors.joint_indices)
-            self.asset.write_joint_damping_to_sim(self.motors.damping, self.motors.joint_indices)
-            self.motors.effort_limit[env_ids] = strength
+        scale_factor = torch.ones(len(env_ids), self.num_joints, device=self.device)
+        for key, (ids, names, value, default) in self.scale_factor_range.items():
+            r = (value[1] - value[0]) * torch.rand(len(env_ids), 1, device=self.device) + value[0]
+            scale_factor[:, ids] = default * r
+
+        stiffness = self.default_stiffness.expand(len(env_ids), -1).clone()
+        for key, (ids, names, value, default) in self.stiffness_range.items():
+            r = (value[1] - value[0]) * torch.rand(len(env_ids), 1, device=self.device) + value[0]
+            stiffness[:, ids] = default * r
+        self.actuator.stiffness[env_ids] = stiffness * scale_factor
+        
+        damping = self.default_damping.expand(len(env_ids), -1).clone()
+        for key, (ids, names, value, default) in self.damping_range.items():
+            r = (value[1] - value[0]) * torch.rand(len(env_ids), 1, device=self.device) + value[0]
+            damping[:, ids] = default * r
+        self.actuator.damping[env_ids] = damping * scale_factor
+
+        # apply randomization
+        if isinstance(self.actuator, DCMotor):
+            pass
+            # self.actuator._saturation_effort[env_ids] = strength
+        elif isinstance(self.actuator, ImplicitActuator):
+            self.asset.write_joint_stiffness_to_sim(self.actuator.stiffness, self.actuator.joint_indices, env_ids)
+            self.asset.write_joint_damping_to_sim(self.actuator.damping, self.actuator.joint_indices, env_ids)
 
 
 class random_motor_failure(Randomization):
