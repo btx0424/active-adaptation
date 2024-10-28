@@ -625,7 +625,7 @@ class com(Observation):
 
 
 class external_forces(Observation):
-    def __init__(self, env, body_names, divide_by_mass: bool=True):
+    def __init__(self, env, body_names, divide_by_mass: bool=True, scale: float = 1.0):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.body_indices, self.body_names = self.asset.find_bodies(body_names)
@@ -633,7 +633,7 @@ class external_forces(Observation):
         self.forces_b = torch.zeros(self.env.num_envs, len(self.body_indices) * 3, device=self.device)
     
         default_mass_total = self.asset.root_physx_view.get_masses()[0].sum() * 9.81
-        self.denom = default_mass_total if divide_by_mass else 1.
+        self.denom = default_mass_total if divide_by_mass else torch.tensor(scale, device=self.device)
 
     def update(self):
         forces_b = self.asset._external_force_b[:, self.body_indices]
@@ -646,7 +646,7 @@ class external_forces(Observation):
         self.forces_w[:] = forces_w.reshape(self.env.num_envs, -1)
         self.forces_b[:] = forces_b.reshape(self.env.num_envs, -1)
 
-        # print("external forces: ", self.forces_b * self.denom)
+        # print("forces:", self.forces_b.abs().mean(0))
 
     def compute(self) -> torch.Tensor:
         return self.forces_b
@@ -669,12 +669,13 @@ class external_torques(Observation):
         self.body_indices, self.body_names = self.asset.find_bodies(body_names)
         self.torques_b = torch.zeros(self.env.num_envs, len(self.body_indices) * 3, device=self.device)
         default_inertia = self.asset.root_physx_view.get_inertias()[0, 0, [0, 4, 8]].to(self.device)
-        self.denom = default_inertia if divide_by_mass else scale
+        self.denom = default_inertia if divide_by_mass else torch.tensor(scale, device=self.device)
     
     def update(self):
         torques_b = self.asset._external_torque_b[:, self.body_indices]
         torques_b = torques_b / self.denom
         self.torques_b[:] = torques_b.reshape(self.env.num_envs, -1)
+        # print("torque:", self.torques_b.abs().mean(0))
     
     def compute(self) -> torch.Tensor:
         return self.torques_b
