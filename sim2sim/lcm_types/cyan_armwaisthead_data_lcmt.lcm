@@ -1,0 +1,7 @@
+struct cyan_armwaisthead_data_lcmt {
+    float q[18];
+    float qd[18];
+    float tauIq[18];
+    float ext_contact[12];
+    float tauCom[18];
+}

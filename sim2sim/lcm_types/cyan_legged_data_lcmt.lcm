@@ -1,0 +1,6 @@
+struct cyan_legged_data_lcmt {
+    float  q[12];
+    float  qd[12];
+    float  tauIq[12];
+    float  tauCom[12];
+}

@@ -1,0 +1,9 @@
+struct cyan_lower_bodyimu_data_lcmt {
+    float  quat[4];
+    float  gyro[3];
+    float  rpy[3];
+    float  accelerometer[3];
+    float  posEst[3];
+    float  velEst[3];
+    int8_t contact_state[12];
+}

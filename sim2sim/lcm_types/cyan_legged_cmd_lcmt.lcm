@@ -1,0 +1,7 @@
+struct cyan_legged_cmd_lcmt {
+    float tau_ff[12];
+    float q_des[12];
+    float qd_des[12];
+    float kp_joint[12];
+    float kd_joint[12];
+}

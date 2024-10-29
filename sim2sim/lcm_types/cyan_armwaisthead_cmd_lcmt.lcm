@@ -1,0 +1,7 @@
+struct cyan_armwaisthead_cmd_lcmt {
+    float tau_ff[18];
+    float q_des[18];
+    float qd_des[18];
+    float kp_joint[18];
+    float kd_joint[18];
+}

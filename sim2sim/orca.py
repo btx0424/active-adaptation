@@ -14,43 +14,57 @@ np.set_printoptions(precision=2, suppress=True)
 
 # joint order transformation
 ISAAC_JOINTS = [
-    'larm_joint1', 'rarm_joint1', 
-    'waist_yaw_joint', 
-    'larm_joint2', 'rarm_joint2', 
     'lleg_joint1', 'rleg_joint1', 
-    'larm_joint3', 'rarm_joint3', 
+    'waist_yaw_joint', 
     'lleg_joint2', 'rleg_joint2', 
-    'larm_joint4', 'rarm_joint4', 
+    'larm_joint1', 'rarm_joint1', 
     'lleg_joint3', 'rleg_joint3', 
-    'larm_joint5', 'rarm_joint5', 
+    'larm_joint2', 'rarm_joint2', 
     'lleg_joint4', 'rleg_joint4', 
+    'larm_joint3', 'rarm_joint3', 
     'lleg_joint5', 'rleg_joint5', 
+    'larm_joint4', 'rarm_joint4', 
+    'lleg_joint6', 'rleg_joint6', 
+    'larm_joint5', 'rarm_joint5', 
+    'larm_joint6', 'rarm_joint6'
+]
+
+MJC_JOINTS = [
+    'lleg_joint1', 'lleg_joint2', 'lleg_joint3', 'lleg_joint4', 'lleg_joint5', 'lleg_joint6', 
+    'rleg_joint1', 'rleg_joint2', 'rleg_joint3', 'rleg_joint4', 'rleg_joint5', 'rleg_joint6', 
+    'waist_yaw_joint', 
+    'larm_joint1', 'larm_joint2', 'larm_joint3', 'larm_joint4', 'larm_joint5', 'larm_joint6', 
+    'rarm_joint1', 'rarm_joint2', 'rarm_joint3', 'rarm_joint4', 'rarm_joint5', 'rarm_joint6'
+]
+
+CTRL_JOINTS = [
+    'lleg_joint1', 'rleg_joint1', 
+    'waist_yaw_joint', 
+    'lleg_joint2', 'rleg_joint2', 
+    'larm_joint1', 'rarm_joint1', 
+    'lleg_joint3', 'rleg_joint3', 
+    'larm_joint2', 'rarm_joint2', 
+    'lleg_joint4', 'rleg_joint4', 
+    'larm_joint3', 'rarm_joint3', 
+    'lleg_joint5', 'rleg_joint5', 
+    'larm_joint4', 'rarm_joint4', 
     'lleg_joint6', 'rleg_joint6'
 ]
-MJC_JOINTS = [
-    "larm_joint1", "larm_joint2", "larm_joint3", "larm_joint4", "larm_joint5",
-    "rarm_joint1", "rarm_joint2", "rarm_joint3", "rarm_joint4", "rarm_joint5",
-    "waist_yaw_joint",
-    "lleg_joint1", "lleg_joint2", "lleg_joint3", "lleg_joint4", "lleg_joint5", "lleg_joint6",
-    "rleg_joint1", "rleg_joint2", "rleg_joint3", "rleg_joint4", "rleg_joint5", "rleg_joint6"
-]
+
+ISAAC_ACTION_SCALE = [0.8, 0.8, 0.8, 0.8, 0.8, 0.25, 0.25, 0.8, 0.8, 0.25, 0.25, 0.8, 0.8, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25]
 
 isaac2mjc = [ISAAC_JOINTS.index(joint) for joint in MJC_JOINTS]
 mjc2isaac = [MJC_JOINTS.index(joint) for joint in ISAAC_JOINTS]
 
-ISAAC_KP = [50., 50., 50., 50., 50., 50., 50., 30., 30., 50., 50., 30., 30., 50.,
-        50., 15., 15., 50., 50., 50., 50., 30., 30.]
-ISAAC_KD = [2., 2., 3., 2., 2., 3., 3., 1., 1., 3., 3., 1., 1., 3., 3., 1., 1., 3.,
-        3., 3., 3., 1., 1.]
-ISAAC_QPOS = [ 0.0000,  0.0000,  0.0000,  0.2000,  0.2000,  0.0000,  0.0000,  0.0000,
-         0.0000,  0.0000,  0.0000, -0.2000, -0.2000,  0.0000,  0.0000,  0.0000,
-         0.0000, -0.2000, -0.2000,  0.0000,  0.0000,  0.0000,  0.0000]
+MJC_KP = [75.0, 50.0, 50.0, 75.0, 30.0, 15.0, 75.0, 50.0, 50.0, 75.0, 30.0, 15.0, 75.0, 75.0, 50.0, 30.0, 30.0, 15.0, 15.0, 75.0, 50.0, 30.0, 30.0, 15.0, 15.0]
+MJC_KD = [6.0, 3.0, 3.0, 6.0, 2.0, 1.0, 6.0, 3.0, 3.0, 6.0, 2.0, 1.0, 3.0, 6.0, 3.0, 0.5, 1.0, 1.0, 1.0, 6.0, 3.0, 0.5, 1.0, 1.0, 1.0]
+MJC_QPOS = [0.0, 0.0, 0.0, -0.1, 0.0, 0.0, 0.0, 0.0, 0.0, -0.1, 0.0, 0.0, 0.0, 0.0, 0.1, 0.0, 0.3, 0.0, 0.0, 0.0, 0.1, 0.0, 0.3, 0.0, 0.0]
 
 DEBUG = False
 
 class MJCRobot:
 
-    smoothing: int = 2
+    smoothing: int = 3
 
     def __init__(self, xml_path, headless=False):
         self.model = mujoco.MjModel.from_xml_path(xml_path)
@@ -65,13 +79,19 @@ class MJCRobot:
         print(self.viewer.cam)
         
         # sometimes we only control/observe a subset of the joints
-        self.joint_names = [self.model.joint(i).name for i in range(self.model.njnt)]
-        self.joint_observed_ids = [self.joint_names.index(joint) for joint in MJC_JOINTS]
-
-        self.actuator_names = [self.model.actuator(i).name for i in range(self.model.nu)]
-        self.actuator_controlled_ids = [self.actuator_names.index(joint) for joint in MJC_JOINTS]
+        self.joint_names = []
+        self.joint_ranges = []
+        for i in range(self.model.njnt):
+            jnt = self.model.joint(i)
+            if jnt.type.item() == 3:
+                self.joint_names.append(jnt.name)
+                self.joint_ranges.append(jnt.range)
+        self.num_joints = len(self.joint_names)
         
-        self.action_dim = len(self.actuator_controlled_ids)
+        self.action_joint_ids_mjc = [self.joint_names.index(name) for name in CTRL_JOINTS]
+        self.action_joint_ids_isaac = [ISAAC_JOINTS.index(name) for name in CTRL_JOINTS]
+
+        self.action_dim = len(self.action_joint_ids_isaac)
 
         self.decimation = int(0.02 / self.model.opt.timestep)
         print(f"Decimation: {self.decimation}")
@@ -79,15 +99,16 @@ class MJCRobot:
         
         # allocate buffers
         self.command    = np.zeros(4)
-        self.action_buf = np.zeros((self.action_dim, 2))
-        self.qvel_buf   = np.zeros((self.action_dim, self.smoothing))
+        self.action_buf = np.zeros((self.action_dim, 3))
+        self.qpos_buf   = np.zeros((self.num_joints, self.smoothing))
+        self.qvel_buf   = np.zeros((self.num_joints, self.smoothing))
+        self.gravity_buf = np.zeros((3, self.smoothing))
         self.angvel_buf = np.zeros((3, self.smoothing))
+        
         self.smth_weight = np.flip(np.arange(1, self.smoothing + 1)).reshape(1, -1)
         self.smth_weight = self.smth_weight / self.smth_weight.sum()
         print(f"Smoothing weight: {self.smth_weight}")
         
-        self.qpos_default = np.zeros(self.action_dim)
-
         if DEBUG:
             self.kp = np.ones(self.action_dim) * 50
             self.kp[[2, 3]] = 30
@@ -98,11 +119,15 @@ class MJCRobot:
             self.kd[[7, 8]] = 0.5
             self.kd[[-1, -2, -7, -8]] = 0.5
         else:
-            self.qpos_default = np.array(ISAAC_QPOS)
-            self.kp = np.array(ISAAC_KP)[isaac2mjc] * 0.8
-            self.kd = np.array(ISAAC_KD)[isaac2mjc] * 0.8
-            self.kp[[-1, -2, -7, -8]] = 20
-            self.kd[[-1, -2, -7, -8]] = 0.6
+            self.qpos_default = np.array(MJC_QPOS)
+            self.kp = np.array(MJC_KP)
+            self.kd = np.array(MJC_KD)
+            ankle_joint_ids = [self.joint_names.index(name) for name in ["lleg_joint6", "rleg_joint6"]]
+            self.kp[ankle_joint_ids] = 15.
+            self.kd[ankle_joint_ids] = 1.0
+            self.action_scale = np.array(ISAAC_ACTION_SCALE)
+            self.applied_action = np.zeros(self.action_dim)
+            self.elbow_joint_ids = [self.joint_names.index(name) for name in ["larm_joint4", "rarm_joint4"]]
 
         mujoco.mj_step(self.model, self.data)
 
@@ -111,15 +136,20 @@ class MJCRobot:
         self.offset = np.pi / 2
     
     def reset(self):
-        self.set_cycle(1.1)
+        self.set_cycle(1.0)
         self.update()
         obs = self.compute_obs()
         return obs
     
     def update(self):
-        self.qpos = self.data.qpos[-self.model.njnt:][self.joint_observed_ids]
-        qvel = self.data.qvel[-self.model.njnt:][self.joint_observed_ids]
-        self.qvel_buf = np.roll(self.qvel_buf, 1, axis=1)
+        qpos = self.data.qpos[-self.num_joints:]
+        qvel = self.data.qvel[-self.num_joints:]
+        
+        self.qpos_buf[:, 1:] = self.qpos_buf[:, :-1]
+        self.qpos_buf[:, 0] = qpos
+        self.qpos = np.mean(self.qpos_buf, axis=1)
+
+        self.qvel_buf[:, 1:] = self.qvel_buf[:, :-1]
         self.qvel_buf[:, 0] = qvel
         self.qvel = np.mean(self.qvel_buf, axis=1)
         
@@ -128,31 +158,26 @@ class MJCRobot:
         self.angvel_buf[:, 0] = angvel
         self.angvel = np.mean(self.angvel_buf, axis=1)
 
+        self.quat = self.data.sensor("orientation").data
+        self.rot = R.from_quat(self.quat, scalar_first=True)
+        gravity = self.rot.inv().apply([0, 0, -1.])
+        self.gravity_buf[:, 1:] = self.gravity_buf[:, :-1]
+        self.gravity_buf[:, 0] = gravity
+        self.gravity_vec = normalize(np.mean(self.gravity_buf, axis=1))
+
     def step(self, action=None):
         if action is not None:
-            self.action_buf = np.roll(self.action_buf, 1, axis=1)
+            self.action_buf[:, 1:] = self.action_buf[:, :-1]
             self.action_buf[:, 0] = action
-            qpos_des = np.clip(action * 0.5 + self.qpos_default, -4, 4)
-        else:
-            qpos_des = self.qpos_default
-        
-        if DEBUG:
-            t = self.data.time
-            phase = self.omega * t + self.offset
-            qpos_des[0] = 0.5 * np.sin(phase)
-            qpos_des[1] = 0.2
-            qpos_des[5] = 0.5 * -np.sin(phase)
-            qpos_des[6] = 0.2
-            qpos_des[11] = 0.5 * np.sin(phase)
-            qpos_des[17] = 0.5 * -np.sin(phase)
-
+            self.applied_action = lerp(self.applied_action, action, 0.7)
 
         for _ in range(self.decimation):
+            self.pd_control(self.applied_action * self.action_scale)
             mujoco.mj_step(self.model, self.data)
             self.update()
-            self.pd_control(qpos_des[isaac2mjc])
         
         self.command[0] = 1.0
+        self.command[3] = 0.3
 
         if self.viewer.render_mode == "window":
             self.viewer.render()
@@ -161,34 +186,43 @@ class MJCRobot:
         return self.compute_obs()
     
     def compute_obs(self):
-        quat = self.data.sensor("orientation").data[[1, 2, 3, 0]]
-        rot = R.from_quat(quat)
-        gravity_vec = rot.inv().apply([0, 0, -1.])
-
         t = self.data.time
+
         phase = self.omega * t + self.offset
+        sin_t = np.sin(phase)
+        cos_t = np.cos(phase)
 
         obs = [
             self.command,
             self.angvel,
-            gravity_vec,
+            # rot.inv().apply(self.angvel),
+            # np.array(sin(yaw_des), cos(yaw_des)),
+            self.gravity_vec,
+            # self.quat,
             self.qpos[mjc2isaac],
             self.qvel[mjc2isaac],
             self.action_buf.flatten(),
-            np.array([np.sin(phase), np.cos(phase)]),
+            np.array([sin_t, self.omega * cos_t, cos_t, -self.omega * sin_t]),
         ]
         return np.concatenate(obs, dtype=np.float32)
 
     def pd_control(self, qpos_des):
-        qpos_err = qpos_des - self.qpos
-        self.tau_des = qpos_err * self.kp - self.qvel_buf.mean(1) * self.kd
-        self.tau_ctrl = lerp(self.data.ctrl, self.tau_des, 0.4)
-        self.data.ctrl[self.actuator_controlled_ids] = np.clip(self.tau_ctrl, -200, 200)
+        qpos_des_isaac = self.qpos_default.copy()
+        qpos_des_isaac[self.action_joint_ids_isaac] += qpos_des
+        qpos_des_mjc = qpos_des_isaac[isaac2mjc]
+        qpos_des_mjc[self.elbow_joint_ids] = 0.3
+
+        qpos_err = qpos_des_mjc - self.qpos
+        self.tau_des = qpos_err * self.kp - self.qvel * self.kd
+        self.tau_ctrl = lerp(self.data.ctrl, self.tau_des, 1.0)
+        self.data.ctrl[:] = np.clip(self.tau_ctrl * 0.98, -200, 200)
 
 
 def lerp(a, b, t):
     return a + (b - a) * t
 
+def normalize(x):
+    return x / np.linalg.norm(x)
 
 FILE_PATH = os.path.dirname(os.path.abspath(__file__))
 
@@ -197,14 +231,15 @@ FILE_PATH = os.path.dirname(os.path.abspath(__file__))
 @torch.inference_mode()
 def main():
 
-    xml_path = os.path.join(FILE_PATH, "orca1h/mjcf/orca1h.xml")
+    # xml_path = os.path.join(FILE_PATH, "orca1h/mjcf/orca1h.xml")
+    xml_path = os.path.join(FILE_PATH, "orca_stable/mjcf/orca_description_stable.xml")
     robot = MJCRobot(xml_path)
 
     obs = robot.reset()
 
-    policy_path = "policy-07-05_11-51.pt"
+    policy_path = "/home/btx0424/lab/active-adaptation/scripts/policy-10-28_03-47.pt"
     policy = torch.load(policy_path)
-    policy.module[0].set_missing_tolerance(True)
+    # policy.module[0].set_missing_tolerance(True)
 
     tensordict = TensorDict({
         "policy": torch.as_tensor(obs),
@@ -221,7 +256,7 @@ def main():
             action = tensordict["action"].squeeze().numpy()
             obs = torch.as_tensor(robot.step(action))
 
-            if hasattr(robot, "img"):
+            if hasattr(robot, "img") and i % 5 == 0:
                 imgs.append(robot.img)
             
             tensordict["next", "policy"] = obs.unsqueeze(0)
@@ -230,6 +265,7 @@ def main():
 
             time.sleep(max(0, 0.02 - (time.perf_counter() - start)))
             if i % 20 == 0:
+                print("time:", robot.data.time)
                 print("qpos:", robot.qpos)
                 print("qvel:", robot.qvel)
                 print("qvel:", robot.qvel_buf.mean(axis=1))
