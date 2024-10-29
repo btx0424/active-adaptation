@@ -32,7 +32,7 @@ import copy
 
 from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuousTensorSpec
 from torchrl.modules import ProbabilisticActor
-from torchrl.envs.transforms import CatTensors, TensorDictPrimer
+from torchrl.envs.transforms import TensorDictPrimer
 from tensordict import TensorDict
 from tensordict.nn import TensorDictModuleBase, TensorDictModule, TensorDictSequential
 
@@ -59,8 +59,10 @@ class PPOConfig:
     clip_param: float = 0.2
     # entropy_coef: float = 0.004
     # entropy_coef: float = 0.002
-    entropy_coef_start: float = 0.001
+    entropy_coef_start: float = 0.004
     entropy_coef_end: float = 0.001
+    
+    reg_lambda: float = 0.
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
@@ -130,7 +132,10 @@ class GRUModule(nn.Module):
         out1 = self.mlp(x)
         out2, hx = self.gru(out1, is_init, hx)
         out3 = self.out(out2 + out1)
-        out = torch.split(out3, self.split, dim=-1)
+        if self.split is None:
+            out = (out3,)
+        else:
+            out = torch.split(out3, self.split, dim=-1)
         return out + (hx.contiguous(),)
 
 
@@ -158,6 +163,11 @@ class PPODICPolicy(TensorDictModuleBase):
     * report ext_rec_error instead of ext_rec_loss
     * fix explicit force est
 
+    version: 0.1.1, 2024.10.29 @botian
+    * fix loss func reduction following torch update
+    * default reg_lambda = 0.0
+    * increase rec_lambda to 0.1
+
     """
     def __init__(
         self, 
@@ -177,6 +187,7 @@ class PPODICPolicy(TensorDictModuleBase):
         self.max_grad_norm = 1.0
         self.clip_param = self.cfg.clip_param
         self.critic_loss_fn = nn.MSELoss(reduction="none")
+        self.adapt_loss_fn = nn.MSELoss(reduction="none")
         self.action_dim = action_spec.shape[-1]
         self.ext_dim = observation_spec["ext_"].shape[-1]
         self.gae = GAE(0.99, 0.95)
@@ -310,7 +321,7 @@ class PPODICPolicy(TensorDictModuleBase):
         return policy
     
     def step_schedule(self, progress: float):
-        self.reg_lambda = progress
+        self.reg_lambda = progress * self.cfg.reg_lambda
         self.entropy_coef = self.cfg.entropy_coef_start + (self.cfg.entropy_coef_end - self.cfg.entropy_coef_start) * progress
 
     def train_op(self, tensordict: TensorDict):
@@ -355,12 +366,12 @@ class PPODICPolicy(TensorDictModuleBase):
             for epoch in range(2):
                 for minibatch in make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every):
                     self.adapt_module(minibatch)
-                    priv_loss = F.mse_loss(minibatch["priv_pred"], minibatch["_priv_feature"], reduce="none")
+                    priv_loss = self.adapt_loss_fn(minibatch["priv_pred"], minibatch["_priv_feature"])
                     priv_loss = (priv_loss * (~minibatch["is_init"])).mean()
-                    ext_loss = F.mse_loss(minibatch["ext_pred"], minibatch["_ext_feature"], reduce="none")
+                    ext_loss = self.adapt_loss_fn(minibatch["ext_pred"], minibatch["_ext_feature"])
                     ext_loss = (ext_loss * (~minibatch["is_init"])).mean()
                     if self.ext_rec_lambda > 0:
-                        ext_rec_error = F.mse_loss(minibatch["ext_rec"], minibatch["ext_"], reduce="none")
+                        ext_rec_error = self.adapt_loss_fn(minibatch["ext_rec"], minibatch["ext_"])
                         ext_rec_error = (ext_rec_error * (~minibatch["is_init"])).mean()
                     else:
                         ext_rec_error = 0.
@@ -415,12 +426,13 @@ class PPODICPolicy(TensorDictModuleBase):
     def _update(self, tensordict: TensorDict, policy_inference: PolicyUpdateInferenceMod, opt: torch.optim.Optimizer):
         log_probs, entropy = policy_inference(tensordict)
 
+        valid = (tensordict["step_count"] > 4)
         adv = tensordict["adv"]
         log_ratio = (log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
         ratio = torch.exp(log_ratio)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
-        policy_loss = - torch.mean(torch.min(surr1, surr2) * (~tensordict["is_init"]))
+        policy_loss = - torch.mean(torch.min(surr1, surr2) * valid)
         entropy_loss = - self.entropy_coef * entropy
 
         # tensordict[CMD_KEY].requires_grad_(True)
@@ -449,7 +461,7 @@ class PPODICPolicy(TensorDictModuleBase):
         value_loss = (value_loss * (~tensordict["is_init"])).mean()
 
         if self.cfg.phase == "train" and self.reg_lambda > 0:
-            reg_loss = F.mse_loss(tensordict["_priv_feature"], tensordict["priv_pred"], reduce="none")
+            reg_loss = self.adapt_loss_fn(tensordict["_priv_feature"], tensordict["priv_pred"])
             reg_loss = self.reg_lambda * (reg_loss * (~tensordict["is_init"])).mean()
         else:
             reg_loss = 0.
