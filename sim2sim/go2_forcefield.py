@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import mujoco
 import mujoco.viewer
-# import mujoco_viewer
+import mujoco_viewer
 import time
 import os
 import itertools
@@ -104,7 +104,7 @@ class FixedCommandForce(CommandManager):
 
     kp = 10.0
     kd = 6.0
-    virtual_mass = 2.0
+    virtual_mass = 10.0
 
     def update(self, robot: MJCRobot):
         self.command[:2] = self.setpoint_pos_b[:2]
@@ -255,6 +255,32 @@ class MJCRobot:
             qpos_des = self.qpos_default_isaac
 
         for _ in range(self.decimation):
+            # Apply spring force before each simulation step
+            base_pos = self.data.qpos[
+                self.base_qpos_start_idx : 3
+            ]
+            spring_force = self.spring_kp * (self.spring_target - base_pos)
+            spring_force[2] = 0
+
+            # force = np.array([-10, 0, 0], dtype=np.float32)
+            force = spring_force
+            # force = self.command_manager.force
+            torque = np.zeros(3)
+            point = np.zeros(3)
+
+            # self.data.xfrc_applied[self.base_body_id, :3] = force
+
+            self.data.qfrc_applied[:] = 0
+            mujoco.mj_applyFT(
+                self.model,
+                self.data,
+                force,
+                torque,
+                point,
+                self.base_body_id,
+                self.data.qfrc_applied,
+            )
+
             mujoco.mj_step(self.model, self.data)
             self.update()
             self.pd_control(qpos_des[isaac2mjc])
@@ -285,17 +311,17 @@ def main():
     robot = MJCRobot(xml_path, command_manager)
 
     # policy_path = "policy-go2force-639.pt"
-    # policy_path = "policy-go2force-1011.pt"
-    policy_path = "../scripts/policy-go2force-1017.pt"
-    policy_path = "../scripts/policy-go2force-1018.pt"
-    policy_path = "../scripts/policy-go2force-1019.pt" # lean forwards and unwilling to move
-    policy_path = "../scripts/policy-go2force-1020.pt"
+    policy_path = "policy-go2force-861.pt"
     policy_path = os.path.join(FILE_PATH, policy_path)
     policy = torch.load(policy_path)
     policy.module[0].set_missing_tolerance(True)
 
     imgs = []
     recorded_actions = []
+
+    recorded_applied_forces = []
+    recorded_commanded_forces = []
+    recorded_predicted_forces = []
 
     try:
         with mujoco.viewer.launch_passive(
@@ -325,8 +351,17 @@ def main():
                 robot.step(action)
                 recorded_actions.append(action)
                 
-                if i % 25 == 0:
-                    print("command:", command)
+                applied_force = robot.data.qfrc_applied[:3].copy()
+                commanded_force = command_manager.setpoint_pos_b * command_manager.kp * command_manager.virtual_mass
+                predicted_force = tensordict["ext_rec"][0, :3].cpu().numpy()
+                recorded_applied_forces.append(applied_force)
+                recorded_commanded_forces.append(commanded_force)
+                recorded_predicted_forces.append(predicted_force)
+
+                if i % 20 == 0:
+                    print("applied force:", applied_force)
+                    print("commanded force:", commanded_force)
+                    print("predicted force:", predicted_force)
                     # print("qpos:", robot.qpos)
                     # print("qvel:", robot.qvel)
                     # print("qvel:", robot.qvel_buf.mean(axis=1))
@@ -346,7 +381,47 @@ def main():
 
     if len(imgs):
         print("Saving gif of length", len(imgs))
-        imageio.mimsave("go2.mp4", imgs, fps=50)
+        imageio.mimsave("go2.mp4", imgs, fps=30)
+
+    if recorded_actions:
+        import matplotlib
+        matplotlib.use("TkAgg")
+        import matplotlib.pyplot as plt
+
+        recorded_actions = np.array(
+            recorded_actions
+        )  # Convert to numpy array for easier handling
+        time_steps = np.arange(len(recorded_actions))
+
+        fig, axs = plt.subplots(
+            12, 1, figsize=(10, 20)
+        )  # Create 12 subplots, one for each action dimension
+
+        for i in range(12):
+            axs[i].plot(time_steps, recorded_actions[:, i])
+            axs[i].set_title(f"Action {i+1}")
+            axs[i].set_xlabel("Time Step")
+            axs[i].set_ylabel("Action Value")
+
+        plt.tight_layout()
+        plt.show()
+
+        # plot applied forces
+        recorded_applied_forces = np.array(recorded_applied_forces)
+        recorded_commanded_forces = np.array(recorded_commanded_forces)
+        recorded_predicted_forces = np.array(recorded_predicted_forces)
+        fig, axs = plt.subplots(3, 1, figsize=(10, 10))
+        for i in range(3):
+            axs[i].plot(time_steps, recorded_applied_forces[:, i], label="applied")
+            axs[i].plot(time_steps, -recorded_commanded_forces[:, i], label="commanded")
+            axs[i].plot(time_steps, recorded_predicted_forces[:, i], label="predicted")
+            axs[i].set_title(f"Force {i+1}")
+            axs[i].set_xlabel("Time Step")
+            axs[i].set_ylabel("Force (N)")
+            axs[i].legend()
+
+        plt.tight_layout()
+        plt.show()
 
 if __name__ == "__main__":
     main()
