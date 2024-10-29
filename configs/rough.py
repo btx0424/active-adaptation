@@ -85,11 +85,11 @@ class LocomotionSceneCfg(InteractiveSceneCfg):
 
     robot: ArticulationCfg = MISSING
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/.*", history_length=3, track_air_time=True)
-    imu = ImuCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/base", 
-        offset=ImuCfg.OffsetCfg(pos=(-0.02557, 0.0, 0.04232), rot=(1.0, 0.0, 0.0, 0.0)),
-        gravity_bias=(0.0, 0.0, 9.81),
-        history_length=3)
+    # imu = ImuCfg(
+    #     prim_path="{ENV_REGEX_NS}/Robot/base", 
+    #     offset=ImuCfg.OffsetCfg(pos=(-0.02557, 0.0, 0.04232), rot=(1.0, 0.0, 0.0, 0.0)),
+    #     gravity_bias=(0.0, 0.0, 9.81),
+    #     history_length=3)
     
     light_0: AssetBaseCfg = AssetBaseCfg(
         prim_path="/World/light_0",
@@ -218,7 +218,7 @@ def LocomotionEnvCfg(task_cfg):
             num_envs=task_cfg.num_envs,                                                                                                                                                         
             robot=robot_cfg,
             terrain=terrain_cfg,
-            replicate_physics=False,
+            replicate_physics=True,
         ),
         action = task_cfg.action,
         command = task_cfg.command,
