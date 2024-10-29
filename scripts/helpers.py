@@ -52,10 +52,16 @@ class ObsNorm(ModBase):
         return tensordict
     
     @classmethod
-    def from_vecnorm(cls, vecnorm: VecNorm):
+    def from_vecnorm(cls, vecnorm: VecNorm, keys):
+        in_keys = []
+        out_keys = []
+        for in_key, out_key in zip(vecnorm.in_keys, vecnorm.out_keys):
+            if in_key in keys:
+                in_keys.append(in_key)
+                out_keys.append(out_key)
         return cls(
-            in_keys=vecnorm.in_keys,
-            out_keys=vecnorm.out_keys,
+            in_keys=in_keys,
+            out_keys=out_keys,
             locs=vecnorm.loc,
             scales=vecnorm.scale
         )
@@ -282,7 +288,7 @@ def export_onnx(module: ModBase, td: TensorDictBase, path: str):
     if not path.endswith(".onnx"):
         raise ValueError(f"Export path must end with .onnx, got {path}.")
     
-    td = td.select(*module.in_keys).cpu()
+    td = td.cpu().select(*module.in_keys, strict=True)
     module = module.cpu()
     onnx_program = torch.onnx.dynamo_export(module, **td.to_dict())
     onnx_program.save(path)
@@ -294,7 +300,7 @@ def export_onnx(module: ModBase, td: TensorDictBase, path: str):
         "in_keys": module.in_keys,
         "out_keys": module.out_keys
     }
-    json.dump(meta, open(meta_path, "w"))
+    json.dump(meta, open(meta_path, "w"), indent=4)
     print(f"Exported metadata to {meta_path}.")
 
     import onnxruntime as ort
