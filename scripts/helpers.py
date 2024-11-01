@@ -298,7 +298,8 @@ def export_onnx(module: ModBase, td: TensorDictBase, path: str):
     meta_path = path.replace(".onnx", ".json")
     meta = {
         "in_keys": module.in_keys,
-        "out_keys": module.out_keys
+        "out_keys": module.out_keys,
+        "in_shapes": [td[k].shape for k in module.in_keys],
     }
     json.dump(meta, open(meta_path, "w"), indent=4)
     print(f"Exported metadata to {meta_path}.")

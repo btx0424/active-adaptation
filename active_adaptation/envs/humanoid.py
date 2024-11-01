@@ -111,7 +111,9 @@ class Humanoid(LocomotionEnv):
             self.asset: Articulation = self.env.scene["robot"]
 
         def compute(self) -> torch.Tensor:
-            return self.asset.data.projected_gravity_b[:, 2].square().unsqueeze(1)
+            z = self.asset.data.projected_gravity_b[:, 2].square().unsqueeze(1)
+            y = self.asset.data.projected_gravity_b[:, 1].abs().unsqueeze(1)
+            return z - y
     
 
     class arm_velocity_exp(mdp.Reward):

@@ -8,6 +8,7 @@ import itertools
 import time
 import argparse
 
+from typing import Sequence
 from scipy.spatial.transform import Rotation as R
 from go2deploy import ONNXModule
 
@@ -40,13 +41,18 @@ ISAAC_QPOS = [
 ]
 
 class Robot:
-    def __init__(self, xml_path: str):
+    def __init__(
+        self,
+        xml_path: str,
+        joint_names_isaac: Sequence[str],
+        jpos_default_isaac: Sequence[float],
+        action_joint_names: Sequence[str]=None,
+    ):
         self.model = mujoco.MjModel.from_xml_path(xml_path)
         self.data = mujoco.MjData(self.model)
 
         self.joint_names = []
         self.joint_ranges = []
-        self.act_names = []
         for i in range(self.model.njnt):
             jnt = self.model.joint(i)
             if jnt.type.item() == 3:
@@ -54,36 +60,59 @@ class Robot:
                 self.joint_ranges.append(jnt.range)
         self.num_joints = len(self.joint_names)
 
-        self.act_names = [self.model.actuator(i).name for i in range(self.model.nu)]
+        actuator_names = [self.model.actuator(i).name for i in range(self.model.nu)]
         
-        assert self.num_joints == 12
-        assert (np.array(self.joint_names) == np.array(self.act_names)).all()
+        if not (np.array(self.joint_names) == np.array(actuator_names)).all():
+            raise ValueError("Joint names and actuator names don't match")
 
-        self.isaac2mjc = [ISAAC_JOINTS.index(joint) for joint in self.joint_names]
-        self.mjc2isaac = [self.joint_names.index(joint) for joint in ISAAC_JOINTS]
+        self.isaac2mjc = [joint_names_isaac.index(joint) for joint in self.joint_names]
+        self.mjc2isaac = [self.joint_names.index(joint) for joint in joint_names_isaac]
         
-        self.prev_action_steps = 1
-        self.action_buf = np.zeros((self.num_joints, self.prev_action_steps), dtype=np.float32)
-        self.applied_action = np.zeros(self.num_joints, dtype=np.float32)
+        if action_joint_names is None:
+            action_joint_names = joint_names_isaac
+        self.action_joint_ids_mjc = [self.joint_names.index(name) for name in action_joint_names]
+        self.action_joint_ids_isaac = [joint_names_isaac.index(name) for name in action_joint_names]
+        self.action_dim = len(self.action_joint_ids_isaac)
+
+        self.action_buf = np.zeros((self.action_dim, 4), dtype=np.float32)
+        self.applied_action = np.zeros(self.action_dim, dtype=np.float32)
 
         self.kp = 20.
         self.kd = 0.5
         self.action_scaling = 0.5
         
         mujoco.mj_step(self.model, self.data)
-        self.jpos_default = np.array(ISAAC_QPOS, dtype=np.float32)[self.isaac2mjc]
-        self.jpos_des = self.jpos_default.copy()
+        self.jpos_default_isaac = np.array(jpos_default_isaac, dtype=np.float32)
+        self.jpos_default_mjc = self.jpos_default_isaac[self.isaac2mjc]
+        self.jpos_des_isaac = self.jpos_default_isaac.copy()
+        self.jpos_des_mjc = self.jpos_default_mjc.copy()
+        self.jpos = self.data.qpos[-self.num_joints:].astype(np.float32)
 
-    def run(self):
-        self.thread_state = threading.Thread(target=self.state_func)
-        self.thread_step = threading.Thread(target=self.step_func)
+        self.synchronized = True
+
+    def run_async(self):
+        self.thread_state = threading.Thread(target=self.state_thread_func)
+        self.thread_step = threading.Thread(target=self.step_thread_func)
+        self.thread_control = threading.Thread(target=self.control_thread_func)
         self.thread_viewer = threading.Thread(target=self.viewer_func)
 
         self.sim_freq = 0.
         self.state_update_freq = 0.
+        self.synchronized = False
 
         self.thread_state.start()
         self.thread_step.start()
+        self.thread_control.start()
+        self.thread_viewer.start()
+    
+    def run_sync(self):
+        self.thread_viewer = threading.Thread(target=self.viewer_func)
+
+        self.sim_freq = int(1. / self.model.opt.timestep)
+        self.state_update_freq = 100
+        self.synchronized = True
+        self._update_state()
+
         self.thread_viewer.start()
 
     def get_obs(self):
@@ -95,16 +124,19 @@ class Robot:
         ]
         return np.concatenate(obs, dtype=np.float32)
 
-    def apply_action(self, action: np.ndarray):
+    def apply_action(self, action: np.ndarray, alpha: float=0.8):
         self.action_buf = np.roll(self.action_buf, 1, axis=1)
         self.action_buf[:, 0] = action
-        alpha = 0.8
         self.applied_action = alpha * action + (1. - alpha) * self.applied_action
 
-        self.jpos_des = (
-            self.action_scaling * self.applied_action[self.isaac2mjc]
-            + self.jpos_default
-        )
+        self.jpos_des_isaac = self.jpos_default_isaac.copy()
+        self.jpos_des_isaac[self.action_joint_ids_isaac] += self.action_scaling * self.applied_action
+
+        if self.synchronized:
+            self.jpos_des_mjc = self.jpos_des_isaac[self.isaac2mjc]
+            for i in range(int(0.02 / self.model.opt.timestep)):
+                self._step_physics()
+            self._update_state()
 
     def viewer_func(self):
         viewer = mujoco_viewer.MujocoViewer(self.model, self.data)
@@ -112,43 +144,59 @@ class Robot:
         viewer.cam.trackbodyid = 1
         for i in itertools.count():
             viewer.render()
-            if i % 50 == 0:
-                print(self.sim_freq, self.state_update_freq)
-                # print(self.jvel)
-                # print(self.jvel_diff)
+            if not self.synchronized and (i + 1) % 100 == 0:
+                print(
+                    f"Simulation freq: {self.sim_freq:.2f}, "
+                    f"State update freq: {self.state_update_freq:.2f}, "
+                    f"Control update freq: {self.control_update_freq:.2f}"
+                )
             time.sleep(0.02)
 
-    def step_func(self):
-        dt = self.model.opt.timestep - 0.0003
+    def step_thread_func(self):
+        dt = self.model.opt.timestep - 0.0002
         t0 = time.perf_counter()
 
         for i in itertools.count():
-            self.pd_control()
-            mujoco.mj_step(self.model, self.data)
+            self._step_physics()
             time.sleep(dt)
             self.sim_freq = i / (time.perf_counter() - t0)
         
-    def state_func(self):
+    def state_thread_func(self):
         t0 = time.perf_counter()
         dt = 0.005
-
-        self.jpos = self.data.qpos[-self.num_joints:].astype(np.float32)
+        
         for i in itertools.count():
-            self.jpos_prev = self.jpos.copy()
-            self.jpos = self.data.qpos[-self.num_joints:].astype(np.float32)
-            self.jvel = self.data.qvel[-self.num_joints:].astype(np.float32)
-            self.jvel_diff = (self.jpos - self.jpos_prev) / dt
-
-            self.quat = self.data.sensor("orientation").data[[1, 2, 3, 0]]
-            self.rot = R.from_quat(self.quat)
-            self.gravity = self.rot.inv().apply([0., 0., -1.])
-            self.gyro = self.data.sensor("imu_gyro").data.astype(np.float32)
-            self.acc = self.data.sensor("imu_gyro").data.astype(np.float32)
+            self._update_state()
             time.sleep(dt)
             self.state_update_freq = i / (time.perf_counter() - t0)
 
+    def control_thread_func(self):
+        t0 = time.perf_counter()
+        dt = 0.005
+
+        for i in itertools.count():
+            self.jpos_des_mjc = self.jpos_des_isaac[self.isaac2mjc]
+            time.sleep(dt)
+            self.control_update_freq = i / (time.perf_counter() - t0)
+
+    def _step_physics(self):
+        self.pd_control()
+        mujoco.mj_step(self.model, self.data)
+
+    def _update_state(self):
+        self.jpos_prev = self.jpos.copy()
+        self.jpos = self.data.qpos[-self.num_joints:].astype(np.float32)
+        self.jvel = self.data.qvel[-self.num_joints:].astype(np.float32)
+        # self.jvel_diff = (self.jpos - self.jpos_prev) / dt
+
+        self.quat = self.data.sensor("orientation").data[[1, 2, 3, 0]]
+        self.rot = R.from_quat(self.quat)
+        self.gravity = self.rot.inv().apply([0., 0., -1.])
+        self.gyro = self.data.sensor("imu_gyro").data.astype(np.float32)
+        self.acc = self.data.sensor("imu_gyro").data.astype(np.float32)
+
     def pd_control(self):
-        pos_error = self.jpos_des - self.data.qpos[-self.num_joints:]
+        pos_error = self.jpos_des_mjc - self.data.qpos[-self.num_joints:]
         vel_error = 0. - self.data.qvel[-self.num_joints:]
         tau_ctrl = self.kp * pos_error + self.kd * vel_error
         
@@ -162,10 +210,14 @@ XML_PATH = os.path.join(FILE_PATH, "go2/go2_plane.xml")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-p", "--path", type=str)
+    parser.add_argument("-s", "--sync", default=False, action="store_true")
     args = parser.parse_args()
     
-    robot = Robot(XML_PATH)
-    robot.run()
+    robot = Robot(XML_PATH, ISAAC_JOINTS, ISAAC_QPOS)
+    if args.sync:
+        robot.run_sync()
+    else:
+        robot.run_async()
     
     path = args.path
     if path.endswith(".onnx"):
