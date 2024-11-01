@@ -37,6 +37,8 @@ class ObsGroup:
         self.funcs = funcs
         self.max_delay = max_delay
         self.use_flip = use_flip
+        self.raw_obs_t = OrderedDict()
+        self.raw_obs_tm1: OrderedDict = None
         self.buf_obs = OrderedDict()
         self.buf_mask = OrderedDict()
         self.timestamp = -1
@@ -60,10 +62,19 @@ class ObsGroup:
     def compute(self, tensordict: TensorDictBase, timestamp: int) -> torch.Tensor:
         # update only if outdated
         if timestamp > self.timestamp:
+            self.raw_obs_tm1 = self.raw_obs_t
+            self.raw_obs_t = OrderedDict()
             for obs_key, func in self.funcs.items():
                 tensor, mask = func()
-                self.buf_obs[obs_key] = tensor
+                self.raw_obs_tm1[obs_key] = self.raw_obs_t.get(obs_key, tensor)
+                self.raw_obs_t[obs_key] = tensor
                 self.buf_mask[obs_key] = mask
+                if self.max_delay > 0:
+                    shape = tensor.shape[0:1] + (1,) * (tensor.ndim - 1)
+                    delay = torch.rand(shape, device=tensor.device) * self.max_delay
+                    self.buf_obs[obs_key] = func.lerp(self.raw_obs_tm1[obs_key], self.raw_obs_t[obs_key], 1 - delay)
+                else:
+                    self.buf_obs[obs_key] = self.raw_obs_t[obs_key]
         self.timestamp = timestamp
         
         tensors = torch.cat([self.buf_obs[key] for key in self.funcs.keys()], dim=-1)
@@ -216,6 +227,9 @@ class Env(EnvBase):
         for group_key, params in self.cfg.observation.items():
             max_delay = params.pop("_max_delay_", 0)
             use_flip = params.pop("_use_flip_", False)
+            if max_delay > self.cfg.decimation:
+                raise ValueError("Max delay cannot be greater than decimation.")
+            max_delay = max_delay / self.cfg.decimation
             funcs = OrderedDict()
             
             for key, kwargs in params.items():
