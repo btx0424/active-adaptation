@@ -63,6 +63,9 @@ class Observation:
     def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
     
+    def lerp(self, obs_tm1: torch.Tensor, obs_t: torch.Tensor, t) -> torch.Tensor:
+        return torch.lerp(obs_tm1, obs_t, t)
+    
     def __call__(self) ->  Tuple[torch.Tensor, torch.Tensor]:
         tensor = self.compute()
         if self.mask_ratio > 0.:
@@ -159,16 +162,21 @@ class root_acc_b(Observation):
     def __init__(self, env):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
-        self._prev_lin_vel_w = self.asset.data.root_lin_vel_w.clone()
-        self.lin_acc_b = torch.zeros_like(self.asset.data.root_lin_vel_b)
-    
-    def update(self):
-        self.lin_acc_w = (self.asset.data.root_lin_vel_w - self._prev_lin_vel_w) / self.env.step_dt
-        self.lin_acc_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.lin_acc_w)
-        self._prev_lin_vel_w = self.asset.data.root_lin_vel_w.clone()
+
+        T = 4
+        self.lin_vel_w = torch.zeros(self.num_envs, 3, T, device=self.device)
+        self.weights = torch.ones(T - 1, device=self.device)
+        self.weights = torch.cumsum(self.weights * 0.5, 0)
+        self.weights = self.weights / self.weights.sum()
+
+    def step(self, substep: int):
+        self.lin_vel_w[:, :, substep] = self.asset.data.root_lin_vel_w
 
     def compute(self):
-        return self.lin_acc_b.reshape(self.num_envs, -1)
+        diff = (self.lin_vel_w[:, :, 1:] - self.lin_vel_w[:, :, :-1]) / self.env.physics_dt
+        lin_acc_w = (diff * self.weights).sum(-1)
+        lin_acc_b = quat_rotate_inverse(self.asset.data.root_quat_w, lin_acc_w)
+        return lin_acc_b.reshape(self.num_envs, -1)
 
 
 class body_pos(CartesianObs):
@@ -354,6 +362,12 @@ class projected_gravity_b(Observation):
 
     def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
         return obs * torch.tensor([1., -1., 1.], device=self.device)
+    
+    def lerp(self, obs_tm1, obs_t, t):
+        gravity = torch.lerp(obs_tm1, obs_t, t)
+        gravity = gravity / gravity.norm(dim=-1, keepdim=True)
+        return gravity
+
 
 class root_linvel_b(Observation):
     def __init__(self, env, body_names: str=None, yaw_only: bool=False, mask_ratio: float=0):
@@ -670,13 +684,6 @@ class external_forces(Observation):
 
     def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
         return obs * torch.tensor([1., -1., 1.], device=self.device)
-    
-    def debug_draw(self):
-        self.env.debug_draw.vector(
-            self.asset.data.body_pos_w[:, self.body_indices].view(-1, 3),
-            self.forces_w.view(-1, 3),
-            color=(1., 0., 0., 1.)
-        )
 
 
 class external_torques(Observation):
