@@ -22,6 +22,8 @@ import os
 import datetime
 
 @hydra.main(config_path="../cfg", config_name="play")
+@torch.inference_mode()
+@set_exploration_type(ExplorationType.MODE)
 def main(cfg):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
@@ -29,13 +31,13 @@ def main(cfg):
     app_launcher = AppLauncher(cfg.app)
     simulation_app = app_launcher.app
 
-    from scripts.helpers import EpisodeStats, make_env_policy
+    from scripts.helpers import EpisodeStats, make_env_policy, ObsNorm, export_onnx
     env, policy, vecnorm = make_env_policy(cfg)
     
     if cfg.export_policy:
         import time
         time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
-        fake_input = env.observation_spec[0].zero().cpu()
+        fake_input = env.observation_spec[0].rand().cpu()
         fake_input["is_init"] = torch.tensor(1, dtype=bool)
         fake_input["context_adapt_hx"] = torch.zeros(128)
         fake_input = fake_input.unsqueeze(0)
@@ -47,14 +49,19 @@ def main(cfg):
             return (time.perf_counter() - start) / 1000
         
         FILE_PATH = os.path.dirname(__file__)
-        _policy = TensorDictSequential(
-            vecnorm.to_observation_norm(),
-            policy.get_rollout_policy("deploy")
-        ).cpu()
+        
+        deploy_policy = policy.get_rollout_policy("deploy")
+        obs_norm = ObsNorm.from_vecnorm(vecnorm, deploy_policy.in_keys)
+        _policy = TensorDictSequential(obs_norm, deploy_policy).cpu()
         
         print(f"Inference time of policy: {test(_policy, fake_input)}")
 
-        torch.save(_policy, os.path.join(FILE_PATH, f"policy-{time_str}.pt"))
+        time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
+        path = os.path.join(FILE_PATH, f"policy-{time_str}.pt")
+        torch.save(_policy, path)
+
+        export_onnx(_policy, fake_input, path.replace(".pt", ".onnx"))
+        
 
     frames_per_batch = env.num_envs * 32
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
@@ -66,22 +73,19 @@ def main(cfg):
     episode_stats = EpisodeStats(stats_keys)
     policy = policy.get_rollout_policy("eval")
 
-    with (
-        torch.inference_mode(), 
-        set_exploration_type(ExplorationType.MODE)
-    ):
-        td_ = env.reset()
-        
-        for i in itertools.count():
-            td_ = policy(td_)
-            td, td_ = env.step_and_maybe_reset(td_)
-            # td_.update(td["next"])
-            episode_stats.add(td)
 
-            if len(episode_stats) >= env.num_envs:
-                print("Step", i)
-                for k, v in sorted(episode_stats.pop().items(True, True)):
-                    print(k, torch.mean(v).item())
+    td_ = env.reset()
+    
+    for i in itertools.count():
+        td_ = policy(td_)
+        td, td_ = env.step_and_maybe_reset(td_)
+        # td_.update(td["next"])
+        episode_stats.add(td)
+
+        if len(episode_stats) >= env.num_envs:
+            print("Step", i)
+            for k, v in sorted(episode_stats.pop().items(True, True)):
+                print(k, torch.mean(v).item())
     
     env.close()
     simulation_app.close()
