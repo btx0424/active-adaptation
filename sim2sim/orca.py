@@ -1,17 +1,17 @@
 import torch
 import numpy as np
-import mujoco, mujoco_viewer
 import time
 import os
 import itertools
-import imageio
-import threading
 import argparse
+import math
+import threading
+import lcm
 
 from tensordict import TensorDict
 from torchrl.envs import set_exploration_type, ExplorationType
-from scipy.spatial.transform import Rotation as R
 from go2deploy import ONNXModule
+from scipy.spatial.transform import Rotation as R
 
 np.set_printoptions(precision=2, suppress=True)
 
@@ -40,6 +40,25 @@ MJC_JOINTS = [
     'rarm_joint1', 'rarm_joint2', 'rarm_joint3', 'rarm_joint4', 'rarm_joint5', 'rarm_joint6'
 ]
 
+REAL_JOINTS = [
+    'lleg_joint6', 'lleg_joint5', 'lleg_joint4', 'lleg_joint3', 'lleg_joint2', 'lleg_joint1',
+    'rleg_joint6', 'rleg_joint5', 'rleg_joint4', 'rleg_joint3', 'rleg_joint2', 'rleg_joint1',
+    'larm_joint6', 'larm_joint5', 'larm_joint4', 'larm_joint3', 'larm_joint2', 'larm_joint1',
+    'rarm_joint6', 'rarm_joint5', 'rarm_joint4', 'rarm_joint3', 'rarm_joint2', 'rarm_joint1',
+    'waist_yaw_joint'
+]
+
+MJC2REAL: list = [
+    5, 4, 3, 2, 1, 0,       # lleg 
+    11, 10, 9, 8, 7, 6,     # rleg
+    18, 17, 16, 15, 14, 13, # larm
+    24, 23, 22, 21, 20, 19, # rarm
+    12                      # waist
+]
+
+REAL2ISAAC = [REAL_JOINTS.index(joint) for joint in ISAAC_JOINTS]
+ISAAC2REAL = [ISAAC_JOINTS.index(joint) for joint in REAL_JOINTS]
+
 CTRL_JOINTS = [
     'lleg_joint1', 'rleg_joint1', 
     'waist_yaw_joint', 
@@ -66,8 +85,157 @@ MJC_QPOS = [0.0, 0.0, 0.0, -0.1, 0.0, 0.0, 0.0, 0.0, 0.0, -0.1, 0.0, 0.0, 0.0, 0
 FILE_PATH = os.path.dirname(os.path.abspath(__file__))
 XML_PATH = os.path.join(FILE_PATH, "orca_stable/mjcf/orca_description_stable.xml")
 
-from sim2sim.go2async import Robot
 from torch.utils._pytree import tree_map
+from sim2sim.go2async import Robot as _Robot
+from sim2sim.lcm_types.python.cyan_legged_cmd_lcmt import *
+from sim2sim.lcm_types.python.cyan_armwaisthead_cmd_lcmt import *
+from sim2sim.lcm_types.python.cyan_legged_data_lcmt import *
+from sim2sim.lcm_types.python.cyan_armwaisthead_data_lcmt import *
+from sim2sim.lcm_types.python.cyan_lower_bodyimu_data_lcmt import *
+
+class Robot(_Robot):
+    
+    def _setup_lcm(self):
+        ttl = 255
+        self.lowlevel_legs_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
+        self.lowlevel_ahw_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
+        self.lowlevel_sensors_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
+
+        self._pub_topic_legs = 'robot2controller_legs'
+        self._pub_topic_ahw = 'robot2controller_ahw'
+        self._pub_topic_sensors = 'robot2controller_sensors'
+        self.__ll_msg_legs = cyan_legged_data_lcmt()
+        self.__ll_msg_ahw = cyan_armwaisthead_data_lcmt()
+        self.__ll_msg_sensor = cyan_lower_bodyimu_data_lcmt()
+
+    def run_async(self):
+        self._setup_lcm()
+        self._update_state()
+        super().run_async()
+    
+    def run_sync(self):
+        self._setup_lcm()
+        self._update_state()
+        super().run_sync()
+    
+    def _update_state(self):
+        super()._update_state()
+        jpos = self.jpos[MJC2REAL]
+        jvel = self.jvel[MJC2REAL]
+        self.__ll_msg_legs.q = jpos[:12]
+        self.__ll_msg_legs.qd = jvel[:12]
+        self.__ll_msg_legs.tauIq = np.zeros(12)
+        
+        self.__ll_msg_ahw.q[:13] = jpos[12:]
+        self.__ll_msg_ahw.qd[:13] = jvel[12:]
+        self.__ll_msg_ahw.tauIq = np.zeros(18)
+
+        self.__ll_msg_sensor.quat = self.quat
+        self.__ll_msg_sensor.gyro = self.gyro
+
+        self.lowlevel_legs_lcm.publish(self._pub_topic_legs, self.__ll_msg_legs.encode())
+        self.lowlevel_ahw_lcm.publish(self._pub_topic_ahw, self.__ll_msg_ahw.encode())
+        self.lowlevel_sensors_lcm.publish(self._pub_topic_sensors, self.__ll_msg_sensor.encode())
+
+
+class PolicyClient:
+    
+    sub_topic_name_legs="robot2controller_legs"
+    sub_topic_name_ahw="robot2controller_ahw"
+    sub_topic_name_sensor="robot2controller_sensors"
+    sub_topic_name_gamepad="gamepad2controller"
+
+    def __init__(
+        self,
+        action_dim: int,
+        action_buf_steps: int = 3
+    ):
+        self.action_dim = action_dim
+        self.action_buf_steps = action_buf_steps
+        
+        ttl = 255
+        self.controller2policy_legs_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
+        self.controller2policy_ahw_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
+        self.controller2policy_sensor_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
+        # self.controller2policy_gamepad_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
+        
+        self.controller2policy_legs_lcm.subscribe(self.sub_topic_name_legs, self._handler_legs)
+        self.controller2policy_ahw_lcm.subscribe(self.sub_topic_name_ahw, self._handler_ahw)
+        self.controller2policy_sensor_lcm.subscribe(self.sub_topic_name_sensor, self._handler_sensor)
+        # self.controller2policy_gamepad_lcm.subscribe(self.sub_topic_name_gamepad, self.my_handler_gamepad)
+        
+        self.__p2c_msg_legs = cyan_legged_cmd_lcmt()
+        self.__p2c_msg_ahw = cyan_armwaisthead_cmd_lcmt()
+        self.policy2controller_legs_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
+        self.policy2controller_ahw_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
+        
+        self.command = np.zeros(4, dtype=np.float32)
+        self.jpos_real = np.zeros(len(ISAAC_JOINTS), dtype=np.float32)
+        self.jvel_real = np.zeros(len(ISAAC_JOINTS), dtype=np.float32)
+        self.rot = R.from_quat([1., 0., 0., 0.])
+        
+        self.action_buf = np.zeros((action_dim, self.action_buf_steps), dtype=np.float32)
+        
+        thread = threading.Thread(target=self._handle)
+        thread.start()
+        while not hasattr(self, "gyro"):
+            time.sleep(0.1)
+        print("Connected to robot!")
+
+    def set_cycle(self, cycle: float):
+        self.omega = np.pi * 2 / cycle
+        self.offset = np.pi / 2
+
+    def get_obs(self, time: float):
+        t = self.omega * time + self.offset
+        sin_t = math.sin(t)
+        cos_t = math.cos(t)
+        
+        self.command[0] = 1.0
+        yaw_diff = 0. - self.rot.as_euler("xyz")[2]
+        self.command[2:3] = yaw_diff
+        self.command[3] = 0.3
+        
+        obs = [
+            self.command, # 4
+            self.gyro, # 3
+            self.gravity, # 3
+            self.jpos_real[REAL2ISAAC], # 25
+            self.jvel_real[REAL2ISAAC], # 25
+            self.action_buf.reshape(-1), # 4
+            np.array([sin_t, self.omega * cos_t, cos_t, -self.omega * sin_t]), # 4
+        ]
+        return np.concatenate(obs, dtype=np.float32)
+
+    def apply_action(self, action: np.ndarray):
+        self.action_buf = np.roll(self.action_buf, 1, axis=1)
+        self.action_buf[:, 0] = action
+
+    def _handle(self):
+        while True:
+            self.controller2policy_legs_lcm.handle()
+            self.controller2policy_ahw_lcm.handle()
+            self.controller2policy_sensor_lcm.handle()
+            # self.controller2policy_gamepad_lcm.handle()
+            time.sleep(0.005)
+
+    def _handler_legs(self, channel, data):
+        msg = cyan_legged_data_lcmt.decode(data)
+        self.jpos_real[:12] = msg.q
+        self.jvel_real[:12] = msg.qd
+
+    def _handler_ahw(self, channel, data):
+        msg = cyan_armwaisthead_data_lcmt.decode(data)
+        self.jpos_real[12:] = msg.q[:13]
+        self.jvel_real[12:] = msg.qd[:13]
+
+    def _handler_sensor(self, channel, data):
+        msg = cyan_lower_bodyimu_data_lcmt.decode(data)
+        self.quat = msg.quat
+        self.gyro = msg.gyro
+        self.rot = R.from_quat(self.quat)
+        self.gravity = self.rot.inv().apply([0., 0., -1.])
+
 
 @set_exploration_type(ExplorationType.MODE)
 @torch.inference_mode()
@@ -75,12 +243,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-p", "--path", type=str)
     parser.add_argument("-s", "--sync", default=False, action="store_true")
+    parser.add_argument("-d", "--dry", default=False, action="store_true")
     args = parser.parse_args()
 
     ISAAC_QPOS = np.array(MJC_QPOS)[mjc2isaac]
     robot = Robot(XML_PATH, ISAAC_JOINTS, ISAAC_QPOS, CTRL_JOINTS)
-    robot.kp = np.array(MJC_KP)
-    robot.kd = np.array(MJC_KD)
+    robot.kp = np.array(MJC_KP) * 0.8
+    robot.kd = np.array(MJC_KD) * 0.8
     robot.action_scaling = np.array(ISAAC_ACTION_SCALE)
 
     if args.sync:
@@ -113,6 +282,10 @@ def main():
         "context_adapt_hx": np.zeros((1, 128), dtype=np.float32),
     }
 
+    t0 = time.perf_counter()
+    client = PolicyClient(action_dim=robot.action_dim)
+    client.set_cycle(1.0)
+    
     command = np.zeros(4, dtype=np.float32)
     command[0] = 1.0
     command[3] = 0.3
@@ -138,26 +311,26 @@ def main():
             np.array([sin_t, omega * cos_t, cos_t, -omega * sin_t]), # 4
         ]
         return np.concatenate(obs, dtype=np.float32)
-    
 
     t0 = time.perf_counter()
     for i in itertools.count():
         iter_start = time.perf_counter()
-        yaw_diff = 0. - robot.rot.as_euler("xyz")[2]
-        command[2:3] = yaw_diff
-
-        inp["command"] = command[None, ...]
-        inp["policy"] = get_obs(robot)[None, ...]
+        
+        inp["policy"] = client.get_obs(time=robot.data.time)[None, ...]
+        # inp["policy"] = get_obs(robot)[None, ...]
         inp["is_init"] = np.array([False])
         action, carry = policy(inp)
         if i > 50:
-            robot.apply_action(action)
+            robot.apply_action(action, 0.8)
+            client.apply_action(action)
         inp = carry
 
         time.sleep(max(0, 0.02 - (time.perf_counter() - iter_start)))
         control_freq = i / (time.perf_counter() - t0)
         if i % 50 == 0:
             print("Control freq:", control_freq)
+            print(client.jpos_real[REAL2ISAAC])
+            print(robot.jpos[mjc2isaac])
 
 
 if __name__ == "__main__":
