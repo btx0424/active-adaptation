@@ -60,7 +60,9 @@ def main(cfg):
         path = os.path.join(FILE_PATH, f"policy-{time_str}.pt")
         torch.save(_policy, path)
 
-        export_onnx(_policy, fake_input, path.replace(".pt", ".onnx"))
+        meta = {}
+        meta["action_scaling"] = cfg.task.action.get("action_scaling")
+        export_onnx(_policy, fake_input, path.replace(".pt", ".onnx"), meta)
         
 
     frames_per_batch = env.num_envs * 32

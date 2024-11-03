@@ -284,7 +284,7 @@ def evaluate(
 
 
 @torch.inference_mode()
-def export_onnx(module: ModBase, td: TensorDictBase, path: str):
+def export_onnx(module: ModBase, td: TensorDictBase, path: str, meta=None):
     if not path.endswith(".onnx"):
         raise ValueError(f"Export path must end with .onnx, got {path}.")
     
@@ -296,11 +296,12 @@ def export_onnx(module: ModBase, td: TensorDictBase, path: str):
 
     import json
     meta_path = path.replace(".onnx", ".json")
-    meta = {
-        "in_keys": module.in_keys,
-        "out_keys": module.out_keys,
-        "in_shapes": [td[k].shape for k in module.in_keys],
-    }
+    if meta is None:
+        meta = {}
+    meta["in_keys"] = module.in_keys
+    meta["out_keys"] = module.out_keys
+    meta["in_shapes"] =  [td[k].shape for k in module.in_keys],
+    
     json.dump(meta, open(meta_path, "w"), indent=4)
     print(f"Exported metadata to {meta_path}.")
 
