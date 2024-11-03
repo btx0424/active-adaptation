@@ -154,20 +154,15 @@ class PolicyClient:
         self.action_buf_steps = action_buf_steps
         
         ttl = 255
-        self.controller2policy_legs_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
-        self.controller2policy_ahw_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
-        self.controller2policy_sensor_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
-        # self.controller2policy_gamepad_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
+        self.lc_sub = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
         
-        self.controller2policy_legs_lcm.subscribe(self.sub_topic_name_legs, self._handler_legs)
-        self.controller2policy_ahw_lcm.subscribe(self.sub_topic_name_ahw, self._handler_ahw)
-        self.controller2policy_sensor_lcm.subscribe(self.sub_topic_name_sensor, self._handler_sensor)
-        # self.controller2policy_gamepad_lcm.subscribe(self.sub_topic_name_gamepad, self.my_handler_gamepad)
+        self.lc_sub.subscribe(self.sub_topic_name_legs, self._handler_legs)
+        self.lc_sub.subscribe(self.sub_topic_name_ahw, self._handler_ahw)
+        self.lc_sub.subscribe(self.sub_topic_name_sensor, self._handler_sensor)
+        # self.lc_sub.subscribe(self.sub_topic_name_gamepad, self.my_handler_gamepad)
         
         self.__p2c_msg_legs = cyan_legged_cmd_lcmt()
         self.__p2c_msg_ahw = cyan_armwaisthead_cmd_lcmt()
-        self.policy2controller_legs_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
-        self.policy2controller_ahw_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
         
         self.command = np.zeros(4, dtype=np.float32)
         self.jpos_real = np.zeros(len(ISAAC_JOINTS), dtype=np.float32)
@@ -213,11 +208,8 @@ class PolicyClient:
 
     def _handle(self):
         while True:
-            self.controller2policy_legs_lcm.handle()
-            self.controller2policy_ahw_lcm.handle()
-            self.controller2policy_sensor_lcm.handle()
-            # self.controller2policy_gamepad_lcm.handle()
-            time.sleep(0.005)
+            self.lc_sub.handle()
+            pass
 
     def _handler_legs(self, channel, data):
         msg = cyan_legged_data_lcmt.decode(data)
