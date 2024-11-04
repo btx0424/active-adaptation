@@ -117,10 +117,11 @@ class Robot:
 
     def get_obs(self):
         obs = [
+            self.gyro,
             self.gravity,
             self.jpos[self.mjc2isaac],
             self.jvel[self.mjc2isaac],
-            self.action_buf.reshape(-1),
+            self.action_buf[:, :1].reshape(-1),
         ]
         return np.concatenate(obs, dtype=np.float32)
 
@@ -142,11 +143,12 @@ class Robot:
         viewer = mujoco_viewer.MujocoViewer(self.model, self.data)
         viewer.cam.type = 1
         viewer.cam.trackbodyid = 1
+        expected_freq = 1 / self.model.opt.timestep
         for i in itertools.count():
             viewer.render()
             if not self.synchronized and (i + 1) % 100 == 0:
                 print(
-                    f"Simulation freq: {self.sim_freq:.2f}, "
+                    f"Simulation freq: {self.sim_freq:.2f}/{expected_freq:.2f}, "
                     f"State update freq: {self.state_update_freq:.2f}, "
                     f"Control update freq: {self.control_update_freq:.2f}"
                 )
@@ -243,11 +245,11 @@ def main():
         "adapt_hx": np.zeros((1, 128), dtype=np.float32),
     }
     
-    kd = 2
+    kd = 4
     kp = np.square(0.5 * kd)
 
     command = np.zeros(10, dtype=np.float32)
-    command[0] = 1.0
+    command[0] = 1.2
     command[1] = 0.0
     command[2:3] = 0.
     command[3:5] = kp * command[0:2]
@@ -273,7 +275,7 @@ def main():
         time.sleep(max(0, 0.02 - (time.perf_counter() - iter_start)))
         control_freq = i / (time.perf_counter() - t0)
         if i % 50 == 0:
-            print("Control freq:", control_freq)
+            print(f"Control freq: {control_freq:.2f}")
 
 if __name__ == "__main__":
     main()
