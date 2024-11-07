@@ -40,6 +40,10 @@ ISAAC_QPOS = [
     # -1.8, -1.8, -1.8, -1.8,
 ]
 
+def normalize(x: np.ndarray):
+    return x / np.linalg.norm(x)
+
+
 class Robot:
     def __init__(
         self,
@@ -76,6 +80,8 @@ class Robot:
 
         self.action_buf = np.zeros((self.action_dim, 4), dtype=np.float32)
         self.applied_action = np.zeros(self.action_dim, dtype=np.float32)
+        self._action_rate_l2 = np.zeros(self.action_dim, dtype=np.float32)
+        self._action_rate2_l2 = np.zeros(self.action_dim, dtype=np.float32)
 
         self.kp = 20.
         self.kd = 0.5
@@ -87,6 +93,10 @@ class Robot:
         self.jpos_des_isaac = self.jpos_default_isaac.copy()
         self.jpos_des_mjc = self.jpos_default_mjc.copy()
         self.jpos = self.data.qpos[-self.num_joints:].astype(np.float32)
+        
+        smoothing = 2
+        self.gyro_buf = np.zeros((3, smoothing), dtype=np.float32)
+        self.gravity_buf = np.zeros((3, smoothing), dtype=np.float32)
 
         self.synchronized = True
 
@@ -99,6 +109,7 @@ class Robot:
         self.sim_freq = 0.
         self.state_update_freq = 0.
         self.synchronized = False
+        self.step_cnt = 0.
 
         self.thread_state.start()
         self.thread_step.start()
@@ -111,17 +122,19 @@ class Robot:
         self.sim_freq = int(1. / self.model.opt.timestep)
         self.state_update_freq = 100
         self.synchronized = True
+        self.step_cnt = 0.
+
         self._update_state()
 
         self.thread_viewer.start()
 
     def get_obs(self):
         obs = [
-            self.gyro,
+            # self.gyro,
             self.gravity,
             self.jpos[self.mjc2isaac],
             self.jvel[self.mjc2isaac],
-            self.action_buf[:, :1].reshape(-1),
+            self.action_buf[:, :3].reshape(-1),
         ]
         return np.concatenate(obs, dtype=np.float32)
 
@@ -138,6 +151,16 @@ class Robot:
             for i in range(int(0.02 / self.model.opt.timestep)):
                 self._step_physics()
             self._update_state()
+        
+        # examine action smoothness
+        decay = 0.9
+        self.step_cnt = self.step_cnt * decay + 1.
+
+        action_rate_l2 = np.square(self.action_buf[:, 0] - self.action_buf[:, 1])
+        action_rate2_l2 = np.square(self.action_buf[:, 0] + 2 * self.action_buf[:, 1] - self.action_buf[:, 2])
+        
+        self._action_rate_l2 = self._action_rate_l2 * decay + action_rate_l2
+        self._action_rate2_l2 = self._action_rate2_l2 * decay + action_rate2_l2
 
     def viewer_func(self):
         viewer = mujoco_viewer.MujocoViewer(self.model, self.data)
@@ -155,7 +178,7 @@ class Robot:
             time.sleep(0.02)
 
     def step_thread_func(self):
-        dt = self.model.opt.timestep - 0.0002
+        dt = self.model.opt.timestep - 0.00022
         t0 = time.perf_counter()
 
         for i in itertools.count():
@@ -168,7 +191,7 @@ class Robot:
         dt = 0.005
         
         for i in itertools.count():
-            self._update_state()
+            self._update_state(dt)
             time.sleep(dt)
             self.state_update_freq = i / (time.perf_counter() - t0)
 
@@ -185,16 +208,24 @@ class Robot:
         self.pd_control()
         mujoco.mj_step(self.model, self.data)
 
-    def _update_state(self):
+    def _update_state(self, dt):
         self.jpos_prev = self.jpos.copy()
         self.jpos = self.data.qpos[-self.num_joints:].astype(np.float32)
         self.jvel = self.data.qvel[-self.num_joints:].astype(np.float32)
-        # self.jvel_diff = (self.jpos - self.jpos_prev) / dt
+        self.jvel_diff = (self.jpos - self.jpos_prev) / dt
 
         self.quat = self.data.sensor("orientation").data[[1, 2, 3, 0]]
         self.rot = R.from_quat(self.quat)
         self.gravity = self.rot.inv().apply([0., 0., -1.])
+        self.gravity_buf = np.roll(self.gravity_buf, 1, 1)
+        self.gravity_buf[:, 0] = self.gravity
+        self.gravity_smoothed = normalize(self.gravity_buf.mean(1))
+
         self.gyro = self.data.sensor("imu_gyro").data.astype(np.float32)
+        self.gyro_buf = np.roll(self.gyro_buf, 1, 1)
+        self.gyro_buf[:, 0] = self.gyro
+        self.gyro_smoothed = self.gyro_buf.mean(1)
+        
         self.acc = self.data.sensor("imu_gyro").data.astype(np.float32)
 
     def pd_control(self):
@@ -203,6 +234,14 @@ class Robot:
         tau_ctrl = self.kp * pos_error + self.kd * vel_error
         
         self.data.ctrl = tau_ctrl
+
+    @property
+    def action_rate_l2(self):
+        return self._action_rate_l2 / self.step_cnt
+    
+    @property
+    def action_rate2_l2(self):
+        return self._action_rate2_l2 / self.step_cnt
 
 
 FILE_PATH = os.path.dirname(os.path.abspath(__file__))
@@ -248,34 +287,56 @@ def main():
     kd = 4
     kp = np.square(0.5 * kd)
 
-    command = np.zeros(10, dtype=np.float32)
-    command[0] = 1.2
+    command = np.zeros(11, dtype=np.float32)
+    command[0] = 1.0
     command[1] = 0.0
-    command[2:3] = 0.
-    command[3:5] = kp * command[0:2]
-    command[5:6] = kd
-    command[6:7] = kp
-    command[7:8] = kd
-    command[8:9] = 3.0
+    command[2] = 0.
+    command[3] = 0.
+    command[4:6] = command[:2] * kp
+    command[6:7] = kd
+    command[7:9] = command[2:4] * kp
+    command[9:10] = kd
+    command[10:11] = 3.0
+
+    import zmq
+    context = zmq.Context()
+    socket = context.socket(zmq.PUB)
+    socket.bind("tcp://localhost:5555")
 
     t0 = time.perf_counter()
     for i in itertools.count():
         iter_start = time.perf_counter()
-        yaw_diff = 0. - robot.rot.as_euler("xyz")[2]
-        command[2:3] = yaw_diff
+        
+        rpy = robot.rot.as_euler("xyz")
+        command[2] = 0. - rpy[1]
+        command[3] = 0. - rpy[2]
+        command[7:9] = command[2:4] * kp
+        # if i % 200 == 0:
+        #     command[0] = 0.0
+
+        obs = robot.get_obs()
 
         inp["command"] = command[None, ...]
-        inp["policy"] = robot.get_obs()[None, ...]
+        inp["policy"] = obs[None, ...]
         inp["is_init"] = np.array([False])
         action, carry = policy(inp)
         if i > 100:
-            robot.apply_action(action)
+            robot.apply_action(action, 0.8)
         inp = carry
 
+        socket.send_pyobj({
+            "jpos": robot.jpos,
+            "jpos_des": robot.jpos_des_mjc,
+        })
         time.sleep(max(0, 0.02 - (time.perf_counter() - iter_start)))
         control_freq = i / (time.perf_counter() - t0)
         if i % 50 == 0:
+            # print(obs)
+            # print(command)
+            # print(action)
             print(f"Control freq: {control_freq:.2f}")
+            print(robot.action_rate_l2)
+            print(robot.action_rate2_l2)
 
 if __name__ == "__main__":
     main()
