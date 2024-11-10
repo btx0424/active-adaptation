@@ -355,7 +355,8 @@ class projected_gravity_b(Observation):
         self.noise_std = noise_std
     
     def compute(self):
-        projected_gravity_b = quat_rotate_inverse(self.init_quat, self.asset.data.projected_gravity_b)
+        # projected_gravity_b = quat_rotate_inverse(self.init_quat, self.asset.data.projected_gravity_b)
+        projected_gravity_b = self.asset.data.projected_gravity_b
         noise = torch.randn_like(projected_gravity_b).clip(-3., 3.) * self.noise_std
         projected_gravity_b += noise
         return projected_gravity_b / projected_gravity_b.norm(dim=-1, keepdim=True)
@@ -1028,15 +1029,21 @@ class height_scan(Observation):
     #     )
 
 class prev_actions(Observation):
-    def __init__(self, env, steps: int=1):
+    def __init__(self, env, steps: int=1, flatten: bool=True):
         super().__init__(env)
         self.steps = steps
+        self.flatten = flatten
+        self.action_manager = self.env.action_manager
     
     def compute(self):
-        return self.env.action_manager.action_buf[:, :, :self.steps].reshape(self.num_envs, -1)
+        action_buf = self.action_manager.action_buf[:, :, :self.steps]
+        if self.flatten:
+            return action_buf.reshape(self.num_envs, -1)
+        else:
+            return action_buf
 
     def fliplr(self, obs: torch.Tensor):
-        return self.env.action_manager.fliplr(obs)
+        return self.action_manager.fliplr(obs)
 
 
 class last_contact(Observation):
