@@ -74,6 +74,7 @@ class motor_params(Randomization):
         stiffness_range: NestedRangeType = (1.0, 1.0),
         damping_range: NestedRangeType = (1.0, 1.0),
         scale_factor_range: NestedRangeType = (1.0, 1.0),
+        armature_range: NestedRangeType = (0.0, 0.0),
         strength_range: NestedRangeType = (1.0, 1.0),
         **kwargs
     ):
@@ -106,6 +107,7 @@ class motor_params(Randomization):
         self.stiffness_range    = parse(stiffness_range, self.default_stiffness)
         self.damping_range      = parse(damping_range, self.default_damping)
         self.scale_factor_range = parse(scale_factor_range, torch.ones(self.num_joints, device=self.device))
+        self.armature_range     = parse(armature_range, torch.zeros(self.num_joints, device=self.device))
         
     def reset(self, env_ids: torch.Tensor=slice(None)):
 
@@ -123,8 +125,14 @@ class motor_params(Randomization):
         damping = self.default_damping.expand(len(env_ids), -1).clone()
         for key, (ids, names, value, default) in self.damping_range.items():
             r = (value[1] - value[0]) * torch.rand(len(env_ids), 1, device=self.device) + value[0]
-            damping[:, ids] = default * r
+            damping[:, ids] = r
         self.actuator.damping[env_ids] = damping * scale_factor
+
+        armature = torch.zeros(len(env_ids), self.num_joints, device=self.device)
+        for key, (ids, names, value, default) in self.armature_range.items():
+            r = (value[1] - value[0]) * torch.rand(len(env_ids), 1, device=self.device) + value[0]
+            armature[:, ids] = r
+        self.asset.write_joint_armature_to_sim(armature, env_ids=env_ids)
 
         # apply randomization
         if isinstance(self.actuator, DCMotor):
