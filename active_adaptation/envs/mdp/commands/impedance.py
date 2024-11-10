@@ -63,6 +63,7 @@ class ImpedanceBase(Command):
 
             self.des_pos_w = torch.zeros(self.num_envs, 3)
             self.des_lin_vel_w = torch.zeros(self.num_envs, 3)
+            self.des_lin_acc_w = torch.zeros(self.num_envs, 3)
             self.des_yaw_w = torch.zeros(self.num_envs, 1)
             self.des_yaw_vel_w = torch.zeros(self.num_envs, 1)
 
@@ -87,13 +88,18 @@ class ImpedanceBase(Command):
             self.compliant = torch.zeros(self.num_envs, 1, dtype=bool)
 
             self.force_ext_w = torch.zeros(self.num_envs, 3)
-            self.force_offset_b = torch.zeros(self.num_envs, 3)
+            self.force_impulse_struct = torch.zeros(self.num_envs, 4)
+            self.force_impulse_w = self.force_impulse_struct[:, :3]
+
+            self.constant_force_offset_b = torch.zeros(self.num_envs, 3)
+            self.impulse_force_offset_b = torch.zeros(self.num_envs, 3)
             self.torque_ext_w = torch.zeros(self.num_envs, 3)
 
             self._cum_error = torch.zeros(self.num_envs, 1)
             self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
             self.target_pos_w = torch.zeros(self.num_envs, 3)
             self.target_lin_vel = torch.zeros(self.num_envs, 3)
+            self.target_yaw_vel = torch.zeros(self.num_envs, 1)
 
         # for backward compatibility
         self.command_pos_w = self.des_pos_w
@@ -130,6 +136,7 @@ class ImpedanceBase(Command):
         # reset to zero command
         root_pos_w = self.asset.data.root_pos_w[env_ids]
         self.target_lin_vel[env_ids] = 0.
+        self.target_yaw_vel[env_ids] = 0.
         self.target_pos_w[env_ids] = root_pos_w
         
         self.setpoint_pos_w[env_ids] = root_pos_w
@@ -145,13 +152,49 @@ class ImpedanceBase(Command):
         self.ang_kp[env_ids] = 1.0
         self.ang_kd[env_ids] = 2.0
         self.virtual_mass[env_ids] =  2.0
+
+        self.lin_vel_error_avg = self.lin_vel_error_sum / self.cnt
+        self.env.extra["stats/lin_vel_error_avg"] = self.lin_vel_error_avg.item()
     
     def step(self, substep):
+        # integrate
+        lin_kp = self.lin_kp.unsqueeze(1)
+        lin_kd = self.lin_kd.unsqueeze(1)
+        ang_kp = self.ang_kp.unsqueeze(1)
+        ang_kd = self.ang_kd.unsqueeze(1)
+        
+        self._des_lin_acc_w = (
+            lin_kp * (self.setpoint_pos_w.unsqueeze(1) - self._des_pos_w)
+            + lin_kd * (0. - self._des_lin_vel_w)
+            + down_scale(self.force_ext_w, 40.).unsqueeze(1)
+        ) / self.virtual_mass.unsqueeze(1)
+
+        self._des_lin_vel_w.add_(self._des_lin_acc_w * self.env.physics_dt)
+        self._des_lin_vel_w[:, :, 2] = 0. # only xy
+        clamp_norm_(self._des_lin_vel_w, 1.6)
+        self._des_pos_w.add_(self._des_lin_vel_w * self.env.physics_dt)
+
+        ang_error = wrap_to_pi((self.setpoint_rpy_w.unsqueeze(1) - self._des_rpy_w))
+        self._des_ang_acc_w = (
+            ang_kp * ang_error
+            + ang_kd * (0. - self._des_ang_vel_w)
+        )
+        self._des_ang_vel_w.add_(self._des_ang_acc_w * self.env.physics_dt)
+        self._des_ang_vel_w[:, :, 0] = 0. # only pitch and yaw
+        self._des_rpy_w.add_(self._des_ang_vel_w * self.env.physics_dt)
+
+        # apply force
         root_quat = self.asset.data.root_quat_w
-        force_b = quat_rotate_inverse(root_quat, self.force_ext_w)
-        self.asset._external_force_b[:, 0] += force_b
-        self.asset._external_torque_b[:, 0] += self.force_offset_b.cross(force_b, dim=-1)
+        constant_force_b = quat_rotate_inverse(root_quat, self.force_ext_w)
+        impulse_force_b = quat_rotate_inverse(root_quat, self.force_impulse_w)
+        self.asset._external_force_b[:, 0] += constant_force_b + impulse_force_b
+        self.asset._external_torque_b[:, 0] += (
+            self.constant_force_offset_b.cross(constant_force_b, dim=-1) 
+            + self.impulse_force_offset_b.cross(impulse_force_b, dim=-1)
+        )
         self.asset.has_external_wrench = True
+
+        self.force_impulse_w[:, :3].mul_(self.force_impulse_struct[:, 3].unsqueeze(1))
     
     def update(self):
 
@@ -166,33 +209,8 @@ class ImpedanceBase(Command):
         self._des_ang_vel_w[:, 0] = self.asset.data.root_ang_vel_w
         self._des_rpy_w = self._des_rpy_w.roll(1, 1)
         self._des_rpy_w[:, 0] = rpy_from_quat(self.asset.data.root_quat_w)
-
-        lin_kp = self.lin_kp.unsqueeze(1)
-        lin_kd = self.lin_kd.unsqueeze(1)
-        ang_kp = self.ang_kp.unsqueeze(1)
-        ang_kd = self.ang_kd.unsqueeze(1)
-        for _ in range(self.substeps):
-            self._des_lin_acc_w = (
-                lin_kp * (self.setpoint_pos_w.unsqueeze(1) - self._des_pos_w)
-                + lin_kd * (0. - self._des_lin_vel_w)
-                + down_scale(self.force_ext_w, 20.).unsqueeze(1)
-            ) / self.virtual_mass.unsqueeze(1)
-
-            self._des_lin_vel_w.add_(self._des_lin_acc_w * self.env.physics_dt)
-            self._des_lin_vel_w[:, :, 2] = 0. # only xy
-            # clamp_norm_(self._des_lin_vel_w, 1.8)
-            self._des_pos_w.add_(self._des_lin_vel_w * self.env.physics_dt)
-
-            ang_error = wrap_to_pi((self.setpoint_rpy_w.unsqueeze(1) - self._des_rpy_w))
-            self._des_ang_acc_w = (
-                ang_kp * ang_error
-                + ang_kd * (0. - self._des_ang_vel_w)
-            )
-            self._des_ang_vel_w.add_(self._des_ang_acc_w * self.env.physics_dt)
-            self._des_ang_vel_w[:, :, 0] = 0. # only pitch and yaw
-            self._des_rpy_w.add_(self._des_ang_vel_w * self.env.physics_dt)
         
-        self.des_acc_w = self._des_lin_acc_w[:, 0]
+        self.des_lin_acc_w = self._des_lin_acc_w[:, 0]
         self.des_lin_vel_w  = self._des_lin_vel_w[:, 8:].mean(1)
         self.des_pos_w      = self._des_pos_w[:, 8:].mean(1)
         self.des_ang_vel_w  = self._des_ang_vel_w[:, 8:].mean(1)
@@ -232,11 +250,12 @@ class ImpedanceBase(Command):
         self.lin_vel_error_sum.mul_(0.995).add_(lin_vel_error)
         self.cnt = self.cnt * 0.995 + self.num_envs
 
-        sample_force = (
-            (torch.rand(self.num_envs, device=self.device) < 0.02)
-            & (self.env.episode_length_buf > self.temporal_smoothing)
-        )
-        self.sample_force(sample_force.nonzero().squeeze(-1))
+        valid = (self.env.episode_length_buf > self.temporal_smoothing)
+        sample_force = (torch.rand(self.num_envs, device=self.device) < 0.02) & valid
+        self.sample_constant_force(sample_force.nonzero().squeeze(-1))
+
+        sample_force = (torch.rand(self.num_envs, device=self.device) < 0.01) & valid
+        self.sample_impulse_force(sample_force.nonzero().squeeze(-1))
         
         eps = 0.05
         has_force = self.force_ext_w.any(dim=1, keepdim=True)
@@ -264,6 +283,7 @@ class ImpedanceBase(Command):
                 root_pos_w + minnorm(setpoint_w_a - root_pos_w, setpoint_w_b - root_pos_w),
                 root_pos_w
             )
+            self.setpoint_rpy_w_next[:, 2].add_(self.target_yaw_vel.squeeze(1) * self.env.step_dt).clamp_(-torch.pi/3, torch.pi/3)
 
         # continuous transition
         self.setpoint_pos_w = self.setpoint_pos_w_next
@@ -302,26 +322,46 @@ class ImpedanceBase(Command):
 
         self.compliant[env_ids] = compliant
         self.target_lin_vel[env_ids] = target_lin_vel
+        self.target_yaw_vel[env_ids] = torch.rand(len(env_ids), 1, device=self.device) * 2 - 1.0
         # self.target_pos_w[env_ids] = target_pos_w + self.asset.data.root_pos_w[env_ids]
         pitch = 0. # torch.randint(-1, 2, (len(env_ids),), device=self.device) * 0.2
         self.setpoint_rpy_w_next[env_ids, 1] = pitch
         self.setpoint_rpy_w_next[env_ids, 2] = yaw
         self.virtual_mass[env_ids] = virtual_mass
     
-    def sample_force(self, env_ids: torch.Tensor):
+    def sample_constant_force(self, env_ids: torch.Tensor):
+        if len(env_ids) == 0:
+            return
         constant_force_prob = torch.where(self.compliant[env_ids], 0.5, 0.3)
         force_ext_w = torch.zeros(len(env_ids), 3, device=self.device)
         force_ext_w[:, 0].uniform_(-30., 30.)
         force_ext_w[:, 1].uniform_(-30., 30.)
         force_ext_w[:, 2].uniform_(-10., 10.)
-        force_offset_b = torch.zeros(len(env_ids), 3, device=self.device)
-        force_offset_b[:, 0].uniform_(-0.2, 0.2)
-        force_offset_b[:, 1].uniform_(-0.1, 0.1)
-        force_offset_b[:, 2].uniform_(-0.1, 0.1)
+        constant_force_offset_b = torch.zeros(len(env_ids), 3, device=self.device)
+        constant_force_offset_b[:, 0].uniform_(-0.2, 0.2)
+        constant_force_offset_b[:, 1].uniform_(-0.1, 0.1)
+        constant_force_offset_b[:, 2].uniform_(-0.1, 0.1)
 
         has_force = torch.rand(len(env_ids), 1, device=self.device) < constant_force_prob
         self.force_ext_w[env_ids] = force_ext_w * has_force
-        self.force_offset_b[env_ids] = force_offset_b * has_force
+        self.constant_force_offset_b[env_ids] = constant_force_offset_b * has_force
+    
+    def sample_impulse_force(self, env_ids: torch.Tensor):
+        if (len(env_ids) == 0) or (self.lin_vel_error_avg > 0.1):
+            return
+        force_impulse_struct = torch.zeros(len(env_ids), 4, device=self.device)
+        a = torch.zeros(len(env_ids), device=self.device).uniform_(60., 120.)
+        r = torch.rand(len(env_ids), device=self.device) * torch.pi * 2
+        force_impulse_struct[:, 0] = torch.sin(r) * a
+        force_impulse_struct[:, 1] = torch.cos(r) * a
+        force_impulse_struct[:, 3].uniform_(0.9, 0.98)
+        impulse_force_offset_b = torch.zeros(len(env_ids), 3, device=self.device)
+        impulse_force_offset_b[:, 0].uniform_(-0.2, 0.2)
+        impulse_force_offset_b[:, 1].uniform_(-0.1, 0.1)
+        impulse_force_offset_b[:, 2].uniform_(-0.1, 0.1)
+
+        self.impulse_force_offset_b[env_ids] = impulse_force_offset_b
+        self.force_impulse_struct[env_ids] = force_impulse_struct
 
     def debug_draw(self):
         self.env.debug_draw.vector(
@@ -350,9 +390,16 @@ class ImpedanceBase(Command):
 
         # draw external forces (orange)
         self.env.debug_draw.vector(
-            self.asset.data.root_pos_w,
+            self.asset.data.root_pos_w + quat_rotate(self.asset.data.root_quat_w, self.constant_force_offset_b),
             self.force_ext_w / (self.virtual_mass * 9.81),
             color=(1., 0.5, 0., 1.),
+            size=4.0
+        )
+
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w + quat_rotate(self.asset.data.root_quat_w, self.impulse_force_offset_b),
+            self.force_impulse_w / (self.virtual_mass * 9.81),
+            color=(1., 0.0, 0.5, 1.),
             size=4.0
         )
 
