@@ -7,10 +7,11 @@ import os
 import itertools
 import time
 import argparse
+import zmq
 
 from typing import Sequence
 from scipy.spatial.transform import Rotation as R
-from go2deploy import ONNXModule
+from go2deploy import ONNXModule, SecondOrderLowPassFilter
 
 np.set_printoptions(precision=3, suppress=True)
 
@@ -99,6 +100,12 @@ class Robot:
         self.gravity_buf = np.zeros((3, smoothing), dtype=np.float32)
 
         self.synchronized = True
+        self.enable_control = False
+        self.filter = SecondOrderLowPassFilter(50., 400.)
+        
+        self.context = zmq.Context()
+        self.socket = self.context.socket(zmq.PUB)
+        self.socket.bind("tcp://*:5555")
 
     def run_async(self):
         self.thread_state = threading.Thread(target=self.state_thread_func)
@@ -128,16 +135,6 @@ class Robot:
 
         self.thread_viewer.start()
 
-    def get_obs(self):
-        obs = [
-            # self.gyro,
-            self.gravity,
-            self.jpos[self.mjc2isaac],
-            self.jvel[self.mjc2isaac],
-            self.action_buf[:, :3].reshape(-1),
-        ]
-        return np.concatenate(obs, dtype=np.float32)
-
     def apply_action(self, action: np.ndarray, alpha: float=0.8):
         self.action_buf = np.roll(self.action_buf, 1, axis=1)
         self.action_buf[:, 0] = action
@@ -153,7 +150,7 @@ class Robot:
             self._update_state()
         
         # examine action smoothness
-        decay = 0.9
+        decay = 0.98
         self.step_cnt = self.step_cnt * decay + 1.
 
         action_rate_l2 = np.square(self.action_buf[:, 0] - self.action_buf[:, 1])
@@ -200,7 +197,8 @@ class Robot:
         dt = 0.005
 
         for i in itertools.count():
-            self.jpos_des_mjc = self.jpos_des_isaac[self.isaac2mjc]
+            if self.enable_control:
+                self.jpos_des_mjc = self.filter.update(self.jpos_des_isaac[self.isaac2mjc])
             time.sleep(dt)
             self.control_update_freq = i / (time.perf_counter() - t0)
 
@@ -208,11 +206,13 @@ class Robot:
         self.pd_control()
         mujoco.mj_step(self.model, self.data)
 
-    def _update_state(self, dt):
+    def _update_state(self, dt=0.005):
         self.jpos_prev = self.jpos.copy()
         self.jpos = self.data.qpos[-self.num_joints:].astype(np.float32)
         self.jvel = self.data.qvel[-self.num_joints:].astype(np.float32)
-        self.jvel_diff = (self.jpos - self.jpos_prev) / dt
+
+        self.jpos_isaac = self.jpos[self.mjc2isaac]
+        self.jvel_isaac = self.jvel[self.mjc2isaac]
 
         self.quat = self.data.sensor("orientation").data[[1, 2, 3, 0]]
         self.rot = R.from_quat(self.quat)
@@ -227,6 +227,14 @@ class Robot:
         self.gyro_smoothed = self.gyro_buf.mean(1)
         
         self.acc = self.data.sensor("imu_gyro").data.astype(np.float32)
+        self.linvel = self.data.sensor("linvel").data.astype(np.float32)
+
+        self.socket.send_pyobj({
+            "jpos": self.jpos,
+            "jpos_des": self.jpos_des_mjc,
+            "rpy": self.gyro,
+            "tau": self.data.ctrl,
+        })
 
     def pd_control(self):
         pos_error = self.jpos_des_mjc - self.data.qpos[-self.num_joints:]
@@ -246,6 +254,53 @@ class Robot:
 
 FILE_PATH = os.path.dirname(os.path.abspath(__file__))
 XML_PATH = os.path.join(FILE_PATH, "go2/go2_plane.xml")
+
+
+class InferenceManager:
+    def __init__(self, robot: Robot, action_steps: int=3):
+        self.robot = robot
+        self.action_steps = action_steps
+
+        obs = self.update_obs()
+        self.obs_dim = obs.shape[-1]
+        self.obs_buf = np.zeros((4, self.obs_dim), dtype=np.float32)
+        self.command = self.update_command()    
+    
+    def update(self):
+        obs = self.update_obs()
+        command = self.update_command()
+        self.obs_buf = np.roll(self.obs_buf, shift=1, axis=0)
+        self.obs_buf[0] = obs
+        return obs, command
+    
+    def update_obs(self):
+        obs = [
+            self.robot.gravity,
+            self.robot.jpos_isaac,
+            self.robot.jvel_isaac,
+            self.robot.action_buf[:, :self.action_steps].reshape(-1),
+        ]
+        obs = np.concatenate(obs, dtype=np.float32)
+        return obs
+    
+    def update_command(self):
+        mass = 2.0
+        kd = 4 * np.sqrt(mass)
+        kp = np.square(0.5 * kd)
+
+        target_vel = np.array([1.0, 0.0])
+        setpoint = target_vel * kd / kp
+
+        rpy = self.robot.rot.as_euler("xyz")
+        command = np.zeros(11, dtype=np.float32)
+        command[0:2] = setpoint
+        command[2:4] = 0. - rpy[1:3]
+        command[4:6] = command[:2] * kp
+        command[6:7] = kd
+        command[7:9] = command[2:4] * kp
+        command[9:10] = kd
+        command[10:11] = mass
+        return command
 
 
 def main():
@@ -270,8 +325,12 @@ def main():
             carry = {k[1]: v for k, v in out.items() if k[0] == "next"}
             return action, carry
     else:
+        import torch
+        from torch.utils._pytree import tree_map
+        from tensordict import TensorDict
         backend = "torch"
         policy_module = torch.load(path)
+        @torch.inference_mode()
         def policy(inp):
             inp = TensorDict(tree_map(torch.as_tensor, inp), []).unsqueeze(0)
             out = policy_module(inp)
@@ -283,51 +342,24 @@ def main():
         "is_init": np.array([True]),
         "adapt_hx": np.zeros((1, 128), dtype=np.float32),
     }
-    
-    kd = 4
-    kp = np.square(0.5 * kd)
 
-    command = np.zeros(11, dtype=np.float32)
-    command[0] = 1.0
-    command[1] = 0.0
-    command[2] = 0.
-    command[3] = 0.
-    command[4:6] = command[:2] * kp
-    command[6:7] = kd
-    command[7:9] = command[2:4] * kp
-    command[9:10] = kd
-    command[10:11] = 3.0
-
-    import zmq
-    context = zmq.Context()
-    socket = context.socket(zmq.PUB)
-    socket.bind("tcp://localhost:5555")
+    manager = InferenceManager(robot)
 
     t0 = time.perf_counter()
     for i in itertools.count():
         iter_start = time.perf_counter()
-        
-        rpy = robot.rot.as_euler("xyz")
-        command[2] = 0. - rpy[1]
-        command[3] = 0. - rpy[2]
-        command[7:9] = command[2:4] * kp
-        # if i % 200 == 0:
-        #     command[0] = 0.0
 
-        obs = robot.get_obs()
-
+        obs, command = manager.update()
         inp["command"] = command[None, ...]
         inp["policy"] = obs[None, ...]
         inp["is_init"] = np.array([False])
         action, carry = policy(inp)
         if i > 100:
-            robot.apply_action(action, 0.8)
+            robot.enable_control = True
+        
+        robot.apply_action(action, 1.0)
         inp = carry
 
-        socket.send_pyobj({
-            "jpos": robot.jpos,
-            "jpos_des": robot.jpos_des_mjc,
-        })
         time.sleep(max(0, 0.02 - (time.perf_counter() - iter_start)))
         control_freq = i / (time.perf_counter() - t0)
         if i % 50 == 0:
