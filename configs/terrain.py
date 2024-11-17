@@ -373,6 +373,44 @@ SLOPES_AND_BOXES = TerrainGeneratorCfg(
     },
 )
 
+DIC = TerrainGeneratorCfg(
+    seed=0,
+    size=(8.0, 8.0),
+    border_width=65.0,
+    num_rows=10,
+    num_cols=10,
+    horizontal_scale=0.2,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    use_cache=False,
+    sub_terrains={
+        "flat": MeshPlaneTerrainCfg(
+            proportion=0.25,
+        ),
+        # "pyramid_stairs_inv_a": MeshInvertedPyramidStairsTerrainCfg(
+        #     proportion=0.25,
+        #     step_height_range=(0.08, 0.15),
+        #     step_width=0.80,
+        #     platform_width=3.5,
+        #     border_width=1.0,
+        #     holes=False,
+        # ),
+        # "random_rough_easy": HfRandomUniformTerrainCfg(
+        #     proportion=0.25,
+        #     noise_range=(0.0, 0.10),
+        #     noise_step=0.02,
+        #     border_width=0.5,
+        #     # downsampled_scale=0.3
+        # ),
+        "boxes": MeshRandomGridTerrainCfg(
+            proportion=0.25, 
+            grid_width=0.45, 
+            grid_height_range=(0.02, 0.05), 
+            platform_width=2.0
+        ),
+    },
+)
+
 
 TERRAINS = {
     "medium": ROUGH_MEDIUM,
@@ -384,6 +422,7 @@ TERRAINS = {
     "stairs_test": STAIRS_TEST,
     "stairs_easy": STAIRS_EASY,
     "slopes_boxes": SLOPES_AND_BOXES,
+    "dic": DIC
 }
 
 FLAT_TERRAIN_CFG = TerrainImporterCfg(

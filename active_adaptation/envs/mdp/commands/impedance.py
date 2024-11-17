@@ -113,6 +113,7 @@ class ImpedanceBase(Command):
         self.lin_vel_error_sum = torch.tensor(0., device=self.device)
         self.ang_vel_error_sum = torch.tensor(0., device=self.device)
         self.cnt = 0.
+        self.step_cnt = 0
 
         if self.teleop:
             self.key_mappings_pos = {
@@ -125,7 +126,21 @@ class ImpedanceBase(Command):
                 "Q": torch.tensor([0., 0., +torch.pi], device=self.device),
                 "E": torch.tensor([0., 0., -torch.pi], device=self.device),
             }
-    
+        
+        if self.env.scene.terrain.cfg.terrain_type == "generator":
+            self.terrain_generator = self.env.scene.terrain.terrain_generator
+            self.env_stairs = torch.as_tensor(
+                (
+                    (self.terrain_generator.terrain_types == "MeshInvertedPyramidStairsTerrainCfg") 
+                    | (self.terrain_generator.terrain_types == "MeshPyramidStairsTerrainCfg")
+                ), 
+                device=self.device
+            )
+            self.terrain_centers = torch.tensor(self.terrain_generator.terrain_origins, device=self.device)
+            self.terrain_origin = torch.tensor(self.terrain_centers[0, 0, :2], device=self.device)
+            self.terrain_origin -= 0.5 * torch.tensor(self.terrain_generator.cfg.size, device=self.device)
+            self.terrain_size = self.terrain_centers.shape[:2]
+
     def reset(self, env_ids):
         self._des_pos_w[env_ids] = self.asset.data.root_pos_w[env_ids].reshape(len(env_ids), 1, 3)
         self._des_lin_vel_w[env_ids] = 0.
@@ -181,6 +196,7 @@ class ImpedanceBase(Command):
         )
         self._des_ang_vel_w.add_(self._des_ang_acc_w * self.env.physics_dt)
         self._des_ang_vel_w[:, :, 0] = 0. # only pitch and yaw
+        self._des_ang_vel_w.clamp_(-torch.pi / 2, torch.pi / 2)
         self._des_rpy_w.add_(self._des_ang_vel_w * self.env.physics_dt)
 
         # apply force
@@ -195,14 +211,22 @@ class ImpedanceBase(Command):
         self.asset.has_external_wrench = True
 
         self.force_impulse_w[:, :3].mul_(self.force_impulse_struct[:, 3].unsqueeze(1))
+        self.step_cnt += 1
     
     def update(self):
+        if self.terrain_generator is not None:
+            terrain_idx = ((self.asset.data.root_pos_w[:, :2] - self.terrain_origin) / 8).int() # [num_envs, 2]
+            x, y = terrain_idx.unbind(-1)
+            x = x.clamp(min=0, max=self.terrain_size[0] -1)
+            y = y.clamp(min=0, max=self.terrain_size[1] -1)
+            self.terrain_idx = (x, y)
+            self.among_stairs = self.env_stairs[x, y]
 
         # closed-loop adjustment
         # linear velocity and position
-        self._des_lin_vel_w = self._des_lin_vel_w.roll(1, 1)
+        self._des_lin_vel_w[:, 1:-1] = self._des_lin_vel_w[:, :-2]
         self._des_lin_vel_w[:, 0] = self.asset.data.root_lin_vel_w
-        self._des_pos_w = self._des_pos_w.roll(1, 1)
+        self._des_pos_w[:, 1:-1] = self._des_pos_w[:, :-2]
         self._des_pos_w[:, 0] = self.asset.data.root_pos_w
         # angular velocity and heading
         self._des_ang_vel_w = self._des_ang_vel_w.roll(1, 1)
@@ -211,8 +235,8 @@ class ImpedanceBase(Command):
         self._des_rpy_w[:, 0] = rpy_from_quat(self.asset.data.root_quat_w)
         
         self.des_lin_acc_w = self._des_lin_acc_w[:, 0]
-        self.des_lin_vel_w  = self._des_lin_vel_w[:, 8:].mean(1)
-        self.des_pos_w      = self._des_pos_w[:, 8:].mean(1)
+        self.des_lin_vel_w  = self._des_lin_vel_w[:, -3:-1].mean(1)
+        self.des_pos_w      = self._des_pos_w[:, -1]
         self.des_ang_vel_w  = self._des_ang_vel_w[:, 8:].mean(1)
         # special handling for yaw since cannot directly average
         heading = self.asset.data.heading_w.unsqueeze(1)
@@ -303,11 +327,16 @@ class ImpedanceBase(Command):
             & (self.env.episode_length_buf[env_ids].unsqueeze(1) > 300)
         )
         # critical damping
-        lin_kd = empty.uniform_(2., 16.).clone() * virtual_mass.sqrt()
-        lin_kp = torch.square(0.5 * lin_kd)
+        # lin_kd = empty.uniform_(2., 16.).clone() * virtual_mass.sqrt()
+        # lin_kp = torch.square(0.5 * lin_kd)
         
-        ang_kd = empty.uniform_(2., 12.).clone()
-        ang_kp = torch.square(0.5 * ang_kd)
+        # ang_kd = empty.uniform_(2., 12.).clone()
+        # ang_kp = torch.square(0.5 * ang_kd)
+        lin_kp = empty.uniform_(2., 40.).clone()
+        lin_kd = 2 * lin_kp.sqrt()
+
+        ang_kp = empty.uniform_(2., 20.).clone()
+        ang_kd = 2 * ang_kp.sqrt()
 
         self.lin_kp[env_ids] = lin_kp
         self.lin_kd[env_ids] = lin_kd
@@ -315,14 +344,17 @@ class ImpedanceBase(Command):
         self.ang_kd[env_ids] = ang_kd
 
         target_lin_vel = torch.zeros(len(env_ids), 3, device=self.device)
-        target_lin_vel[:, 0].uniform_(-1.0, 1.4)
-        target_lin_vel[:, 1].uniform_(-1.2, 1.2)
+        target_lin_vel[:, 0].uniform_(0.0, 1.0)
+        target_lin_vel[:, 1].uniform_(0.0, 0.0)
         target_lin_vel = target_lin_vel * (~compliant) * (target_lin_vel.norm(dim=1, keepdim=True) > 0.1)
-        yaw = torch.zeros(len(env_ids), device=self.device)
+        yaw = 0. # (torch.rand(len(env_ids), device=self.device) - 0.5) * torch.pi * 0.2
+
+        among_stairs = self.among_stairs[env_ids]
+        target_lin_vel[:, 1] *= (~among_stairs.reshape(-1))
 
         self.compliant[env_ids] = compliant
         self.target_lin_vel[env_ids] = target_lin_vel
-        self.target_yaw_vel[env_ids] = torch.rand(len(env_ids), 1, device=self.device) * 2 - 1.0
+        self.target_yaw_vel[env_ids] = 0. #(torch.rand(len(env_ids), 1, device=self.device) * 2 - 1.0) * (~among_stairs.reshape(-1, 1))
         # self.target_pos_w[env_ids] = target_pos_w + self.asset.data.root_pos_w[env_ids]
         pitch = 0. # torch.randint(-1, 2, (len(env_ids),), device=self.device) * 0.2
         self.setpoint_rpy_w_next[env_ids, 1] = pitch
@@ -332,7 +364,7 @@ class ImpedanceBase(Command):
     def sample_constant_force(self, env_ids: torch.Tensor):
         if len(env_ids) == 0:
             return
-        constant_force_prob = torch.where(self.compliant[env_ids], 0.5, 0.3)
+        constant_force_prob = torch.where(self.compliant[env_ids], 0.6, 0.6)
         force_ext_w = torch.zeros(len(env_ids), 3, device=self.device)
         force_ext_w[:, 0].uniform_(-30., 30.)
         force_ext_w[:, 1].uniform_(-30., 30.)
@@ -403,3 +435,17 @@ class ImpedanceBase(Command):
             size=4.0
         )
 
+        self.env.debug_draw.point(
+            self.des_pos_w,
+            size=40,
+            color=(1., 1., 0., 1.)
+        )
+
+        # x, y = self.terrain_idx
+        # terrain_centers = self.terrain_centers[x, y]
+        # self.env.debug_draw.vector(
+        #     self.asset.data.root_pos_w,
+        #     terrain_centers - self.asset.data.root_pos_w,
+        #     color=(1., 1., 1.0, 1.0),
+        #     size=2
+        # )

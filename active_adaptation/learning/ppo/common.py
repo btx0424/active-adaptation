@@ -137,8 +137,8 @@ class Actor(nn.Module):
             self.actor_mean = nn.LazyLinear(action_dim * 2)
         else:
             self.actor_mean = nn.LazyLinear(action_dim)
-            self.actor_std = nn.Parameter(torch.zeros(action_dim))
-        self.scale_mapping = torch.exp
+            self.actor_std = nn.Parameter(torch.ones(action_dim))
+        self.scale_mapping = nn.Identity()
     
     def forward(self, features: torch.Tensor):
         if self.predict_std:
@@ -147,6 +147,27 @@ class Actor(nn.Module):
             loc = self.actor_mean(features)
             scale = torch.ones_like(loc) * self.actor_std
         scale = self.scale_mapping(scale)
+        return loc, scale
+
+
+class ActorCov(nn.Module):
+    """
+    Predicts state-dependent covariance between a_t and a_{t-1}.
+    """
+    def __init__(self, action_dim: int) -> None:
+        super().__init__()
+        self.actor_mean_cov = nn.LazyLinear(action_dim * 2)
+        self.actor_std = nn.Parameter(torch.zeros(action_dim))
+        self.scale_mapping = torch.exp
+    
+    def forward(self, features: torch.Tensor, prev_action: torch.Tensor, prev_loc: torch.Tensor):
+        loc, cov = self.actor_mean_cov(features).chunk(2, dim=-1)
+        scale = torch.ones_like(loc) * self.scale_mapping(self.actor_std)
+        var = scale.square()
+        cov = torch.tanh(cov) * var.detach()
+        loc = loc + (cov / var.detach()) * (prev_action - prev_loc)
+        var = var - cov.square() / var.detach()
+        scale = var.sqrt()
         return loc, scale
 
 

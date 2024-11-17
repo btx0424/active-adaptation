@@ -46,7 +46,7 @@ from collections import OrderedDict
 
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
 from ..modules.distributions import IndependentNormal
-from ..modules.rnn import GRU, set_recurrent_mode
+from ..modules.rnn import GRU, set_recurrent_mode, recurrent_mode
 from .common import *
 
 torch.set_float32_matmul_precision('high')
@@ -56,23 +56,24 @@ class PPOConfig:
     _target_: str = "active_adaptation.learning.ppo.ppo_dic.PPODICPolicy"
     name: str = "ppo_dic"
     train_every: int = 32
-    ppo_epochs: int = 5
-    num_minibatches: int = 8
+    ppo_epochs: int = 4
+    num_minibatches: int = 16
     lr: float = 5e-4
     clip_param: float = 0.2
     # entropy_coef: float = 0.004
     # entropy_coef: float = 0.002
     entropy_coef_start: float = 0.004
-    entropy_coef_end: float = 0.001
+    entropy_coef_end: float = 0.000
     
-    reg_lambda: float = 1.0
+    reg_lambda: float = 0.0
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
     phase: str = "train"
+    short_history: int = 0
     vecnorm: Union[str, None] = None
     checkpoint_path: Union[str, None] = None
-    in_keys: List[str] = field(default_factory=lambda: [CMD_KEY, OBS_KEY, OBS_PRIV_KEY, "ext", "ext_"])
+    in_keys: List[str] = field(default_factory=lambda: [CMD_KEY, OBS_KEY, OBS_PRIV_KEY, "ext", "ext_", "action_buf_", "symmetry"])
 
 cs = ConfigStore.instance()
 cs.store("ppo_dic_train", node=PPOConfig(phase="train", vecnorm="train"), group="algo")
@@ -84,33 +85,17 @@ class GRU(nn.Module):
         self, 
         input_size, 
         hidden_size, 
-        allow_none: bool = False,
         burn_in: bool = False
     ) -> None:
         super().__init__()
         self.gru = nn.GRUCell(input_size, hidden_size)
         self.ln = nn.LayerNorm(hidden_size)
-        self.allow_none = allow_none
         self.burn_in = burn_in
 
     def forward(self, x: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor):
-        if x.ndim == 2: # single step
-
-            N = x.shape[0]
-            if hx is None and self.allow_none:
-                hx = torch.zeros(N, self.gru.hidden_size, device=x.device)
-            # assert (hx[is_init.squeeze()] == 0.).all()
-            output = hx = self.gru(x, hx)
-            output = self.ln(output)
-            return output, hx
-
-        elif x.ndim == 3: # multi-step
-
+        if recurrent_mode():
             N, T = x.shape[:2]
-            if hx is None and self.allow_none:
-                hx = torch.zeros(N, self.gru.hidden_size, device=x.device)
-            else:
-                hx = hx[:, 0]
+            hx = hx[:, 0]
             output = []
             reset = 1. - is_init.float().reshape(N, T, 1)
             for i, x_t, reset_t in zip(range(T), x.unbind(1), reset.unbind(1)):
@@ -121,6 +106,11 @@ class GRU(nn.Module):
             output = torch.stack(output, dim=1)
             output = self.ln(output)
             return output, einops.repeat(hx, "b h -> b t h", t=T)
+        else:
+            N = x.shape[0]
+            hx = self.gru(x, hx)
+            output = self.ln(hx)
+            return output, hx
 
 
 class GRUModule(nn.Module):
@@ -158,7 +148,8 @@ class PolicyUpdateInferenceMod:
         dist = self.actor.get_dist(tensordict)
         log_probs = dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy().mean()
-        return log_probs, entropy
+        action = dist.rsample()
+        return log_probs, entropy, action
 
 
 class ContinuityLoss:
@@ -197,6 +188,11 @@ class PPODICPolicy(TensorDictModuleBase):
     * default reg_lambda = 0.0
     * increase rec_lambda to 0.1
 
+    version: 0.1.2, 2024.11.4 @botian
+    * reorganized structure
+    * fix bug in checkpoint loading
+    * tried ActorCov
+
     """
     def __init__(
         self, 
@@ -222,6 +218,7 @@ class PPODICPolicy(TensorDictModuleBase):
         self.gae = GAE(0.99, 0.95)
         self.reg_lambda = 0.0
         self.ext_rec_lambda = 0.1
+        self.symmetry_coef = 0.
         
         if cfg.value_norm:
             value_norm_cls = ValueNorm1
@@ -235,6 +232,10 @@ class PPODICPolicy(TensorDictModuleBase):
             Mod(nn.Sequential(make_mlp([128]), nn.LazyLinear(128)), [OBS_PRIV_KEY], ["_priv_feature"]),
             Mod(nn.Sequential(make_mlp([32]), nn.LazyLinear(32)), ["ext"], ["_ext_feature"]),
         ).to(self.device)
+
+        if self.cfg.short_history > 0:
+            global OBS_KEY 
+            OBS_KEY = OBS_KEY + "_h"
 
         self.adapt_module =  Mod(
             GRUModule(128 + 32 + 6, split=[128, 32, 6]), 
@@ -292,6 +293,21 @@ class PPODICPolicy(TensorDictModuleBase):
         self.adapt_ema = copy.deepcopy(self.adapt_module)
         self.adapt_ema.requires_grad_(False)
 
+        def init_(module):
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight, 1) # sqrt(2)
+        
+        # self.random = nn.Sequential(make_mlp([256, 256], norm=None, activation=nn.LeakyReLU), nn.LazyLinear(32)).to(self.device)
+        # self.random(fake_input["symmetry"])
+        # self.random.requires_grad_(False)
+        # self.random.apply(init_)
+        
+        # self.random_pred = nn.Sequential(make_mlp([256, 256], norm=None, activation=nn.LeakyReLU), nn.LazyLinear(32)).to(self.device)
+        # self.random_pred(fake_input["symmetry"])        
+        # self.random_pred.apply(init_)
+
+        # self.opt_rnd = torch.optim.Adam(self.random_pred.parameters())
+
         self.opt = torch.optim.Adam(
             [
                 {"params": self.actor.parameters()},
@@ -325,6 +341,12 @@ class PPODICPolicy(TensorDictModuleBase):
         self.critic.apply(init_)
         self.encoder_priv.apply(init_)
         self.adapt_module.apply(init_)
+
+        self.symmetry = nn.Sequential(make_mlp([256, 256]), nn.LazyLinear(1)).to(self.device)
+        self.symmetry(fake_input["symmetry"])
+        self.symmetry.apply(init_)
+        self.opt_symmetry = torch.optim.Adam(self.symmetry.parameters(), lr=5e-4)
+        
         self.num_updates = 0
     
     def make_tensordict_primer(self):
@@ -361,6 +383,7 @@ class PPODICPolicy(TensorDictModuleBase):
     def step_schedule(self, progress: float):
         self.reg_lambda = progress * self.cfg.reg_lambda
         self.entropy_coef = self.cfg.entropy_coef_start + (self.cfg.entropy_coef_end - self.cfg.entropy_coef_start) * progress
+        self.symmetry_coef = min(progress * 2, 1.)
 
     def train_op(self, tensordict: TensorDict):
         info = {}
@@ -389,40 +412,40 @@ class PPODICPolicy(TensorDictModuleBase):
             for minibatch in batch:
                 info = self._update(minibatch, policy_inference, opt)
                 infos.append(TensorDict(info, []))
-        
+
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         infos["critic/value_mean"] = tensordict["ret"].mean().item()
         return infos
     
+    @set_recurrent_mode(True)
     def train_adapt(self, tensordict: TensorDict):
         infos = []
 
         with torch.no_grad():
             self.encoder_priv(tensordict)
 
-        with set_recurrent_mode(True):
-            for epoch in range(2):
-                for minibatch in make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every):
-                    self.adapt_module(minibatch)
-                    priv_loss = self.adapt_loss_fn(minibatch["priv_pred"], minibatch["_priv_feature"])
-                    priv_loss = (priv_loss * (~minibatch["is_init"])).mean()
-                    ext_loss = self.adapt_loss_fn(minibatch["ext_pred"], minibatch["_ext_feature"])
-                    ext_loss = (ext_loss * (~minibatch["is_init"])).mean()
-                    if self.ext_rec_lambda > 0:
-                        ext_rec_error = self.adapt_loss_fn(minibatch["ext_rec"], minibatch["ext_"])
-                        ext_rec_error = (ext_rec_error * (~minibatch["is_init"])).mean()
-                    else:
-                        ext_rec_error = 0.
-                    self.opt_adapt.zero_grad()
-                    (priv_loss + ext_loss + self.ext_rec_lambda * ext_rec_error).backward()
-                    self.opt_adapt.step()
-                    infos.append(TensorDict({
-                        "adapt/priv_loss": priv_loss,
-                        "adapt/ext_loss": ext_loss,
-                        "adapt/ext_rec_loss": ext_rec_error,
-                    }, []))
+        for epoch in range(2):
+            for minibatch in make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every):
+                self.adapt_module(minibatch)
+                priv_loss = self.adapt_loss_fn(minibatch["priv_pred"], minibatch["_priv_feature"])
+                priv_loss = (priv_loss * (~minibatch["is_init"])).mean()
+                ext_loss = self.adapt_loss_fn(minibatch["ext_pred"], minibatch["_ext_feature"])
+                ext_loss = (ext_loss * (~minibatch["is_init"])).mean()
+                if self.ext_rec_lambda > 0:
+                    ext_rec_error = self.adapt_loss_fn(minibatch["ext_rec"], minibatch["ext_"])
+                    ext_rec_error = (ext_rec_error * (~minibatch["is_init"])).mean()
+                else:
+                    ext_rec_error = 0.
+                self.opt_adapt.zero_grad()
+                (priv_loss + ext_loss + self.ext_rec_lambda * ext_rec_error).backward()
+                self.opt_adapt.step()
+                infos.append(TensorDict({
+                    "adapt/priv_loss": priv_loss,
+                    "adapt/ext_loss": ext_loss,
+                    "adapt/ext_rec_loss": ext_rec_error,
+                }, []))
         
-        soft_copy_(self.adapt_module, self.adapt_ema, 0.05)
+        soft_copy_(self.adapt_module, self.adapt_ema, 0.04)
         
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
         return infos
@@ -462,7 +485,7 @@ class PPODICPolicy(TensorDictModuleBase):
 
     # @torch.compile
     def _update(self, tensordict: TensorDict, policy_inference: PolicyUpdateInferenceMod, opt: torch.optim.Optimizer):
-        log_probs, entropy = policy_inference(tensordict)
+        log_probs, entropy, action = policy_inference(tensordict)
 
         if self.cfg.phase == "train":
             valid = (tensordict["step_count"] > 1)
@@ -475,6 +498,11 @@ class PPODICPolicy(TensorDictModuleBase):
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
         policy_loss = - torch.mean(torch.min(surr1, surr2) * valid)
         entropy_loss = - self.entropy_coef * entropy
+
+        a_tm1 = tensordict["action_buf_"][:, :, 0]
+        a_tm2 = tensordict["action_buf_"][:, :, 1]
+        smth1_loss = torch.mean(torch.square(action - a_tm1).sum(-1) * valid) # first order smth
+        smth2_loss = torch.mean(torch.square(action - 2 * a_tm1 + a_tm2).sum(-1) * valid) # second order smth
 
         # tensordict[CMD_KEY].requires_grad_(True)
         # tensordict[OBS_KEY].requires_grad_(True)
@@ -507,11 +535,11 @@ class PPODICPolicy(TensorDictModuleBase):
         else:
             reg_loss = 0.
             
-        loss = policy_loss + entropy_loss + value_loss + reg_loss + gradient_penalty * 0.002
+        loss = policy_loss + entropy_loss + value_loss + reg_loss
         
         opt.zero_grad()
         loss.backward()
-        actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+        actor_grad_norm = nn.utils.clip_grad_norm_(policy_inference.actor.parameters(), self.max_grad_norm)
         critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
         opt.step()
         
@@ -523,6 +551,8 @@ class PPODICPolicy(TensorDictModuleBase):
             "actor/grad_norm": actor_grad_norm,
             'actor/approx_kl': ((ratio - 1) - log_ratio).mean(),
             "actor/gradient_penalty": gradient_penalty,
+            "actor/smth1_loss": smth1_loss,
+            "actor/smth2_loss": smth2_loss,
             "adapt/reg_loss": reg_loss,
             "critic/value_loss": value_loss,
             "critic/grad_norm": critic_grad_norm,
@@ -530,6 +560,40 @@ class PPODICPolicy(TensorDictModuleBase):
         }
         return info
 
+    def _update_symmetry(self, tensordict: TensorDict):
+        # left_obs, right_obs = tensordict["symmetry"].unbind(1)
+        # rnd_pred = self.random_pred(left_obs)
+        # rnd_loss = F.mse_loss(rnd_pred, self.random(left_obs))
+
+        left_obs, right_obs = tensordict["symmetry"].unbind(1)
+        left_obs.requires_grad_(True)
+        left_score = self.symmetry(left_obs)
+        right_score = self.symmetry(right_obs)
+        valid = (~tensordict["is_init"]).float()
+        loss_left = (left_score - 1).square()
+        loss_right = (right_score + 1).square()
+        symmetry_loss = torch.mean((loss_left + loss_right) * valid)
+
+        grad = torch.autograd.grad(
+            left_score,
+            left_obs, 
+            torch.ones_like(left_score),
+            retain_graph=True,
+            create_graph=True
+        )[0]
+        gradient_penalty = torch.mean(grad.square().sum(dim=-1))
+        
+        self.opt_symmetry.zero_grad()
+        (symmetry_loss + 5 * gradient_penalty).backward()
+        self.opt_symmetry.step()
+
+        return {
+            "symmetry/loss": symmetry_loss,
+            "symmetry/gradient_penalty": gradient_penalty,
+            # "symmetry/acc": ((left_score > 0) & (right_score < 0)).float().mean(),
+            # "symmetry/loss_rnd": rnd_loss
+        }
+    
     def state_dict(self):
         state_dict = OrderedDict()
         for name, module in self.named_children():
