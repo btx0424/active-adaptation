@@ -1,6 +1,7 @@
 from math import inf
 import torch
 import abc
+from typing import TYPE_CHECKING
 
 from omni.isaac.lab.sensors import ContactSensor
 from omni.isaac.lab.assets import Articulation
@@ -10,12 +11,15 @@ from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from active_adaptation.utils.helpers import batchify
 from ..commands import *
 
+if TYPE_CHECKING:
+    from active_adaptation.envs.base import Env
+
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
 
 class Reward:
     def __init__(self, env, weight: float, enabled: bool=True, clip_range=(-torch.inf, +torch.inf)):
-        self.env = env
+        self.env: Env = env
         self.weight = weight
         self.enabled = enabled
         self.clip_range = clip_range
@@ -70,7 +74,10 @@ def energy_l2(self):
 def joint_acc_l2(self):
     asset: Articulation = self.scene["robot"]
     r = - asset.data.joint_acc.square().sum(dim=-1, keepdim=True)
-    return r
+    if hasattr(asset.data, "linvel_exp"):
+        return r * (0.5 + 0.5 * asset.data.linvel_exp)
+    else:
+        return r
 
 
 @reward_func
@@ -606,14 +613,17 @@ class feet_air_time(Reward):
         self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names)
         self.body_ids = torch.tensor(self.body_ids, device=self.env.device)
         self.reward = torch.zeros(self.num_envs, 1, device=self.env.device)
+        self.last_air_time = torch.zeros(self.num_envs, len(self.body_ids), device=self.env.device)
 
     def compute(self):
         first_contact = self.contact_sensor.compute_first_contact(self.env.step_dt)[:, self.body_ids]
         last_air_time = self.contact_sensor.data.last_air_time[:, self.body_ids]
-        self.reward = torch.sum((last_air_time - self.thres).clamp_max(0.) * first_contact, dim=1, keepdim=True)
+        contact = self.last_air_time != last_air_time
+        self.last_air_time = last_air_time
+        self.reward = torch.sum((last_air_time - self.thres).clamp_max(0.) * contact, dim=1, keepdim=True)
         self.reward *= (~self.env.command_manager.is_standing_env)
-        if self.condition_on_linvel and hasattr(self.asset.data, "linvel_exp"):
-            self.reward *= self.asset.data.linvel_exp
+        # if self.condition_on_linvel and hasattr(self.asset.data, "linvel_exp"):
+        #     self.reward *= self.asset.data.linvel_exp
         return self.reward
 
 class max_feet_height(Reward):
@@ -1068,21 +1078,50 @@ class impedance_pos(Reward):
         r = torch.exp(- diff.norm(dim=-1, keepdim=True) / 0.25)
         return r
     
+from ..commands.impedance import rpy_from_quat, ImpedanceBase
 
 class impedance_vel(Reward):
     def __init__(self, env, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.command_manager: Impedance = self.env.command_manager
-    
+
+        self.decay = torch.tensor([0.0, 0.5], device=self.device)
+        self.cnt = torch.zeros(self.num_envs, len(self.decay), device=self.device)
+        self.lin_vel_sum = torch.zeros(self.num_envs, 3, len(self.decay), device=self.device)
+
+    def reset(self, env_ids):
+        self.lin_vel_sum[env_ids] = 0.
+        self.cnt[env_ids] = 0
+
+    def update(self):
+        self.cnt.mul_(self.decay).add_(1.)
+        self.lin_vel_sum.mul_(self.decay).add_(self.asset.data.root_lin_vel_w.unsqueeze(-1))
+
     def compute(self) -> torch.Tensor:
-        diff = (self.command_manager.command_linvel_w - self.asset.data.root_lin_vel_w)
-        command_speed = self.command_manager.command_speed.reshape(-1, 1)
-        diff = torch.where(command_speed < 1.0, diff, diff / command_speed)
-        error_l2 = diff.square().sum(dim=-1, keepdim=True)
-        r = torch.exp(- error_l2 / 0.25) - error_l2
+        lin_vel_w = self.lin_vel_sum / self.cnt.unsqueeze(1)
+        command_lin_vel_w = self.command_manager.command_linvel_w.unsqueeze(-1)
+        command_speed = self.command_manager.command_speed.reshape(self.num_envs, 1)
+        diff = (lin_vel_w - command_lin_vel_w)
+        error_l2 = diff[:, :2].square().sum(dim=1, keepdim=True)
+        error_l2 = error_l2.min(-1)[0]
+        p = torch.exp(- error_l2 / 0.25)
+        r = p - 0.5 * error_l2
+        self.asset.data.linvel_exp = p
         return r
 
+class impedance_acc(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.command_manager: ImpedanceBase = self.env.command_manager
+    
+    def compute(self) -> torch.Tensor:
+        lin_acc_w = self.asset.data.body_acc_w[:, 0, :3]
+        command_lin_acc_w = self.command_manager.des_lin_acc_w
+        error_l2 = (lin_acc_w - command_lin_acc_w)[:, :2].square().sum(dim=1, keepdim=True)
+        r = torch.exp(- error_l2 / 2.)
+        return r
 
 class impedance_yaw_pos(Reward):
     def __init__(self, env, weight: float, enabled: bool = True):
@@ -1097,6 +1136,20 @@ class impedance_yaw_pos(Reward):
         return r
 
 
+class impedance_pitch_pos(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.command_manager: ImpedanceBase = self.env.command_manager
+
+    def compute(self):
+        rpy = rpy_from_quat(self.asset.data.root_quat_w)
+        diff = self.command_manager.setpoint_rpy_w[:, 1].unsqueeze(1) - rpy[:, 1].unsqueeze(1)
+        error_l1 = diff.abs()
+        r = torch.exp(- error_l1 / 0.4)
+        return r
+
+
 class impedance_yaw_vel(Reward):
     def __init__(self, env, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
@@ -1107,7 +1160,7 @@ class impedance_yaw_vel(Reward):
         command_angvel = self.command_manager.command_angvel.reshape(self.num_envs, 1)
         diff = (command_angvel - self.asset.data.root_ang_vel_b[:, 2:3])
         error_l2 = diff.square().sum(dim=-1, keepdim=True)
-        r = torch.exp(- error_l2 / 0.25) - error_l2
+        r = torch.exp(- error_l2 / 0.25) - 0.5 * error_l2
         return r
 
 
@@ -1198,6 +1251,33 @@ class joint_limits(Reward):
         violation_min = (joint_pos - self.joint_limits_min).clamp_max(0.)
         violation_max = (self.joint_limits_max - joint_pos).clamp_max(0.)
         return (violation_min + violation_max).sum(1, keepdim=True)
+
+
+from active_adaptation.assets.quadruped import Quadruped
+class step_vel(Reward):
+    def __init__(self, env, weight, enabled = True, clip_range=(-torch.inf, +torch.inf)):
+        super().__init__(env, weight, enabled, clip_range)
+        self.asset: Quadruped = self.env.scene["robot"]
+        self.prev_root_pos_w = torch.zeros(self.num_envs, 4, 3, device=self.device)
+        self.last_impact_time = torch.zeros(self.num_envs, 4, 1, device=self.device)
+        self.command_manager: Impedance = self.env.command_manager
+
+    def reset(self, env_ids):
+        self.prev_root_pos_w[env_ids] = self.asset.data.root_pos_w[env_ids].unsqueeze(1)
+        self.last_impact_time[env_ids] = 0.
+
+    def update(self):
+        root_pos_w = self.asset.data.root_pos_w.unsqueeze(1)
+        t = self.env.episode_length_buf.reshape(-1, 1, 1) * self.env.step_dt
+        self.step_vel = (root_pos_w - self.prev_root_pos_w) / (t - self.last_impact_time)
+        self.step_vel = torch.nan_to_num(self.step_vel, nan=0., posinf=0., neginf=0.)
+        self.prev_root_pos_w = torch.where(self.asset.impact.unsqueeze(-1), root_pos_w, self.prev_root_pos_w)
+        self.last_impact_time = torch.where(self.asset.impact.unsqueeze(-1), t, self.last_impact_time)
+
+    def compute(self):
+        error_l1 = (self.command_manager.command_linvel_w[:, :2].unsqueeze(1) - self.step_vel[:, :, :2]).norm(dim=-1)
+        r = torch.exp(- error_l1) * self.asset.impact
+        return r.sum(1, keepdim=True)
 
 
 def normalize(x: torch.Tensor):
