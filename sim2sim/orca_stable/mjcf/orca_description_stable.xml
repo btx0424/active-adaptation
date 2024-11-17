@@ -1,6 +1,6 @@
 <mujoco model="orca_description">
     <compiler angle="radian" meshdir="../meshes/" />
-    <option gravity='0 0 -9.806' iterations='50' solver='Newton' timestep='0.001'/>
+    <option gravity='0 0 -9.806' iterations='50' solver='Newton' timestep='0.002'/>
     <size njmax="500" nconmax="100" />
     <asset>
         <material name='collision' rgba='0.1 0.5 0.9 0.4'/>
@@ -274,7 +274,7 @@
         <framelinvel name='base_linvel' objtype='body' objname='base' />
 
         <framequat   name='orientation' objtype='site' objname='imu'/>
-        <gyro        name='angular-velocity' site='imu'/>
+        <gyro        name='imu_gyro' site='imu'/>
         <velocimeter name='linear-velocity'  site='imu'/>
     </sensor>
 

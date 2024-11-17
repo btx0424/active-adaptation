@@ -321,8 +321,8 @@ def main():
         control_freq = i / (time.perf_counter() - t0)
         if i % 50 == 0:
             print("Control freq:", control_freq)
-            print(client.jpos_real[REAL2ISAAC])
-            print(robot.jpos[mjc2isaac])
+            # print(client.jpos_real[REAL2ISAAC])
+            # print(robot.jpos[mjc2isaac])
 
 
 if __name__ == "__main__":
