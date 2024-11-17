@@ -3,10 +3,11 @@ import torch
 
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.utils.math import yaw_quat
+from omni.isaac.lab.sensors import ContactSensor
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from active_adaptation.utils.helpers import batchify
 
-from .locomotion import Reward, normalize
+from .locomotion import Reward, normalize, Command2
 
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
@@ -92,30 +93,33 @@ class feet_orientation(Reward):
             self.body_id = self.asset.find_bodies(body_name)[0][0]
         else:
             self.body_id = None
+        self.command_manager: Command2 = self.env.command_manager
     
-    def compute(self) -> torch.Tensor:
+    def update(self):
         quat_feet = yaw_quat(self.asset.data.body_quat_w[:, self.feet_id])
+        self.feet_fwd = quat_rotate(quat_feet, self.heading_feet)
+        
         if self.body_id is not None:
             quat_body = yaw_quat(self.asset.data.body_quat_w[:, self.body_id]).unsqueeze(1)
         else:
             quat_body = yaw_quat(self.asset.data.root_quat_w).unsqueeze(1)
-        reward = dot(
-            quat_rotate(quat_feet, self.heading_feet), 
-            quat_rotate(quat_body, self.heading_root)
-        )
-        return (reward.square() * reward.sign()).mean(1)
+        self.body_fwd = quat_rotate(quat_body, self.heading_root)
+
+    def compute(self) -> torch.Tensor:
+        reward_alignment = - (self.feet_fwd - self.body_fwd).square().sum(-1)
+        # reward_alignment = dot(self.feet_fwd, self.body_fwd).square().squeeze(-1)
+        return (reward_alignment).sum(1, True)
 
     # def debug_draw(self):
     #     feet_pos = self.asset.data.body_pos_w[:, self.feet_id]
-    #     quat_feet = yaw_quat(self.asset.data.body_quat_w[:, self.feet_id])
     #     self.env.debug_draw.vector(
     #         feet_pos.reshape(-1, 3),
-    #         quat_rotate(quat_feet, self.heading_feet).reshape(-1, 3),
+    #         self.feet_fwd.reshape(-1, 3),
     #         color=(1., 1., 0., 1.)
     #     )
     #     self.env.debug_draw.vector(
     #         self.asset.data.root_pos_w, 
-    #         quat_rotate(self.asset.data.root_quat_w, self.heading_root),
+    #         self.body_fwd,
     #         color=(1., 1., 0., 1.)
     #     )
 
@@ -131,6 +135,32 @@ class joint_pos_default(Reward):
     def compute(self) -> torch.Tensor:
         dev = self.asset.data.joint_pos[:, self.joint_ids] - self.default_joint_pos
         return - dev.square().mean(1, True)
+
+
+class joint_deviation_l1(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True, joint_names: str=".*"):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids = self.asset.find_joints(joint_names)[0]
+        self.default_joint_pos = self.asset.data.default_joint_pos[:, self.joint_ids].clone()
+        self.joint_ids = torch.tensor(self.joint_ids, device=self.device)
+    
+    def compute(self) -> torch.Tensor:
+        dev = self.asset.data.joint_pos[:, self.joint_ids] - self.default_joint_pos
+        return - dev.abs().sum(1, True)
+
+
+class joint_deviation_l2(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True, joint_names: str=".*"):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids = self.asset.find_joints(joint_names)[0]
+        self.default_joint_pos = self.asset.data.default_joint_pos[:, self.joint_ids].clone()
+        self.joint_ids = torch.tensor(self.joint_ids, device=self.device)
+    
+    def compute(self) -> torch.Tensor:
+        dev = self.asset.data.joint_pos[:, self.joint_ids] - self.default_joint_pos
+        return - dev.square().sum(1, True)
 
 
 class feet_step(Reward):
@@ -249,3 +279,135 @@ class arm_velocity(Reward):
         d = (arm_linvel - root_linvel.unsqueeze(1)).square().sum(-1)
         return - d.mean(1, True)
 
+
+class arm_well_being(Reward):
+    def __init__(self, env, arm_names: str, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_ids, body_names = self.asset.find_bodies(arm_names)
+        # self.target_x = torch.tensor([0.0, 0.0], device=self.device)
+        # self.target_y = torch.tensor([0.21, -0.21], device=self.device)
+    
+    def update(self):
+        self.arm_pos = self.asset.data.body_pos_w[:, self.body_ids]
+        self.root_pos = self.asset.data.root_pos_w
+        self.root_quat = self.asset.data.root_quat_w
+    
+    @torch.compile
+    def compute(self) -> torch.Tensor:
+        arm_pos_b = quat_rotate_inverse(
+            self.root_quat.unsqueeze(1), 
+            self.arm_pos - self.root_pos.unsqueeze(1)
+        )
+        rx = - (arm_pos_b[:, :, 0].mean(1)).square()
+        ry = - (arm_pos_b[:, :, 1].mean(1)).square()
+        return (rx + ry).reshape(self.num_envs, 1)
+
+
+class feet_impact(Reward):
+    def __init__(self, env, feet_names: str, weight, enabled = True):
+        super().__init__(env, weight, enabled)
+
+        self.asset: Articulation = self.env.scene["robot"]
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+        self.body_ids, self.body_names = self.contact_sensor.find_bodies(feet_names)
+        self.body_ids = torch.tensor(self.body_ids, device=self.device)
+
+        self.asset_body_ids, self.asset_body_names = self.asset.find_bodies(feet_names)
+
+        self.in_contact = torch.zeros(self.num_envs, len(self.body_ids), dtype=bool, device=self.device)
+        self.impact = torch.zeros(self.num_envs, len(self.body_ids), dtype=bool, device=self.device)
+        self.detach = torch.zeros(self.num_envs, len(self.body_ids), dtype=bool, device=self.device)
+        self.has_impact = torch.zeros(self.num_envs, len(self.body_ids), dtype=bool, device=self.device)
+        self.impact_point = torch.zeros(self.num_envs, len(self.body_ids), 3, device=self.device)
+        self.detach_point = torch.zeros(self.num_envs, len(self.body_ids), 3, device=self.device)
+
+    def reset(self, env_ids):
+        self.has_impact[env_ids] = False
+    
+    def update(self):
+        self.contact_force = self.contact_sensor.data.net_forces_w_history[:, :, self.body_ids]
+        feet_pos_w = self.asset.data.body_pos_w[:, self.asset_body_ids]
+        in_contact = (self.contact_force.norm(dim=-1) > 0.01).any(dim=1)
+        self.impact = (~self.in_contact) & in_contact
+        self.detach = self.in_contact & (~in_contact)
+        self.in_contact = in_contact
+        self.has_impact.logical_or_(self.impact)
+        self.impact_point[self.impact] = feet_pos_w[self.impact]
+        self.detach_point[self.detach] = feet_pos_w[self.detach]
+    
+    def compute(self):
+        r = self.contact_force.mean(1).square().sum(-1)
+        return - (self.impact * r).sum(1, True)
+
+
+class angular_momentum(Reward):
+    """
+    https://arxiv.org/pdf/2409.16611
+    """
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_mass = self.asset.root_physx_view.get_masses().to(self.device).reshape(self.num_envs, -1, 1)
+        self.body_inertia = self.asset.root_physx_view.get_inertias().to(self.device).reshape(self.num_envs, -1, 3, 3)
+        self.com_offset = self.asset.root_physx_view.get_coms()[:, :, :3].to(self.device)
+        self.body_mass_weight = self.body_mass / self.body_mass.sum(1, keepdim=True)
+
+    def update(self):
+        self.body_pos = self.asset.data.body_pos_w
+        self.body_lin_vel = self.asset.data.body_lin_vel_w
+        self.body_ang_vel = self.asset.data.body_ang_vel_w
+        self.root_pos = self.asset.data.root_pos_w
+        self.root_lin_vel = self.asset.data.root_lin_vel_w
+    
+    def compute(self):
+        body_com_pos = self.body_pos + quat_rotate(
+            self.asset.data.body_quat_w,
+            self.com_offset
+        )
+        com_pos = (body_com_pos * self.body_mass_weight).sum(1)
+        body_pos = body_com_pos - com_pos.unsqueeze(1)
+        
+        m1 = body_pos.cross(self.body_lin_vel * self.body_mass, dim=-1)
+        body_ang_vel_b = quat_rotate_inverse(
+            self.asset.data.body_quat_w,
+            self.body_ang_vel
+        )
+        m2 = (self.body_inertia @ body_ang_vel_b.unsqueeze(-1)).squeeze(-1)
+        m2 = quat_rotate(self.asset.data.body_quat_w, m2)
+        r = (m1 + m2).sum(1).square().sum(-1)
+        return r.reshape(self.num_envs, 1)
+
+
+class com_pos(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_ids = slice(None)
+        self.body_mass = self.asset.root_physx_view.get_masses()[:, self.body_ids].to(self.device).reshape(self.num_envs, -1, 1)
+        self.mass_weight = self.body_mass / self.body_mass.sum(1, keepdim=True)
+        self.com_offset = self.asset.root_physx_view.get_coms()[:, self.body_ids, :3].to(self.device)
+
+    def update(self):
+        self.body_pos_w = self.asset.data.body_pos_w[:, self.body_ids]
+        self.body_quat_w = self.asset.data.body_quat_w[:, self.body_ids]
+        self.root_pos_w = self.asset.data.root_pos_w
+    
+    def compute(self):
+        self.body_com_pos = self.body_pos_w + quat_rotate(
+            self.body_quat_w,
+            self.com_offset
+        )
+        self.com_pos_w = (self.body_com_pos * self.mass_weight).sum(1)
+        self.com_pos_b = quat_rotate_inverse(
+            self.asset.data.root_quat_w,
+            self.com_pos_w - self.root_pos_w
+        )
+        return self.com_pos_b[:, 0].clamp_max(0.).unsqueeze(1)
+    
+    def debug_draw(self):
+        self.env.debug_draw.point(
+            self.com_pos_w.reshape(-1, 3),
+            size=40,
+            color=(1.0, 0.0, 0.0, 1.0),
+        )
