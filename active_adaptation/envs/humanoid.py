@@ -4,7 +4,7 @@ import torch
 from omni.isaac.lab.sensors import ContactSensor, RayCaster
 from omni.isaac.lab.actuators import DCMotor
 from omni.isaac.lab.assets import Articulation
-from omni.isaac.lab.utils.math import yaw_quat
+from omni.isaac.lab.utils.math import yaw_quat, quat_mul
 from omni.isaac.lab.utils.warp import raycast_mesh
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
@@ -111,9 +111,10 @@ class Humanoid(LocomotionEnv):
             self.asset: Articulation = self.env.scene["robot"]
 
         def compute(self) -> torch.Tensor:
-            z = self.asset.data.projected_gravity_b[:, 2].square().unsqueeze(1)
-            y = self.asset.data.projected_gravity_b[:, 1].abs().unsqueeze(1)
-            return z - y
+            z = - self.asset.data.projected_gravity_b[:, 2]
+            # y = self.asset.data.projected_gravity_b[:, 1].abs()
+            x = self.asset.data.projected_gravity_b[:, 0].clamp_max(0.)
+            return (z + x).unsqueeze(1)
     
 
     class arm_velocity_exp(mdp.Reward):
@@ -188,38 +189,41 @@ class Humanoid(LocomotionEnv):
             return self.action_manager.command_arm_linvel.reshape(self.num_envs, -1)
 
     class symmetry(mdp.Observation):
-        def __init__(self, env, arm_names: str, feet_names: str):
+        def __init__(self, env, body_names: str):
             super().__init__(env)
             self.asset: Articulation = self.env.scene["robot"]
-            self.arm_ids, self.arm_names = self.asset.find_bodies(arm_names)
-            self.feet_ids, self.feet_names = self.asset.find_bodies(feet_names)
-            self.fliplr = torch.tensor([1., -1., 1.], device=self.device)
+            self.body_ids, self.body_names = self.asset.find_bodies(body_names)
+            
+            self.flipy = torch.tensor([1., -1., 1.], device=self.device)
 
         def compute(self) -> torch.Tensor:
             root_quat = self.asset.data.root_quat_w
             root_pos  = self.asset.data.root_pos_w
-            arm_pos = quat_rotate_inverse(
+            
+            body_pos = quat_rotate(
                 root_quat.unsqueeze(1),
-                self.asset.data.body_pos_w[:, self.arm_ids] - root_pos.unsqueeze(1)
-            )
-            arm_vel = quat_rotate_inverse(
+                self.asset.data.body_pos_w[:, self.body_ids] - root_pos.unsqueeze(1)
+            ).reshape(self.num_envs, -1, 2, 3)
+            body_vel = quat_rotate(
                 root_quat.unsqueeze(1),
-                self.asset.data.body_lin_vel_w[:, self.arm_ids]
-            )
-            feet_pos = quat_rotate_inverse(
-                root_quat.unsqueeze(1),
-                self.asset.data.body_pos_w[:, self.feet_ids] - root_pos.unsqueeze(1)
-            )
-            feet_vel = quat_rotate_inverse(
-                root_quat.unsqueeze(1),
-                self.asset.data.body_lin_vel_w[:, self.feet_ids]
-            )
-            original = torch.stack([arm_pos, arm_vel, feet_pos, feet_vel], dim=2) # [*, 2, 4, 3]
-            mirrored = self._mirror(original)
-            return torch.stack([original.flatten(1), mirrored.flatten(1)], dim=1)
-
-        def _mirror(self, tensor: torch.Tensor):
-            return (tensor.fliplr() * self.fliplr)
+                self.asset.data.body_lin_vel_w[:, self.body_ids]
+            ).reshape(self.num_envs, -1, 2, 3)
+            
+            gravity = self.asset.data.projected_gravity_b
+            lin_vel_b = self.asset.data.root_lin_vel_b
+            left = torch.cat([
+                gravity,
+                lin_vel_b,
+                body_pos.reshape(self.num_envs, -1),
+                body_vel.reshape(self.num_envs, -1)
+            ], dim=-1)
+            right = torch.cat([
+                gravity * self.flipy, 
+                lin_vel_b * self.flipy,
+                (body_pos.flip(dims=(2,)) * self.flipy).reshape(self.num_envs, -1), 
+                (body_vel.flip(dims=(2,)) * self.flipy).reshape(self.num_envs, -1)
+            ], dim=-1)
+            return torch.stack([left, right], dim=1)
 
 
     class hand_pose(mdp.Reward):

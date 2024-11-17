@@ -206,6 +206,7 @@ class Env(EnvBase):
         
         self.action_manager: mdp.ActionManager = hydra.utils.instantiate(self.cfg.action, env=self)
         self._reset_callbacks.append(self.action_manager.reset)
+        self._debug_draw_callbacks.append(self.action_manager.debug_draw)
         
         self.action_spec = Composite(
             {
@@ -336,7 +337,8 @@ class Env(EnvBase):
             tensordict = TensorDict({}, self.num_envs, device=self.device)
             self._compute_observation(tensordict)
         else:
-            tensordict.update(self.observation_spec.zero())
+            # tensordict.update(self.observation_spec.zero())
+            self._compute_observation(tensordict)
         if self.record_now and env_mask[self.lookat_env_i]:
             if self.complete_video_frames is None:
                 self.complete_video_frames = []

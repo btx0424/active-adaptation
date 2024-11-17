@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import abc
 import einops
-from typing import Tuple
+from typing import Tuple, TYPE_CHECKING
 from torchvision.utils import make_grid
 from torchvision.io import write_jpeg
 
@@ -18,6 +18,9 @@ from omni.isaac.lab.utils.math import convert_quat, quat_apply, quat_apply_yaw, 
 from omni.isaac.lab.utils.warp import convert_to_warp_mesh, raycast_mesh
 from omni.isaac.lab.utils.string import resolve_matching_names
 from pxr import UsdGeom, UsdPhysics
+
+if TYPE_CHECKING:
+    from active_adaptation.envs.base import Env
 
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
@@ -44,7 +47,7 @@ class Observation:
         Note that `True` means the observation is masked.
 
         """
-        self.env = env
+        self.env: Env = env
         self.mask_ratio = mask_ratio
         self.mask = torch.zeros(self.num_envs, device=self.device, dtype=bool)
 
@@ -158,7 +161,7 @@ class CartesianObs(Observation):
         return obs_flipped.reshape(self.num_envs, -1)
 
 
-class root_acc_b(Observation):
+class root_linacc_b(Observation):
     def __init__(self, env):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
@@ -173,7 +176,7 @@ class root_acc_b(Observation):
         self.lin_vel_w[:, :, substep] = self.asset.data.root_lin_vel_w
 
     def compute(self):
-        diff = (self.lin_vel_w[:, :, 1:] - self.lin_vel_w[:, :, :-1]) / self.env.physics_dt
+        diff = (self.lin_vel_w[:, :, 1:] - self.lin_vel_w[:, :, :-1]) # / self.env.physics_dt
         lin_acc_w = (diff * self.weights).sum(-1)
         lin_acc_b = quat_rotate_inverse(self.asset.data.root_quat_w, lin_acc_w)
         return lin_acc_b.reshape(self.num_envs, -1)
@@ -329,6 +332,19 @@ class command_hidden(Observation):
         return self.command_manager.command_hidden
 
 
+class joint_pos_target(Observation):
+    def __init__(self, env, mask_ratio = 0, subtract_offset: bool=False):
+        super().__init__(env, mask_ratio)
+        self.subtract_offset = subtract_offset
+        self.asset: Articulation = self.env.scene["robot"]
+
+    def compute(self):
+        joint_pos_target = self.asset.data.joint_pos_target
+        if self.subtract_offset:
+            joint_pos_target = joint_pos_target - self.asset.data.default_joint_pos
+        return joint_pos_target.reshape(self.num_envs, -1)
+
+
 class root_angvel_b(Observation):
     def __init__(self, env, noise_std: float=0., yaw_only: bool=False, mask_ratio: float=0.):
         super().__init__(env, mask_ratio=mask_ratio)
@@ -465,13 +481,19 @@ class joint_pos(JointObs):
         left_joints = None,
         right_joints = None,
         asym_joints = None,
+        subtract_offset: bool=False,
         noise_std: float=0.0,
     ):
         super().__init__(env, joint_names, left_joints, right_joints, asym_joints)
         self.noise_std = noise_std
+        self.subtract_offset = subtract_offset
+        self.offset = self.asset.data.default_joint_pos[:, self.joint_ids]
 
     def compute(self) -> torch.Tensor:
-        return random_noise(self.asset.data.joint_pos[:, self.joint_ids], self.noise_std)
+        joint_pos = self.asset.data.joint_pos[:, self.joint_ids]
+        if self.subtract_offset:
+            joint_pos = joint_pos - self.offset
+        return random_noise(joint_pos, self.noise_std)
 
 
 class joint_vel(JointObs):
@@ -1375,3 +1397,25 @@ class feet_orientation(Observation):
         feet_fwd = quat_rotate(self.quat_feet, self.heading_feet)
         return feet_fwd.reshape(self.num_envs, -1)
 
+
+class symmetry_quad(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.flip_y = torch.tensor([1., -1., 1.], device=self.device)
+        self.flip_ry = torch.tensor([-1., 1., -1.], device=self.device)
+    
+    def compute(self):
+        jpos = self.asset.data.joint_pos
+        jvel = self.asset.data.joint_vel
+        
+        gravity = self.asset.data.projected_gravity_b
+        linvel = self.asset.data.root_lin_vel_b
+        angvel = self.asset.data.root_ang_vel_b
+
+        left = torch.cat([jpos, linvel * self.flip_y , gravity], dim=1)
+        right = torch.cat([self.mirror(jpos), linvel * self.flip_y, gravity * self.flip_y], dim=1)
+        return torch.stack([left, right], dim=1)
+    
+    def mirror(self, jnt: torch.Tensor):
+        return jnt.reshape(self.num_envs, 4, 3)[:, [1, 0, 3, 2]].reshape(self.num_envs, -1)
