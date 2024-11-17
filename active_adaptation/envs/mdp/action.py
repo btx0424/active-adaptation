@@ -1,9 +1,13 @@
 import torch
+import einops
 from typing import Dict, Literal, Tuple, Union, TYPE_CHECKING
 from tensordict import TensorDictBase
 from omni.isaac.lab.assets import Articulation
 import omni.isaac.lab.utils.string as string_utils
 from omni.isaac.lab.utils.math import euler_xyz_from_quat, quat_mul, quat_conjugate, axis_angle_from_quat, quat_inv, quat_rotate_inverse, quat_rotate, yaw_quat
+from active_adaptation.utils.helpers import batchify
+
+quat_rotate = batchify(quat_rotate)
 
 if TYPE_CHECKING:
     from active_adaptation.envs.base import Env
@@ -17,6 +21,9 @@ class ActionManager:
         self.asset: Articulation = self.env.scene["robot"]
     
     def reset(self, env_ids: torch.Tensor):
+        pass
+
+    def debug_draw(self):
         pass
     
     @property
@@ -293,7 +300,7 @@ class JointPosition(ActionManager):
         left_joints = None,
         right_joints = None,
         asym_joints = None,
-        max_delay: int = 4,
+        max_delay: int = None, # delay in simulation steps
         fixed_delay: bool = False,
         alpha: Union[float, Tuple[float, float], Dict[str, float], Dict[str, Tuple[float, float]]] = (0.5, 1.0),
         cumstom_command: Dict[str, float] = None,
@@ -316,21 +323,17 @@ class JointPosition(ActionManager):
             self.signs[self.asym_joint_ids] = -1
         
         self.action_scaling = torch.tensor(self.action_scaling, device=self.device)
-        self.max_delay = max_delay
+        self.max_delay = max_delay if max_delay is not None else self.env.cfg.decimation
+        self.max_delay = min(self.max_delay, self.env.cfg.decimation)
         self.fixed_delay = fixed_delay
         
         self.action_dim = len(self.joint_ids)
         
         import omegaconf
         if isinstance(alpha, float):
-            self.alpha_range = torch.tensor([[alpha, alpha]], device=self.device).expand(self.action_dim, -1)
+            self.alpha_range = (alpha, alpha)
         elif isinstance(alpha, omegaconf.listconfig.ListConfig):
-            self.alpha_range = torch.tensor(list(alpha), device=self.device).expand(self.action_dim, -1)
-        elif isinstance(alpha, omegaconf.dictconfig.DictConfig):
-            _, _, alpha_list = string_utils.resolve_matching_names_values(dict(alpha), self.asset.joint_names)
-            if isinstance(alpha_list[0], float):
-                alpha_list = [[alpha_list[i], alpha_list[i]] for i in range(len(alpha_list))]
-            self.alpha_range = torch.tensor(alpha_list, device=self.device)
+            self.alpha_range = tuple(alpha)
         else:
             raise ValueError(f"Invalid alpha type: {type(alpha)}")
 
@@ -350,7 +353,7 @@ class JointPosition(ActionManager):
             action_buf_hist = max(max_delay + 1, 3) if max_delay is not None else 3
             self.action_buf = torch.zeros(self.num_envs, self.action_dim, action_buf_hist) # at least 3 for action_rate_2_l2 reward
             self.applied_action = torch.zeros(self.num_envs, self.action_dim)
-            self.alpha = torch.ones(self.num_envs, self.action_dim)
+            self.alpha = torch.ones(self.num_envs, 1)
             self.delay = torch.zeros(self.num_envs, 1, dtype=int)
 
     
@@ -368,39 +371,31 @@ class JointPosition(ActionManager):
         return (action_flipped * self.signs.unsqueeze(-1)).reshape(action.shape)
 
     def reset(self, env_ids: torch.Tensor):
-        if self.fixed_delay:
-            self.delay[env_ids] = torch.full((len(env_ids), 1), self.max_delay, device=self.device)
-        else:
-            self.delay[env_ids] = torch.randint(0, self.max_delay + 1, (len(env_ids), 1), device=self.device)
+        self.delay[env_ids] = torch.randint(0, 2, (len(env_ids), 1), device=self.device)
         self.action_buf[env_ids] = 0
         self.applied_action[env_ids] = 0
 
         self.default_joint_pos[env_ids] = self.asset.data.default_joint_pos[env_ids].clone()
         self.default_joint_pos[env_ids] += self.offset[env_ids]
 
-        alpha = torch.empty(len(env_ids), self.action_dim, device=self.device).uniform_(0, 1)
-        alpha = self.alpha_range[:, 0] + alpha * (self.alpha_range[:, 1] - self.alpha_range[:, 0])
-        self.alpha[env_ids] = alpha.pow(1.0 / self.decimation)
+        alpha = torch.empty(len(env_ids), 1, device=self.device).uniform_(self.alpha_range[0], self.alpha_range[1])
+        self.alpha[env_ids] = alpha
 
     def __call__(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
             action = tensordict["action"].clamp(-10, 10)
-            # if self.env.use_flipping:
-            #     action = torch.where(self.env.fliplr.unsqueeze(1), self.fliplr(action), action)
             self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
             self.action_buf[:, :, 0] = action
-            self.delay[:] = torch.randint(0, self.max_delay + 1, (self.num_envs, 1), device=self.device)
-        dim = (self.delay - substep + self.decimation) // self.decimation
-        action = self.action_buf.take_along_dim(dim.unsqueeze(1), dim=-1)
-        self.applied_action.lerp_(action.squeeze(-1), self.alpha)
+            action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
+            self.applied_action.lerp_(action.squeeze(-1), self.alpha)
 
-        pos_target = self.default_joint_pos.clone()
-        pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
-        if hasattr(self, "cumstom_command"):
-            pos_target[:, self.cumstom_command_joint_ids] = self.cumstom_command
-        if hasattr(self, "clip_joint_targets"):
-            pos_target = self.asset.data.joint_pos + (pos_target - self.asset.data.joint_pos).clamp(-self.clip_joint_targets, self.clip_joint_targets)
-        self.asset.set_joint_position_target(pos_target.clamp(*self.joint_limits))
+            pos_target = self.default_joint_pos.clone()
+            pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
+            if hasattr(self, "cumstom_command"):
+                pos_target[:, self.cumstom_command_joint_ids] = self.cumstom_command
+            if hasattr(self, "clip_joint_targets"):
+                pos_target = self.asset.data.joint_pos + (pos_target - self.asset.data.joint_pos).clamp(-self.clip_joint_targets, self.clip_joint_targets)
+            self.asset.set_joint_position_target(pos_target.clamp(*self.joint_limits))
         self.asset.write_data_to_sim()
 
 class QuadrupedWithArm(JointPosition):
@@ -565,6 +560,82 @@ class QuadrupedAndArm(ActionManager):
         self.asset.write_data_to_sim()
 
 
+class QuadrupedJointForce(ActionManager):
+    def __init__(self, env, action_scaling: float=30.):
+        super().__init__(env)
+        self.action_dim = 16
+        self.action_buf = torch.zeros(self.num_envs, self.action_dim, 4, device=self.device)
+        self.applied_action = torch.zeros(self.num_envs, self.action_dim, device=self.device)
+        self.feet_ids, self.feet_names = self.asset.find_bodies(".*foot")
+        self.joint_ids = torch.as_tensor([
+            self.asset.find_joints("FL_.*_joint")[0],
+            self.asset.find_joints("FR_.*_joint")[0],
+            self.asset.find_joints("RL_.*_joint")[0],
+            self.asset.find_joints("RR_.*_joint")[0],
+        ], device=self.device)
+        print(self.asset.find_joints("FL_.*_joint")[1])
+
+        self.feet_ids = torch.as_tensor(self.feet_ids, device=self.device)
+        
+        self.action_scaling = torch.tensor([0.2, 0.0, 0.2], device=self.device)
+        self.default_feet_pos = self.asset.data.body_pos_w[0, self.feet_ids] - self.asset.data.root_pos_w[0]
+        self.default_feet_pos[:, 2] = -0.40
+        self.kp = 200
+        self.kd = 10.
+
+        self.asset.actuators["base_legs"].stiffness[:] = 0.
+        self.asset.actuators["base_legs"].damping[:] = 0.1
+
+    def __call__(self, tensordict: TensorDictBase, substep: int):
+        if substep == 0:
+            action = tensordict["action"].clamp(-10, 10)
+            self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
+            self.action_buf[:, :, 0] = action
+            self.applied_action = self.action_buf[:, :, 0]
+        self.feet_pos_w = self.asset.data.body_pos_w[:, self.feet_ids]
+        self.feet_vel_w = self.asset.data.body_lin_vel_w[:, self.feet_ids]
+        self.root_quat_w = self.asset.data.root_quat_w
+        self.root_pos_w = self.asset.data.root_pos_w
+        self.root_lin_vel_w = self.asset.data.root_lin_vel_w
+        self.jacobian = self.asset.root_physx_view.get_jacobians()[:, :, :3, 6:]
+
+        effort = self.compute_effort()
+        hip_pos = self.asset.data.joint_pos.reshape(-1, 3, 4)[:, 0]
+        hip_vel = self.asset.data.joint_vel.reshape(-1, 3, 4)[:, 0]
+        hip_pos_target = self.asset.data.default_joint_pos.reshape(-1, 3, 4)[:, 0] + 0.5 * self.applied_action[:, 12:].reshape(-1, 4)
+        effort[:, :, 0] = 20 * (hip_pos_target - hip_pos) + 0.5 * - hip_vel
+        
+        self.asset.set_joint_effort_target(effort.flatten(1), self.joint_ids.flatten())
+        self.asset.write_data_to_sim()
+    
+    def compute_effort(self):
+        feet_pos_b = quat_rotate_inverse(
+            self.root_quat_w.unsqueeze(1),
+            self.feet_pos_w - self.root_pos_w.unsqueeze(1)
+        )
+        feet_vel_b = quat_rotate_inverse(
+            self.root_quat_w.unsqueeze(1),
+            self.feet_vel_w - self.root_lin_vel_w.unsqueeze(1)
+        )
+        pos_error = self.action_scaling * self.applied_action[:, :12].reshape(-1, 4, 3) + self.default_feet_pos - feet_pos_b
+        
+        feet_torque_b = self.kp * pos_error + self.kd * - feet_vel_b
+        feet_torque_w = quat_rotate(self.root_quat_w.unsqueeze(1), feet_torque_b)
+        jacobian = einops.rearrange(self.jacobian, "n b c j -> n b j c")
+        jacobian = jacobian[:, self.feet_ids.unsqueeze(1), self.joint_ids]
+        effort = (jacobian @ feet_torque_w.unsqueeze(-1)).squeeze(-1) # [n, 4, j, 3] -> [n, 4, j] 
+        return effort
+    
+    def debug_draw(self):
+        feet_setpos_w = quat_rotate(
+            self.asset.data.root_quat_w.unsqueeze(1),
+            self.action_scaling * self.applied_action[:, :12].reshape(-1, 4, 3) + self.default_feet_pos
+        ) + self.asset.data.root_pos_w.unsqueeze(1)
+        self.env.debug_draw.point(
+            feet_setpos_w.reshape(-1, 3),
+            size=10.,
+            color=(0., 1., 0., 1.)
+        )
 
 def clamp_norm(x: torch.Tensor, max_norm: float):
     norm = x.norm(dim=-1, keepdim=True)
