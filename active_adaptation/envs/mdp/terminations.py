@@ -149,3 +149,14 @@ class impact_exceeds(Termination):
         impact_force = self.contact_sensor.data.net_forces_w_history[:, :, self.body_ids]
         return (impact_force.norm(dim=-1).mean(1) > self.thres).any(1, True)
 
+
+class impedance_pos_error(Termination):
+    def __init__(self, env, thres: float = 0.3):
+        super().__init__(env)
+        self.thres = thres
+        self.command_manger = self.env.command_manager
+        self.asset: Articulation = self.env.scene["robot"]
+
+    def __call__(self):
+        error = (self.asset.data.root_pos_w-self.command_manger.des_pos_w)[:, :2].norm(dim=-1, keepdim=True)
+        return error > self.thres
