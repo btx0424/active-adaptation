@@ -396,7 +396,7 @@ class JointPosition(ActionManager):
             if hasattr(self, "clip_joint_targets"):
                 pos_target = self.asset.data.joint_pos + (pos_target - self.asset.data.joint_pos).clamp(-self.clip_joint_targets, self.clip_joint_targets)
             self.asset.set_joint_position_target(pos_target.clamp(*self.joint_limits))
-        self.asset.write_data_to_sim()
+            self.asset.write_data_to_sim()
 
 class QuadrupedWithArm(JointPosition):
     def __init__(
