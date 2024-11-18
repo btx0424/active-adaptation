@@ -125,7 +125,7 @@ class motor_params(Randomization):
         damping = self.default_damping.expand(len(env_ids), -1).clone()
         for key, (ids, names, value, default) in self.damping_range.items():
             r = (value[1] - value[0]) * torch.rand(len(env_ids), 1, device=self.device) + value[0]
-            damping[:, ids] = r
+            damping[:, ids] = default * r
         self.actuator.damping[env_ids] = damping * scale_factor
 
         armature = torch.zeros(len(env_ids), self.num_joints, device=self.device)
