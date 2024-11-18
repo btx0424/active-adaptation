@@ -65,11 +65,11 @@ CY1_CFG = ArticulationCfg(
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
             retain_accelerations=False,
-            linear_damping=0.0,
-            angular_damping=0.0,
-            max_linear_velocity=1000.0,
-            max_angular_velocity=1000.0,
-            max_depenetration_velocity=1.0,
+            linear_damping=0.02,
+            angular_damping=0.02,
+            max_linear_velocity=50.0,
+            max_angular_velocity=100.0,
+            max_depenetration_velocity=0.5,
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
             enabled_self_collisions=True, 
@@ -77,8 +77,8 @@ CY1_CFG = ArticulationCfg(
             solver_velocity_iteration_count=2
         ),
         collision_props=sim_utils.CollisionPropertiesCfg(
-            contact_offset=0.01,
-            rest_offset=0.0,
+            contact_offset=0.02,
+            rest_offset=0.02,
         )
     ),
     init_state=ArticulationCfg.InitialStateCfg(
