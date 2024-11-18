@@ -153,6 +153,7 @@ randomization:
       .*arm_joint.*:      [0.8, 1.2]
       .*leg_joint.*:      [0.8, 1.2]
       waist_yaw_joint: [0.8, 1.2]
+    armatrue_range:   [0.0, 0.04]
   reset_joint_states_uniform:
     pos_ranges:
       .*arm_joint1: [-0.3, 0.3]
