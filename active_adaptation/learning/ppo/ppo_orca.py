@@ -62,7 +62,7 @@ class PPOConfig:
     lr: float = 5e-4
     clip_param: float = 0.2
     
-    entropy_coef_start: float = 0.004
+    entropy_coef_start: float = 0.002
     entropy_coef_end: float = 0.000
     
     reg_lambda: float = 0.0
@@ -323,7 +323,7 @@ class PPOOrcaPolicy(TensorDictModuleBase):
         self.symmetry = nn.Sequential(make_mlp([256, 256]), nn.LazyLinear(1)).to(self.device)
         self.symmetry(fake_input["symmetry"])
         self.symmetry.apply(init_)
-        self.opt_symmetry = torch.optim.Adam(self.symmetry.parameters(), lr=5e-4)
+        self.opt_symmetry = torch.optim.Adam(self.symmetry.parameters(), lr=1e-4)
     
     def make_tensordict_primer(self):
         num_envs = self.observation_spec.shape[0]
@@ -392,8 +392,10 @@ class PPOOrcaPolicy(TensorDictModuleBase):
                 infos.append(TensorDict(info, []))
 
         infos_symmetry = []
-        for batch in make_batch(tensordict, 4):
+        for i, batch in enumerate(make_batch(tensordict, 4)):
             infos_symmetry.append(TensorDict(self._update_symmetry(batch), []))
+            if i % 2 == 0:
+                break
         
         infos = collect_info(infos)
         infos.update(collect_info(infos_symmetry))

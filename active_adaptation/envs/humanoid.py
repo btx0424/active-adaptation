@@ -211,15 +211,18 @@ class Humanoid(LocomotionEnv):
             
             gravity = self.asset.data.projected_gravity_b
             lin_vel_b = self.asset.data.root_lin_vel_b
+            ang_vel_b = self.asset.data.root_ang_vel_b
             left = torch.cat([
                 gravity,
                 lin_vel_b,
+                ang_vel_b,
                 body_pos.reshape(self.num_envs, -1),
                 body_vel.reshape(self.num_envs, -1)
             ], dim=-1)
             right = torch.cat([
                 gravity * self.flipy, 
                 lin_vel_b * self.flipy,
+                ang_vel_b * torch.tensor([-1., 1., -1.], device=self.device),
                 (body_pos.flip(dims=(2,)) * self.flipy).reshape(self.num_envs, -1), 
                 (body_vel.flip(dims=(2,)) * self.flipy).reshape(self.num_envs, -1)
             ], dim=-1)

@@ -16,8 +16,8 @@ payload: false
 action:
   _target_: active_adaptation.envs.mdp.action.JointPosition
   action_scaling:
-    # waist_yaw_joint: 0.8
-    # .*arm_joint[1-4]: 0.25
+    waist_yaw_joint: 0.8
+    .*arm_joint[1-4]: 0.25
     .*leg_joint[1-4]: 0.8
     .*leg_joint[5-6]: 0.25
   max_delay: 1
@@ -91,7 +91,7 @@ reward:
     energy_l1:          {weight: 5.0e-4, enabled: true}
     joint_acc_l2:       {weight: 1.0e-8, enabled: false}
     joint_torques_l2:   {weight: 1.0e-4, enabled: true, joint_names: ".*arm_joint[1-3]"}
-    joint_limits:       {weight: 0.5, enabled: false, joint_names: .*leg_joint4, offset: 0.06}
+    joint_limits:       {weight: 0.5, enabled: true, joint_names: [.*arm_joint4, .*leg_joint4], offset: 0.06}
     # stand: 0.5
     root_orientation:   {weight: 0.5, enabled: true}
     survival:           {weight: 1.0, enabled: true}
@@ -104,6 +104,7 @@ reward:
     feet_orientation:   {weight: 1.0, enabled: true,  feet_names: .*leg_link7}
     # arm_swing:          {weight: 1.0, enabled: true, arm_names: .*arm_link5}
     joint_deviation_l1: {weight: 0.2, enabled: false, joint_names: [".*leg_joint[2,3]"]}
+    joint_deviation_l2: {weight: 0.2, enabled: true, joint_names: [".*arm_joint[1-4]", "waist_yaw_joint"]}
     joint_vel_l2:       {weight: 0.001, enabled: true, joint_names: [".*arm_joint[1-4]", waist_yaw_joint]}
     arm_well_being:     {weight: 4.0, enabled: false, arm_names: .*arm_link6}
     feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}

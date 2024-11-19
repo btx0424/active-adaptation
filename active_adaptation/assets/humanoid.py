@@ -127,7 +127,7 @@ CY1_CFG = ArticulationCfg(
                 "waist_yaw_joint": 3.,
                 "[l,r]arm_joint1": 6.,
                 "[l,r]arm_joint2": 3.,
-                "[l,r]arm_joint3": 0.5,
+                "[l,r]arm_joint3": 1.,
                 "[l,r]arm_joint4": 1.,
                 "[l,r]arm_joint5": 1.,
                 "[l,r]arm_joint6": 1.,
