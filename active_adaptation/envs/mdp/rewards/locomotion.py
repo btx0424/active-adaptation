@@ -35,6 +35,9 @@ class Reward:
     def step(self, substep: int):
         pass
 
+    def post_step(self, substep: int):
+        pass
+
     def update(self):
         pass
 

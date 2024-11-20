@@ -78,6 +78,9 @@ class Observation:
     def startup(self):
         pass
     
+    def post_step(self, substep: int):
+        pass
+
     def update(self):
         """Called at each step **after** simulation"""
         pass
@@ -172,7 +175,7 @@ class root_linacc_b(Observation):
         self.weights = torch.cumsum(self.weights * 0.5, 0)
         self.weights = self.weights / self.weights.sum()
 
-    def step(self, substep: int):
+    def post_step(self, substep: int):
         self.lin_vel_w[:, :, substep] = self.asset.data.root_lin_vel_w
 
     def compute(self):
@@ -488,12 +491,79 @@ class joint_pos(JointObs):
         self.noise_std = noise_std
         self.subtract_offset = subtract_offset
         self.offset = self.asset.data.default_joint_pos[:, self.joint_ids]
+        shape = (self.num_envs, 2, self.asset.num_joints)
+        self.joint_pos = torch.zeros(shape, device=self.device)
+    
+    def post_step(self, substep):
+        self.joint_pos[:, substep % 2] = self.asset.data.joint_pos[:, self.joint_ids]
 
     def compute(self) -> torch.Tensor:
-        joint_pos = self.asset.data.joint_pos[:, self.joint_ids]
+        joint_pos = self.joint_pos.mean(1)
         if self.subtract_offset:
             joint_pos = joint_pos - self.offset
         return random_noise(joint_pos, self.noise_std)
+
+
+class joint_pos_substep(Observation):
+    def __init__(self, env, mask_ratio = 0):
+        super().__init__(env, mask_ratio)
+        self.asset: Articulation = self.env.scene["robot"]
+        shape = (self.num_envs, self.env.cfg.decimation, self.asset.num_joints)
+        self.joint_pos = torch.zeros(shape, device=self.device)
+    
+    def post_step(self, substep):
+        self.joint_pos[:, substep] = self.asset.data.joint_pos
+    
+    def compute(self):
+        return self.joint_pos
+
+class joint_pos_multistep(Observation):
+    def __init__(self, env, steps: int=4, diff: bool=False, mask_ratio = 0):
+        super().__init__(env, mask_ratio)
+        self.steps = steps
+        self.diff = diff
+        self.asset: Articulation = self.env.scene["robot"]
+        shape = (self.num_envs, steps, self.asset.num_joints)
+        self.joint_pos = torch.zeros(shape, device=self.device)
+    
+    def update(self):
+        self.joint_pos = self.joint_pos.roll(1, 1)
+        self.joint_pos[:, 0] = self.asset.data.joint_pos
+    
+    def compute(self):
+        joint_pos = self.asset.data.joint_pos
+        if self.diff:
+            joint_pos[:, 1:] = joint_pos[:, 0].unsqueeze(1) - joint_pos[:, 1:]
+        return joint_pos.reshape(self.num_envs, -1)
+        
+
+
+class joint_vel_substep(Observation):
+    def __init__(self, env, mask_ratio = 0):
+        super().__init__(env, mask_ratio)
+        self.asset: Articulation = self.env.scene["robot"]
+        shape = (self.num_envs, self.env.cfg.decimation, self.asset.num_joints)
+        self.joint_vel = torch.zeros(shape, device=self.device)
+
+    def post_step(self, substep):
+        self.joint_vel[:, substep] = self.asset.data.joint_vel
+    
+    def compute(self):
+        return self.joint_vel
+
+
+class joint_pos_des_substep(Observation):
+    def __init__(self, env, mask_ratio = 0):
+        super().__init__(env, mask_ratio)
+        self.asset: Articulation = self.env.scene["robot"]
+        shape = (self.num_envs, self.env.cfg.decimation, self.asset.num_joints)
+        self.joint_pos_des = torch.zeros(shape, device=self.device)
+    
+    def post_step(self, substep):
+        self.joint_pos_des[:, substep] = self.asset.data.joint_pos_target
+    
+    def compute(self):
+        return self.joint_pos_des
 
 
 class joint_vel(JointObs):
@@ -508,9 +578,15 @@ class joint_vel(JointObs):
     ):
         super().__init__(env, joint_names, left_joints, right_joints, asym_joints)
         self.noise_std = noise_std
-    
+        shape = (self.num_envs, 2, self.asset.num_joints)
+        self.joint_vel = torch.zeros(shape, device=self.device)
+
+    def post_step(self, substep):
+        self.joint_vel[:, substep % 2] = self.asset.data.joint_vel[:, self.joint_ids]
+
     def compute(self) -> torch.Tensor:
-        return random_noise(self.asset.data.joint_vel[:, self.joint_ids], self.noise_std)
+        joint_vel = self.joint_vel.mean(1)
+        return random_noise(joint_vel, self.noise_std)
 
 
 class joint_acc(Observation):

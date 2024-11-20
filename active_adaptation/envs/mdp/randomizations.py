@@ -139,8 +139,8 @@ class motor_params(Randomization):
             pass
             # self.actuator._saturation_effort[env_ids] = strength
         elif isinstance(self.actuator, ImplicitActuator):
-            self.asset.write_joint_stiffness_to_sim(self.actuator.stiffness, self.actuator.joint_indices, env_ids)
-            self.asset.write_joint_damping_to_sim(self.actuator.damping, self.actuator.joint_indices, env_ids)
+            self.asset.write_joint_stiffness_to_sim(stiffness, self.actuator.joint_indices, env_ids)
+            self.asset.write_joint_damping_to_sim(damping, self.actuator.joint_indices, env_ids)
 
 
 class random_motor_failure(Randomization):

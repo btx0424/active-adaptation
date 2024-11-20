@@ -196,10 +196,11 @@ class Env(EnvBase):
         self._update_callbacks = []
         self._reset_callbacks = []
         self._debug_draw_callbacks = []
-        self._step_callbacks = []
+        self._pre_step_callbacks = []
+        self._post_step_callbacks = []
 
         self.command_manager: mdp.Command = hydra.utils.instantiate(self.cfg.command, env=self)
-        self._step_callbacks.append(self.command_manager.step)
+        self._pre_step_callbacks.append(self.command_manager.step)
         # self._update_callbacks.append(self.command_manager.update)
         self._reset_callbacks.append(self.command_manager.reset)
         self._debug_draw_callbacks.append(self.command_manager.debug_draw)
@@ -222,7 +223,7 @@ class Env(EnvBase):
             self._startup_callbacks.append(rand.startup)
             self._reset_callbacks.append(rand.reset)
             self._debug_draw_callbacks.append(rand.debug_draw)
-            self._step_callbacks.append(rand.step)
+            self._pre_step_callbacks.append(rand.step)
             self._update_callbacks.append(rand.update)
 
         for group_key, params in self.cfg.observation.items():
@@ -241,6 +242,7 @@ class Env(EnvBase):
                 self._update_callbacks.append(obs.update)
                 self._reset_callbacks.append(obs.reset)
                 self._debug_draw_callbacks.append(obs.debug_draw)
+                self._post_step_callbacks.append(obs.post_step)
             
             self.observation_funcs[group_key] = ObsGroup(group_key, funcs, max_delay=max_delay, use_flip=use_flip)
         
@@ -262,7 +264,8 @@ class Env(EnvBase):
                 self._update_callbacks.append(reward.update)
                 self._reset_callbacks.append(reward.reset)
                 self._debug_draw_callbacks.append(reward.debug_draw)
-                self._step_callbacks.append(reward.step)
+                self._pre_step_callbacks.append(reward.step)
+                self._post_step_callbacks.append(reward.post_step)
                 print(f"\t{key}: \t{reward.weight:.2f}, \t{reward.enabled}")
             self.reward_groups[group_name] = RewardGroup(self, group_name, funcs)
             reward_spec["stats", group_name, "return"] = UnboundedContinuous(1, device=self.device)
@@ -409,11 +412,13 @@ class Env(EnvBase):
                     asset._external_torque_b.zero_()
                     asset.has_external_wrench = False
             self.apply_action(tensordict, substep)
-            for callback in self._step_callbacks:
+            for callback in self._pre_step_callbacks:
                 callback(substep)
             self.scene.write_data_to_sim()
             self.sim.step(render=False)
             self.scene.update(self.physics_dt)
+            for callback in self._post_step_callbacks:
+                callback(substep)
         # end = time.perf_counter()
         # print(end - start, self.cfg.decimation)
         self._update()
