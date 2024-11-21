@@ -114,7 +114,7 @@ class Humanoid(LocomotionEnv):
             z = - self.asset.data.projected_gravity_b[:, 2]
             # y = self.asset.data.projected_gravity_b[:, 1].abs()
             x = self.asset.data.projected_gravity_b[:, 0].clamp_max(0.1)
-            return (z + x).unsqueeze(1)
+            return (z + 2 * x).unsqueeze(1)
     
 
     class arm_velocity_exp(mdp.Reward):

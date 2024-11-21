@@ -147,6 +147,7 @@ reward:
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*leg_link6}
     feet_swing:         {weight: 1.1, enabled: true,  feet_names: .*leg_link7}
     feet_step:          {weight: 1.0, enabled: true,  feet_names: .*leg_link7}
+    leg_swing:          {weight: 1.0, enabled: true}
     feet_orientation:   {weight: 1.0, enabled: true,  feet_names: .*leg_link7}
     # arm_swing:          {weight: 1.0, enabled: true, arm_names: .*arm_link5}
     joint_deviation_l1: {weight: 0.2, enabled: false, joint_names: [".*leg_joint[2,3]"]}

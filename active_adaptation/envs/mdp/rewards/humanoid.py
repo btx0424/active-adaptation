@@ -81,6 +81,28 @@ class feet_swing(Reward):
         self.env.debug_draw.vector(feet_pos.reshape(-1, 3), feet_linvel.reshape(-1, 3), color=(1., 0., 0.2, 1.))
 
 
+class leg_swing(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.phase: torch.Tensor = self.asset.data.phase
+        self.command_manager = self.env.command_manager
+        self.hip_ids = self.asset.find_joints(".*leg_joint1")[0]
+        self.knee_ids = self.asset.find_joints(".*leg_joint4")[0]
+    
+    def compute(self) -> torch.Tensor:
+        phase_sin = self.phase.sin()
+        self.hip_pos = self.asset.data.joint_pos[:, self.hip_ids]
+        self.knee_pos = self.asset.data.joint_pos[:, self.knee_ids]
+        r1 = torch.where(self.knee_pos < -0.25, 0., -(-0.25 - self.knee_pos).abs())
+        r2 = torch.where(self.hip_pos > -0.25, 0., -(-0.25 - self.hip_pos).abs())
+        r = r1 + r2
+        r[:, 0] *= (phase_sin > +0.15).float()
+        r[:, 1] *= (phase_sin < -0.15).float()
+        r = r.sum(1, True) * (~self.command_manager.is_standing_env)
+        return r
+
+
 class feet_orientation(Reward):
 
     def __init__(self, env, feet_names: str, weight: float, enabled: bool = True, body_name: str=None):

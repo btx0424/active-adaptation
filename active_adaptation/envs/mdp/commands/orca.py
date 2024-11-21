@@ -106,11 +106,11 @@ class OrcaLocoCommand(Command):
             self.command_linvel.lerp_(command_linvel_target, 0.5)
         else:
             interval_reached = (self.env.episode_length_buf - 40) % self.resample_interval == 0
-            resample_vel = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
+            resample_vel = interval_reached # & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
             resample_vel = resample_vel.nonzero().squeeze(-1)
             if len(resample_vel) > 0:
                 self.sample_vel_command(resample_vel)
-            resample_yaw = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
+            resample_yaw = interval_reached # & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
             resample_yaw = resample_yaw.nonzero().squeeze(-1)
             if len(resample_yaw) > 0:
                 self.sample_yaw_command(resample_yaw)
