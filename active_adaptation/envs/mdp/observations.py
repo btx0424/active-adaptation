@@ -524,18 +524,45 @@ class joint_pos_multistep(Observation):
         self.diff = diff
         self.asset: Articulation = self.env.scene["robot"]
         shape = (self.num_envs, steps, self.asset.num_joints)
-        self.joint_pos = torch.zeros(shape, device=self.device)
+        self.joint_pos_multistep = torch.zeros(shape, device=self.device)
+        self.joint_pos = torch.zeros(self.num_envs, 2, self.asset.num_joints, device=self.device)
+    
+    def post_step(self, substep):
+        self.joint_pos[:, substep % 2] = self.asset.data.joint_pos
     
     def update(self):
-        self.joint_pos = self.joint_pos.roll(1, 1)
-        self.joint_pos[:, 0] = self.asset.data.joint_pos
+        self.joint_pos_multistep = self.joint_pos_multistep.roll(1, 1)
+        self.joint_pos_multistep[:, 0] = self.joint_pos.mean(1)
     
     def compute(self):
-        joint_pos = self.asset.data.joint_pos
+        joint_pos = self.joint_pos_multistep.clone()
         if self.diff:
-            joint_pos[:, 1:] = joint_pos[:, 0].unsqueeze(1) - joint_pos[:, 1:]
+            joint_pos[:, 1:] = joint_pos[:, 1:] - joint_pos[:, :-1]
         return joint_pos.reshape(self.num_envs, -1)
-        
+
+
+class joint_vel_multistep(Observation):
+    def __init__(self, env, steps: int=4, diff: bool=False, mask_ratio = 0):
+        super().__init__(env, mask_ratio)
+        self.steps = steps
+        self.diff = diff
+        self.asset: Articulation = self.env.scene["robot"]
+        shape = (self.num_envs, steps, self.asset.num_joints)
+        self.joint_vel_multistep = torch.zeros(shape, device=self.device)
+        self.joint_vel = torch.zeros(self.num_envs, 2, self.asset.num_joints, device=self.device)
+    
+    def post_step(self, substep):
+        self.joint_vel[:, substep % 2] = self.asset.data.joint_vel
+    
+    def update(self):
+        self.joint_vel_multistep = self.joint_vel_multistep.roll(1, 1)
+        self.joint_vel_multistep[:, 0] = self.joint_vel.mean(1)
+    
+    def compute(self):
+        joint_vel = self.joint_vel_multistep.clone()
+        if self.diff:
+            joint_vel[:, 1:] = joint_vel[:, 1:] - joint_vel[:, :-1]
+        return joint_vel.reshape(self.num_envs, -1)
 
 
 class joint_vel_substep(Observation):
