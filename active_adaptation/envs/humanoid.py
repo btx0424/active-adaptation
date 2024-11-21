@@ -113,7 +113,7 @@ class Humanoid(LocomotionEnv):
         def compute(self) -> torch.Tensor:
             z = - self.asset.data.projected_gravity_b[:, 2]
             # y = self.asset.data.projected_gravity_b[:, 1].abs()
-            x = self.asset.data.projected_gravity_b[:, 0].clamp_max(0.)
+            x = self.asset.data.projected_gravity_b[:, 0].clamp_max(0.1)
             return (z + x).unsqueeze(1)
     
 

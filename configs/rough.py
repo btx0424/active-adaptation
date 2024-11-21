@@ -191,7 +191,11 @@ class EnvCfg:
 
 def LocomotionEnvCfg(task_cfg):
 
-    robot_cfg = ROBOTS[task_cfg.robot.lower()]
+    if isinstance(task_cfg.robot, str):
+        robot_name = task_cfg.robot.lower()
+    else:
+        robot_name = task_cfg.robot.name.lower()
+    robot_cfg = ROBOTS[robot_name]
 
     terrain = task_cfg.get("terrain", "plane")
     if not terrain == "plane":

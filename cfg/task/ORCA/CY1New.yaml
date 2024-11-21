@@ -9,8 +9,45 @@ defaults:
   - override /task/action@action: null
   - _self_
 
-robot: cy1
-terrain: plane
+robot:
+  name: cy1
+  stiffness: 
+    "waist_yaw_joint": 75.
+    "[l,r]arm_joint1": 75.
+    "[l,r]arm_joint2": 50.
+    "[l,r]arm_joint3": 30.
+    "[l,r]arm_joint4": 30.
+    "[l,r]arm_joint5": 15.
+    "[l,r]arm_joint6": 15.
+    "[l,r]leg_joint1": 75.
+    "[l,r]leg_joint2": 50.
+    "[l,r]leg_joint3": 50.
+    "[l,r]leg_joint4": 75.
+    "[l,r]leg_joint5": 30.
+    "[l,r]leg_joint6": 15.
+  damping:
+    "waist_yaw_joint": 3.
+    "[l,r]arm_joint1": 6.
+    "[l,r]arm_joint2": 3.
+    "[l,r]arm_joint3": 1.
+    "[l,r]arm_joint4": 1.
+    "[l,r]arm_joint5": 1.
+    "[l,r]arm_joint6": 1.
+    "[l,r]leg_joint1": 6.
+    "[l,r]leg_joint2": 3.
+    "[l,r]leg_joint3": 3.
+    "[l,r]leg_joint4": 6.
+    "[l,r]leg_joint5": 2.
+    "[l,r]leg_joint6": 1.
+  effort_limit:
+    "waist_yaw_joint": 36
+    "[l,r]arm_joint1": 94.
+    "[l,r]arm_joint[2-5]": 36
+    "[l,r]leg_joint[1,4]": 150
+    "[l,r]leg_joint[2,3]": 94
+    "[l,r]leg_joint[5,6]": 36
+
+terrain: orca_loco
 payload: false
 
 action:
@@ -25,7 +62,7 @@ action:
   # cumstom_command: {.*arm_joint4: 0.3}
 
 command:
-  _target_: active_adaptation.envs.mdp.Command2
+  _target_: active_adaptation.envs.mdp.OrcaLocoCommand
   linvel_x_range: [0., 1.5]
   linvel_y_range: [-0.1, 0.1]
   angvel_range: [-2.0, 2.0]
@@ -113,7 +150,7 @@ reward:
     feet_orientation:   {weight: 1.0, enabled: true,  feet_names: .*leg_link7}
     # arm_swing:          {weight: 1.0, enabled: true, arm_names: .*arm_link5}
     joint_deviation_l1: {weight: 0.2, enabled: false, joint_names: [".*leg_joint[2,3]"]}
-    joint_deviation_l2: {weight: 0.2, enabled: true, joint_names: [".*arm_joint[1-4]", "waist_yaw_joint"]}
+    joint_deviation_l2: {weight: 0.1, enabled: true, joint_names: [".*arm_joint[1-4]", "waist_yaw_joint"]}
     joint_vel_l2:       {weight: 0.001, enabled: true, joint_names: [".*arm_joint[1-4]", waist_yaw_joint]}
     arm_well_being:     {weight: 4.0, enabled: false, arm_names: .*arm_link6}
     feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}
@@ -181,4 +218,4 @@ termination:
     min_time: 0.5
   fall_over: {xy_thres: 0.8}
   # feet_too_close: {feet_names: ".*leg_link6", thres: 0.11}
-  cum_error: {thres: 0.9}
+  # cum_error: {thres: 0.9}

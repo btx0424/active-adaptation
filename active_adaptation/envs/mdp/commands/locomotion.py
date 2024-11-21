@@ -196,9 +196,9 @@ class Command2(Command):
         
     def reset(self, env_ids, reward_stats = None):
         self.command[env_ids] = 0.
-        if not self.teleop:
-            self.sample_vel_command(env_ids)
-            self.sample_yaw_command(env_ids)
+        self._target_linvel[env_ids] = 0.
+        self.target_yaw[env_ids] = self.asset.data.heading_w[env_ids]
+        
         self._cum_linvel_error[env_ids] = 0.
         self._cum_angvel_error[env_ids] = 0.
         self.env.extra["stats/avg_error"] = self._avg_error.item()
@@ -219,7 +219,7 @@ class Command2(Command):
                 command_linvel_target *= 0.6
             self.command_linvel.lerp_(command_linvel_target, 0.5)
         else:
-            interval_reached = (self.env.episode_length_buf + 1) % self.resample_interval == 0
+            interval_reached = (self.env.episode_length_buf - 40) % self.resample_interval == 0
             resample_vel = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
             resample_yaw = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
             self.sample_vel_command(resample_vel.nonzero().squeeze(-1))
