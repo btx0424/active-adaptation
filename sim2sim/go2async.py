@@ -8,8 +8,9 @@ import itertools
 import time
 import argparse
 import zmq
+import re
 
-from typing import Sequence
+from typing import Sequence, Dict
 from scipy.spatial.transform import Rotation as R
 from go2deploy import ONNXModule, SecondOrderLowPassFilter
 
@@ -52,30 +53,41 @@ class Robot:
         joint_names_isaac: Sequence[str],
         jpos_default_isaac: Sequence[float],
         action_joint_names: Sequence[str]=None,
+        policy_freq: float=50,
+        state_update_freq: float=200,
+        control_update_freq: float=200,
     ):
         self.model = mujoco.MjModel.from_xml_path(xml_path)
         self.data = mujoco.MjData(self.model)
 
-        self.joint_names = []
+        self.policy_freq = policy_freq
+        self.state_update_freq = state_update_freq
+        self.control_update_freq = control_update_freq
+        
+        self.state_update_dt = 1. / state_update_freq
+        self.control_update_dt = 1. / control_update_freq
+
+        self.joint_names_isaac = joint_names_isaac
+        self.joint_names_mjc = []
         self.joint_ranges = []
         for i in range(self.model.njnt):
             jnt = self.model.joint(i)
             if jnt.type.item() == 3:
-                self.joint_names.append(jnt.name)
+                self.joint_names_mjc.append(jnt.name)
                 self.joint_ranges.append(jnt.range)
-        self.num_joints = len(self.joint_names)
+        self.num_joints = len(self.joint_names_mjc)
 
         actuator_names = [self.model.actuator(i).name for i in range(self.model.nu)]
         
-        if not (np.array(self.joint_names) == np.array(actuator_names)).all():
+        if not (np.array(self.joint_names_mjc) == np.array(actuator_names)).all():
             raise ValueError("Joint names and actuator names don't match")
 
-        self.isaac2mjc = [joint_names_isaac.index(joint) for joint in self.joint_names]
-        self.mjc2isaac = [self.joint_names.index(joint) for joint in joint_names_isaac]
+        self.isaac2mjc = [joint_names_isaac.index(joint) for joint in self.joint_names_mjc]
+        self.mjc2isaac = [self.joint_names_mjc.index(joint) for joint in joint_names_isaac]
         
         if action_joint_names is None:
             action_joint_names = joint_names_isaac
-        self.action_joint_ids_mjc = [self.joint_names.index(name) for name in action_joint_names]
+        self.action_joint_ids_mjc = [self.joint_names_mjc.index(name) for name in action_joint_names]
         self.action_joint_ids_isaac = [joint_names_isaac.index(name) for name in action_joint_names]
         self.action_dim = len(self.action_joint_ids_isaac)
 
@@ -84,8 +96,9 @@ class Robot:
         self._action_rate_l2 = np.zeros(self.action_dim, dtype=np.float32)
         self._action_rate2_l2 = np.zeros(self.action_dim, dtype=np.float32)
 
-        self.kp = 20.
-        self.kd = 0.5
+        self.jnt_kp = np.zeros(self.num_joints)
+        self.jnt_kd = np.zeros(self.num_joints)
+        self.effort_limit = np.zeros(self.num_joints)
         self.action_scaling = 0.5
         
         mujoco.mj_step(self.model, self.data)
@@ -189,17 +202,17 @@ class Robot:
         
         for i in itertools.count():
             self._update_state(dt)
-            time.sleep(dt)
+            time.sleep(self.state_update_dt)
             self.state_update_freq = i / (time.perf_counter() - t0)
 
     def control_thread_func(self):
         t0 = time.perf_counter()
-        dt = 0.005
 
         for i in itertools.count():
             if self.enable_control:
-                self.jpos_des_mjc = self.filter.update(self.jpos_des_isaac[self.isaac2mjc])
-            time.sleep(dt)
+                self.jpos_des_mjc = self.jpos_des_isaac[self.isaac2mjc]
+                # self.jpos_des_mjc = self.filter.update(self.jpos_des_isaac[self.isaac2mjc])
+            time.sleep(self.control_update_dt)
             self.control_update_freq = i / (time.perf_counter() - t0)
 
     def _step_physics(self):
@@ -227,7 +240,7 @@ class Robot:
         self.gyro_smoothed = self.gyro_buf.mean(1)
         
         self.acc = self.data.sensor("imu_gyro").data.astype(np.float32)
-        self.linvel = self.data.sensor("linvel").data.astype(np.float32)
+        self.linvel = self.data.sensor("base_linvel").data.astype(np.float32)
 
         self.socket.send_pyobj({
             "jpos": self.jpos,
@@ -239,9 +252,9 @@ class Robot:
     def pd_control(self):
         pos_error = self.jpos_des_mjc - self.data.qpos[-self.num_joints:]
         vel_error = 0. - self.data.qvel[-self.num_joints:]
-        tau_ctrl = self.kp * pos_error + self.kd * vel_error
+        tau_ctrl = self.jnt_kp * pos_error + self.jnt_kd * vel_error
         
-        self.data.ctrl = tau_ctrl
+        self.data.ctrl = np.clip(tau_ctrl, -self.effort_limit, self.effort_limit)
 
     @property
     def action_rate_l2(self):
@@ -250,6 +263,38 @@ class Robot:
     @property
     def action_rate2_l2(self):
         return self._action_rate2_l2 / self.step_cnt
+    
+    def resolve_mjc(self, data: Dict[str, float]):
+        jnt_names = np.array(self.joint_names_mjc)
+        matched = np.zeros(len(jnt_names), dtype=bool)
+        values = np.zeros(len(jnt_names))
+        for name, value in data.items():
+            pattern = re.compile(name)
+            for i, joint in enumerate(self.joint_names_mjc):
+                if pattern.match(joint):
+                    assert not matched[i]
+                    matched[i] = True
+                    values[i] = value
+        ids = np.arange(len(jnt_names))[matched]
+        names = jnt_names[matched]
+        values = values[matched]
+        return ids, names, values
+    
+    def resolve_isaac(self, data: Dict[str, float]):
+        jnt_names = np.array(self.joint_names_isaac)
+        matched = np.zeros(len(jnt_names), dtype=bool)
+        values = np.zeros(len(jnt_names))
+        for name, value in data.items():
+            pattern = re.compile(name)
+            for i, joint in enumerate(self.joint_names_isaac):
+                if pattern.match(joint):
+                    assert not matched[i]
+                    matched[i] = True
+                    values[i] = value
+        ids = np.arange(len(jnt_names))[matched]
+        names = jnt_names[matched]
+        values = values[matched]
+        return ids, names, values
 
 
 FILE_PATH = os.path.dirname(os.path.abspath(__file__))

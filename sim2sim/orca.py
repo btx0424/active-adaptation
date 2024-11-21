@@ -7,6 +7,7 @@ import argparse
 import math
 import threading
 import lcm
+import json
 
 from tensordict import TensorDict
 from torchrl.envs import set_exploration_type, ExplorationType
@@ -78,8 +79,6 @@ ISAAC_ACTION_SCALE = [0.8, 0.8, 0.8, 0.8, 0.8, 0.25, 0.25, 0.8, 0.8, 0.25, 0.25,
 isaac2mjc = [ISAAC_JOINTS.index(joint) for joint in MJC_JOINTS]
 mjc2isaac = [MJC_JOINTS.index(joint) for joint in ISAAC_JOINTS]
 
-MJC_KP = [75.0, 50.0, 50.0, 75.0, 30.0, 15.0, 75.0, 50.0, 50.0, 75.0, 30.0, 15.0, 75.0, 75.0, 50.0, 30.0, 30.0, 15.0, 15.0, 75.0, 50.0, 30.0, 30.0, 15.0, 15.0]
-MJC_KD = [6.0, 3.0, 3.0, 6.0, 2.0, 1.0, 6.0, 3.0, 3.0, 6.0, 2.0, 1.0, 3.0, 6.0, 3.0, 0.5, 1.0, 1.0, 1.0, 6.0, 3.0, 0.5, 1.0, 1.0, 1.0]
 MJC_QPOS = [0.0, 0.0, 0.0, -0.1, 0.0, 0.0, 0.0, 0.0, 0.0, -0.1, 0.0, 0.0, 0.0, 0.0, 0.1, 0.0, 0.3, 0.0, 0.0, 0.0, 0.1, 0.0, 0.3, 0.0, 0.0]
 
 FILE_PATH = os.path.dirname(os.path.abspath(__file__))
@@ -118,8 +117,8 @@ class Robot(_Robot):
         self._update_state()
         super().run_sync()
     
-    def _update_state(self):
-        super()._update_state()
+    def _update_state(self, dt: float = 0.005):
+        super()._update_state(dt)
         jpos = self.jpos[MJC2REAL]
         jvel = self.jvel[MJC2REAL]
         self.__ll_msg_legs.q = jpos[:12]
@@ -152,6 +151,7 @@ class PolicyClient:
     ):
         self.action_dim = action_dim
         self.action_buf_steps = action_buf_steps
+        self.num_joints = len(ISAAC_JOINTS)
         
         ttl = 255
         self.lc_sub = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
@@ -167,10 +167,19 @@ class PolicyClient:
         self.command = np.zeros(4, dtype=np.float32)
         self.jpos_real = np.zeros(len(ISAAC_JOINTS), dtype=np.float32)
         self.jvel_real = np.zeros(len(ISAAC_JOINTS), dtype=np.float32)
+        
+        self.jpos_multistep = np.zeros((4, self.num_joints))
+        self.jvel_multistep = np.zeros((4, self.num_joints))
+
         self.rot = R.from_quat([1., 0., 0., 0.])
         
         self.action_buf = np.zeros((action_dim, self.action_buf_steps), dtype=np.float32)
-        
+        self.action_scaling = np.array(ISAAC_ACTION_SCALE)
+        self.action_joint_ids = np.array([
+            ISAAC_JOINTS.index(joint) for joint in CTRL_JOINTS])
+        self.jpos_default = np.array(MJC_QPOS)[mjc2isaac]
+        self.jpos_des = self.jpos_default.copy()
+
         thread = threading.Thread(target=self._handle)
         thread.start()
         while not hasattr(self, "gyro"):
@@ -181,30 +190,51 @@ class PolicyClient:
         self.omega = np.pi * 2 / cycle
         self.offset = np.pi / 2
 
-    def get_obs(self, time: float):
-        t = self.omega * time + self.offset
-        sin_t = math.sin(t)
-        cos_t = math.cos(t)
-        
+    def get_cmd(self, time: float):
         self.command[0] = 1.0
         yaw_diff = 0. - self.rot.as_euler("xyz")[2]
         self.command[2:3] = yaw_diff
         self.command[3] = 0.3
-        
+
+        t = self.omega * time + self.offset
+        sin_t = math.sin(t)
+        cos_t = math.cos(t)
+        self.phase = np.array([sin_t, self.omega * cos_t, cos_t, -self.omega * sin_t])
+
+        return np.concatenate([self.command, self.phase], dtype=np.float32)
+
+    def get_obs(self, time: float):
+        self.jpos_multistep = np.roll(self.jpos_multistep, shift=1, axis=0)
+        # self.jpos_multistep[0] = self.jpos_real[REAL2ISAAC]
+        self.jpos_multistep[0] = robot.jpos_isaac
+        self.jvel_multistep = np.roll(self.jvel_multistep, shift=1, axis=0)
+        # self.jvel_multistep[0] = self.jvel_real[REAL2ISAAC]
+        self.jvel_multistep[0] = robot.jvel_isaac
+
+        jpos_multistep = self.jpos_multistep.copy()
+        jpos_multistep[1:] = self.jpos_multistep[1:] - self.jpos_multistep[:-1]
+        jvel_multistep = self.jvel_multistep.copy()
+        jvel_multistep[1:] = self.jvel_multistep[1:] - self.jvel_multistep[:-1]
+
         obs = [
-            self.command, # 4
+            # self.command, # 4
             self.gyro, # 3
             self.gravity, # 3
-            self.jpos_real[REAL2ISAAC], # 25
-            self.jvel_real[REAL2ISAAC], # 25
+            jpos_multistep.reshape(-1),
+            jvel_multistep.reshape(-1),
             self.action_buf.reshape(-1), # 4
-            np.array([sin_t, self.omega * cos_t, cos_t, -self.omega * sin_t]), # 4
+            # self.jpos_real[REAL2ISAAC], # 25
+            # self.jvel_real[REAL2ISAAC], # 25
+            # self.jpos_des,
+            # self.phase, # 4
         ]
         return np.concatenate(obs, dtype=np.float32)
 
     def apply_action(self, action: np.ndarray):
         self.action_buf = np.roll(self.action_buf, 1, axis=1)
         self.action_buf[:, 0] = action
+        self.jpos_des = self.jpos_default.copy()
+        self.jpos_des[self.action_joint_ids] += action * self.action_scaling
 
     def _handle(self):
         while True:
@@ -228,6 +258,8 @@ class PolicyClient:
         self.rot = R.from_quat(self.quat)
         self.gravity = self.rot.inv().apply([0., 0., -1.])
 
+ISAAC_QPOS = np.array(MJC_QPOS)[mjc2isaac]
+robot = Robot(XML_PATH, ISAAC_JOINTS, ISAAC_QPOS, CTRL_JOINTS)
 
 @set_exploration_type(ExplorationType.MODE)
 @torch.inference_mode()
@@ -238,11 +270,6 @@ def main():
     parser.add_argument("-d", "--dry", default=False, action="store_true")
     args = parser.parse_args()
 
-    ISAAC_QPOS = np.array(MJC_QPOS)[mjc2isaac]
-    robot = Robot(XML_PATH, ISAAC_JOINTS, ISAAC_QPOS, CTRL_JOINTS)
-    robot.kp = np.array(MJC_KP) * 0.8
-    robot.kd = np.array(MJC_KD) * 0.8
-    robot.action_scaling = np.array(ISAAC_ACTION_SCALE)
 
     if args.sync:
         robot.run_sync()
@@ -253,7 +280,21 @@ def main():
     path = args.path
     if path.endswith(".onnx"):
         backend = "onnx"
+
         policy_module = ONNXModule(path)
+        try:
+            meta = json.load(open(path.replace(".onnx", ".json"), "r"))
+            _, _, action_scaling = robot.resolve_isaac(meta["action_scaling"])
+            robot.action_scaling = np.array(action_scaling)
+            ids, _, stiffness = robot.resolve_mjc(meta["stiffness"])
+            robot.jnt_kp[ids] = np.array(stiffness)
+            ids, _, damping = robot.resolve_mjc(meta["damping"])
+            robot.jnt_kd[ids] = np.array(damping)
+            ids, _, effort_limit = robot.resolve_mjc(meta["effort_limit"])
+            robot.effort_limit[ids] = np.array(effort_limit)
+        except KeyError as e:
+            print(f"Failed to load metadata: {e}")
+
         def policy(inp):
             out = policy_module(inp)
             action = out["action"].reshape(-1)
@@ -272,54 +313,28 @@ def main():
     inp = {
         "is_init": np.array([True]),
         "context_adapt_hx": np.zeros((1, 128), dtype=np.float32),
+        "adapt_hx": np.zeros((1, 128), dtype=np.float32),
     }
 
-    t0 = time.perf_counter()
     client = PolicyClient(action_dim=robot.action_dim)
-    client.set_cycle(1.0)
+    client.set_cycle(1.1)
     
-    command = np.zeros(4, dtype=np.float32)
-    command[0] = 1.0
-    command[3] = 0.3
-
-    cycle = 1.2
-    omega = np.pi * 2 / cycle
-    offset = np.pi / 2
-    
-    def get_obs(self: Robot):
-        t = self.data.time
-
-        phase = omega * t + offset
-        sin_t = np.sin(phase)
-        cos_t = np.cos(phase)
-
-        obs = [
-            command, # 4
-            self.gyro, # 3
-            self.gravity, # 3
-            self.jpos[self.mjc2isaac], # 25
-            self.jvel[self.mjc2isaac], # 25
-            self.action_buf[:, :3].flatten(), # 21 * 3
-            np.array([sin_t, omega * cos_t, cos_t, -omega * sin_t]), # 4
-        ]
-        return np.concatenate(obs, dtype=np.float32)
-
     t0 = time.perf_counter()
     for i in itertools.count():
         iter_start = time.perf_counter()
-        
+        inp["command"] = client.get_cmd(time=robot.data.time)[None, ...]
         inp["policy"] = client.get_obs(time=robot.data.time)[None, ...]
-        # inp["policy"] = get_obs(robot)[None, ...]
         inp["is_init"] = np.array([False])
         action, carry = policy(inp)
+        robot.apply_action(action, 0.8)
+        client.apply_action(action)
         if i > 50:
-            robot.apply_action(action, 0.8)
-            client.apply_action(action)
+            robot.enable_control = True
         inp = carry
 
         time.sleep(max(0, 0.02 - (time.perf_counter() - iter_start)))
         control_freq = i / (time.perf_counter() - t0)
-        if i % 50 == 0:
+        if i % 20 == 0:
             print("Control freq:", control_freq)
             # print(client.jpos_real[REAL2ISAAC])
             # print(robot.jpos[mjc2isaac])
