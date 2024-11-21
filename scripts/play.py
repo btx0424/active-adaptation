@@ -12,6 +12,7 @@ from omni.isaac.lab.app import AppLauncher
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from tensordict.nn import TensorDictSequential
 from active_adaptation.learning import ALGOS
+from active_adaptation.utils.export import export_onnx
 from collections import OrderedDict
 
 import wandb
@@ -31,7 +32,7 @@ def main(cfg):
     app_launcher = AppLauncher(cfg.app)
     simulation_app = app_launcher.app
 
-    from scripts.helpers import EpisodeStats, make_env_policy, ObsNorm, export_onnx
+    from scripts.helpers import EpisodeStats, make_env_policy, ObsNorm
     env, policy, vecnorm = make_env_policy(cfg)
     
     if cfg.export_policy:
@@ -62,6 +63,9 @@ def main(cfg):
 
         meta = {}
         meta["action_scaling"] = dict(cfg.task.action.get("action_scaling"))
+        meta["stiffness"] = dict(cfg.task.robot.stiffness)
+        meta["damping"] = dict(cfg.task.robot.damping)
+        meta["effort_limit"] = dict(cfg.task.robot.effort_limit)
         export_onnx(_policy, fake_input, path.replace(".pt", ".onnx"), meta)
         
 
