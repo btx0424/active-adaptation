@@ -40,9 +40,11 @@ observation:
   policy:
     root_angvel_b:  {noise_std: 0.05}
     projected_gravity_b: {noise_std: 0.01}
-    joint_pos: {noise_std: 0.05, subtract_offset: false}
-    joint_vel: {noise_std: 0.2}
-    joint_pos_target: {subtract_offset: false}
+    # joint_pos: {noise_std: 0.05, subtract_offset: false}
+    # joint_vel: {noise_std: 0.2}
+    joint_pos_multistep: {steps: 4, diff: true}
+    joint_vel_multistep: {steps: 4, diff: true}
+    prev_actions:        {steps: 3}
   priv:
     root_linvel_b:    {yaw_only: true}
     body_pos:         {body_names: [.*leg_link6, .*arm_link5], yaw_only: true}
@@ -73,6 +75,13 @@ observation:
     root_linvel_b:    {yaw_only: true}
     root_angvel_b:    {yaw_only: true}
     rewards:          {}
+  # state_:
+  #   joint_pos:
+  #   joint_vel:
+  # state_substep_:
+  #   joint_pos_substep:
+  #   joint_vel_substep:
+  #   joint_pos_des_substep:
 
 reward:
   loco:
