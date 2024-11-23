@@ -935,8 +935,9 @@ class base_height_l1(Reward):
 
     def compute(self) -> torch.Tensor:
         target_height = self.target_height * self.scale
-        height = (self.asset.data.feet_height - self.asset.data.feet_pos_b[:, :, 2]).max(1, keepdim=True)[0]
-        return (height - target_height).clamp_max(0.)
+        # height = (self.asset.data.feet_height - self.asset.data.feet_pos_b[:, :, 2]).max(1, keepdim=True)[0]
+        height = self.asset.data.root_pos_w[:, 2].unsqueeze(1)
+        return height.clamp(max=target_height)
 
 
 class quadruped_stand_always(Reward):
@@ -1285,6 +1286,33 @@ class step_vel(Reward):
     def compute(self):
         error_l1 = (self.command_manager.command_linvel_w[:, :2].unsqueeze(1) - self.step_vel[:, :, :2]).norm(dim=-1)
         r = torch.exp(- error_l1) * self.asset.impact
+        return r.sum(1, keepdim=True)
+
+
+class oscillator(Reward):
+    def __init__(self, env, weight, enabled = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Quadruped = self.env.scene["robot"]
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+        self.feet_ids, feet_names = self.contact_sensor.find_bodies(".*foot")
+        self.mass = self.asset.data.default_mass[0].sum().to(self.device)
+        self.gravity = self.mass * 9.81
+        self.phi: torch.Tensor = self.asset.phi
+        self.grf_substep = torch.zeros(self.num_envs, self.env.cfg.decimation, 4, device=self.device)
+        self.omega = torch.zeros(self.num_envs, 1, device=self.device)
+        self.omega.uniform_(3., 4.).mul_(torch.pi)
+
+    def post_step(self, substep):
+        grf = self.contact_sensor.data.net_forces_w[:, self.feet_ids].norm(dim=-1)
+        self.grf_substep[:, substep] = grf
+    
+    def update(self):
+        self.grf = self.grf_substep.mean(1) / self.gravity
+        phi_dot = self.omega
+        self.phi[:] = (self.phi + phi_dot * self.env.step_dt) % (2 * torch.pi)
+
+    def compute(self):
+        r = (self.asset.data.feet_height.clamp_max(0.06) - self.grf) * self.phi.sin()
         return r.sum(1, keepdim=True)
 
 

@@ -220,8 +220,8 @@ class Command2(Command):
             self.command_linvel.lerp_(command_linvel_target, 0.5)
         else:
             interval_reached = (self.env.episode_length_buf - 40) % self.resample_interval == 0
-            resample_vel = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
-            resample_yaw = interval_reached & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
+            resample_vel = interval_reached & ((torch.rand(self.num_envs, device=self.device) < self.resample_prob) | self.is_standing_env.squeeze(1))
+            resample_yaw = interval_reached & ((torch.rand(self.num_envs, device=self.device) < self.resample_prob) | self.is_standing_env.squeeze(1))
             self.sample_vel_command(resample_vel.nonzero().squeeze(-1))
             self.sample_yaw_command(resample_yaw.nonzero().squeeze(-1))
 

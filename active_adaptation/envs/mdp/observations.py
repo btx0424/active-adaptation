@@ -1521,3 +1521,32 @@ class symmetry_quad(Observation):
     
     def mirror(self, jnt: torch.Tensor):
         return jnt.reshape(self.num_envs, 4, 3)[:, [1, 0, 3, 2]].reshape(self.num_envs, -1)
+
+
+class oscillator(Observation):
+    
+    def __init__(self, env, history: bool=False,mask_ratio = 0):
+        super().__init__(env, mask_ratio)
+        self.history = history
+        self.asset: Quadruped = self.env.scene["robot"]
+        self.phi = self.asset.phi
+
+        self.phi[:, 0] = torch.pi
+        self.phi[:, 3] = torch.pi
+        
+        self.phi_history = torch.zeros(self.num_envs, 4, 4, device=self.device)
+
+    def update(self):
+        self.phi_history = self.phi_history.roll(1, dims=1)
+        self.phi_history[:, 0] = self.phi
+
+    def compute(self):
+        if self.history:
+            phi_sin = self.phi_history.sin()
+            phi_cos = self.phi_history.cos()
+        else:
+            phi_sin = self.phi.sin()
+            phi_cos = self.phi.cos()
+        obs = torch.concat([phi_sin, phi_cos], dim=-1)
+        return obs.reshape(self.num_envs, -1)
+

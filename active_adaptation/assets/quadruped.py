@@ -4,7 +4,7 @@ import torch
 
 import omni.isaac.lab.sim as sim_utils
 from omni.isaac.lab_assets import UNITREE_GO2_CFG, UNITREE_A1_CFG, ArticulationCfg
-from omni.isaac.lab.actuators import DCMotorCfg, ImplicitActuatorCfg
+from omni.isaac.lab.actuators import DCMotorCfg, ImplicitActuatorCfg, ImplicitActuator
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.utils.math import quat_rotate_inverse
 from omni.isaac.lab.sensors import ContactSensor
@@ -14,7 +14,9 @@ class Quadruped(Articulation):
         super()._create_buffers()
         self.feet_ids, self.feet_names = self.find_bodies(".*_foot")
         self.feet_ids = torch.tensor(self.feet_ids, device=self.device)
-
+        
+        self.phi = torch.zeros(self.num_instances, 4, device=self.device)
+            
         self.contact_sensor: ContactSensor = self._env.scene.sensors.get("contact_forces", None)
         if self.contact_sensor is not None:
             shape = (self.num_instances, len(self.feet_ids))
