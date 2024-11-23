@@ -4,6 +4,7 @@ import pyqtgraph as pg
 import time
 import zmq
 import argparse
+import threading
 
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QTimer
@@ -93,10 +94,7 @@ class LivePlot():
         timer.timeout.connect(self.update_plot)
         timer.start(10)
 
-        timer = QTimer(self.app)
-        timer.timeout.connect(self.update_data)
-        timer.start(2)
-
+        threading.Thread(target=self.update_data).start()
         # Show the window
         self.win.show()
 
@@ -104,32 +102,33 @@ class LivePlot():
         sys.exit(self.app.exec_())
 
     def update_data(self):
-        data = self.socket.recv_pyobj()
+        while True:
+            data = self.socket.recv_pyobj()
 
-        jpos = data["jpos"]
-        jpos_des = data["jpos_des"]
-        rpy = data["rpy"]
-        tau = data["tau"] / 8.0
+            jpos = data["jpos"]
+            jpos_des = data["jpos_des"]
+            rpy = data["rpy"]
+            # tau = data["tau"] / 8.0
 
-        for i, (curve_0, curve_1, curve_2) in enumerate(self.plot_items):
-            self.jpos[i] = self.jpos[i][-self.time_span:]
-            self.jpos[i].append(jpos[i])
+            for i, (curve_0, curve_1, curve_2) in enumerate(self.plot_items):
+                self.jpos[i] = self.jpos[i][-self.time_span:]
+                self.jpos[i].append(jpos[i])
 
-            self.jpos_des[i] = self.jpos_des[i][-self.time_span:]
-            self.jpos_des[i].append(jpos_des[i])
+                self.jpos_des[i] = self.jpos_des[i][-self.time_span:]
+                self.jpos_des[i].append(jpos_des[i])
 
-            self.tau[i] = self.tau[i][-self.time_span:]
-            self.tau[i].append(tau[i])
-        
-        for i, curve in enumerate(self.rpy_plots):
-            self.rpy[i] = self.rpy[i][-100:]
-            self.rpy[i].append(rpy[i])
-        
-        self.update_cnt += 1
-        if self.update_cnt % self.time_span == 0:
-            update_freq = self.time_span / (time.time() - self.t0)
-            print(f"Update freq: {update_freq:.2f}")
-            self.t0 = time.time()
+                # self.tau[i] = self.tau[i][-self.time_span:]
+                # self.tau[i].append(tau[i])
+            
+            for i, curve in enumerate(self.rpy_plots):
+                self.rpy[i] = self.rpy[i][-100:]
+                self.rpy[i].append(rpy[i])
+            
+            self.update_cnt += 1
+            if self.update_cnt % self.time_span == 0:
+                update_freq = self.time_span / (time.time() - self.t0)
+                print(f"Update freq: {update_freq:.2f}")
+                self.t0 = time.time()
     
     def update_plot(self):
 

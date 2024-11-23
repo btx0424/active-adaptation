@@ -23,4 +23,8 @@ class ONNXModule:
         outputs = self.ort_session.run(None, args)
         outputs = {k: v for k, v in zip(self.out_keys, outputs)}
         return outputs
-    
+
+
+def normalize(x: np.ndarray):
+    return x / np.linalg.norm(x)
+

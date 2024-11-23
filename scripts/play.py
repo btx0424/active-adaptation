@@ -37,6 +37,7 @@ def main(cfg):
     
     if cfg.export_policy:
         import time
+        import copy
         time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
         fake_input = env.observation_spec[0].rand().cpu()
         fake_input["is_init"] = torch.tensor(1, dtype=bool)
@@ -51,7 +52,7 @@ def main(cfg):
         
         FILE_PATH = os.path.dirname(__file__)
         
-        deploy_policy = policy.get_rollout_policy("deploy")
+        deploy_policy = copy.deepcopy(policy.get_rollout_policy("deploy"))
         obs_norm = ObsNorm.from_vecnorm(vecnorm, deploy_policy.in_keys)
         _policy = TensorDictSequential(obs_norm, deploy_policy).cpu()
         
