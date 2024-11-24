@@ -518,9 +518,10 @@ class joint_pos_substep(Observation):
         return self.joint_pos
 
 class joint_pos_multistep(Observation):
-    def __init__(self, env, steps: int=4, diff: bool=False, mask_ratio = 0):
+    def __init__(self, env, steps: int=4, noise_std: float=0., diff: bool=False, mask_ratio = 0):
         super().__init__(env, mask_ratio)
         self.steps = steps
+        self.noise_std = noise_std
         self.diff = diff
         self.asset: Articulation = self.env.scene["robot"]
         shape = (self.num_envs, steps, self.asset.num_joints)
@@ -532,7 +533,10 @@ class joint_pos_multistep(Observation):
     
     def update(self):
         self.joint_pos_multistep = self.joint_pos_multistep.roll(1, 1)
-        self.joint_pos_multistep[:, 0] = self.joint_pos.mean(1)
+        joint_pos = self.joint_pos.mean(1)
+        if self.noise_std > 0:
+            joint_pos = random_noise(joint_pos, self.noise_std)
+        self.joint_pos_multistep[:, 0] = joint_pos
     
     def compute(self):
         joint_pos = self.joint_pos_multistep.clone()
@@ -542,9 +546,10 @@ class joint_pos_multistep(Observation):
 
 
 class joint_vel_multistep(Observation):
-    def __init__(self, env, steps: int=4, diff: bool=False, mask_ratio = 0):
+    def __init__(self, env, steps: int=4, noise_std: float=0., diff: bool=False, mask_ratio = 0):
         super().__init__(env, mask_ratio)
         self.steps = steps
+        self.noise_std = noise_std
         self.diff = diff
         self.asset: Articulation = self.env.scene["robot"]
         shape = (self.num_envs, steps, self.asset.num_joints)
@@ -556,7 +561,10 @@ class joint_vel_multistep(Observation):
     
     def update(self):
         self.joint_vel_multistep = self.joint_vel_multistep.roll(1, 1)
-        self.joint_vel_multistep[:, 0] = self.joint_vel.mean(1)
+        joint_vel = self.joint_vel.mean(1)
+        if self.noise_std > 0:
+            joint_vel = random_noise(joint_vel, self.noise_std)
+        self.joint_vel_multistep[:, 0] = joint_vel
     
     def compute(self):
         joint_vel = self.joint_vel_multistep.clone()
@@ -1530,9 +1538,6 @@ class oscillator(Observation):
         self.history = history
         self.asset: Quadruped = self.env.scene["robot"]
         self.phi = self.asset.phi
-
-        self.phi[:, 0] = torch.pi
-        self.phi[:, 3] = torch.pi
         
         self.phi_history = torch.zeros(self.num_envs, 4, 4, device=self.device)
 

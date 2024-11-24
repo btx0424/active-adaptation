@@ -79,8 +79,8 @@ observation:
     projected_gravity_b: {noise_std: 0.01}
     # joint_pos: {noise_std: 0.05, subtract_offset: false}
     # joint_vel: {noise_std: 0.2}
-    joint_pos_multistep: {steps: 4, diff: true}
-    joint_vel_multistep: {steps: 4, diff: true}
+    joint_pos_multistep: {steps: 4, noise_std: 0.05, diff: true}
+    joint_vel_multistep: {steps: 4, noise_std: 0.2, diff: true}
     prev_actions:        {steps: 3}
   priv:
     root_linvel_b:    {yaw_only: true}
