@@ -171,6 +171,7 @@ class Command2(Command):
             self.command_speed = torch.zeros(self.num_envs, 1)
             self._target_direction = torch.zeros(self.num_envs, 3)
             self._target_linvel = torch.zeros(self.num_envs, 3)
+            self.next_command_linvel = torch.zeros(self.num_envs, 3)
             self.command_linvel = torch.zeros(self.num_envs, 3)
             self.command_linvel_w = torch.zeros(self.num_envs, 3)
             self.command_angvel = torch.zeros(self.num_envs)
@@ -196,7 +197,9 @@ class Command2(Command):
         
     def reset(self, env_ids, reward_stats = None):
         self.command[env_ids] = 0.
-        self._target_linvel[env_ids] = 0.
+        self.next_command_linvel[env_ids] = 0.
+        self.command_linvel[env_ids] = 0.
+
         self.target_yaw[env_ids] = self.asset.data.heading_w[env_ids]
         
         self._cum_linvel_error[env_ids] = 0.
@@ -256,7 +259,11 @@ class Command2(Command):
 
         self._cum_linvel_error.mul_(0.98).add_(linvel_error * self.env.step_dt)
         self._cum_angvel_error.mul_(0.98).add_(angvel_error * self.env.step_dt)
-        self.command_linvel[:] = self.command_linvel + clamp_norm((target_linvel - self.command_linvel) * 0.1, max=0.1)
+        
+        max_command_speed = (2.5 - self.command_angvel.abs()).clamp(0.).unsqueeze(1)
+        self.command_linvel.lerp_(self.next_command_linvel, 0.1)
+        self.command_linvel = clamp_norm(self.command_linvel, max=max_command_speed)
+        self.command_speed = self.command_linvel.norm(dim=-1, keepdim=True)
 
         self.command_linvel_w[:] = quat_apply_yaw(self.robot.data.root_quat_w, self.command_linvel)
         self.command[:, :2] = self.command_linvel[:, :2]
@@ -270,22 +277,13 @@ class Command2(Command):
 
     
     def sample_vel_command(self, env_ids: torch.Tensor):
-        linvel = torch.zeros(len(env_ids), 2, device=self.device)
-        linvel[:, 0].uniform_(*self.linvel_x_range)
-        linvel[:, 0] = torch.where(
-            torch.rand(len(env_ids), device=self.device) < 0.2, 
-            linvel[:, 0].abs(), linvel[:, 0]
-        )
-        linvel[:, 1].uniform_(*self.linvel_y_range)
-        speed = linvel.norm(dim=-1, keepdim=True)
-        direction = linvel / speed.clamp(1e-6)
-        stand = (speed < 0.3) | (torch.rand(len(env_ids), 1, device=self.device) < self.stand_prob)
-        speed = speed * (~stand)
+        next_command_linvel = torch.zeros(len(env_ids), 3, device=self.device)
+        next_command_linvel[:, 0].uniform_(*self.linvel_x_range)
+        next_command_linvel[:, 1].uniform_(*self.linvel_y_range)
 
-        self.command_speed[env_ids] = speed
-        self._target_direction[env_ids, :2] = direction
-        self._target_linvel[env_ids, :2] = direction * speed
-
+        speed = next_command_linvel.norm(dim=-1, keepdim=True)
+        r = torch.rand(len(env_ids), 1, device=self.device) > self.stand_prob
+        self.next_command_linvel[env_ids] = next_command_linvel * ((speed > 0.15) | r)
         self.aux_input[env_ids] = sample_uniform(env_ids.shape, *self.aux_input_range, self.device).unsqueeze(1)
 
     def sample_yaw_command(self, env_ids: torch.Tensor):

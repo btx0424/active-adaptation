@@ -366,6 +366,35 @@ class root_angvel_b(Observation):
         # assume the robot is symmetric left-right
         return obs * torch.tensor([-1., 1., -1.], device=self.device)
 
+
+class root_gyro_substep(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        shape = (self.num_envs, self.env.cfg.decimation, 3)
+        self.gyro = torch.zeros(shape, device=self.device)
+
+    def post_step(self, substep):
+        self.gyro[:, substep] = self.asset.data.root_ang_vel_b
+    
+    def compute(self):
+        return self.gyro
+
+class root_gyro_multistep(Observation):
+    def __init__(self, env, steps: int=4, noise_std: float=0.):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.noise_std = noise_std
+        self.gyro_multistep = torch.zeros((self.num_envs, steps, 3), device=self.device)
+    
+    def update(self):
+        self.gyro_multistep = self.gyro_multistep.roll(1, dims=1)
+        self.gyro_multistep[:, 0] = random_noise(self.asset.data.root_ang_vel_b, self.noise_std)
+    
+    def compute(self):
+        return self.gyro_multistep.reshape(self.num_envs, -1)
+
+
 class projected_gravity_b(Observation):
     def __init__(self, env, noise_std: float=0.):
         super().__init__(env)
@@ -1536,22 +1565,21 @@ class oscillator(Observation):
     def __init__(self, env, history: bool=False,mask_ratio = 0):
         super().__init__(env, mask_ratio)
         self.history = history
-        self.asset: Quadruped = self.env.scene["robot"]
-        self.phi = self.asset.phi
-        
+        self.asset: Quadruped = self.env.scene["robot"]        
         self.phi_history = torch.zeros(self.num_envs, 4, 4, device=self.device)
 
     def update(self):
-        self.phi_history = self.phi_history.roll(1, dims=1)
-        self.phi_history[:, 0] = self.phi
+        if self.history:
+            self.phi_history = self.phi_history.roll(1, dims=1)
+            self.phi_history[:, 0] = self.asset.phi
 
     def compute(self):
         if self.history:
             phi_sin = self.phi_history.sin()
             phi_cos = self.phi_history.cos()
         else:
-            phi_sin = self.phi.sin()
-            phi_cos = self.phi.cos()
+            phi_sin = self.asset.phi.sin()
+            phi_cos = self.asset.phi.cos()
         obs = torch.concat([phi_sin, phi_cos], dim=-1)
         return obs.reshape(self.num_envs, -1)
 

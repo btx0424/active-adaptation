@@ -535,7 +535,7 @@ class random_joint_offset(Randomization):
 
 
 class random_pull(Randomization):
-    def __init__(self, env, force_xy_range, force_z_range, prob=0.01, duration=50):
+    def __init__(self, env, force_xy_range, force_z_range, prob=0.01, duration = (0.5, 0.5)):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.force_xy_range = force_xy_range
@@ -548,13 +548,11 @@ class random_pull(Randomization):
         self.time_remaining = torch.zeros(self.num_envs, 1, device=self.device)
 
     def step(self, substep):
-        force_b = self.asset._external_force_b.clone()
-        torques_b = self.asset._external_torque_b.clone()
-        force_b[:, 0] += quat_rotate_inverse(
+        self.asset._external_force_b[:, 0] += quat_rotate_inverse(
             self.asset.data.root_quat_w,  
             self.force_w * (self.time_remaining > 0)
         )
-        self.asset.set_external_force_and_torque(force_b, torques_b)
+        self.asset.has_external_wrench = True
     
     def update(self):
         sample_force = (torch.rand(self.num_envs, device=self.device) < self.prob).nonzero().squeeze(-1)
@@ -564,8 +562,10 @@ class random_pull(Randomization):
             force_w[:, 1].uniform_(*self.force_xy_range)
             force_w[:, 2].uniform_(*self.force_z_range) 
             self.force_w[sample_force] = force_w
-            self.time_remaining[sample_force] = self.duration
-        self.time_remaining -= 1
+            duration = torch.zeros(len(sample_force), 1, device=self.device)
+            duration.uniform_(*self.duration)
+            self.time_remaining[sample_force] = duration / self.env.step_dt
+        self.time_remaining -= 1.
 
     def debug_draw(self):
         self.env.debug_draw.vector(
