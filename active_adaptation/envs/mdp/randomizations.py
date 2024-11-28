@@ -3,6 +3,7 @@ import numpy as np
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.actuators import DCMotor, ImplicitActuator
 from omni.isaac.lab.sensors import RayCaster
+from active_adaptation.envs.actuator import HybridActuator
 import omni.isaac.lab.utils.string as string_utils
 from typing import Union
 import logging
@@ -138,6 +139,10 @@ class motor_params(Randomization):
         if isinstance(self.actuator, DCMotor):
             pass
             # self.actuator._saturation_effort[env_ids] = strength
+        elif isinstance(self.actuator, HybridActuator):
+            implicit = self.actuator.implicit[env_ids].unsqueeze(1)
+            self.asset.write_joint_stiffness_to_sim(stiffness * implicit, self.actuator.joint_indices, env_ids)
+            self.asset.write_joint_damping_to_sim(damping * implicit, self.actuator.joint_indices, env_ids)
         elif isinstance(self.actuator, ImplicitActuator):
             self.asset.write_joint_stiffness_to_sim(stiffness, self.actuator.joint_indices, env_ids)
             self.asset.write_joint_damping_to_sim(damping, self.actuator.joint_indices, env_ids)

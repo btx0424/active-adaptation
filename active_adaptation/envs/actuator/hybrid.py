@@ -1,0 +1,42 @@
+import torch
+
+from omni.isaac.lab.assets import Articulation
+from omni.isaac.lab.actuators import ImplicitActuatorCfg, ImplicitActuator
+from omni.isaac.lab.utils import configclass
+from omni.isaac.lab.utils.types import ArticulationActions
+
+
+class HybridActuator(ImplicitActuator):
+    
+    articulation: Articulation
+    cfg: "HybridActuatorCfg"
+
+    def __init__(self, cfg, *args, **kwargs):
+        super().__init__(cfg, *args, **kwargs)
+        self.implicit = torch.zeros(self._num_envs, dtype=torch.bool, device=self._device)
+        self.default_stiffness = self.stiffness[0].clone()
+        self.default_damping = self.damping[0].clone()
+    
+    def reset(self, env_ids: torch.Tensor):
+        implicit = torch.rand(len(env_ids), device=self._device) < self.cfg.implicit_ratio
+        stiffness = self.default_stiffness.expand(len(env_ids), -1) * implicit.unsqueeze(1)
+        damping = self.default_damping.expand(len(env_ids), -1) * implicit.unsqueeze(1)
+        self.implicit[env_ids] = implicit
+        self.articulation.write_joint_stiffness_to_sim(stiffness, self.joint_indices, env_ids)
+        self.articulation.write_joint_damping_to_sim(damping, self.joint_indices, env_ids)
+
+    def compute(
+        self, control_action: ArticulationActions, joint_pos: torch.Tensor, joint_vel: torch.Tensor
+    ) -> ArticulationActions:
+        error_pos = control_action.joint_positions - joint_pos
+        error_vel = control_action.joint_velocities - joint_vel
+        self.computed_effort = self.stiffness * error_pos + self.damping * error_vel + control_action.joint_efforts
+        control_action.joint_efforts = self._clip_effort(self.computed_effort) * (~self.implicit.unsqueeze(1))
+        return control_action
+
+
+@configclass
+class HybridActuatorCfg(ImplicitActuatorCfg):
+    implicit_ratio: float = 0.5
+    class_type = HybridActuator
+
