@@ -715,29 +715,23 @@ class contact_indicator(Observation):
         self.asset: Articulation = self.env.scene["robot"]
         self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
         
-        self.artc_ids, names = self.asset.find_bodies(body_names, preserve_order=True)
+        self.artc_ids, names = self.asset.find_bodies(body_names)
         self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names, preserve_order=True)
         self.timing = timing
         
-        self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum().to(self.env.device) * 9.81
-        self.forces = torch.zeros(self.num_envs, len(self.body_ids), 3, device=self.device)
+        self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum()
+        self.giravity = self.default_mass_total.to(self.env.device) * 9.81
+        self.force_substep = torch.zeros(self.num_envs, self.env.cfg.decimation, len(self.body_ids), 3, device=self.device)
 
-    def update(self):
-        self.forces[:] = self.contact_sensor.data.net_forces_w_history[:, :, self.body_ids].mean(1)
-        # self.forces[:] = self.contact_sensor.data.net_forces_w[:, self.body_ids]
+    def post_step(self, substep):
+        force = self.contact_sensor.data.net_forces_w[:, self.body_ids]
+        self.force_substep[:, substep] = force
 
     def compute(self):
-        forces = quat_rotate_inverse(self.asset.data.root_quat_w.unsqueeze(1), self.forces) / self.default_mass_total
-        if self.timing:
-            current_air_time = self.contact_sensor.data.current_air_time[:, self.body_ids].clamp_max(1.)
-            current_contact_time = self.contact_sensor.data.current_contact_time[:, self.body_ids].clamp_max(1.)
-            return torch.cat([
-                current_air_time,
-                current_contact_time,
-                forces.reshape(self.num_envs, -1).clip(-5., 5.)
-            ], dim=-1)
-        else:
-            return forces.reshape(self.num_envs, -1).clip(-5., 5.)
+        forces = self.force_substep.mean(1).norm(dim=-1)
+        forces = torch.where(forces < 2., 0., forces)
+        forces = torch.where(forces > 2., 1., forces)
+        return forces.reshape(self.num_envs, -1)
 
     def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
         if self.timing:
@@ -749,7 +743,7 @@ class contact_indicator(Observation):
     def debug_draw(self):
         self.env.debug_draw.vector(
             self.asset.data.body_pos_w[:, self.artc_ids],
-            self.forces / self.default_mass_total,
+            self.force_substep.mean(1) / self.giravity,
             color=(1., 1., 1., 1.)
         )
 
@@ -1575,11 +1569,42 @@ class oscillator(Observation):
 
     def compute(self):
         if self.history:
-            phi_sin = self.phi_history.sin()
-            phi_cos = self.phi_history.cos()
+            phi_sin = self.phi_history.sin().reshape(self.num_envs, -1)
+            phi_cos = self.phi_history.cos().reshape(self.num_envs, -1)
         else:
             phi_sin = self.asset.phi.sin()
             phi_cos = self.asset.phi.cos()
-        obs = torch.concat([phi_sin, phi_cos], dim=-1)
+        obs = torch.concat([phi_sin, phi_cos, self.asset.phi_dot], dim=-1)
         return obs.reshape(self.num_envs, -1)
 
+
+class feet_contact_multistep(Observation):
+    def __init__(self, env, steps: int=4, thres: float=1.):
+        super().__init__(env)
+        self.thres = thres
+        self.asset: Articulation = self.env.scene["robot"]
+        self.contact_sensor: ContactSensor = self.env.scene["contact_sensor"]
+        self.feet_id = self.asset.find_bodies(".*_foot")[0]
+        self.contact = torch.zeros(self.num_envs, steps, device=self.device, dtype=bool)
+        self.grf_substep = torch.zeros(self.num_envs, self.env.cfg.decimation, device=self.device)
+    
+    def post_step(self, substep):
+        contact_forces = self.contact_sensor.data.net_forces_w[:, self.feet_id]
+        self.grf_substep[:, substep] = contact_forces.norm(dim=-1)
+    
+    def update(self):
+        self.contact = self.contact.roll(1, dims=1) 
+        self.contact[:, 0] = self.grf_substep.mean(dim=1) > self.thres
+    
+    def compute(self):
+        return self.contact.reshape(self.num_envs, -1)
+
+
+class actuator_type(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.actuator = self.asset.actuators["base_legs"]
+
+    def compute(self):
+        return self.actuator.implicit.reshape(self.num_envs, -1)
