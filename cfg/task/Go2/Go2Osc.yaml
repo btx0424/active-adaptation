@@ -19,12 +19,12 @@ robot:
   action_scaling:
     .*: 0.5
 # terrain: slopes_boxes
-terrain: plane
+terrain: easy
 payload: false
 homogeneous: false
 
 action:
-  _target_: active_adaptation.envs.mdp.action.JointPositionAndPhase
+  _target_: active_adaptation.envs.mdp.action.JointPosition
   action_scaling: {.*_joint: 0.5}
   max_delay: 1
   # # fixed_delay: true
@@ -42,7 +42,7 @@ command:
   use_stiffness_ratio: 0.99
   aux_input_range: [.5, 1.]
   resample_prob: 0.5
-  stand_prob: 0.02
+  stand_prob: 0.05
   target_yaw_range: 
     - [-0.3927,  0.3927]
     - [ 1.1781,  1.9635]
@@ -53,10 +53,11 @@ command:
 observation:
   command_:
     command:
-    oscillator: {history: true}
+    oscillator: {history: false}
   policy:
     # _max_delay_: 0.5
     # root_angvel_b: {noise_std: 0.2}
+    # root_gyro_multistep: {steps: 4, noise_std: 0.05}
     projected_gravity_b: {noise_std: 0.05}
     # joint_pos:    {noise_std: 0.05, subtract_offset: true}
     # joint_vel:    {noise_std: 0.2}
@@ -77,17 +78,20 @@ observation:
     external_forces:  {body_names: ["base"]}
     external_torques: {body_names: ["base"]}
   ext_:
+    # root_angvel_b:
     external_forces:  {body_names: ["base"], divide_by_mass: false}
     external_torques: {body_names: ["base"], divide_by_mass: false, scale: 0.2}
   symmetry:
     symmetry_quad:    {}
-  state_:
-    joint_pos:
-    joint_vel:
-  state_substep_:
-    joint_pos_substep:
-    joint_vel_substep:
-    joint_pos_des_substep:
+  # state_:
+  #   root_angvel_b:
+  #   joint_pos:
+  #   joint_vel:
+  # state_substep_:
+  #   root_gyro_substep:
+  #   joint_pos_substep:
+  #   joint_vel_substep:
+  #   joint_pos_des_substep:
 
   # state_:
   #   projected_gravity_b: {noise_std: 0.00}
@@ -101,18 +105,17 @@ reward:
   loco:
     linvel_exp:         {weight: 1.5, enabled: true, dim: 2, yaw_only: true}
     angvel_z_exp:       {weight: 0.75, enabled: true}
-    oscillator:         {weight: 1.0, enabled: true}
+    oscillator:         {weight: 1.0, enabled: true, feet_names: .*_foot, margin: 0.1}
 
     linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
-    angvel_xy_l2:       {weight: 0.01, enabled: true}
+    angvel_xy_l2:       {weight: 0.02, enabled: true}
     linvel_z_l2:        {weight: 1.0, enabled: true}
     base_height_l1:     {weight: 2.0, enabled: true, target_height: 0.35}
     energy_l1:          {weight: 0.0002, enabled: true}
     energy_dist_lr:     {weight: 0.0002, enabled: false}
     joint_acc_l2:       {weight: 2.5e-7, enabled: true}
     joint_torques_l2:   {weight: 2.0e-4, enabled: true}
-    # quadruped_stand:    {weight: 0.5}
-    # gait:               {weight: 0.02, enabled: true}
+    # quadruped_stand:    {weight: 0.5, enabled: false}
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.01, enabled: true}
     action_rate2_l2:    {weight: 0.005, enabled: true}
@@ -170,4 +173,9 @@ randomization:
     F[L,R]_thigh_joint: [-0.05, 0.05]
     R[L,R]_thigh_joint: [-0.05, 0.05]
     .*calf_joint: [-0.05, 0.05]
-  stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.4, 0.4]}
+  stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.1, 0.4]}
+  random_pull: 
+    force_xy_range: [-40., 40.]
+    force_z_range:  [-10., 30.]
+    prob: 0.005
+    duration: [0.5, 1.5]

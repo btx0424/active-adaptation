@@ -1110,7 +1110,6 @@ class impedance_vel(Reward):
     def compute(self) -> torch.Tensor:
         lin_vel_w = self.lin_vel_sum / self.cnt.unsqueeze(1)
         command_lin_vel_w = self.command_manager.command_linvel_w.unsqueeze(-1)
-        command_speed = self.command_manager.command_speed.reshape(self.num_envs, 1)
         diff = (lin_vel_w - command_lin_vel_w)
         error_l2 = diff[:, :2].square().sum(dim=1, keepdim=True)
         error_l2 = error_l2.min(-1)[0]
@@ -1290,30 +1289,116 @@ class step_vel(Reward):
 
 
 class oscillator(Reward):
-    def __init__(self, env, weight, enabled = True):
+    def __init__(
+        self,
+        env,
+        feet_names: str=".*_foot",
+        margin: float=0.,
+        weight=1.0,
+        enabled = True,
+    ):
         super().__init__(env, weight, enabled)
+        self.margin = margin
+        self.target_swing_height = 0.06
+
         self.asset: Quadruped = self.env.scene["robot"]
         self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
-        self.feet_ids, feet_names = self.contact_sensor.find_bodies(".*foot")
+        self.command_manager: Command2 = self.env.command_manager
+        
+        self.feet_ids, feet_names = self.contact_sensor.find_bodies(feet_names)
         self.mass = self.asset.data.default_mass[0].sum().to(self.device)
         self.gravity = self.mass * 9.81
+        
         self.phi: torch.Tensor = self.asset.phi
-        self.grf_substep = torch.zeros(self.num_envs, self.env.cfg.decimation, 4, device=self.device)
+        self.grf_substep = torch.zeros(self.num_envs, self.env.cfg.decimation, len(self.feet_ids), device=self.device)
+        
         self.omega = torch.zeros(self.num_envs, 1, device=self.device)
-        self.omega.uniform_(3., 4.).mul_(torch.pi)
+        self.omega.uniform_(4., 5.).mul_(torch.pi)
+        
+        self.rest_target = torch.pi * 3 / 2
+        self.keep_steping = torch.zeros(self.num_envs, 1, dtype=bool, device=self.device)
 
+    def reset(self, env_ids):
+        self.keep_steping[env_ids] = torch.rand(len(env_ids), 1, device=self.device) < 0.5
+    
     def post_step(self, substep):
         grf = self.contact_sensor.data.net_forces_w[:, self.feet_ids].norm(dim=-1)
         self.grf_substep[:, substep] = grf
     
     def update(self):
         self.grf = self.grf_substep.mean(1) / self.gravity
-        phi_dot = self.omega
-        self.phi[:] = (self.phi + phi_dot * self.env.step_dt) % (2 * torch.pi)
+        inp = (self.command_manager.command_speed + self.command_manager.command_angvel.unsqueeze(1).abs()) > 0.1
+        phi_dot = torch.where(inp | self.keep_steping, self.omega + self.trot(self.phi), self.stand(self.phi))
+        self.asset.phi_dot[:] = phi_dot
 
     def compute(self):
-        r = (self.asset.data.feet_height.clamp_max(0.06) - self.grf) * self.phi.sin()
-        return r.sum(1, keepdim=True)
+        phi_sin = self.phi.sin()
+        feet_height = self.asset.data.feet_height.clamp_max(self.target_swing_height)
+        r = (feet_height - self.grf.clamp_max(0.4)) * phi_sin * (phi_sin.abs() > self.margin)
+        return r.sum(1, True)
+    
+    def stand(self, phi: torch.Tensor):
+        phi_dot = 2.0 * ((self.rest_target - phi) % (2 * torch.pi))
+        return phi_dot
+    
+    def trot(self, phi: torch.Tensor):
+        phi_dot = torch.zeros_like(phi)
+        phi_dot[:, 0] = phi[:, 3] - phi[:, 0]
+        phi_dot[:, 1] = (phi[:, 2] - phi[:, 1]) + ((phi[:, 0] + torch.pi - phi[:, 1]) % (2 * torch.pi))
+        phi_dot[:, 2] = (phi[:, 1] - phi[:, 2]) + ((phi[:, 0] + torch.pi - phi[:, 2]) % (2 * torch.pi))
+        phi_dot[:, 3] = phi[:, 0] - phi[:, 3]
+        return phi_dot
+
+
+class gait(Reward):
+    def __init__(self, env, weight, enabled = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Quadruped = self.env.scene["robot"]
+        self.command_manager: Command2 = self.env.command_manager
+        self.phi: torch.Tensor = self.asset.phi
+
+    def compute(self):
+        fast = self.command_manager.command_speed > 1.6
+        r_gallop = (self.phi[:, 0] - self.phi[:, 1]).square() + (self.phi[:, 2] - self.phi[:, 3]).square()
+        r_trot = (self.phi[:, 0] - self.phi[:, 3]).square() + (self.phi[:, 1] - self.phi[:, 2]).square()
+        r = torch.where(fast, r_gallop.unsqueeze(1), r_trot.unsqueeze(1))
+        return - r
+
+
+class quad_leg_swing(Reward):
+    def __init__(self, env, weight, feet_names: str=".*_foot", enabled = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Quadruped = self.env.scene["robot"]
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+        self.feet_ids = self.asset.find_bodies(feet_names)[0]
+        self.feet_ids_ = self.contact_sensor.find_bodies(feet_names)[0]
+        self.grf_substep = torch.zeros(self.num_envs, self.env.cfg.decimation, 4, device=self.device)
+        self.command_manager: Command2 = self.env.command_manager
+
+    def post_step(self, substep):
+        grf = self.contact_sensor.data.net_forces_w[:, self.feet_ids_].norm(dim=-1)
+        self.grf_substep[:, substep] = grf
+
+    def update(self):
+        feet_lin_vel_w = self.asset.data.body_lin_vel_w[:, self.feet_ids]
+        root_lin_vel_w = self.asset.data.root_lin_vel_w
+        self.feet_height = self.asset.data.body_pos_w[:, self.feet_ids, 2]
+        self.dot = (feet_lin_vel_w * normalize(root_lin_vel_w).unsqueeze(1)).sum(-1) # [num_envs, 4]
+        self.swinging = (self.grf_substep.mean(1) < 0.1)
+        
+    def compute(self):
+        r = self.dot.clamp(0.05, 0.5) + self.feet_height.clamp_max(0.06)
+        r = torch.where(
+            self.command_manager.is_standing_env,
+            - self.swinging.sum(1, True),
+            (r * self.swinging).max(1, True).values,
+        )
+        return r
+    
+    def debug_draw(self):
+        feet_pos_w = self.asset.data.body_pos_w[:, self.feet_ids]
+        swing_feet_pos_w = feet_pos_w[self.swinging]
+        self.env.debug_draw.point(swing_feet_pos_w, color=(1.0, 0., 0., 1.), size=15.)
 
 
 def normalize(x: torch.Tensor):
