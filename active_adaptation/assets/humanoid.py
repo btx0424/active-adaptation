@@ -5,11 +5,16 @@ import torch
 from omni.isaac.lab_assets import ArticulationCfg, H1_CFG
 from omni.isaac.lab.actuators import DCMotorCfg, ImplicitActuatorCfg, IdealPDActuatorCfg
 from omni.isaac.lab.assets import Articulation
+from active_adaptation.envs.actuator import HybridActuatorCfg
 
 
 class Humanoid(Articulation):
     def _create_buffers(self):
         super()._create_buffers()
+
+        # oscillators
+        self.phi = torch.zeros(self.num_instances, 2, device=self.device)
+        self.phi_dot = torch.zeros(self.num_instances, 2, device=self.device)
 
         if hasattr(self.cfg, "hand_body_name"):
             self.hand_body_ids = self.find_bodies(self.cfg.hand_body_name)[0]
@@ -21,6 +26,8 @@ class Humanoid(Articulation):
     
     def update(self, dt: float):
         super().update(dt)
+        self.phi[:] = (self.phi + dt * self.phi_dot) % (2 * torch.pi)
+    
         if hasattr(self.cfg, "hand_body_name"):
             self.hand_pos_w[:] = self.data.body_pos_w[:, self.hand_body_ids]
         if hasattr(self.cfg, "foot_body_name"):
@@ -96,7 +103,9 @@ CY1_CFG = ArticulationCfg(
     ),
     soft_joint_pos_limit_factor=0.9,
     actuators={
-        "base_legs": IdealPDActuatorCfg(
+        "base_legs": HybridActuatorCfg(
+            # implicit_ratio=0.5,
+            # homogeneous_ratio=0.5,
             joint_names_expr=[".*"],
             effort_limit={
                 "waist_yaw_joint": 36,
@@ -120,7 +129,7 @@ CY1_CFG = ArticulationCfg(
                 "[l,r]leg_joint2": 50.,
                 "[l,r]leg_joint3": 50.,
                 "[l,r]leg_joint4": 75.,
-                "[l,r]leg_joint5": 30.,
+                "[l,r]leg_joint5": 15.,
                 "[l,r]leg_joint6": 15.,
             },
             damping={
@@ -135,10 +144,11 @@ CY1_CFG = ArticulationCfg(
                 "[l,r]leg_joint2": 3.,
                 "[l,r]leg_joint3": 3.,
                 "[l,r]leg_joint4": 6., # 6.
-                "[l,r]leg_joint5": 2.,
+                "[l,r]leg_joint5": 1.,
                 "[l,r]leg_joint6": 1.,
             },
-            friction=0.0,
+            armature=0.01,
+            friction=0.01,
         ),
     },
 )
