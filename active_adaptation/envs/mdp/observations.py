@@ -168,20 +168,16 @@ class root_linacc_b(Observation):
     def __init__(self, env):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
+        self.lin_vel_w = self.asset.data.root_lin_vel_w.clone()
+        self.lin_acc_w = torch.zeros(self.num_envs, 3, device=self.env.device)
 
-        T = 4
-        self.lin_vel_w = torch.zeros(self.num_envs, 3, T, device=self.device)
-        self.weights = torch.ones(T - 1, device=self.device)
-        self.weights = torch.cumsum(self.weights * 0.5, 0)
-        self.weights = self.weights / self.weights.sum()
-
-    def post_step(self, substep: int):
-        self.lin_vel_w[:, :, substep] = self.asset.data.root_lin_vel_w
+    def update(self):
+        lin_vel_w = self.asset.data.root_lin_vel_w
+        self.lin_acc_w = (lin_vel_w - self.lin_vel_w) / self.env.step_dt
+        self.lin_vel_w = lin_vel_w
 
     def compute(self):
-        diff = (self.lin_vel_w[:, :, 1:] - self.lin_vel_w[:, :, :-1]) # / self.env.physics_dt
-        lin_acc_w = (diff * self.weights).sum(-1)
-        lin_acc_b = quat_rotate_inverse(self.asset.data.root_quat_w, lin_acc_w)
+        lin_acc_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.lin_acc_w)
         return lin_acc_b.reshape(self.num_envs, -1)
 
 
@@ -580,17 +576,31 @@ class joint_vel_multistep(Observation):
         self.steps = steps
         self.noise_std = noise_std
         self.diff = diff
+        self.from_pos = True
         self.asset: Articulation = self.env.scene["robot"]
         shape = (self.num_envs, steps, self.asset.num_joints)
+        
         self.joint_vel_multistep = torch.zeros(shape, device=self.device)
-        self.joint_vel = torch.zeros(self.num_envs, 2, self.asset.num_joints, device=self.device)
+        
+        if self.from_pos:
+            shape = (self.num_envs, self.env.cfg.decimation, self.asset.num_joints)
+            self.joint_pos_substep = torch.zeros(shape, device=self.device)
+        else:
+            shape = (self.num_envs, 2, self.asset.num_joints)
+            self.joint_vel_substep = torch.zeros(shape, device=self.device)
     
     def post_step(self, substep):
-        self.joint_vel[:, substep % 2] = self.asset.data.joint_vel
+        if self.from_pos:
+            self.joint_pos_substep[:, substep] = self.asset.data.joint_pos
+        else:
+            self.joint_vel_substep[:, substep % 2] = self.asset.data.joint_vel
     
     def update(self):
         self.joint_vel_multistep = self.joint_vel_multistep.roll(1, 1)
-        joint_vel = self.joint_vel.mean(1)
+        if self.from_pos:
+            joint_vel = self.joint_pos_substep.diff(dim=1).mean(dim=1) / self.env.physics_dt
+        else:
+            joint_vel = self.joint_vel_substep.mean(dim=1)
         if self.noise_std > 0:
             joint_vel = random_noise(joint_vel, self.noise_std)
         self.joint_vel_multistep[:, 0] = joint_vel
@@ -638,18 +648,31 @@ class joint_vel(JointObs):
         left_joints = None,
         right_joints = None,
         asym_joints = None,
-        noise_std: float=0.0
+        noise_std: float=0.0,
+        from_pos: bool=False
     ):
         super().__init__(env, joint_names, left_joints, right_joints, asym_joints)
         self.noise_std = noise_std
-        shape = (self.num_envs, 2, self.asset.num_joints)
-        self.joint_vel = torch.zeros(shape, device=self.device)
+        self.from_pos = from_pos
+
+        if self.from_pos:
+            shape = (self.num_envs, self.env.cfg.decimation, self.asset.num_joints)
+            self.joint_pos_substep = torch.zeros(shape, device=self.device)
+        else:
+            shape = (self.num_envs, 2, self.asset.num_joints)
+            self.joint_vel = torch.zeros(shape, device=self.device)
 
     def post_step(self, substep):
-        self.joint_vel[:, substep % 2] = self.asset.data.joint_vel[:, self.joint_ids]
+        if self.from_pos:
+            self.joint_pos_substep[:, substep] = self.asset.data.joint_pos
+        else:
+            self.joint_vel[:, substep % 2] = self.asset.data.joint_vel[:, self.joint_ids]
 
     def compute(self) -> torch.Tensor:
-        joint_vel = self.joint_vel.mean(1)
+        if self.from_pos:
+            joint_vel = self.joint_pos_substep.diff(dim=1).mean(dim=1) / self.env.physics_dt
+        else:
+            joint_vel = self.joint_vel.mean(dim=1)
         return random_noise(joint_vel, self.noise_std)
 
 
@@ -1546,7 +1569,7 @@ class symmetry_quad(Observation):
         linvel = self.asset.data.root_lin_vel_b
         angvel = self.asset.data.root_ang_vel_b
 
-        left = torch.cat([jpos, linvel * self.flip_y , gravity], dim=1)
+        left = torch.cat([jpos, linvel , gravity], dim=1)
         right = torch.cat([self.mirror(jpos), linvel * self.flip_y, gravity * self.flip_y], dim=1)
         return torch.stack([left, right], dim=1)
     
