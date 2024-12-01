@@ -43,6 +43,8 @@ def main():
         print(file.name)
         if "checkpoint" in file.name:
             checkpoints.append(file)
+        elif file.name == "cfg.yaml":
+            file.download(root, replace=True)
         elif file.name == "files/cfg.yaml":
             file.download(root, replace=True)
         elif file.name == "config.yaml":
@@ -73,7 +75,10 @@ def main():
     #     for k, v in run.config.items():
     #         cfg[k] = cfg[k]["value"]
     # else:
-    cfg = OmegaConf.load(os.path.join(root, "files", "cfg.yaml"))
+    try:
+        cfg = OmegaConf.load(os.path.join(root, "files", "cfg.yaml"))
+    except FileNotFoundError:
+        cfg = OmegaConf.load(os.path.join(root, "cfg.yaml"))
     OmegaConf.set_struct(cfg, False)
 
     cfg["checkpoint_path"] = os.path.join(root, checkpoint.name)
@@ -88,6 +93,7 @@ def main():
             _cfg = hydra.compose(config_name="eval", overrides=[f"task={args.task}"])
         # cfg["task"]["randomization"] = _cfg.task.randomization
         cfg["task"]["reward"] = _cfg.task.reward
+        cfg["task"]["termination"] = _cfg.task.termination
         if args.terrain:
             cfg["task"]["terrain"] = _cfg.task.terrain
         if args.command:

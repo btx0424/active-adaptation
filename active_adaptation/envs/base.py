@@ -253,6 +253,8 @@ class Env(EnvBase):
 
         # parse rewards
         self.clip_rewards = self.cfg.reward.pop("_clip_", True)
+        self.mult_dt = self.cfg.reward.pop("_mult_dt_", True)
+
         self.reward_groups = OrderedDict()
         for group_name, func_specs in self.cfg.reward.items():
             print(f"Reward group: {group_name}")
@@ -332,10 +334,10 @@ class Env(EnvBase):
         if len(env_ids):
             self._reset_idx(env_ids)
         self.episode_length_buf[env_ids] = 0
+        self.scene.update(self.step_dt)
         for callback in self._reset_callbacks:
             callback(env_ids)
 
-        self.scene.update(self.step_dt)
         if tensordict is None:
             tensordict = TensorDict({}, self.num_envs, device=self.device)
             self._compute_observation(tensordict)
@@ -539,6 +541,8 @@ class RewardGroup:
         rewards = []
         for key, func in self.funcs.items():
             reward = func()
+            if self.env.mult_dt:
+                reward *= self.env.step_dt
             self.env.stats[self.name, key].add_(reward)
             if func.enabled:
                 rewards.append(reward)
