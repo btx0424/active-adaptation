@@ -140,7 +140,7 @@ class motor_params(Randomization):
             pass
             # self.actuator._saturation_effort[env_ids] = strength
         elif isinstance(self.actuator, HybridActuator):
-            implicit = self.actuator.implicit[env_ids].unsqueeze(1)
+            implicit = self.actuator.implicit[env_ids]
             self.asset.write_joint_stiffness_to_sim(stiffness * implicit, self.actuator.joint_indices, env_ids)
             self.asset.write_joint_damping_to_sim(damping * implicit, self.actuator.joint_indices, env_ids)
         elif isinstance(self.actuator, ImplicitActuator):
@@ -550,13 +550,13 @@ class random_pull(Randomization):
         self.mass_total = self.asset.root_physx_view.get_masses()[0].sum().to(self.device)
 
         self.force_w = torch.zeros(self.num_envs, 3, device=self.device)
+        self.offset_b = torch.zeros(self.num_envs, 3, device=self.device)
         self.time_remaining = torch.zeros(self.num_envs, 1, device=self.device)
 
     def step(self, substep):
-        self.asset._external_force_b[:, 0] += quat_rotate_inverse(
-            self.asset.data.root_quat_w,  
-            self.force_w * (self.time_remaining > 0)
-        )
+        force_w = self.force_w * (self.time_remaining > 0)
+        self.asset._external_force_b[:, 0] += quat_rotate_inverse(self.asset.data.root_quat_w, force_w)
+        self.asset._external_torque_b[:, 0] += self.offset_b.cross(force_w, dim=-1)
         self.asset.has_external_wrench = True
     
     def update(self):
@@ -566,6 +566,11 @@ class random_pull(Randomization):
             force_w[:, 0].uniform_(*self.force_xy_range)
             force_w[:, 1].uniform_(*self.force_xy_range)
             force_w[:, 2].uniform_(*self.force_z_range) 
+            offset_b = torch.zeros(len(sample_force), 3, device=self.device)
+            offset_b[:, 0].uniform_(-0.25, 0.25)
+            offset_b[:, 1].uniform_(-0.15, 0.15)
+            offset_b[:, 2].uniform_(-0.15, 0.15)
+            self.offset_b[sample_force] = offset_b
             self.force_w[sample_force] = force_w
             duration = torch.zeros(len(sample_force), 1, device=self.device)
             duration.uniform_(*self.duration)
