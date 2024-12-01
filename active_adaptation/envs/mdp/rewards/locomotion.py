@@ -1330,6 +1330,7 @@ class oscillator(Reward):
         inp = (self.command_manager.command_speed + self.command_manager.command_angvel.unsqueeze(1).abs()) > 0.1
         phi_dot = torch.where(inp | self.keep_steping, self.omega + self.trot(self.phi), self.stand(self.phi))
         self.asset.phi_dot[:] = phi_dot
+        self.asset.phi[:] = (self.phi + phi_dot * self.env.step_dt) % (2 * torch.pi)
 
     def compute(self):
         phi_sin = self.phi.sin()

@@ -85,6 +85,7 @@ observation:
     symmetry_quad:    {}
   # state_:
   #   root_angvel_b:
+  #   root_linacc_b:
   #   joint_pos:
   #   joint_vel:
   # state_substep_:
