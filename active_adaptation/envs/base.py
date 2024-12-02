@@ -374,6 +374,8 @@ class Env(EnvBase):
         rewards = []
         for group, reward_group in self.reward_groups.items():
             reward = reward_group.compute()
+            if self.mult_dt:
+                reward *= self.step_dt
             rewards.append(reward)
             self.stats[group, "return"].add_(reward)
 
@@ -541,8 +543,6 @@ class RewardGroup:
         rewards = []
         for key, func in self.funcs.items():
             reward = func()
-            if self.env.mult_dt:
-                reward *= self.env.step_dt
             self.env.stats[self.name, key].add_(reward)
             if func.enabled:
                 rewards.append(reward)
