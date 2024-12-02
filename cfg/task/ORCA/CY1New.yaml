@@ -23,7 +23,7 @@ robot:
     "[l,r]leg_joint2": 50.
     "[l,r]leg_joint3": 50.
     "[l,r]leg_joint4": 75.
-    "[l,r]leg_joint5": 30.
+    "[l,r]leg_joint5": 15.
     "[l,r]leg_joint6": 15.
   damping:
     "waist_yaw_joint": 3.
@@ -37,7 +37,7 @@ robot:
     "[l,r]leg_joint2": 3.
     "[l,r]leg_joint3": 3.
     "[l,r]leg_joint4": 6.
-    "[l,r]leg_joint5": 2.
+    "[l,r]leg_joint5": 1.
     "[l,r]leg_joint6": 1.
   effort_limit:
     "waist_yaw_joint": 36
@@ -47,7 +47,7 @@ robot:
     "[l,r]leg_joint[2,3]": 94
     "[l,r]leg_joint[5,6]": 36
 
-terrain: orca_loco
+terrain: plane
 payload: false
 
 action:
@@ -75,8 +75,7 @@ observation:
     command:
     phase: {cycle_range: [0.9, 1.1], deriv: true}
   policy:
-    root_angvel_b:  {noise_std: 0.05}
-    projected_gravity_b: {noise_std: 0.01}
+    projected_gravity_b: {noise_std: 0.02}
     # joint_pos: {noise_std: 0.05, subtract_offset: false}
     # joint_vel: {noise_std: 0.2}
     joint_pos_multistep: {steps: 4, noise_std: 0.05, diff: true}
@@ -84,14 +83,15 @@ observation:
     prev_actions:        {steps: 3}
   priv:
     root_linvel_b:    {yaw_only: true}
+    root_angvel_b:    {noise_std: 0.05}
     body_pos:         {body_names: [.*leg_link6, .*arm_link5], yaw_only: true}
-    body_vel:         {body_names: [.*leg_link6, .*arm_link5], yaw_only: true}
+    # body_vel:         {body_names: [.*leg_link6, .*arm_link5], yaw_only: true}
     feet_height_map:  {feet_names: .*leg_link5 }
     applied_torques:  {actuator_name: base_legs}
-    contact_indicator: {body_names: [".*leg_link6"], timing: false}
-    joint_forces:     {}
-    cum_error:        {}
-    feet_orientation: {feet_names: .*leg_link7}
+    contact_indicator: {body_names: [".*leg_link6"]}
+    # joint_forces:     {}
+    # cum_error:        {}
+    # feet_orientation: {feet_names: .*leg_link7}
     # rewards:     {}
   params:
     motor_params:     {actuator_name: "base_legs"}
@@ -153,7 +153,7 @@ reward:
     joint_deviation_l1: {weight: 0.2, enabled: false, joint_names: [".*leg_joint[2,3]"]}
     joint_deviation_l2: {weight: 0.1, enabled: true, joint_names: [".*arm_joint[1-4]", "waist_yaw_joint"]}
     joint_vel_l2:       {weight: 0.001, enabled: true, joint_names: [".*arm_joint[1-4]", waist_yaw_joint]}
-    arm_well_being:     {weight: 4.0, enabled: false, arm_names: .*arm_link6}
+    # arm_well_being:     {weight: 4.0, enabled: false, arm_names: .*arm_link6}
     feet_clearance:     {weight: 2.0, enabled: true, feet_names: .*leg_link6}
     undesired_contact:  {weight: 0.2, enabled: true, body_names: .*arm_link.*}
     feet_impact:        {weight: 5.0e-6, enabled: true, feet_names: .*leg_link6}
@@ -201,7 +201,7 @@ randomization:
       .*arm_joint.*:      [0.8, 1.2]
       .*leg_joint.*:      [0.8, 1.2]
       waist_yaw_joint: [0.8, 1.2]
-    armatrue_range:   [0.0, 0.04]
+    armatrue_range:   [0.0, 0.1]
   reset_joint_states_uniform:
     pos_ranges:
       .*arm_joint1: [-0.3, 0.3]

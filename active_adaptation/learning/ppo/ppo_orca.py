@@ -64,7 +64,8 @@ class PPOConfig:
     
     entropy_coef_start: float = 0.002
     entropy_coef_end: float = 0.000
-    
+    gradient_penalty: float = 0.002
+
     reg_lambda: float = 0.0
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
@@ -267,6 +268,10 @@ class PPOOrcaPolicy(TensorDictModuleBase):
             Mod(_critic, ["_critic_input"], ["state_value"])
         ).to(self.device)
 
+        self.aux = Seq(
+            Mod(nn.LazyLinear(25), ["_actor_feature"], ["_implicit_pred"]),
+        ).to(self.device)
+
         with torch.device(self.device):
             fake_input["is_init"] = torch.ones(fake_input.shape[0], 1, dtype=torch.bool)
             fake_input["adapt_hx"] = torch.zeros(fake_input.shape[0], 128)
@@ -278,6 +283,7 @@ class PPOOrcaPolicy(TensorDictModuleBase):
         self.critic(fake_input)
         self.adapt_module(fake_input)
         self.actor_adapt(fake_input)
+        self.aux(fake_input)
 
         self.policy_train_inference = PolicyUpdateInferenceMod(self.actor, self.encoder_priv)
         self.policy_adapt_inference = PolicyUpdateInferenceMod(self.actor_adapt, None)
@@ -290,6 +296,7 @@ class PPOOrcaPolicy(TensorDictModuleBase):
                 {"params": self.actor.parameters()},
                 {"params": self.critic.parameters()},
                 {"params": self.encoder_priv.parameters()},
+                {"params": self.aux.parameters()},
             ],
             lr=cfg.lr
         )
@@ -308,7 +315,7 @@ class PPOOrcaPolicy(TensorDictModuleBase):
             ],
             lr=cfg.lr
         )
-        
+
         def init_(module):
             if isinstance(module, nn.Linear):
                 nn.init.orthogonal_(module.weight, 0.01)
@@ -318,6 +325,7 @@ class PPOOrcaPolicy(TensorDictModuleBase):
         self.critic.apply(init_)
         self.encoder_priv.apply(init_)
         self.adapt_module.apply(init_)
+        self.aux.apply(init_)
         self.num_updates = 0
 
         self.symmetry = nn.Sequential(make_mlp([256, 256]), nn.LazyLinear(1)).to(self.device)
@@ -377,7 +385,7 @@ class PPOOrcaPolicy(TensorDictModuleBase):
             left_score = self.symmetry(left_obs)
             right_score = self.symmetry(right_obs)
             symmetry_reward = (1 - (right_score - 1).square())
-            tensordict[REWARD_KEY] += self.symmetry_coef * symmetry_reward
+            tensordict[REWARD_KEY] += 0.02 * self.symmetry_coef * symmetry_reward
 
         self._compute_advantage(tensordict, self.critic, "adv", "ret", update_value_norm=True)
         tensordict["adv"] = normalize(tensordict["adv"], subtract_mean=True)
@@ -466,6 +474,8 @@ class PPOOrcaPolicy(TensorDictModuleBase):
 
     # @torch.compile
     def _update(self, tensordict: TensorDict, policy_inference: PolicyUpdateInferenceMod, opt: torch.optim.Optimizer):
+        for key in (CMD_KEY, OBS_KEY):
+            tensordict[key].requires_grad_(True)
         log_probs, entropy = policy_inference(tensordict)
 
         if self.cfg.phase == "train":
@@ -479,8 +489,15 @@ class PPOOrcaPolicy(TensorDictModuleBase):
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
         policy_loss = - torch.mean(torch.min(surr1, surr2) * valid)
         entropy_loss = - self.entropy_coef * entropy
-
-        gradient_penalty = 0.
+        
+        grad = torch.autograd.grad(
+            log_probs,
+            [tensordict[key] for key in (CMD_KEY, OBS_KEY, "_priv_feature")],
+            grad_outputs=torch.ones_like(log_probs),
+            create_graph=True,
+            retain_graph=True,
+        )
+        gradient_penalty = torch.cat(grad, dim=-1).square().sum(-1).mean()
 
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["state_value"]
@@ -493,7 +510,7 @@ class PPOOrcaPolicy(TensorDictModuleBase):
         else:
             reg_loss = 0.
             
-        loss = policy_loss + entropy_loss + value_loss + reg_loss + gradient_penalty * 0.002
+        loss = policy_loss + entropy_loss + value_loss + reg_loss + self.cfg.gradient_penalty * gradient_penalty
         
         opt.zero_grad()
         loss.backward()
