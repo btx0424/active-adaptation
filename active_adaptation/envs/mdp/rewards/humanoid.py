@@ -315,7 +315,6 @@ class arm_well_being(Reward):
         self.root_pos = self.asset.data.root_pos_w
         self.root_quat = self.asset.data.root_quat_w
     
-    @torch.compile
     def compute(self) -> torch.Tensor:
         arm_pos_b = quat_rotate_inverse(
             self.root_quat.unsqueeze(1), 
