@@ -8,9 +8,18 @@ defaults:
   - override action: null
   - _self_
 
-robot: go2
+robot:
+  name: go2
+  stiffness:
+    .*: 25.
+  damping:
+    .*: 0.5
+  effort_limit:
+    .*: 23.5
+  action_scaling:
+    .*: 0.5
 # terrain: slopes_boxes
-terrain: dic
+terrain: plane
 payload: false
 homogeneous: false
 
@@ -38,14 +47,17 @@ command:
   teleop: false
 
 observation:
-  command:
+  command_:
     command:
+    oscillator:
   policy:
     # _max_delay_: 0.5
     # root_angvel_b: {noise_std: 0.2}
     projected_gravity_b: {noise_std: 0.05}
-    joint_pos:    {noise_std: 0.05, subtract_offset: true}
-    joint_vel:    {noise_std: 0.2}
+    # joint_pos:    {noise_std: 0.05, subtract_offset: true}
+    # joint_vel:    {noise_std: 0.2}
+    joint_pos_multistep: {steps: 4, diff: true}
+    joint_vel_multistep: {steps: 4, diff: true}
     prev_actions: {steps: 3}
   priv:
     command_hidden:
@@ -68,6 +80,14 @@ observation:
     prev_actions:     {steps: 3, flatten: false}
   symmetry:
     symmetry_quad:    {}
+  state_:
+    joint_pos:
+    joint_vel:
+  # state_substep_:
+  #   joint_pos_substep:
+  #   joint_vel_substep:
+  #   joint_pos_des_substep:
+
   # state_:
   #   projected_gravity_b: {noise_std: 0.00}
   #   joint_pos:    {noise_std: 0.00}
@@ -82,10 +102,11 @@ reward:
     # angvel_z_exp:       {weight: 1.0, enabled: false}
     impedance_yaw_pos:      {weight: 0.5, enabled: true}
     impedance_yaw_vel:      {weight: 1.0, enabled: true}
-    impedance_pitch_pos:    {weight: 0.75, enabled: false}
+    # impedance_pitch_pos:    {weight: 0.75, enabled: false}
     impedance_pos:      {weight: 0.5, enabled: true}
-    impedance_vel:      {weight: 2.0, enabled: true}
-    impedance_acc:      {weight: 1.0, enabled: true}
+    impedance_vel:      {weight: 1.0, enabled: true}
+    # impedance_acc:      {weight: 1.0, enabled: true}
+    oscillator:         {weight: 1.0, enabled: true}
     # step_vel:           {weight: 1.0, enabled: false}
 
     linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
@@ -115,13 +136,13 @@ termination:
   fall_over: {xy_thres: 0.9}
   # joint_acc_exceeds: {thres: 5000}
   # cum_error: {thres: 0.5, min_steps: 500}
-  impedance_pos_error: {thres: 0.3}
+  # impedance_pos_error: {thres: 0.3}
 
 randomization:
   perturb_body_mass:
     (?!(payload|base|Head.*)).*: [0.8, 1.2]
     base: [0.8, 1.2]
-    Head.*: [10, 250.]
+    # Head.*: [10, 250.]
   perturb_body_materials:
     body_names: ".*_foot"
     static_friction_range:  [0.5, 4.0]

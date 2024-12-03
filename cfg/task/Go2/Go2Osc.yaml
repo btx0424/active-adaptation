@@ -19,7 +19,7 @@ robot:
   action_scaling:
     .*: 0.5
 # terrain: slopes_boxes
-terrain: easy
+terrain: plane
 payload: false
 homogeneous: false
 
@@ -58,6 +58,7 @@ observation:
     # _max_delay_: 0.5
     # root_angvel_b: {noise_std: 0.2}
     # root_gyro_multistep: {steps: 4, noise_std: 0.05}
+    # root_linacc_b:  {}
     projected_gravity_b: {noise_std: 0.05}
     # joint_pos:    {noise_std: 0.05, subtract_offset: true}
     # joint_vel:    {noise_std: 0.2}
@@ -84,8 +85,8 @@ observation:
   symmetry:
     symmetry_quad:    {}
   # state_:
-  #   root_angvel_b:
-  #   root_linacc_b:
+  #   root_angvel_debug:
+  #   root_linacc_debug:
   #   joint_pos:
   #   joint_vel:
   # state_substep_:
