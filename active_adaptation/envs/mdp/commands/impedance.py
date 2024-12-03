@@ -57,7 +57,7 @@ class ImpedanceBase(Command):
         self.temporal_smoothing = temporal_smoothing
         
         with torch.device(self.device):
-            self.command = torch.zeros(self.num_envs, 11)
+            self.command = torch.zeros(self.num_envs, 13)
             # linvel_xy, angvel_z
             self.command_hidden = torch.zeros(self.num_envs, 8)
 
@@ -88,6 +88,7 @@ class ImpedanceBase(Command):
             self.ang_kd = torch.zeros(self.num_envs, 1)
             self.compliant = torch.zeros(self.num_envs, 1, dtype=bool)
 
+            self.force_responsive = torch.zeros(self.num_envs, 1, dtype=bool)
             self.force_ext_w = torch.zeros(self.num_envs, 3)
             self.force_impulse_struct = torch.zeros(self.num_envs, 4)
             self.force_impulse_w = self.force_impulse_struct[:, :3]
@@ -171,6 +172,7 @@ class ImpedanceBase(Command):
         self.ang_kp[env_ids] = 1.0
         self.ang_kd[env_ids] = 2.0
         self.virtual_mass[env_ids] =  2.0
+        self.force_responsive[env_ids] = torch.rand(len(env_ids), 1, device=self.device) < 0.5
 
         self.lin_vel_error_avg = self.lin_vel_error_sum / self.cnt
         self.env.extra["stats/lin_vel_error_avg"] = self.lin_vel_error_avg.item()
@@ -204,6 +206,7 @@ class ImpedanceBase(Command):
         self.root_pos_w = self.asset.data.root_pos_w
         self.root_quat = self.asset.data.root_quat_w
         self.root_quat_yaw = yaw_quat(self.root_quat)
+        self.update_setpoint()
 
         if self.terrain_generator is not None:
             terrain_idx = ((self.asset.data.root_pos_w[:, :2] - self.terrain_origin) / 8).int() # [num_envs, 2]
@@ -225,7 +228,7 @@ class ImpedanceBase(Command):
         self._des_lin_acc_w = (
             lin_kp * (setpoint_pos_w - self._des_pos_w)
             + lin_kd * (0. - self._des_lin_vel_w)
-            + down_scale(self.force_ext_w, 40.).unsqueeze(1)
+            + (down_scale(self.force_ext_w, 40.) * self.force_responsive).unsqueeze(1)
         ) / self.virtual_mass.unsqueeze(1)
 
         self._des_lin_vel_w.add_(self._des_lin_acc_w * self.env.step_dt)
@@ -284,6 +287,11 @@ class ImpedanceBase(Command):
         self.command[:, 7:9] = self.ang_kp * pitch_yaw_diff # 2
         self.command[:, 9:10] = self.ang_kd # 1
         self.command[:, 10:11] = self.virtual_mass
+        self.command[:, 11:13] = torch.where(
+            self.force_responsive,
+            torch.tensor([1., 0.], device=self.device),
+            torch.tensor([0., 1.], device=self.device)
+        )
 
         self.command_hidden[:, 0:3] = quat_rotate_inverse(self.root_quat, self.des_pos_w - self.asset.data.root_pos_w)
         self.command_hidden[:, 3:6] = quat_rotate_inverse(self.root_quat, self.des_lin_vel_w)
@@ -304,7 +312,10 @@ class ImpedanceBase(Command):
         
         eps = 0.05
         has_force = self.force_ext_w.any(dim=1, keepdim=True)
-        has_cmd = (pos_diff.abs() > eps).any(1, True) | (pitch_yaw_diff.abs() > eps).any(1, True)
+        has_cmd = (
+            (pos_diff.norm(dim=-1, keepdim=True) > eps) | 
+            (pitch_yaw_diff.norm(dim=-1, keepdim=True) > eps)
+        )
         
         des_lin_speed = self.des_lin_vel_w.norm(dim=-1, keepdim=True)
         des_yaw_speed = self.des_ang_vel_w[:, 2:3]
@@ -314,8 +325,6 @@ class ImpedanceBase(Command):
             ~((has_force | has_cmd) & has_des_speed),
             ~has_des_speed
         )
-
-        self.update_setpoint()
         
         t = self.env.episode_length_buf - 20
         sample_command = ((t % 300 == 0)).nonzero().squeeze(-1)
@@ -326,10 +335,10 @@ class ImpedanceBase(Command):
         empty = torch.empty(len(env_ids), 1, device=self.device)
         
         virtual_mass = empty.uniform_(1.0, 4.0).clone()
-        compliant = (
-            (torch.rand(len(env_ids), 1, device=self.device) < self.compliant_ratio)
-            & (self.env.episode_length_buf[env_ids].unsqueeze(1) > 300)
-        )
+        t = self.env.episode_length_buf[env_ids]
+        r = torch.rand(len(env_ids), 1, device=self.device)
+        compliant = (r < self.compliant_ratio) & (t.unsqueeze(1) > 300)
+
         lin_kp = empty.uniform_(2., 20.).clone()
         lin_kd = 2 * lin_kp.sqrt()
 
@@ -344,6 +353,7 @@ class ImpedanceBase(Command):
         setpoint_pos_b = torch.zeros(len(env_ids), 3, device=self.device)
         setpoint_pos_b[:, 0].uniform_(-1.0, 1.0)
         setpoint_pos_b[:, 1].uniform_(-0.7, 0.7)
+        setpoint_pos_b *= (~compliant)
         self.setpoint_pos_b[env_ids] = setpoint_pos_b
 
         if self.terrain_generator is not None:
