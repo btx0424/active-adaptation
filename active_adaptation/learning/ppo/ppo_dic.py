@@ -73,7 +73,7 @@ class PPOConfig:
     short_history: int = 0
     vecnorm: Union[str, None] = None
     checkpoint_path: Union[str, None] = None
-    in_keys: List[str] = field(default_factory=lambda: [CMD_KEY, OBS_KEY, OBS_PRIV_KEY, "ext", "ext_", "action_buf_", "symmetry"])
+    in_keys: List[str] = field(default_factory=lambda: ["command_", OBS_KEY, OBS_PRIV_KEY, "ext", "ext_", "action_buf_", "symmetry"])
 
 cs = ConfigStore.instance()
 cs.store("ppo_dic_train", node=PPOConfig(phase="train", vecnorm="train"), group="algo")
@@ -148,8 +148,7 @@ class PolicyUpdateInferenceMod:
         dist = self.actor.get_dist(tensordict)
         log_probs = dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy().mean()
-        action = dist.rsample()
-        return log_probs, entropy, action
+        return log_probs, entropy
 
 
 class ContinuityLoss:
@@ -213,12 +212,14 @@ class PPODICPolicy(TensorDictModuleBase):
         self.clip_param = self.cfg.clip_param
         self.critic_loss_fn = nn.MSELoss(reduction="none")
         self.adapt_loss_fn = nn.MSELoss(reduction="none")
+        self.rec_loss = nn.MSELoss(reduction="none")
         self.action_dim = action_spec.shape[-1]
         self.ext_dim = observation_spec["ext_"].shape[-1]
         self.gae = GAE(0.99, 0.95)
         self.reg_lambda = 0.0
         self.ext_rec_lambda = 0.1
         self.symmetry_coef = 0.
+        self.rec_rew = 0.
         
         if cfg.value_norm:
             value_norm_cls = ValueNorm1
@@ -237,13 +238,14 @@ class PPODICPolicy(TensorDictModuleBase):
             global OBS_KEY 
             OBS_KEY = OBS_KEY + "_h"
 
+        ext_shape = observation_spec["ext_"].shape[-1]
         self.adapt_module =  Mod(
-            GRUModule(128 + 32 + 6, split=[128, 32, 6]), 
+            GRUModule(128 + 32 + ext_shape, split=[128, 32, ext_shape]), 
             [OBS_KEY, "is_init", "adapt_hx"], 
-            ["priv_pred", "ext_pred", "ext_rec", ("next", "adapt_hx")]
+            ["priv_pred", "ext_pred", ("info", "ext_rec"), ("next", "adapt_hx")]
         ).to(self.device)
         
-        in_keys = [CMD_KEY, OBS_KEY, "_priv_feature", "_ext_feature"]
+        in_keys = ["command_", OBS_KEY, "_priv_feature", "_ext_feature"]
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=Seq(
                 CatTensors(in_keys, "_actor_inp", del_keys=False, sort=False),
@@ -256,7 +258,19 @@ class PPODICPolicy(TensorDictModuleBase):
             return_log_prob=True
         ).to(self.device)
 
-        in_keys = [CMD_KEY, OBS_KEY, "priv_pred", "ext_pred"]
+        self.dynamics = Seq(
+            CatTensors(["_actor_feature", ACTION_KEY], "_dyn_inp", del_keys=False),
+            Mod(make_mlp([256, 128]), ["_dyn_inp"], ["_dyn_pred"]),
+            Mod(nn.LazyLinear(12), ["_dyn_pred"], ["_dyn_pred"])
+        ).to(self.device)
+
+        self.retro = Seq(
+            CatTensors(["_actor_feature", ACTION_KEY], "retro_inp", del_keys=False),
+            Mod(make_mlp([256, 128]), ["retro_inp"], ["retro_feat"]),
+            Mod(nn.LazyLinear(4), ["retro_feat"], [("info", "retro_pred")])
+        ).to(self.device)
+
+        in_keys = ["command_", OBS_KEY, "priv_pred", "ext_pred"]
         self.actor_adapt: ProbabilisticActor = ProbabilisticActor(
             module=Seq(
                 CatTensors(in_keys, "_actor_inp", del_keys=False, sort=False),
@@ -271,7 +285,7 @@ class PPODICPolicy(TensorDictModuleBase):
         
         _critic = nn.Sequential(make_mlp([512, 256, 128]), nn.LazyLinear(1))
         self.critic = Seq(
-            CatTensors([CMD_KEY, OBS_KEY, OBS_PRIV_KEY, "ext"], "_critic_input", del_keys=False),
+            CatTensors(["command_", OBS_KEY, OBS_PRIV_KEY, "ext"], "_critic_input", del_keys=False),
             Mod(_critic, ["_critic_input"], ["state_value"])
         ).to(self.device)
 
@@ -286,6 +300,8 @@ class PPODICPolicy(TensorDictModuleBase):
         self.critic(fake_input)
         self.adapt_module(fake_input)
         self.actor_adapt(fake_input)
+        self.dynamics(fake_input)
+        self.retro(fake_input)
 
         self.policy_train_inference = PolicyUpdateInferenceMod(self.actor, self.encoder_priv)
         self.policy_adapt_inference = PolicyUpdateInferenceMod(self.actor_adapt, None)
@@ -313,6 +329,8 @@ class PPODICPolicy(TensorDictModuleBase):
                 {"params": self.actor.parameters()},
                 {"params": self.critic.parameters()},
                 {"params": self.encoder_priv.parameters()},
+                # {"params": self.dynamics.parameters()},
+                {"params": self.retro.parameters()},
             ],
             lr=cfg.lr
         )
@@ -328,6 +346,7 @@ class PPODICPolicy(TensorDictModuleBase):
             [
                 {"params": self.actor_adapt.parameters()},
                 {"params": self.critic.parameters()},
+                {"params": self.retro.parameters()},
             ],
             lr=cfg.lr
         )
@@ -341,6 +360,8 @@ class PPODICPolicy(TensorDictModuleBase):
         self.critic.apply(init_)
         self.encoder_priv.apply(init_)
         self.adapt_module.apply(init_)
+        # self.dynamics.apply(init_)
+        self.retro.apply(init_)
 
         self.symmetry = nn.Sequential(make_mlp([256, 256]), nn.LazyLinear(1)).to(self.device)
         self.symmetry(fake_input["symmetry"])
@@ -353,8 +374,8 @@ class PPODICPolicy(TensorDictModuleBase):
         num_envs = self.observation_spec.shape[0]
         return TensorDictPrimer({
             "adapt_hx": UnboundedContinuous((num_envs, 128), device=self.device),
-            "prev_action": UnboundedContinuous((num_envs, self.action_dim), device=self.device),
-            "prev_loc": UnboundedContinuous((num_envs, self.action_dim), device=self.device),
+            # "prev_action": UnboundedContinuous((num_envs, self.action_dim), device=self.device),
+            # "prev_loc": UnboundedContinuous((num_envs, self.action_dim), device=self.device),
         }, reset_key="done")
 
     def get_rollout_policy(self, mode: str="train"):
@@ -371,6 +392,10 @@ class PPODICPolicy(TensorDictModuleBase):
             modules.append(self.adapt_ema)
             modules.append(self.actor_adapt)
         
+        if mode == "deploy":
+            # modules.append(self.dynamics)
+            modules.append(self.retro)
+        
         def foo(tensordict: TensorDict):
             tensordict["next", "prev_action"] = tensordict["action"]
             tensordict["next", "prev_loc"] = tensordict["loc"]
@@ -384,6 +409,7 @@ class PPODICPolicy(TensorDictModuleBase):
         self.reg_lambda = progress * self.cfg.reg_lambda
         self.entropy_coef = self.cfg.entropy_coef_start + (self.cfg.entropy_coef_end - self.cfg.entropy_coef_start) * progress
         self.symmetry_coef = min(progress * 2, 1.)
+        self.rec_rew = min(progress * 2, 1.)
 
     def train_op(self, tensordict: TensorDict):
         info = {}
@@ -401,6 +427,8 @@ class PPODICPolicy(TensorDictModuleBase):
     # @torch.compile
     def train_policy(self, tensordict: TensorDict):    
         infos = []
+        # rec_error = self.rec_loss(tensordict["info", "ext_rec"], tensordict["ext_"])
+        # tensordict[REWARD_KEY] += -0.1 * self.rec_rew * rec_error.mean(-1, True)
         self._compute_advantage(tensordict, self.critic, "adv", "ret", update_value_norm=True)
         tensordict["adv"] = normalize(tensordict["adv"], subtract_mean=True)
 
@@ -432,7 +460,7 @@ class PPODICPolicy(TensorDictModuleBase):
                 ext_loss = self.adapt_loss_fn(minibatch["ext_pred"], minibatch["_ext_feature"])
                 ext_loss = (ext_loss * (~minibatch["is_init"])).mean()
                 if self.ext_rec_lambda > 0:
-                    ext_rec_error = self.adapt_loss_fn(minibatch["ext_rec"], minibatch["ext_"])
+                    ext_rec_error = self.rec_loss(minibatch["info", "ext_rec"], minibatch["ext_"])
                     ext_rec_error = (ext_rec_error * (~minibatch["is_init"])).mean()
                 else:
                     ext_rec_error = 0.
@@ -485,7 +513,7 @@ class PPODICPolicy(TensorDictModuleBase):
 
     # @torch.compile
     def _update(self, tensordict: TensorDict, policy_inference: PolicyUpdateInferenceMod, opt: torch.optim.Optimizer):
-        log_probs, entropy, action = policy_inference(tensordict)
+        log_probs, entropy = policy_inference(tensordict)
 
         if self.cfg.phase == "train":
             valid = (tensordict["step_count"] > 1)
@@ -498,13 +526,20 @@ class PPODICPolicy(TensorDictModuleBase):
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
         policy_loss = - torch.mean(torch.min(surr1, surr2) * valid)
         entropy_loss = - self.entropy_coef * entropy
+        
+        # self.retro(tensordict)
+        # retro_pred = tensordict["info", "retro_pred"]
+        # retro_loss = F.l1_loss(retro_pred, tensordict["command_"][:, :retro_pred.shape[-1]])
+        # retro_loss = (retro_loss * (~tensordict["is_init"])).mean()
+        
+        # self.dynamics(tensordict)
+        # dyn_loss = F.l1_loss(tensordict["_dyn_pred"], tensordict["next", "state_"][..., :12])
+        # a_tm1 = tensordict["action_buf_"][:, :, 0]
+        # a_tm2 = tensordict["action_buf_"][:, :, 1]
+        # smth1_loss = torch.mean(torch.square(action - a_tm1).sum(-1) * valid) # first order smth
+        # smth2_loss = torch.mean(torch.square(action - 2 * a_tm1 + a_tm2).sum(-1) * valid) # second order smth
 
-        a_tm1 = tensordict["action_buf_"][:, :, 0]
-        a_tm2 = tensordict["action_buf_"][:, :, 1]
-        smth1_loss = torch.mean(torch.square(action - a_tm1).sum(-1) * valid) # first order smth
-        smth2_loss = torch.mean(torch.square(action - 2 * a_tm1 + a_tm2).sum(-1) * valid) # second order smth
-
-        # tensordict[CMD_KEY].requires_grad_(True)
+        # tensordict["command_"].requires_grad_(True)
         # tensordict[OBS_KEY].requires_grad_(True)
         # tensordict["priv"].requires_grad_(True)
         # tensordict["ext"].requires_grad_(True)
@@ -515,7 +550,7 @@ class PPODICPolicy(TensorDictModuleBase):
 
         # gradient = torch.autograd.grad(
         #     outputs=action,
-        #     inputs=[tensordict[CMD_KEY], tensordict[OBS_KEY], tensordict["priv"], tensordict["ext"]],
+        #     inputs=[tensordict["command_"], tensordict[OBS_KEY], tensordict["priv"], tensordict["ext"]],
         #     grad_outputs=torch.ones_like(action),
         #     retain_graph=True,
         #     create_graph=True,
@@ -535,7 +570,7 @@ class PPODICPolicy(TensorDictModuleBase):
         else:
             reg_loss = 0.
             
-        loss = policy_loss + entropy_loss + value_loss + reg_loss
+        loss = policy_loss + entropy_loss + value_loss + reg_loss # + retro_loss# + dyn_loss
         
         opt.zero_grad()
         loss.backward()
@@ -551,8 +586,10 @@ class PPODICPolicy(TensorDictModuleBase):
             "actor/grad_norm": actor_grad_norm,
             'actor/approx_kl': ((ratio - 1) - log_ratio).mean(),
             "actor/gradient_penalty": gradient_penalty,
-            "actor/smth1_loss": smth1_loss,
-            "actor/smth2_loss": smth2_loss,
+            # "actor/smth1_loss": smth1_loss,
+            # "actor/smth2_loss": smth2_loss,
+            # "actor/dyn_loss": dyn_loss,
+            # "actor/retro_loss": retro_loss,
             "adapt/reg_loss": reg_loss,
             "critic/value_loss": value_loss,
             "critic/grad_norm": critic_grad_norm,
