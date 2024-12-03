@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from omni.isaac.lab.sensors import ContactSensor
 from omni.isaac.lab.assets import Articulation
-from omni.isaac.lab.utils.math import yaw_quat, wrap_to_pi
+from omni.isaac.lab.utils.math import yaw_quat, wrap_to_pi, euler_xyz_from_quat
 import omni.isaac.lab.utils.string as string_utils
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from active_adaptation.utils.helpers import batchify
@@ -679,7 +679,7 @@ class max_feet_height(Reward):
         reference_height = torch.maximum(self.impact_point[:, :, 2], self.detach_point[:, :, 2])
         max_height = self.max_height - reference_height
         r = self.impact * (max_height / self.target_height).clamp_max(1.0) 
-        return r.sum(dim=1, keepdim=True)
+        return r.sum(dim=1, keepdim=True) * self.env.command_manager.is_standing_env
 
     def debug_draw(self):
         feet_pos_w = self.asset.data.body_pos_w[:, self.asset_body_ids]
@@ -1046,9 +1046,8 @@ class stand_up_height(Reward):
         self.asset: Articulation = self.env.scene["robot"]
     
     def compute(self) -> torch.Tensor:
-        return (
-            self.asset.data.root_pos_w[:, 2].clamp(max=0.7).square()
-        ).unsqueeze(-1)
+        height = self.asset.data.root_pos_w[:, 2]
+        return (height.clamp(max=0.7)).unsqueeze(-1)
 
 class stand_up_orientation(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, clip_range=(-torch.inf, +torch.inf)):
@@ -1327,7 +1326,7 @@ class oscillator(Reward):
     
     def update(self):
         self.grf = self.grf_substep.mean(1) / self.gravity
-        inp = (self.command_manager.command_speed + self.command_manager.command_angvel.unsqueeze(1).abs()) > 0.1
+        inp = (self.command_manager.command_speed + self.command_manager.command_angvel.reshape(-1, 1).abs()) > 0.1
         phi_dot = torch.where(inp | self.keep_steping, self.omega + self.trot(self.phi), self.stand(self.phi))
         self.asset.phi_dot[:] = phi_dot
         self.asset.phi[:] = (self.phi + phi_dot * self.env.step_dt) % (2 * torch.pi)
