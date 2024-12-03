@@ -230,7 +230,7 @@ class PPODICPolicy(TensorDictModuleBase):
         fake_input = observation_spec.zero()
         
         self.encoder_priv = Seq(
-            Mod(nn.Sequential(make_mlp([128]), nn.LazyLinear(128)), [OBS_PRIV_KEY], ["_priv_feature"]),
+            Mod(nn.Sequential(make_mlp([128]), nn.LazyLinear(128)), [OBS_PRIV_KEY], ["priv_feature"]),
             Mod(nn.Sequential(make_mlp([32]), nn.LazyLinear(32)), ["ext"], ["_ext_feature"]),
         ).to(self.device)
 
@@ -245,7 +245,7 @@ class PPODICPolicy(TensorDictModuleBase):
             ["priv_pred", "ext_pred", ("info", "ext_rec"), ("next", "adapt_hx")]
         ).to(self.device)
         
-        in_keys = ["command_", OBS_KEY, "_priv_feature", "_ext_feature"]
+        in_keys = ["command_", OBS_KEY, "priv_feature", "_ext_feature"]
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=Seq(
                 CatTensors(in_keys, "_actor_inp", del_keys=False, sort=False),
@@ -442,6 +442,10 @@ class PPODICPolicy(TensorDictModuleBase):
                 infos.append(TensorDict(info, []))
 
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
+        if self.cfg.phase == "train":
+            infos["actor/feature_std"] = tensordict["priv_feature"].std(dim=(0, 1)).mean().item()
+        else:
+            infos["actor/feature_std"] = tensordict["priv_pred"].std(dim=(0, 1)).mean().item()
         infos["critic/value_mean"] = tensordict["ret"].mean().item()
         return infos
     
@@ -455,7 +459,7 @@ class PPODICPolicy(TensorDictModuleBase):
         for epoch in range(2):
             for minibatch in make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every):
                 self.adapt_module(minibatch)
-                priv_loss = self.adapt_loss_fn(minibatch["priv_pred"], minibatch["_priv_feature"])
+                priv_loss = self.adapt_loss_fn(minibatch["priv_pred"], minibatch["priv_feature"])
                 priv_loss = (priv_loss * (~minibatch["is_init"])).mean()
                 ext_loss = self.adapt_loss_fn(minibatch["ext_pred"], minibatch["_ext_feature"])
                 ext_loss = (ext_loss * (~minibatch["is_init"])).mean()
@@ -565,7 +569,7 @@ class PPODICPolicy(TensorDictModuleBase):
         value_loss = (value_loss * (~tensordict["is_init"])).mean()
 
         if self.cfg.phase == "train" and self.reg_lambda > 0:
-            reg_loss = self.adapt_loss_fn(tensordict["_priv_feature"], tensordict["priv_pred"])
+            reg_loss = self.adapt_loss_fn(tensordict["priv_feature"], tensordict["priv_pred"])
             reg_loss = self.reg_lambda * (reg_loss * (~tensordict["is_init"])).mean()
         else:
             reg_loss = 0.
