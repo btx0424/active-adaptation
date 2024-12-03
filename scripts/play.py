@@ -59,7 +59,8 @@ def main(cfg):
         print(f"Inference time of policy: {test(_policy, fake_input)}")
 
         time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
-        path = os.path.join(FILE_PATH, f"policy-{time_str}.pt")
+        os.makedirs(os.path.join(FILE_PATH, "exports", cfg.task.name), exist_ok=True)
+        path = os.path.join(FILE_PATH, "exports", cfg.task.name, f"policy-{time_str}.pt")
         torch.save(_policy, path)
 
         meta = {}
