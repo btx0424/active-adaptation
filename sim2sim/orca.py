@@ -74,25 +74,79 @@ CTRL_JOINTS = [
     'lleg_joint6', 'rleg_joint6'
 ]
 
-ISAAC_ACTION_SCALE = [0.8, 0.8, 0.8, 0.8, 0.8, 0.25, 0.25, 0.8, 0.8, 0.25, 0.25, 0.8, 0.8, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25]
-
 isaac2mjc = [ISAAC_JOINTS.index(joint) for joint in MJC_JOINTS]
 mjc2isaac = [MJC_JOINTS.index(joint) for joint in ISAAC_JOINTS]
 
 MJC_QPOS = [0.0, 0.0, 0.0, -0.1, 0.0, 0.0, 0.0, 0.0, 0.0, -0.1, 0.0, 0.0, 0.0, 0.0, 0.1, 0.0, 0.3, 0.0, 0.0, 0.0, 0.1, 0.0, 0.3, 0.0, 0.0]
 
 FILE_PATH = os.path.dirname(os.path.abspath(__file__))
-XML_PATH = os.path.join(FILE_PATH, "orca_stable/mjcf/orca_description_stable.xml")
+XML_PATH = os.path.join(FILE_PATH, "orca/orca_stable/mjcf/orca_description_stable.xml")
 
 from torch.utils._pytree import tree_map
-from sim2sim.go2async import Robot as _Robot
+from sim2sim.robot import MJCRobot
+from sim2sim.utils import *
 from sim2sim.lcm_types.python.cyan_legged_cmd_lcmt import *
 from sim2sim.lcm_types.python.cyan_armwaisthead_cmd_lcmt import *
 from sim2sim.lcm_types.python.cyan_legged_data_lcmt import *
 from sim2sim.lcm_types.python.cyan_armwaisthead_data_lcmt import *
 from sim2sim.lcm_types.python.cyan_lower_bodyimu_data_lcmt import *
 
-class Robot(_Robot):
+class OrcaReal:
+    
+    sub_topic_name_legs="robot2controller_legs"
+    sub_topic_name_ahw="robot2controller_ahw"
+    sub_topic_name_sensor="robot2controller_sensors"
+    sub_topic_name_gamepad="gamepad2controller"
+
+    def __init__(self):
+        # buffers
+        self.jpos_real = np.zeros(len(ISAAC_JOINTS), dtype=np.float32)
+        self.jvel_real = np.zeros(len(ISAAC_JOINTS), dtype=np.float32)
+
+        self.jpos_isaac = np.zeros(len(ISAAC_JOINTS), dtype=np.float32)
+        self.jvel_isaac = np.zeros(len(ISAAC_JOINTS), dtype=np.float32)
+
+        # setup lcm
+        ttl = 255
+        self.lowlevel_legs_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
+        self.lowlevel_ahw_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
+        self.lowlevel_sensors_lcm = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
+
+        self._pub_topic_legs = 'robot2controller_legs'
+        self._pub_topic_ahw = 'robot2controller_ahw'
+        self._pub_topic_sensors = 'robot2controller_sensors'
+        self.__ll_msg_legs = cyan_legged_data_lcmt()
+        self.__ll_msg_ahw = cyan_armwaisthead_data_lcmt()
+        self.__ll_msg_sensor = cyan_lower_bodyimu_data_lcmt()
+
+        self.lc_sub = lcm.LCM("udpm://239.255.76.67:7667?ttl="+str(ttl))
+        self.lc_sub.subscribe(self.sub_topic_name_legs, self._handler_legs)
+        self.lc_sub.subscribe(self.sub_topic_name_ahw, self._handler_ahw)
+        self.lc_sub.subscribe(self.sub_topic_name_sensor, self._handler_sensor)
+
+    
+    def lcm_send(self):
+        pass
+    
+    def _handler_legs(self, channel, data):
+        msg = cyan_legged_data_lcmt.decode(data)
+        self.jpos_real[:12] = msg.q
+        self.jvel_real[:12] = msg.qd
+
+    def _handler_ahw(self, channel, data):
+        msg = cyan_armwaisthead_data_lcmt.decode(data)
+        self.jpos_real[12:] = msg.q[:13]
+        self.jvel_real[12:] = msg.qd[:13]
+
+    def _handler_sensor(self, channel, data):
+        msg = cyan_lower_bodyimu_data_lcmt.decode(data)
+        self.quat = msg.quat
+        self.gyro = msg.gyro
+        self.rot = R.from_quat(self.quat)
+        self.gravity = self.rot.inv().apply([0., 0., -1.])
+
+
+class OrcaMJC(MJCRobot):
     
     def _setup_lcm(self):
         ttl = 255
@@ -109,7 +163,7 @@ class Robot(_Robot):
 
     def run_async(self):
         self._setup_lcm()
-        self._update_state()
+        # self._update_state()
         super().run_async()
     
     def run_sync(self):
@@ -119,14 +173,14 @@ class Robot(_Robot):
     
     def _update_state(self, dt: float = 0.005):
         super()._update_state(dt)
-        jpos = self.jpos[MJC2REAL]
-        jvel = self.jvel[MJC2REAL]
-        self.__ll_msg_legs.q = jpos[:12]
-        self.__ll_msg_legs.qd = jvel[:12]
+        jpos_real = self.jpos_mjc[MJC2REAL]
+        jvel_real = self.jvel_mjc[MJC2REAL]
+        self.__ll_msg_legs.q = jpos_real[:12]
+        self.__ll_msg_legs.qd = jvel_real[:12]
         self.__ll_msg_legs.tauIq = np.zeros(12)
         
-        self.__ll_msg_ahw.q[:13] = jpos[12:]
-        self.__ll_msg_ahw.qd[:13] = jvel[12:]
+        self.__ll_msg_ahw.q[:13] = jpos_real[12:]
+        self.__ll_msg_ahw.qd[:13] = jvel_real[12:]
         self.__ll_msg_ahw.tauIq = np.zeros(18)
 
         self.__ll_msg_sensor.quat = self.quat
@@ -174,7 +228,7 @@ class PolicyClient:
         self.rot = R.from_quat([1., 0., 0., 0.])
         
         self.action_buf = np.zeros((action_dim, self.action_buf_steps), dtype=np.float32)
-        self.action_scaling = np.array(ISAAC_ACTION_SCALE)
+        # self.action_scaling = np.array(ISAAC_ACTION_SCALE)
         self.action_joint_ids = np.array([
             ISAAC_JOINTS.index(joint) for joint in CTRL_JOINTS])
         self.jpos_default = np.array(MJC_QPOS)[mjc2isaac]
@@ -192,9 +246,10 @@ class PolicyClient:
 
     def get_cmd(self, time: float):
         self.command[0] = 1.0
-        yaw_diff = 0. - self.rot.as_euler("xyz")[2]
-        self.command[2:3] = yaw_diff
-        self.command[3] = 0.3
+        target_yaw = 0 # (0.1 * time * math.pi) % (2 * math.pi)
+        yaw_diff = target_yaw - self.rot.as_euler("xyz")[2]
+        self.command[2] = 2.0 * wrap_to_pi(yaw_diff)
+        self.command[3] = wrap_to_pi(yaw_diff)
 
         t = self.omega * time + self.offset
         sin_t = math.sin(t)
@@ -203,7 +258,7 @@ class PolicyClient:
 
         return np.concatenate([self.command, self.phase], dtype=np.float32)
 
-    def get_obs(self, time: float):
+    def get_obs(self, t: float):
         self.jpos_multistep = np.roll(self.jpos_multistep, shift=1, axis=0)
         # self.jpos_multistep[0] = self.jpos_real[REAL2ISAAC]
         self.jpos_multistep[0] = robot.jpos_isaac
@@ -216,15 +271,18 @@ class PolicyClient:
         jvel_multistep = self.jvel_multistep.copy()
         jvel_multistep[1:] = self.jvel_multistep[1:] - self.jvel_multistep[:-1]
 
+        # print(time.time() - self.legs_timestamp, time.time() - self.ahw_timestamp, time.time() - self.sensor_timestamp)
         obs = [
-            # self.command, # 4
-            self.gyro, # 3
-            self.gravity, # 3
-            jpos_multistep.reshape(-1),
-            jvel_multistep.reshape(-1),
-            self.action_buf.reshape(-1), # 4
+            # self.command[:4], # 4
+            # self.gyro, # 3
+            # self.gravity, # 3
+            # robot.gyro,
+            robot.gravity,
             # self.jpos_real[REAL2ISAAC], # 25
             # self.jvel_real[REAL2ISAAC], # 25
+            jpos_multistep.reshape(-1),
+            jvel_multistep.reshape(-1),
+            robot.action_buf[:, :3].reshape(-1), # 4
             # self.jpos_des,
             # self.phase, # 4
         ]
@@ -245,21 +303,24 @@ class PolicyClient:
         msg = cyan_legged_data_lcmt.decode(data)
         self.jpos_real[:12] = msg.q
         self.jvel_real[:12] = msg.qd
+        self.legs_timestamp = time.time()
 
     def _handler_ahw(self, channel, data):
         msg = cyan_armwaisthead_data_lcmt.decode(data)
         self.jpos_real[12:] = msg.q[:13]
         self.jvel_real[12:] = msg.qd[:13]
+        self.ahw_timestamp = time.time()
 
     def _handler_sensor(self, channel, data):
         msg = cyan_lower_bodyimu_data_lcmt.decode(data)
         self.quat = msg.quat
         self.gyro = msg.gyro
-        self.rot = R.from_quat(self.quat)
+        self.rot = R.from_quat(self.quat, scalar_first=True)
         self.gravity = self.rot.inv().apply([0., 0., -1.])
+        self.sensor_timestamp = time.time()
 
 ISAAC_QPOS = np.array(MJC_QPOS)[mjc2isaac]
-robot = Robot(XML_PATH, ISAAC_JOINTS, ISAAC_QPOS, CTRL_JOINTS)
+robot = OrcaMJC(XML_PATH, ISAAC_JOINTS, ISAAC_QPOS, CTRL_JOINTS)
 
 @set_exploration_type(ExplorationType.MODE)
 @torch.inference_mode()
@@ -287,7 +348,7 @@ def main():
             _, _, action_scaling = robot.resolve_isaac(meta["action_scaling"])
             robot.action_scaling = np.array(action_scaling)
             ids, _, stiffness = robot.resolve_mjc(meta["stiffness"])
-            robot.jnt_kp[ids] = np.array(stiffness)
+            robot.jnt_kp[ids] = np.array(stiffness) * 0.8
             ids, _, damping = robot.resolve_mjc(meta["damping"])
             robot.jnt_kd[ids] = np.array(damping)
             ids, _, effort_limit = robot.resolve_mjc(meta["effort_limit"])
@@ -310,6 +371,11 @@ def main():
             carry = dict(out["next"].squeeze(0))
             return action, carry
     
+    print(robot.get_jpos_offset("lleg_joint1"))
+    print(robot.get_jpos_offset("lleg_joint4"))
+    robot.set_jpos_offset("lleg_joint1", -0.1)
+    robot.set_jpos_offset("rleg_joint1", -0.1)
+
     inp = {
         "is_init": np.array([True]),
         "context_adapt_hx": np.zeros((1, 128), dtype=np.float32),
@@ -323,12 +389,13 @@ def main():
     for i in itertools.count():
         iter_start = time.perf_counter()
         inp["command"] = client.get_cmd(time=robot.data.time)[None, ...]
-        inp["policy"] = client.get_obs(time=robot.data.time)[None, ...]
+        inp["policy"] = client.get_obs(t=robot.data.time)[None, ...]
         inp["is_init"] = np.array([False])
         action, carry = policy(inp)
         robot.apply_action(action, 0.8)
-        client.apply_action(action)
-        if i > 50:
+        
+        # client.apply_action(action)
+        if i > 20:
             robot.enable_control = True
         inp = carry
 

@@ -51,6 +51,7 @@ class LivePlot():
 
         m, n = jorder.shape
 
+        self.foot_force_plots = []
         for row in range(m):
             for col in range(n):
                 plot = self.win.addPlot(row=row, col=col)
@@ -63,20 +64,37 @@ class LivePlot():
                 curve_1 = plot.plot(pen=pg.mkPen(color='r', width=2))  # Red line plot
                 curve_2 = plot.plot(pen=pg.mkPen(color='g', width=2))  # Green line plot
                 self.plot_items.append((curve_0, curve_1, curve_2))
+            plot = self.win.addPlot(row=row, col=col+1)
+            plot.setTitle("Foot Force")
+            curve = plot.plot(pen=pg.mkPen(color='b', width=2))  # Blue line plot
+            self.foot_force_plots.append(curve)
         
         self.rpy_plots = []
+        self.gyro_plots = []
         for i, axis in enumerate(["Roll", "Pitch", "Yaw"]):
             plot = self.win.addPlot(row=m+1, col=i, title=axis)
             plot.showGrid(x=True, y=True)
-            if i < 2:
-                plot.setYRange(-np.pi / 2, np.pi / 2)
-            curve = plot.plot(pen='b')
-            self.rpy_plots.append(curve)
+            # if i < 2:
+            #     plot.setYRange(-np.pi / 2, np.pi / 2)
+            curve_rpy = plot.plot(pen='b')
+            curve_gyro = plot.plot(pen='r')
+            self.rpy_plots.append(curve_rpy)
+            self.gyro_plots.append(curve_gyro)
         
+        self.acc_plots = []
+        for i, axis in enumerate(["X", "Y", "Z"]):
+            plot = self.win.addPlot(row=m+2, col=i, title=axis)
+            plot.showGrid(x=True, y=True)
+            curve_acc = plot.plot(pen='b')
+            self.acc_plots.append(curve_acc)
+
         self.jpos = [[] for _ in range(12)]
         self.jpos_des = [[] for _ in range(12)]
         self.tau = [[] for _ in range(12)]
         self.rpy = [[] for _ in range(3)]
+        self.gyro = [[] for _ in range(3)]
+        self.foot_force = [[] for _ in range(4)]
+        self.acc = [[] for _ in range(3)]
 
         # Function to update the data    
         self.t0 = time.time()
@@ -105,24 +123,40 @@ class LivePlot():
         while True:
             data = self.socket.recv_pyobj()
 
-            jpos = data["jpos"]
-            jpos_des = data["jpos_des"]
-            rpy = data["rpy"]
-            # tau = data["tau"] / 8.0
+            if "jpos" in data:
+                jpos = data["jpos"]
+                jpos_des = data["jpos_des"]
 
-            for i, (curve_0, curve_1, curve_2) in enumerate(self.plot_items):
-                self.jpos[i] = self.jpos[i][-self.time_span:]
-                self.jpos[i].append(jpos[i])
+                for i, (curve_0, curve_1, curve_2) in enumerate(self.plot_items):
+                    self.jpos[i] = self.jpos[i][-self.time_span:]
+                    self.jpos[i].append(jpos[i])
 
-                self.jpos_des[i] = self.jpos_des[i][-self.time_span:]
-                self.jpos_des[i].append(jpos_des[i])
-
-                # self.tau[i] = self.tau[i][-self.time_span:]
-                # self.tau[i].append(tau[i])
+                    self.jpos_des[i] = self.jpos_des[i][-self.time_span:]
+                    self.jpos_des[i].append(jpos_des[i])
             
-            for i, curve in enumerate(self.rpy_plots):
-                self.rpy[i] = self.rpy[i][-100:]
-                self.rpy[i].append(rpy[i])
+            if "rpy" in data:
+                rpy = data["rpy"]
+                for i, curve in enumerate(self.rpy_plots):
+                    self.rpy[i] = self.rpy[i][-self.time_span:]
+                    self.rpy[i].append(rpy[i])
+            
+            if "gyro" in data:
+                gyro = data["gyro"]
+                for i, curve in enumerate(self.gyro_plots):
+                    self.gyro[i] = self.gyro[i][-self.time_span:]
+                    self.gyro[i].append(gyro[i])
+            
+            if "foot_force" in data:
+                foot_force = data["foot_force"]
+                for i, curve in enumerate(self.foot_force_plots):
+                    self.foot_force[i] = self.foot_force[i][-self.time_span:]
+                    self.foot_force[i].append(foot_force[i])
+            
+            if "acc" in data:
+                acc = data["acc"]
+                for i, curve in enumerate(self.acc_plots):
+                    self.acc[i] = self.acc[i][-self.time_span:]
+                    self.acc[i].append(acc[i])
             
             self.update_cnt += 1
             if self.update_cnt % self.time_span == 0:
@@ -140,7 +174,14 @@ class LivePlot():
         for i, curve in enumerate(self.rpy_plots):
             curve.setData(self.rpy[i])
 
+        for i, curve in enumerate(self.gyro_plots):
+            curve.setData(self.gyro[i])
 
+        for i, curve in enumerate(self.foot_force_plots):
+            curve.setData(self.foot_force[i])
+        
+        for i, curve in enumerate(self.acc_plots):
+            curve.setData(self.acc[i])
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

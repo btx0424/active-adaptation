@@ -278,7 +278,7 @@
     <framequat name="orientation" objtype="site" objname="imu" />
     <gyro name="imu_gyro" site="imu" />
     <accelerometer name="imu_acc" site="imu" />
-    <framelinvel name='linvel' objtype='site' objname='imu' />
+    <framelinvel name='base_linvel' objtype='site' objname='imu' />
   </sensor>
 
   <!-- <keyframe>

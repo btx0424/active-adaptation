@@ -58,6 +58,7 @@ class Go2Manager:
 
         self.jpos_multistep = np.zeros((4, 12))
         self.jvel_multistep = np.zeros((4, 12))
+        self.gyro_multistep = np.zeros((4, 3))
 
         obs = self.update_obs()
         self.obs_dim = obs.shape[-1]
@@ -70,6 +71,7 @@ class Go2Manager:
         self.phi[0] = np.pi
         self.phi[3] = np.pi
         self.phi_history = np.zeros((4, 4)) # [t, legs]
+        self.phi_dot = np.zeros(4)
         
         self.update_command()
     
@@ -79,6 +81,10 @@ class Go2Manager:
         self.jpos_multistep[0] = self.robot.jpos_isaac
         self.jvel_multistep = np.roll(self.jvel_multistep, shift=1, axis=0)
         self.jvel_multistep[0] = self.robot.jvel_isaac
+        self.gyro_multistep = np.roll(self.gyro_multistep, shift=1, axis=0)
+        # noise = 0.2 * math.sin(time.perf_counter() * math.pi * 210)
+        # noise += 0.1 * math.sin(time.perf_counter() * math.pi * 390)
+        self.gyro_multistep[0] = 0. * self.robot.gyro # + noise
 
         obs = self.update_obs()
         command = self.update_command()
@@ -92,6 +98,7 @@ class Go2Manager:
         jvel_multistep = self.jvel_multistep.copy()
         jvel_multistep[1:] = self.jvel_multistep[1:] - self.jvel_multistep[:-1]
         obs = [
+            # self.gyro_multistep.reshape(-1),
             self.robot.gravity,
             jpos_multistep.reshape(-1),
             jvel_multistep.reshape(-1),
@@ -147,21 +154,22 @@ class Go2DICManager(Go2Manager):
 
 class Go2LocoManager(Go2Manager):
 
-    oscillator_history: bool = True
-    command_dim: int = 4 + (4 * 2 if not oscillator_history else 4 * 4 * 2) 
+    oscillator_history: bool = False
+    command_dim: int = 4 + (4 * 2 + 4 if not oscillator_history else 4 * 4 * 2) 
 
     def update_command(self):
         rpy = self.robot.rot.as_euler("xyz")
-        self.command[0] = min(self.command[0] + 0.01, 1.0)
-        self.command[1] = 0
-        self.command[2] = -0.5 # 0.8 * (0. - rpy[2])
+        self.command[0] = 0 # min(self.command[0] + 0.01, 0.8)
+        self.command[1] = 0.
+        self.command[2] = 0.5 * (0. - rpy[2])
         self.command[3] = 0.75
 
         t = time.perf_counter()
         dt = t - self.last_command_update
         self.last_command_update = t
 
-        self.phi = (self.phi + np.pi * 3 * dt) % (2 * np.pi)
+        self.phi_dot[:] = np.pi * 4
+        self.phi = (self.phi + self.phi_dot * dt) % (2 * np.pi)
         self.phi_history = np.roll(self.phi_history, 1, axis=0)
         self.phi_history[0] = self.phi
 
@@ -172,7 +180,7 @@ class Go2LocoManager(Go2Manager):
             phi_sin = np.sin(self.phi)
             phi_cos = np.cos(self.phi)
         
-        osc = np.concatenate([phi_sin, phi_cos], axis=-1)
+        osc = np.concatenate([phi_sin, phi_cos, self.phi_dot], axis=-1)
         self.command[4:] = osc.reshape(-1)
         return self.command
 
@@ -230,7 +238,7 @@ def main():
         iter_start = time.perf_counter()
 
         obs, command = manager.update()
-        inp["command"] = command[None, ...]
+        inp["command_"] = command[None, ...]
         inp["policy"] = obs[None, ...]
         inp["is_init"] = np.array([False])
         action, carry = policy(inp)
@@ -251,7 +259,7 @@ def main():
             print(f"Control freq: {control_freq:.2f}")
             print(robot.lin_vel_b)
             # print(command[:4])
-            # print(carry["retro_pred"].squeeze(0))
+            print(carry["retro_pred"].squeeze(0))
             # print(robot.action_rate_l2)
             # print(robot.action_rate2_l2)
             # print(np.abs(carry["_dyn_pred"] - robot.jpos_isaac).mean())

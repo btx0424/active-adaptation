@@ -4,9 +4,12 @@ import mujoco_viewer
 
 import itertools
 import time
+import datetime
 import zmq
 import threading
 import re
+import h5py
+import os
 
 from typing import Sequence, Dict
 from sim2sim.utils import normalize
@@ -64,8 +67,8 @@ class MJCRobot:
         self._action_rate_l2 = np.zeros(self.action_dim, dtype=np.float32)
         self._action_rate2_l2 = np.zeros(self.action_dim, dtype=np.float32)
 
-        self.jnt_kp = np.zeros(self.num_joints)
-        self.jnt_kd = np.zeros(self.num_joints)
+        self.jnt_kp = np.zeros(self.num_joints) # in mjc order
+        self.jnt_kd = np.zeros(self.num_joints) # in mjc order
         self.effort_limit = np.zeros(self.num_joints)
         self.action_scaling = 0.5
         
@@ -79,11 +82,50 @@ class MJCRobot:
 
         self.synchronized = True
         self.enable_control = False
-        self.filter = SecondOrderLowPassFilter(50., 400.)
+        self.filter = SecondOrderLowPassFilter(50., 200.)
         
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.PUB)
         self.socket.bind("tcp://*:5555")
+
+        os.makedirs("logs", exist_ok=True)
+        timestr = datetime.datetime.now().strftime("%m-%d_%H-%M-%S")
+        self.log_file = h5py.File(f"logs/{timestr}.h5py", "a")
+        init_length = 200 * 10
+        self.log_file.attrs["cursor"] = 0
+
+        # joint state
+        self.log_file.create_dataset("jpos", (init_length, self.num_joints), dtype=np.float32, maxshape=(None, self.num_joints))
+        self.log_file.create_dataset("jpos_des", (init_length, self.num_joints), dtype=np.float32, maxshape=(None, self.num_joints))
+        self.log_file.create_dataset("jvel", (init_length, self.num_joints), dtype=np.float32, maxshape=(None, self.num_joints))
+        self.log_file.create_dataset("tau", (init_length, self.num_joints), dtype=np.float32, maxshape=(None, self.num_joints))
+        self.log_file.create_dataset("tau_kp", (init_length, self.num_joints), dtype=np.float32, maxshape=(None, self.num_joints))
+        self.log_file.create_dataset("tau_kd", (init_length, self.num_joints), dtype=np.float32, maxshape=(None, self.num_joints))
+
+        # sensor state
+        self.log_file.create_dataset("gyro", (init_length, 3), dtype=np.float32, maxshape=(None, 3))
+        self.log_file.create_dataset("acc", (init_length, 3), dtype=np.float32, maxshape=(None, 3))
+    
+    def get_gains(self, jnt_name: str):
+        i = self.joint_names_mjc.index(jnt_name)
+        return self.jnt_kp[i], self.jnt_kd[i]
+
+    def set_gains(self, jnt_name: str, kp: float, kd: float):
+        i = self.joint_names_mjc.index(jnt_name)
+        self.jnt_kp[i] = kp
+        self.jnt_kd[i] = kd
+    
+    def set_jpos_target(self, jnt_name: str, value: float):
+        i = self.joint_names_isaac.index(jnt_name)
+        self.jpos_des_isaac[i] = value
+    
+    def get_jpos_offset(self, jnt_name: str):
+        i = self.joint_names_isaac.index(jnt_name)
+        return self.jpos_default_isaac[i]
+    
+    def set_jpos_offset(self, jnt_name: str, value: float):
+        i = self.joint_names_isaac.index(jnt_name)
+        self.jpos_default_isaac[i] = value
 
     def run_async(self):
         self.thread_state = threading.Thread(target=self.state_thread_func)
@@ -95,6 +137,8 @@ class MJCRobot:
         self.state_update_freq = 0.
         self.synchronized = False
         self.step_cnt = 0.
+        self.state_update_cnt = 0
+        self.running = True
 
         self.thread_state.start()
         self.thread_step.start()
@@ -107,7 +151,8 @@ class MJCRobot:
         self.sim_freq = int(1. / self.model.opt.timestep)
         self.state_update_freq = 100
         self.synchronized = True
-        self.step_cnt = 0.
+        self.step_cnt = 0
+        self.state_update_cnt = 0
 
         self._update_state()
 
@@ -157,9 +202,10 @@ class MJCRobot:
         t0 = time.perf_counter()
 
         for i in itertools.count():
-            self._step_physics()
+            self._step_physics(i)
             time.sleep(dt)
             self.sim_freq = i / (time.perf_counter() - t0)
+            if not self.running: break
         
     def state_thread_func(self):
         t0 = time.perf_counter()
@@ -169,6 +215,7 @@ class MJCRobot:
             self._update_state(dt)
             time.sleep(self.state_update_dt)
             self.state_update_freq = i / (time.perf_counter() - t0)
+            if not self.running: break
 
     def control_thread_func(self):
         t0 = time.perf_counter()
@@ -179,9 +226,10 @@ class MJCRobot:
                 self.jpos_des_mjc = self.filter.update(self.jpos_des_isaac[self.isaac2mjc])
             time.sleep(self.control_update_dt)
             self.control_update_freq = i / (time.perf_counter() - t0)
+            if not self.running: break
 
-    def _step_physics(self):
-        self.pd_control()
+    def _step_physics(self, i):
+        self.pd_control(i)
         mujoco.mj_step(self.model, self.data)
 
     def _update_state(self, dt=0.005):
@@ -199,23 +247,45 @@ class MJCRobot:
         self.rot = R.from_quat(self.quat, scalar_first=True)
         self.gravity = self.rot.inv().apply([0., 0., -1.])
         self.gyro = self.data.sensor("imu_gyro").data.astype(np.float32)
-        self.acc = self.data.sensor("imu_gyro").data.astype(np.float32)
+        self.acc = self.data.sensor("imu_acc").data.astype(np.float32)
         self.lin_vel_w = self.data.sensor("base_linvel").data.astype(np.float32)
         self.lin_vel_b = self.rot.inv().apply(self.lin_vel_w)
 
-        self.socket.send_pyobj({
-            "jpos": self.jpos_mjc,
-            "jpos_des": self.jpos_des_mjc,
-            "rpy": self.gyro,
-            "tau": self.data.ctrl,
-        })
+        self.log_file["jpos"][self.state_update_cnt] = self.jpos_isaac
+        self.log_file["jvel"][self.state_update_cnt] = self.jvel_isaac
+        self.log_file["jpos_des"][self.state_update_cnt] = self.jpos_des_mjc[self.mjc2isaac]
+        self.log_file["tau"][self.state_update_cnt] = self.data.ctrl
+        self.log_file["tau_kp"][self.state_update_cnt] = self.tau_kp
+        self.log_file["tau_kd"][self.state_update_cnt] = self.tau_kd
 
-    def pd_control(self):
+        self.log_file["gyro"][self.state_update_cnt] = self.gyro
+        self.log_file["acc"][self.state_update_cnt] = self.acc
+
+        self.log_file.attrs["cursor"] = self.state_update_cnt
+        if self.log_file.attrs["cursor"] % 200 == 0: 
+            self.log_file.flush()
+        if self.log_file.attrs["cursor"] == self.log_file["jpos"].len() - 1:
+            new_len = self.log_file.attrs["cursor"] + 1 + 200 * 20
+            print(f"Extend log size to {new_len}.")
+            for key, value in self.log_file.items():
+                value.resize((new_len, *value.shape[1:]))
+
+        self.state_update_cnt += 1
+        # self.socket.send_pyobj({
+        #     "jpos": self.jpos_mjc,
+        #     "jpos_des": self.jpos_des_mjc,
+        #     "rpy": self.gyro,
+        #     # "tau": self.data.ctrl,
+        #     "acc": self.acc,
+        # })
+
+    def pd_control(self, i: int):
         pos_error = self.jpos_des_mjc - self.data.qpos[-self.num_joints:]
         vel_error = 0. - self.data.qvel[-self.num_joints:]
-        tau_ctrl = self.jnt_kp * pos_error + self.jnt_kd * vel_error
-        
-        self.data.ctrl = np.clip(tau_ctrl, -self.effort_limit, self.effort_limit)
+        self.tau_kp = self.jnt_kp * pos_error
+        self.tau_kd = self.jnt_kd * vel_error
+        self.tau_ctrl = np.clip(self.tau_kp + self.tau_kd, -self.effort_limit, self.effort_limit)
+        self.data.ctrl[:] = self.tau_ctrl
 
     @property
     def action_rate_l2(self):
