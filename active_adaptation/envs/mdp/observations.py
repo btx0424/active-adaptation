@@ -181,6 +181,47 @@ class root_linacc_b(Observation):
         return lin_acc_b.reshape(self.num_envs, -1)
 
 
+class root_linacc_debug(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.lin_vel_w = self.asset.data.root_lin_vel_w.clone()
+        self.lin_acc_w = torch.zeros(self.num_envs, 3, device=self.env.device)
+        self.root_vel_w_substep = torch.zeros(self.num_envs, self.env.cfg.decimation, 3, device=self.env.device)
+        self.body_acc_w_substep = torch.zeros(self.num_envs, self.env.cfg.decimation, 3, device=self.env.device)
+
+    def post_step(self, substep):
+        self.root_vel_w_substep[:, substep] = self.asset.data.root_lin_vel_w
+        self.body_acc_w_substep[:, substep] = self.asset.data.body_acc_w[:, 0, :3]
+
+    def update(self):
+        lin_vel_w = self.asset.data.root_lin_vel_w
+        self.lin_acc_w = (lin_vel_w - self.lin_vel_w) / self.env.step_dt
+        self.lin_vel_w = lin_vel_w
+
+    def compute(self):
+        print(self.asset.data.root_lin_vel_w[0], self.asset.data.body_lin_vel_w[0, 0])
+
+        lin_acc_b0 = quat_rotate_inverse(self.asset.data.root_quat_w, self.lin_acc_w)
+        lin_acc_b1 = quat_rotate_inverse(self.asset.data.root_quat_w, self.root_vel_w_substep.diff(dim=1).mean(1) / self.env.physics_dt)
+        lin_acc_b2 = quat_rotate_inverse(self.asset.data.root_quat_w, self.asset.data.body_acc_w[:, 0, :3])
+        lin_acc_b3 = quat_rotate_inverse(self.asset.data.root_quat_w, self.body_acc_w_substep.mean(1))
+        return torch.cat([lin_acc_b0, lin_acc_b1, lin_acc_b2, lin_acc_b3], dim=-1)
+
+
+# class root_angvel_debug(Observation):
+#     def __init__(self, env):
+#         super().__init__(env)
+#         self.asset: Articulation = self.env.scene["robot"]
+#         self.rpy_w = torch.zeros(self.num_envs, 3, device=self.env.device)
+#         self.angvel_w = torch.zeros(self.num_envs, 3, device=self.env.device)
+
+#     def update(self):
+#         rpy_w = rpy_from_quat(self.asset.data.root_quat_w)
+#         self.angvel_w = (rpy_w - self.rpy_w) / self.env.step_dt
+#         self.rpy_w = rpy_w
+
+
 class body_pos(CartesianObs):
     def __init__(
         self,
