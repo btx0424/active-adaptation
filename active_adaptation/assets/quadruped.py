@@ -126,14 +126,14 @@ UNITREE_GO2_CFG = ArticulationCfg(
         "base_legs": DCMotorCfg(
             joint_names_expr=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
             effort_limit={
-                "(?!.*_calf_joint).*": 23.5,
+                ".*_hip_joint": 23.5,
+                ".*_thigh_joint": 23.5,
                 ".*_calf_joint": 35.5,
             },  
             saturation_effort=35.5,
             velocity_limit=30.0,
             stiffness=25.0,
             damping=0.5,
-            friction=0.01,
         ),
     },
 )

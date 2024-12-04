@@ -615,7 +615,7 @@ class joint_vel_multistep(Observation):
     def __init__(self, env, steps: int=4, noise_std: float=0., diff: bool=False, mask_ratio = 0):
         super().__init__(env, mask_ratio)
         self.steps = steps
-        self.noise_std = noise_std
+        self.noise_std_max = max(noise_std, 0.)
         self.diff = diff
         self.from_pos = True
         self.asset: Articulation = self.env.scene["robot"]
@@ -623,6 +623,7 @@ class joint_vel_multistep(Observation):
         
         self.joint_vel_multistep = torch.zeros(shape, device=self.device)
         
+        self.noise_std = torch.zeros(self.num_envs, self.asset.num_joints, device=self.device)
         if self.from_pos:
             shape = (self.num_envs, self.env.cfg.decimation, self.asset.num_joints)
             self.joint_pos_substep = torch.zeros(shape, device=self.device)
@@ -630,6 +631,9 @@ class joint_vel_multistep(Observation):
             shape = (self.num_envs, 2, self.asset.num_joints)
             self.joint_vel_substep = torch.zeros(shape, device=self.device)
     
+    def reset(self, env_ids: torch.Tensor):
+        self.noise_std[env_ids] = torch.rand(len(env_ids), self.asset.num_joints, device=self.device) * self.noise_std_max
+
     def post_step(self, substep):
         if self.from_pos:
             self.joint_pos_substep[:, substep] = self.asset.data.joint_pos
@@ -642,8 +646,7 @@ class joint_vel_multistep(Observation):
             joint_vel = self.joint_pos_substep.diff(dim=1).mean(dim=1) / self.env.physics_dt
         else:
             joint_vel = self.joint_vel_substep.mean(dim=1)
-        if self.noise_std > 0:
-            joint_vel = random_noise(joint_vel, self.noise_std)
+        joint_vel = random_noise(joint_vel, self.noise_std)
         self.joint_vel_multistep[:, 0] = joint_vel
     
     def compute(self):

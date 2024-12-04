@@ -141,14 +141,37 @@ class PolicyUpdateInferenceMod:
         self.actor = actor
         self.encoder = encoder
     
-    def __call__(self, tensordict: TensorDictBase):
+    def __call__(self, tensordict: TensorDictBase, grad_pen: bool=False):
         # TODO@botian: write to tensordict?
         if self.encoder is not None:
             self.encoder(tensordict)
-        dist = self.actor.get_dist(tensordict)
-        log_probs = dist.log_prob(tensordict[ACTION_KEY])
-        entropy = dist.entropy().mean()
-        return log_probs, entropy
+        for k in self.actor.in_keys:
+            tensordict[k].requires_grad_(True)
+        if grad_pen:
+            dist = self.actor.get_dist(tensordict)
+            log_probs = dist.log_prob(tensordict[ACTION_KEY])
+            entropy = dist.entropy().mean()
+            grad = torch.autograd.grad(
+                outputs=log_probs,
+                inputs=[tensordict[k] for k in self.actor.in_keys],
+                grad_outputs=torch.ones_like(log_probs),
+                retain_graph=True,
+                create_graph=True,
+            )
+            grad = torch.cat(grad, dim=-1)
+        else:
+            dist = self.actor.get_dist(tensordict)
+            log_probs = dist.log_prob(tensordict[ACTION_KEY])
+            entropy = dist.entropy().mean()
+            with torch.no_grad():
+                grad = torch.autograd.grad(
+                    outputs=log_probs,
+                    inputs=[tensordict[k] for k in self.actor.in_keys],
+                    grad_outputs=torch.ones_like(log_probs),
+                    retain_graph=True,
+                )
+                grad = torch.cat(grad, dim=-1)
+        return log_probs, entropy, grad
 
 
 class ContinuityLoss:
@@ -517,7 +540,7 @@ class PPODICPolicy(TensorDictModuleBase):
 
     # @torch.compile
     def _update(self, tensordict: TensorDict, policy_inference: PolicyUpdateInferenceMod, opt: torch.optim.Optimizer):
-        log_probs, entropy = policy_inference(tensordict)
+        log_probs, entropy, grad = policy_inference(tensordict, grad_pen=True)
 
         if self.cfg.phase == "train":
             valid = (tensordict["step_count"] > 1)
@@ -543,25 +566,7 @@ class PPODICPolicy(TensorDictModuleBase):
         # smth1_loss = torch.mean(torch.square(action - a_tm1).sum(-1) * valid) # first order smth
         # smth2_loss = torch.mean(torch.square(action - 2 * a_tm1 + a_tm2).sum(-1) * valid) # second order smth
 
-        # tensordict["command_"].requires_grad_(True)
-        # tensordict[OBS_KEY].requires_grad_(True)
-        # tensordict["priv"].requires_grad_(True)
-        # tensordict["ext"].requires_grad_(True)
-
-        # policy_inference.encoder(tensordict)
-        # dist = policy_inference.actor.get_dist(tensordict)
-        # action = dist.rsample()
-
-        # gradient = torch.autograd.grad(
-        #     outputs=action,
-        #     inputs=[tensordict["command_"], tensordict[OBS_KEY], tensordict["priv"], tensordict["ext"]],
-        #     grad_outputs=torch.ones_like(action),
-        #     retain_graph=True,
-        #     create_graph=True,
-        # )
-        # gradient = torch.cat(gradient, dim=-1)
-        # gradient_penalty = gradient.square().sum(-1).mean()
-        gradient_penalty = 0.
+        gradient_penalty = grad.square().sum(-1).mean()
 
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["state_value"]
@@ -574,7 +579,7 @@ class PPODICPolicy(TensorDictModuleBase):
         else:
             reg_loss = 0.
             
-        loss = policy_loss + entropy_loss + value_loss + reg_loss # + retro_loss# + dyn_loss
+        loss = policy_loss + entropy_loss + value_loss + reg_loss + 0.002 * gradient_penalty
         
         opt.zero_grad()
         loss.backward()
