@@ -153,28 +153,6 @@ class PolicyUpdateInferenceMod:
         return log_probs, entropy
 
 
-class ContinuityLoss:
-    def __init__(self, module: ModBase,in_keys, out_key):
-        self.module = module
-        self.in_keys = in_keys
-        self.out_key = out_key
-    
-    def __call__(self, tensordict: TensorDictBase):
-        for in_key in self.in_keys:
-            tensordict[in_key].requires_grad_(True)
-        out = self.module(tensordict)[self.out_key]
-        gradient = torch.autograd.grad(
-            outputs=out,
-            inputs=[tensordict[in_key] for in_key in self.in_keys],
-            grad_outputs=torch.ones_like(out),
-            retain_graph=True,
-            create_graph=True,
-        )
-        gradient = torch.cat(gradient, dim=-1)
-        gradient_penalty = gradient.square().sum(-1).mean()
-        return gradient_penalty
-
-
 class PPOOrcaPolicy(TensorDictModuleBase):
     """
     
@@ -227,7 +205,7 @@ class PPOOrcaPolicy(TensorDictModuleBase):
         assert "symmetry" in obs_keys
         
         self.encoder_priv = Seq(
-            Mod(nn.Sequential(make_mlp([128]), nn.LazyLinear(128)), [OBS_PRIV_KEY], ["_priv_feature"]),
+            Mod(nn.Sequential(make_mlp([128]), nn.LazyLinear(128)), [OBS_PRIV_KEY], ["priv_feature"]),
         ).to(self.device)
 
         self.adapt_module =  Mod(
@@ -236,7 +214,7 @@ class PPOOrcaPolicy(TensorDictModuleBase):
             ["priv_pred", ("next", "adapt_hx")]
         ).to(self.device)
         
-        in_keys = [CMD_KEY, OBS_KEY, "_priv_feature"]
+        in_keys = [CMD_KEY, OBS_KEY, "priv_feature"]
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=Seq(
                 CatTensors(in_keys, "_actor_inp", del_keys=False, sort=False),
@@ -407,12 +385,15 @@ class PPOOrcaPolicy(TensorDictModuleBase):
         
         infos = collect_info(infos)
         infos.update(collect_info(infos_symmetry))
-
+        if self.cfg.phase == "train":
+            infos["actor/feature_std"] = tensordict["priv_feature"].std(-1).mean().item()
+        else:
+            infos["actor/feature_std"] = tensordict["priv_pred"].std(-1).mean().item()
         infos["critic/value_mean"] = tensordict["ret"].mean().item()
         infos["symmetry/reward"] = symmetry_reward.mean().item()
         infos["symmetry/acc"] = ((left_score > 0) & (right_score < 0)).float().mean().item()
         infos["symmetry/score"] = right_score.mean().item()
-        return infos
+        return {k: v for k, v in sorted(infos.items())}
     
     @set_recurrent_mode(True)
     def train_adapt(self, tensordict: TensorDict):
@@ -424,7 +405,7 @@ class PPOOrcaPolicy(TensorDictModuleBase):
         for epoch in range(2):
             for minibatch in make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every):
                 self.adapt_module(minibatch)
-                priv_loss = self.adapt_loss_fn(minibatch["priv_pred"], minibatch["_priv_feature"])
+                priv_loss = self.adapt_loss_fn(minibatch["priv_pred"], minibatch["priv_feature"])
                 priv_loss = (priv_loss * (~minibatch["is_init"])).mean()
                 
                 self.opt_adapt.zero_grad()
@@ -474,8 +455,12 @@ class PPOOrcaPolicy(TensorDictModuleBase):
 
     # @torch.compile
     def _update(self, tensordict: TensorDict, policy_inference: PolicyUpdateInferenceMod, opt: torch.optim.Optimizer):
-        for key in (CMD_KEY, OBS_KEY):
-            tensordict[key].requires_grad_(True)
+        if self.cfg.phase == "train":
+            for key in (CMD_KEY, OBS_KEY):
+                tensordict[key].requires_grad_(True)
+        else:
+            for key in (CMD_KEY, OBS_KEY, "priv_pred"):
+                tensordict[key].requires_grad_(True)
         log_probs, entropy = policy_inference(tensordict)
 
         if self.cfg.phase == "train":
@@ -492,7 +477,7 @@ class PPOOrcaPolicy(TensorDictModuleBase):
         
         grad = torch.autograd.grad(
             log_probs,
-            [tensordict[key] for key in (CMD_KEY, OBS_KEY, "_priv_feature")],
+            [tensordict[key] for key in (CMD_KEY, OBS_KEY, "priv_feature" if self.cfg.phase == "train" else "priv_pred")],
             grad_outputs=torch.ones_like(log_probs),
             create_graph=True,
             retain_graph=True,
@@ -505,7 +490,7 @@ class PPOOrcaPolicy(TensorDictModuleBase):
         value_loss = (value_loss * (~tensordict["is_init"])).mean()
 
         if self.cfg.phase == "train" and self.reg_lambda > 0:
-            reg_loss = self.adapt_loss_fn(tensordict["_priv_feature"], tensordict["priv_pred"])
+            reg_loss = self.adapt_loss_fn(tensordict["priv_feature"], tensordict["priv_pred"])
             reg_loss = self.reg_lambda * (reg_loss * (~tensordict["is_init"])).mean()
         else:
             reg_loss = 0.
