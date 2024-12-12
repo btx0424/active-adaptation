@@ -62,7 +62,7 @@ class PPOConfig:
     value_norm: bool = False
 
     fix: bool = False
-    short_history: int = 6
+    short_history: int = 8
     num_prototypes: int = 256
     
     temperature: float = 3.0
@@ -114,8 +114,8 @@ class PPOHIMPolicy(TensorDictModuleBase):
         actor_keys = [CMD_KEY, OBS_HIST_KEY, "aux_pred"]
         actor_module=Seq(
             CatTensors(actor_keys, "_actor_input", del_keys=False, sort=False),
-            Mod(make_mlp([512, 256, 256]), ["_actor_input"], ["_actor_feature"]),
-            Mod(Actor(self.action_dim), ["_actor_feature"], ["loc", "scale"])
+            Mod(make_mlp([512, 256]), ["_actor_input"], ["_actor_feature"]),
+            Mod(nn.Sequential(make_mlp([256]), Actor(self.action_dim)), ["_actor_feature"], ["loc", "scale"])
         )
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=actor_module,
@@ -127,8 +127,8 @@ class PPOHIMPolicy(TensorDictModuleBase):
         
         self.critic = Seq(
             CatTensors([CMD_KEY, OBS_KEY, OBS_PRIV_KEY], "_critic_input", del_keys=False),
-            Mod(make_mlp([512, 256, 128]), ["_critic_input"], ["_critic_feature"]),
-            Mod(nn.LazyLinear(1), ["_critic_feature"], ["state_value"])
+            Mod(make_mlp([512, 256]), ["_critic_input"], ["_critic_feature"]),
+            Mod(nn.Sequential(make_mlp([128]), nn.LazyLinear(1)), ["_critic_feature"], ["state_value"])
         ).to(self.device)
 
         # HIM estimation module
@@ -168,6 +168,7 @@ class PPOHIMPolicy(TensorDictModuleBase):
                 nn.init.orthogonal_(module.weight, 0.01)
                 nn.init.constant_(module.bias, 0.)
         
+        self.encoder.apply(init_)
         self.actor.apply(init_)
         self.critic.apply(init_)
 
