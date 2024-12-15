@@ -8,7 +8,17 @@ defaults:
   - override action: null
   - _self_
 
-robot: aliengo
+robot: 
+  name: aliengo
+  stiffness:
+    .*: 60.
+  damping:
+    .*: 2.0
+  effort_limit:
+    .*: 50.0
+  action_scaling:
+    .*: 0.5
+
 terrain: plane
 payload: false
 homogeneous: false
@@ -23,7 +33,7 @@ command:
   _target_: active_adaptation.envs.mdp.Impedance
   virtual_mass_range: [0.25, 1.0]
   compliant_ratio: 0.25
-  force_type_probs: [0.0, 0.5, 0.5]
+  force_type_probs: [0.0, 0.8, 0.2]
   constant_force_scale: [120., 120., 20.]
   constant_force_duration_range: [1, 4]
   impulse_force_momentum_scale: [5.0, 5.0, 1.0]
@@ -33,12 +43,13 @@ command:
   teleop: false
 
 observation:
-  command:
+  command_:
     command:
+    oscillator: {history: false}
   policy:
     projected_gravity_b: {noise_std: 0.05}
-    joint_pos:    {noise_std: 0.05}
-    joint_vel:    {noise_std: 0.2}
+    joint_pos_multistep: {steps: 4, noise_std: 0.05, diff: true}
+    joint_vel_multistep: {steps: 4, noise_std: 0.2, diff: true}
     prev_actions: {steps: 3}
   priv:
     command_hidden:
@@ -55,8 +66,11 @@ observation:
     external_forces:  {body_names: ["base"]}
     external_torques: {body_names: ["base"]}
   ext_:
+    # root_angvel_b:
     external_forces:  {body_names: ["base"], divide_by_mass: false}
-    external_torques: {body_names: ["base"], divide_by_mass: false}
+    external_torques: {body_names: ["base"], divide_by_mass: false, scale: 0.2}
+  symmetry:
+    symmetry_quad:    {}
 
 reward:
   loco:
@@ -70,25 +84,25 @@ reward:
     linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
     # linacc_z_l2:        {weight: 0.005, enabled: false}
     angvel_xy_l2:       {weight: 0.02, enabled: true}
-    # linvel_z_l2:        {weight: 2.0, enabled: true}
-    base_height_l1:     {weight: 0.5, enabled: true, target_height: 0.3}
-    energy_l1:          {weight: 0.001, enabled: true}
+    linvel_z_l2:        {weight: 1.0, enabled: true}
+    base_height_l1:     {weight: 2.0, enabled: true, target_height: 0.4}
+    energy_l1:          {weight: 0.0002, enabled: true}
     energy_dist_lr:     {weight: 0.0002, enabled: false}
     # energy_dist_fb:     {weight: 0.0002, enabled: false}
     joint_acc_l2:       {weight: 2.5e-7, enabled: true}
     joint_torques_l2:   {weight: 1.0e-4, enabled: true}
-    quadruped_stand:    {weight: 0.5}
+    # quadruped_stand:    {weight: 0.5}
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.01, enabled: true}
     action_rate2_l2:    {weight: 0.005, enabled: true}
-    feet_air_time:      {weight: 5.0, enabled: true, body_names: .*_foot, thres: 0.4}
-    feet_swing_height:  {weight: 1.0, enabled: true, target_height: 0.1}
+    feet_air_time:      {weight: 2.0, enabled: true, body_names: .*_foot, thres: 0.3}
+    # feet_swing_height:  {weight: 1.0, enabled: true, target_height: 0.1}
     feet_slip:          {weight: 1.0, enabled: true, body_names: .*_foot}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
-    undesired_contact:  {body_names: [.*_calf, .*thigh], weight: 0.25, enabled: true}
+    undesired_contact:  {body_names: [.*_calf, .*thigh], weight: 2.0, enabled: true}
     # step_up:            {weight: 2.0, enabled: true}
     # step_up_needed:     {weight: 1.0, enabled: false}
-    com_support:        {weight: 1.0, enabled: true}
+    # com_support:        {weight: 1.0, enabled: true}
 
 termination:
   crash: {body_names_expr: ["base", ".*_calf"], t_thres: 0.1, z_thres: -0.2}
@@ -97,23 +111,49 @@ termination:
   # cum_error: {thres: 0.5, min_steps: 100}
 
 randomization:
-  random_scale: [1.0, 1.0]
   perturb_body_mass:
-    (?!(payload|base)).*: [0.8, 1.2]
-    base: [0.8, 1.2]
+    (?!(payload|base.*)).*: [0.8, 1.2]
+    base: [0.8, 1.4]
+    # Head.*: [10, 250.]
   perturb_body_materials:
     body_names: ".*_foot"
     static_friction_range:  [0.5, 4.0]
     dynamic_friction_range: [0.5, 4.0]
     restitution_range:      [0.0, 0.5]
-    homogeneous: true # ${task.homogeneous}
+    # homogeneous: ${task.homogeneous}
   motor_params:
     actuator_name: base_legs
-    stiffness_range:  [0.7, 1.3]
-    damping_range:    [0.7, 1.3]
-    armature_range:   [0.0, 0.02]
-    homogeneous: ${task.homogeneous}
+    stiffness_range:  
+      F[L,R]_hip_joint:   [0.9, 1.1]
+      F[L,R]_thigh_joint: [0.9, 1.1]
+      F[L,R]_calf_joint:  [0.9, 1.1]
+      R[L,R]_hip_joint:   [0.9, 1.1]
+      R[L,R]_thigh_joint: [0.9, 1.1]
+      R[L,R]_calf_joint:  [0.9, 1.1]
+    damping_range:
+      F[L,R]_hip_joint:   [0.9, 1.1]
+      F[L,R]_thigh_joint: [0.9, 1.1]
+      F[L,R]_calf_joint:  [0.9, 1.1]
+      R[L,R]_hip_joint:   [0.9, 1.1]
+      R[L,R]_thigh_joint: [0.9, 1.1]
+      R[L,R]_calf_joint:  [0.9, 1.1]
+    scale_factor_range:
+      .*_hip_joint:   [0.9, 1.1]
+      .*_thigh_joint: [0.9, 1.1]
+      .*_calf_joint:  [0.9, 1.1]
+    armature_range:
+      .*: [0.0, 0.02]
   reset_joint_states_scale:
     pos_scales:
       .*: [0.8, 1.2]
-  stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.4, 0.4]}
+  random_joint_offset:
+    .*hip_joint: [-0.05, 0.05]
+    F[L,R]_thigh_joint: [-0.05, 0.05]
+    R[L,R]_thigh_joint: [-0.05, 0.05]
+    .*calf_joint: [-0.05, 0.05]
+  stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.1, 0.4]}
+  random_pull: 
+    force_xy_range: [-40., 40.]
+    force_z_range:  [-10., 30.]
+    prob: 0.005
+    duration: [0.5, 1.5]

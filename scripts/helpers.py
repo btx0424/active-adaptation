@@ -96,13 +96,13 @@ class EpisodeStats:
 def parse_checkpoint_path(path: str):
     if path is None:
         return None
-    
+
     if path.startswith("run:"):
         api = wandb.Api()
         run = api.run(path[4:])
         root = os.path.join(os.path.dirname(__file__), "wandb", run.name)
         os.makedirs(root, exist_ok=True)
-        
+
         checkpoints = []
         for file in run.files():
             print(file.name)
@@ -110,7 +110,7 @@ def parse_checkpoint_path(path: str):
                 checkpoints.append(file)
             elif file.name == "files/cfg.yaml":
                 file.download(root, replace=True)
-        
+
         def sort_by_time(file):
             number_str = file.name[:-3].split("_")[-1]
             if number_str == "final":
@@ -125,7 +125,7 @@ def parse_checkpoint_path(path: str):
         checkpoint.download(root, replace=True)
     return path
 
-    
+
 def make_env_policy(cfg: DictConfig):
     OmegaConf.set_struct(cfg, False)
 
@@ -259,7 +259,7 @@ def evaluate(
     def take_first_episode(tensor: torch.Tensor):
         indices = first_done.reshape(first_done.shape+(1,)*(tensor.ndim-2))
         return torch.take_along_dim(tensor, indices, dim=1).reshape(-1)
-    
+
     info = {}
     stats = {}
     compute_std_for = ["return", "survival"]
@@ -277,9 +277,9 @@ def evaluate(
         video_array = np.stack(frames)
         frames.clear()
         video_path = os.path.join(os.path.dirname(__file__), f"recording-{time_str}.mp4")
-        write_video(video_path, video_array, fps=1 / env.step_dt)
+        write_video(
+            video_path, video_array=video_array, fps=1 / env.step_dt, video_codec="h264"
+        )
 
     info["episode_cnt"] = episode_cnt
     return dict(sorted(info.items())), trajs, stats
-
-
