@@ -546,7 +546,7 @@ class random_pull(Randomization):
         self.force_xy_range = force_xy_range
         self.force_z_range = force_z_range
         self.prob = prob
-        self.duration = duration
+        self.duration = (duration, duration) if isinstance(duration, (int, float)) else duration
         self.mass_total = self.asset.root_physx_view.get_masses()[0].sum().to(self.device)
 
         self.force_w = torch.zeros(self.num_envs, 3, device=self.device)

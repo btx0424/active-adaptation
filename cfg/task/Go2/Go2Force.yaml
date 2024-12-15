@@ -70,8 +70,8 @@ observation:
     projected_gravity_b: {noise_std: 0.05}
     # joint_pos:    {noise_std: 0.05, subtract_offset: true}
     # joint_vel:    {noise_std: 0.2}
-    joint_pos_multistep: {steps: 4, noise_std: 0.05, diff: true}
-    joint_vel_multistep: {steps: 4, noise_std: 0.2, diff: true}
+    joint_pos_multistep: {steps: 4, noise_std: 0.05, diff: false}
+    joint_vel_multistep: {steps: 4, noise_std: 0.4, diff: false}
     prev_actions: {steps: 3}
   priv:
     command_hidden:

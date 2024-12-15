@@ -733,16 +733,20 @@ class Impedance(Command):
         constant_force_duration_range=(1, 4),
         temporal_smoothing: int = 5,
         force_offset_scale=(0.3, 0.2, 0.1),
+        max_acc_norm: float = 8.0,
+        max_vel_norm: float = 1.6,
         teleop: bool = False,
     ) -> None:
         super().__init__(env, teleop)
-        self.robot: Articulation = env.scene["robot"]
 
         self.virtual_mass_range = virtual_mass_range
         self.resample_prob = 0.01
         self.compliant_ratio = compliant_ratio  # kp=0 for compliant mode
         self.linear_kp_range = linear_kp_range
         self.temporal_smoothing = temporal_smoothing
+
+        self.max_acc_norm = max_acc_norm
+        self.max_vel_norm = max_vel_norm
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 10)
@@ -879,7 +883,7 @@ class Impedance(Command):
         torques_b[:, 0] += self.force_offset_b.cross(forces_b[:, 0], dim=-1)
         self.asset.set_external_force_and_torque(forces_b, torques_b)
 
-    def _integrate(self):
+    def _integrate(self, dt: float):
         desired_acc_w = (
             self.kp.unsqueeze(1)
             * (self.command_setpos_w.unsqueeze(1) - self.desired_pos_w)
@@ -887,10 +891,10 @@ class Impedance(Command):
             + (self.force_ext_w / self.virtual_mass).unsqueeze(1)
         )  # [n, t, 3]
         # print()
-        self.desired_lin_acc_w[:] = clamp_norm(desired_acc_w * self.xy, max=10.0)
-        self.desired_lin_vel_w.add_(self.desired_lin_acc_w * self.env.physics_dt)
-        self.desired_lin_vel_w[:] = clamp_norm(self.desired_lin_vel_w, max=1.2)
-        self.desired_pos_w.add_(self.desired_lin_vel_w * self.env.physics_dt)
+        self.desired_lin_acc_w[:] = clamp_norm(desired_acc_w * self.xy, max=self.max_acc_norm)
+        self.desired_lin_vel_w.add_(self.desired_lin_acc_w * dt)
+        self.desired_lin_vel_w[:] = clamp_norm(self.desired_lin_vel_w, max=self.max_vel_norm)
+        self.desired_pos_w.add_(self.desired_lin_vel_w * dt)
 
         force_offset_w = yaw_rotate(
             self.desired_yaw_w, self.force_offset_b.unsqueeze(1)
@@ -904,8 +908,8 @@ class Impedance(Command):
             + (torque / self.virtual_inertia.unsqueeze(1))[..., 2:3]
         )
         self.desired_yaw_acc_w[:] = desired_yaw_acc_w
-        self.desired_yaw_vel_w.add_(self.desired_yaw_acc_w * self.env.physics_dt)
-        self.desired_yaw_w.add_(self.desired_yaw_vel_w * self.env.physics_dt)
+        self.desired_yaw_vel_w.add_(self.desired_yaw_acc_w * dt)
+        self.desired_yaw_w.add_(self.desired_yaw_vel_w * dt)
 
     def _smooth(self, q: torch.Tensor):
         return (q * self.smoothing_weight.unsqueeze(-1)).sum(1)
@@ -947,8 +951,9 @@ class Impedance(Command):
         self.constant_force_time.add_(self.env.step_dt)
         self.impulse_force_time.add_(self.env.step_dt)
 
-        for _ in range(self.decimation):
-            self._integrate()
+        # for _ in range(self.decimation):
+        #     self._integrate(self.env.physics_dt)
+        self._integrate(self.env.physics_dt)
 
         self.command_linvel_w[:] = self._smooth(self.desired_lin_vel_w)
         self.command_angvel[:] = self._smooth(self.desired_yaw_vel_w).squeeze(-1)
