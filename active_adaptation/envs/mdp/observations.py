@@ -181,6 +181,30 @@ class root_linacc_b(Observation):
         return lin_acc_b.reshape(self.num_envs, -1)
 
 
+class root_linacc_substep(Observation):
+    def __init__(self, env, steps: int=None, flatten: bool=False):
+        super().__init__(env)
+        self.flatten = flatten
+        self.asset: Articulation = self.env.scene["robot"]
+        if steps is None:
+            steps = self.env.cfg.decimation
+        shape = (self.num_envs, steps, 3)
+        self.lin_acc_substep = torch.zeros(shape, device=self.env.device)
+
+    def post_step(self, substep):
+        root_quat_w = self.asset.data.root_quat_w
+        self.lin_acc_substep[:, substep] = quat_rotate_inverse(
+            root_quat_w,
+            self.asset.data.body_lin_vel_w[:, 0]
+        )
+
+    def compute(self):
+        if self.flatten:
+            return self.lin_acc_substep.reshape(self.num_envs, -1)
+        else:
+            return self.lin_acc_substep
+
+
 class root_linacc_debug(Observation):
     def __init__(self, env):
         super().__init__(env)
@@ -405,17 +429,23 @@ class root_angvel_b(Observation):
 
 
 class root_gyro_substep(Observation):
-    def __init__(self, env):
+    def __init__(self, env, steps: int=None,flatten: bool=False):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
-        shape = (self.num_envs, self.env.cfg.decimation, 3)
+        if steps is None:
+            steps = self.env.cfg.decimation
+        shape = (self.num_envs, steps, 3)
         self.gyro = torch.zeros(shape, device=self.device)
+        self.flatten = flatten
 
     def post_step(self, substep):
         self.gyro[:, substep] = self.asset.data.root_ang_vel_b
     
     def compute(self):
-        return self.gyro
+        if self.flatten:
+            return self.gyro.reshape(self.num_envs, -1)
+        else:
+            return self.gyro
 
 class root_gyro_multistep(Observation):
     def __init__(self, env, steps: int=4, noise_std: float=0.):
@@ -453,6 +483,26 @@ class projected_gravity_b(Observation):
         gravity = torch.lerp(obs_tm1, obs_t, t)
         gravity = gravity / gravity.norm(dim=-1, keepdim=True)
         return gravity
+
+
+class gravity_substep(Observation):
+    def __init__(self, env, steps: int=None, flatten: bool=False):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        if steps is None:
+            steps = self.env.cfg.decimation
+        shape = (self.num_envs, steps, 3)
+        self.gravity = torch.zeros(shape, device=self.device)
+        self.flatten = flatten
+    
+    def post_step(self, substep):
+        self.gravity[:, substep] = self.asset.data.projected_gravity_b
+    
+    def compute(self):
+        if self.flatten:
+            return self.gravity.reshape(self.num_envs, -1)
+        else:
+            return self.gravity
 
 
 class root_linvel_b(Observation):
@@ -584,13 +634,14 @@ class joint_pos_substep(Observation):
         return self.joint_pos
 
 class joint_pos_multistep(Observation):
-    def __init__(self, env, steps: int=4, noise_std: float=0., diff: bool=False, mask_ratio = 0):
+    def __init__(self, env, steps: int=4, interval:int=1, noise_std: float=0., diff: bool=False, mask_ratio = 0):
         super().__init__(env, mask_ratio)
         self.steps = steps
+        self.interval = interval
         self.noise_std = noise_std
         self.diff = diff
         self.asset: Articulation = self.env.scene["robot"]
-        shape = (self.num_envs, steps, self.asset.num_joints)
+        shape = (self.num_envs, steps * interval, self.asset.num_joints)
         self.joint_pos_multistep = torch.zeros(shape, device=self.device)
         self.joint_pos = torch.zeros(self.num_envs, 2, self.asset.num_joints, device=self.device)
     
@@ -605,7 +656,7 @@ class joint_pos_multistep(Observation):
         self.joint_pos_multistep[:, 0] = joint_pos
     
     def compute(self):
-        joint_pos = self.joint_pos_multistep.clone()
+        joint_pos = self.joint_pos_multistep[:, ::self.interval].clone()
         if self.diff:
             joint_pos[:, 1:] = joint_pos[:, 1:] - joint_pos[:, :-1]
         return joint_pos.reshape(self.num_envs, -1)
