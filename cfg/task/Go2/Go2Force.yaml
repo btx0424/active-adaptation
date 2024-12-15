@@ -33,23 +33,37 @@ action:
   #   .*_(thigh|calf)_joint: 0.8
   #   .*_(hip)_joint: 0.5
 
+# command:
+#   _target_: active_adaptation.envs.mdp.ImpedanceBase
+#   # virtual_mass_range: [0.25, 1]
+#   # compliant_ratio: 0.25
+#   # force_type_probs: [0.0, 0.5, 0.5]
+#   # constant_force_scale: [80., 80., 20.]
+#   # constant_force_duration_range: [1, 4]
+#   # impulse_force_momentum_scale: [5.0, 5.0, 1.0]
+#   # impulse_force_duration_range: [0.1, 0.4]
+#   # temporal_smoothing: 12
+#   # force_offset_scale: [0.3, 0.2, 0.1]
+#   teleop: false
+
 command:
-  _target_: active_adaptation.envs.mdp.ImpedanceBase
-  # virtual_mass_range: [0.25, 1]
-  # compliant_ratio: 0.25
-  # force_type_probs: [0.0, 0.5, 0.5]
-  # constant_force_scale: [80., 80., 20.]
-  # constant_force_duration_range: [1, 4]
-  # impulse_force_momentum_scale: [5.0, 5.0, 1.0]
-  # impulse_force_duration_range: [0.1, 0.4]
-  # temporal_smoothing: 12
-  # force_offset_scale: [0.3, 0.2, 0.1]
+  _target_: active_adaptation.envs.mdp.Impedance
+  virtual_mass_range: [1.0, 5.0]
+  compliant_ratio: 0.25
+  force_type_probs: [0.0, 0.8, 0.2]
+  constant_force_scale: [60.,60., 10.]
+  constant_force_duration_range: [1, 4]
+  impulse_force_momentum_scale: [5.0, 5.0, 1.0]
+  impulse_force_duration_range: [0.1, 0.4]
+  temporal_smoothing: 16
+  force_offset_scale: [0.3, 0.2, 0.1]
+  linear_kp_range: [0.5, 8.0]
   teleop: false
 
 observation:
   command_:
     command:
-    oscillator:
+    # oscillator:
   policy:
     # _max_delay_: 0.5
     # root_angvel_b: {noise_std: 0.2}
@@ -62,6 +76,9 @@ observation:
   priv:
     command_hidden:
     applied_action:
+    projected_gravity_b: {noise_std: 0.00}
+    joint_pos_multistep: {steps: 4, noise_std: 0.00, diff: true}
+    joint_vel_multistep: {steps: 4, noise_std: 0.00, diff: true}
     root_linvel_b:    {yaw_only: true}
     root_angvel_b:
     root_linacc_b:
@@ -100,13 +117,12 @@ reward:
   loco:
     # linvel_exp:         {weight: 1.5, enabled: false, dim: 3, yaw_only: true}
     # angvel_z_exp:       {weight: 1.0, enabled: false}
-    impedance_yaw_pos:      {weight: 0.5, enabled: true}
-    impedance_yaw_vel:      {weight: 1.0, enabled: true}
-    # impedance_pitch_pos:    {weight: 0.75, enabled: false}
-    impedance_pos:      {weight: 0.5, enabled: true}
-    impedance_vel:      {weight: 1.0, enabled: true}
+    impedance_yaw_pos:      {weight: 1.0, enabled: true}
+    impedance_yaw_vel:      {weight: 1.5, enabled: true}
+    impedance_pos:      {weight: 1.0, enabled: true}
+    impedance_vel:      {weight: 1.5, enabled: true}
     # impedance_acc:      {weight: 1.0, enabled: true}
-    oscillator:         {weight: 1.0, enabled: true}
+    # oscillator:         {weight: 1.0, enabled: true}
     # step_vel:           {weight: 1.0, enabled: false}
 
     linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
@@ -121,19 +137,19 @@ reward:
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.01, enabled: true}
     action_rate2_l2:    {weight: 0.005, enabled: false}
-    feet_air_time:      {weight: 0.1, enabled: true, body_names: .*_foot, thres: 0.4}
+    feet_air_time:      {weight: 2.0, enabled: true, body_names: .*_foot, thres: 0.3}
     feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
-    # feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
-    undesired_contact:  {body_names: [Head.*, .*_calf, .*thigh], weight: 0.25, enabled: true}
+    feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
+    undesired_contact:  {body_names: [Head.*, .*_calf, .*thigh], weight: 2.0, enabled: true}
     # step_up:            {weight: 2.0, enabled: true}
     # step_up_needed:     {weight: 1.0, enabled: false}
     # com_support:        {weight: 1.0, enabled: false}
     quadruped_stand_feet_contact_force: {weight: 1.0, enabled: true, body_names: .*_foot}
-    is_standing_env:    {weight: 1.0, enabled: false}
+    # is_standing_env:    {weight: 1.0, enabled: false}
 
 termination:
-  crash: {body_names_expr: [Head.*, "base", ".*thigh"], t_thres: 0.1}
-  fall_over: {xy_thres: 0.9}
+  crash: {body_names_expr: ["base", ".*_calf"], t_thres: 0.1, z_thres: -0.2}
+  fall_over: {xy_thres: 0.7}
   # joint_acc_exceeds: {thres: 5000}
   # cum_error: {thres: 0.5, min_steps: 500}
   # impedance_pos_error: {thres: 0.3}
@@ -148,35 +164,40 @@ randomization:
     static_friction_range:  [0.5, 4.0]
     dynamic_friction_range: [0.5, 4.0]
     restitution_range:      [0.0, 0.5]
-    homogeneous: true # ${task.homogeneous}
+    # homogeneous: true # ${task.homogeneous}
   motor_params:
     actuator_name: base_legs
     stiffness_range:  
-      F[L,R]_hip_joint:   [0.9, 1.1]
-      F[L,R]_thigh_joint: [0.9, 1.1]
-      F[L,R]_calf_joint:  [0.9, 1.1]
-      R[L,R]_hip_joint:   [0.9, 1.1]
-      R[L,R]_thigh_joint: [0.9, 1.1]
-      R[L,R]_calf_joint:  [0.9, 1.1]
+      F[L,R]_hip_joint:   [0.8, 1.2]
+      F[L,R]_thigh_joint: [0.8, 1.2]
+      F[L,R]_calf_joint:  [0.8, 1.2]
+      R[L,R]_hip_joint:   [0.8, 1.2]
+      R[L,R]_thigh_joint: [0.8, 1.2]
+      R[L,R]_calf_joint:  [0.8, 1.2]
     damping_range:
-      F[L,R]_hip_joint:   [0.9, 1.1]
-      F[L,R]_thigh_joint: [0.9, 1.1]
-      F[L,R]_calf_joint:  [0.9, 1.1]
-      R[L,R]_hip_joint:   [0.9, 1.1]
-      R[L,R]_thigh_joint: [0.9, 1.1]
-      R[L,R]_calf_joint:  [0.9, 1.1]
+      F[L,R]_hip_joint:   [0.8, 1.2]
+      F[L,R]_thigh_joint: [0.8, 1.2]
+      F[L,R]_calf_joint:  [0.8, 1.2]
+      R[L,R]_hip_joint:   [0.8, 1.2]
+      R[L,R]_thigh_joint: [0.8, 1.2]
+      R[L,R]_calf_joint:  [0.8, 1.2]
     scale_factor_range:
-      .*_hip_joint:   [0.9, 1.1]
-      .*_thigh_joint: [0.9, 1.1]
-      .*_calf_joint:  [0.9, 1.1]
+      .*_hip_joint:   [0.8, 1.2]
+      .*_thigh_joint: [0.8, 1.2]
+      .*_calf_joint:  [0.8, 1.2]
     armature_range:
       .*: [0.0, 0.02]
   reset_joint_states_scale:
     pos_scales:
       .*: [0.8, 1.2]
-  # random_joint_offset:
-  #   .*hip_joint: [-0.05, 0.05]
-  #   F[L,R]_thigh_joint: [-0.05, 0.05]
-  #   R[L,R]_thigh_joint: [-0.05, 0.05]
-  #   .*calf_joint: [-0.05, 0.05]
-  # stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.4, 0.4]}
+  random_joint_offset:
+    .*hip_joint: [-0.05, 0.05]
+    F[L,R]_thigh_joint: [-0.05, 0.05]
+    R[L,R]_thigh_joint: [-0.05, 0.05]
+    .*calf_joint: [-0.05, 0.05]
+  stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.1, 0.4]}
+  random_pull: 
+    force_xy_range: [-40., 40.]
+    force_z_range:  [-10., 30.]
+    prob: 0.005
+    duration: [0.5, 1.5]
