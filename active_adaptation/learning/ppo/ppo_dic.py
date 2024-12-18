@@ -62,7 +62,7 @@ class PPOConfig:
     clip_param: float = 0.2
     # entropy_coef: float = 0.004
     # entropy_coef: float = 0.002
-    entropy_coef_start: float = 0.000
+    entropy_coef_start: float = 0.004
     entropy_coef_end: float = 0.000
 
     reg_lambda: float = 0.0
@@ -540,7 +540,7 @@ class PPODICPolicy(TensorDictModuleBase):
 
     # @torch.compile
     def _update(self, tensordict: TensorDict, policy_inference: PolicyUpdateInferenceMod, opt: torch.optim.Optimizer):
-        log_probs, entropy, grad = policy_inference(tensordict, grad_pen=True)
+        log_probs, entropy, grad = policy_inference(tensordict, grad_pen=False)
 
         if self.cfg.phase == "train":
             valid = (tensordict["step_count"] > 1)

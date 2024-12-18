@@ -953,7 +953,7 @@ class Impedance(Command):
 
         # for _ in range(self.decimation):
         #     self._integrate(self.env.physics_dt)
-        self._integrate(self.env.physics_dt)
+        self._integrate(self.env.step_dt)
 
         self.command_linvel_w[:] = self._smooth(self.desired_lin_vel_w)
         self.command_angvel[:] = self._smooth(self.desired_yaw_vel_w).squeeze(-1)
