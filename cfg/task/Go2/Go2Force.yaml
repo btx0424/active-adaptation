@@ -55,12 +55,12 @@ command:
   constant_force_duration_range: [1, 4]
   impulse_force_momentum_scale: [5.0, 5.0, 1.0]
   impulse_force_duration_range: [0.1, 0.4]
-  temporal_smoothing: 16
+  temporal_smoothing: 20
   force_offset_scale: [0.3, 0.2, 0.1]
   linear_kp_range: [0.5, 8.0]
   teleop: false
-  max_acc_norm: 8.0
-  max_vel_norm: 1.6
+  max_acc_xy: [8.0, 8.0]
+  max_vel_xy: [1.5, 0.9]
 
 observation:
   command_:
@@ -72,8 +72,8 @@ observation:
     projected_gravity_b: {noise_std: 0.05}
     # joint_pos:    {noise_std: 0.05, subtract_offset: true}
     # joint_vel:    {noise_std: 0.2}
-    joint_pos_multistep: {steps: 4, noise_std: 0.05, diff: false}
-    joint_vel_multistep: {steps: 4, noise_std: 0.4, diff: false}
+    joint_pos_multistep: {steps: 8, noise_std: 0.05, diff: false}
+    joint_vel_multistep: {steps: 8, noise_std: 0.4, diff: false}
     prev_actions: {steps: 3}
   priv:
     command_hidden:

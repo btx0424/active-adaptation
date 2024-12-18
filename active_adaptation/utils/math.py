@@ -29,6 +29,10 @@ def clamp_norm(x: torch.Tensor, min: float=0., max: float=torch.inf):
     x = torch.where(x_norm > max, x / x_norm * max, x)
     return x
 
+def clamp_along(x: torch.Tensor, axis: torch.Tensor, min: float, max: float):
+    projection = (x * axis).sum(dim=-1, keepdim=True)
+    return x - projection * axis + projection.clamp(min, max) * axis
+
 
 class MultiUniform(D.Distribution):
     """

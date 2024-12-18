@@ -7,7 +7,7 @@ from typing import Sequence, TYPE_CHECKING
 
 from omni.isaac.lab.assets import Articulation
 import omni.isaac.lab.utils.math as math_utils
-from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse, MultiUniform
+from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse, MultiUniform, clamp_along
 from active_adaptation.utils.helpers import batchify
 from omni.isaac.lab.utils.math import quat_apply_yaw, yaw_quat
 from tensordict import TensorDict
@@ -733,8 +733,8 @@ class Impedance(Command):
         constant_force_duration_range=(1, 4),
         temporal_smoothing: int = 5,
         force_offset_scale=(0.3, 0.2, 0.1),
-        max_acc_norm: float = 8.0,
-        max_vel_norm: float = 1.6,
+        max_acc_xy: float = (8.0, 4.0),
+        max_vel_xy: float = (1.6, 1.0),
         teleop: bool = False,
     ) -> None:
         super().__init__(env, teleop)
@@ -745,8 +745,8 @@ class Impedance(Command):
         self.linear_kp_range = linear_kp_range
         self.temporal_smoothing = temporal_smoothing
 
-        self.max_acc_norm = max_acc_norm
-        self.max_vel_norm = max_vel_norm
+        self.max_acc_xyz = max_acc_xy + (0.,)
+        self.max_vel_xyz = max_vel_xy + (0.,)
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 10)
@@ -891,9 +891,16 @@ class Impedance(Command):
             + (self.force_ext_w / self.virtual_mass).unsqueeze(1)
         )  # [n, t, 3]
         # print()
-        self.desired_lin_acc_w[:] = clamp_norm(desired_acc_w * self.xy, max=self.max_acc_norm)
-        self.desired_lin_vel_w.add_(self.desired_lin_acc_w * dt)
-        self.desired_lin_vel_w[:] = clamp_norm(self.desired_lin_vel_w, max=self.max_vel_norm)
+        x_b = torch.cat([self.desired_yaw_w.cos(), self.desired_yaw_w.sin(), torch.zeros_like(self.desired_yaw_w)], dim=-1)
+        y_b = torch.cat([-self.desired_yaw_w.sin(), self.desired_yaw_w.cos(), torch.zeros_like(self.desired_yaw_w)], dim=-1)
+        desired_acc_w = desired_acc_w * self.xy
+        desired_acc_w = clamp_along(desired_acc_w, x_b, -self.max_acc_xyz[0], self.max_acc_xyz[0])
+        desired_acc_w = clamp_along(desired_acc_w, y_b, -self.max_acc_xyz[1], self.max_acc_xyz[1])
+        self.desired_lin_acc_w[:] = desired_acc_w
+        desired_vel_w = self.desired_lin_vel_w + self.desired_lin_acc_w * dt
+        desired_vel_w = clamp_along(desired_vel_w, x_b, -self.max_vel_xyz[0], self.max_vel_xyz[0])
+        desired_vel_w = clamp_along(desired_vel_w, y_b, -self.max_vel_xyz[1], self.max_vel_xyz[1])  
+        self.desired_lin_vel_w[:] = desired_vel_w
         self.desired_pos_w.add_(self.desired_lin_vel_w * dt)
 
         force_offset_w = yaw_rotate(
@@ -955,7 +962,13 @@ class Impedance(Command):
         #     self._integrate(self.env.physics_dt)
         self._integrate(self.env.step_dt)
 
+        yaw = self.asset.data.heading_w
+        # x_b = torch.stack([yaw.cos(), yaw.sin(), torch.zeros_like(yaw)], dim=-1)
+        # y_b = torch.stack([-yaw.sin(), yaw.cos(), torch.zeros_like(yaw)], dim=-1)
         self.command_linvel_w[:] = self._smooth(self.desired_lin_vel_w)
+        # self.command_linvel_w[:] = clamp_along(self.command_linvel_w, x_b, -self.max_vel_xyz[0], self.max_vel_xyz[0])
+        # self.command_linvel_w[:] = clamp_along(self.command_linvel_w, y_b, -self.max_vel_xyz[1], self.max_vel_xyz[1])
+        
         self.command_angvel[:] = self._smooth(self.desired_yaw_vel_w).squeeze(-1)
         self.command_pos_w[:] = self._smooth(self.desired_pos_w)
         _yaw_diff = self.desired_yaw_w - self.desired_yaw_w[:, 0:1]
@@ -980,6 +993,8 @@ class Impedance(Command):
         self.command_linvel[:] = quat_rotate_inverse(
             self.asset.data.root_quat_w, self.command_linvel_w
         )
+        # print((self.command_linvel[:, 0].abs() - self.max_vel_xyz[0]).max())
+        # print((self.command_linvel[:, 1].abs() - self.max_vel_xyz[1]).max())
         self.command_speed[:] = self.command_linvel.norm(dim=-1, keepdim=True)
 
         linvel_noise = (
