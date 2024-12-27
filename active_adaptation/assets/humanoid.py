@@ -26,7 +26,6 @@ class Humanoid(Articulation):
     
     def update(self, dt: float):
         super().update(dt)
-        self.phi[:] = (self.phi + dt * self.phi_dot) % (2 * torch.pi)
     
         if hasattr(self.cfg, "hand_body_name"):
             self.hand_pos_w[:] = self.data.body_pos_w[:, self.hand_body_ids]
@@ -95,7 +94,7 @@ CY1_CFG = ArticulationCfg(
             ".*arm_joint[1,3,5,6]": 0.0,
             ".*leg_joint[2,3,5,6]": 0.0,
             "[l,r]arm_joint2": 0.1,
-            "[l,r]arm_joint4": 0.3,
+            "[l,r]arm_joint4": 0.1,
             "[l,r]leg_joint1": -0.1,
             "[l,r]leg_joint4": -0.1,
         },

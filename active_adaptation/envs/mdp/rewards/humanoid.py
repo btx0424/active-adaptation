@@ -4,6 +4,7 @@ import torch
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.utils.math import yaw_quat
 from omni.isaac.lab.sensors import ContactSensor
+from active_adaptation.assets import Humanoid
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from active_adaptation.utils.helpers import batchify
 
@@ -432,3 +433,58 @@ class com_pos(Reward):
             size=40,
             color=(1.0, 0.0, 0.0, 1.0),
         )
+
+
+class oscillator_humanoid(Reward):
+    def __init__(
+        self,
+        env,
+        feet_names: str="[l,r]leg_link6",
+        margin: float=0.,
+        weight=1.0,
+        enabled = True,
+    ):
+        super().__init__(env, weight, enabled)
+        self.margin = margin
+        self.target_swing_height = 0.20
+
+        self.asset: Humanoid = self.env.scene["robot"]
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+        self.command_manager: Command2 = self.env.command_manager
+        
+        self.feet_ids, feet_names = self.contact_sensor.find_bodies(feet_names)
+        self.mass = self.asset.data.default_mass[0].sum().to(self.device)
+        self.gravity = self.mass * 9.81
+        
+        self.phi: torch.Tensor = self.asset.phi
+        self.phi[:, 0] = torch.pi
+        self.phi[:, 1] = 0.
+        self.phi_dot: torch.Tensor = self.asset.phi_dot
+        self.grf_substep = torch.zeros(self.num_envs, self.env.cfg.decimation, len(self.feet_ids), device=self.device)
+        
+        self.omega = torch.zeros(self.num_envs, 1, device=self.device)
+        self.omega.uniform_(2., 3.).mul_(torch.pi)
+        
+        self.rest_target = torch.pi * 3 / 2
+        self.keep_steping = torch.zeros(self.num_envs, 1, dtype=bool, device=self.device)
+
+    def reset(self, env_ids):
+        self.keep_steping[env_ids] = torch.rand(len(env_ids), 1, device=self.device) < 0.5
+    
+    def post_step(self, substep):
+        grf = self.contact_sensor.data.net_forces_w[:, self.feet_ids].norm(dim=-1)
+        self.grf_substep[:, substep] = grf
+    
+    def update(self):
+        self.grf = self.grf_substep.mean(1) / self.gravity
+        inp = (self.command_manager.command_speed + self.command_manager.command_angvel.reshape(-1, 1).abs()) > 0.1
+        phi_dot = self.omega + torch.randn_like(self.omega).clamp(-3., 3.) * 0.1
+        self.phi[:] = (self.phi + self.phi_dot * self.env.step_dt) % (2 * torch.pi)
+        self.phi_dot[:] = phi_dot
+
+    def compute(self):
+        phi_sin = self.phi.sin()
+        feet_height = self.asset.data.feet_height.clamp_max(self.target_swing_height)
+        r = (feet_height - self.grf.clamp_max(0.4)) * phi_sin * (phi_sin.abs() > self.margin)
+        return r.sum(1, True)
+
