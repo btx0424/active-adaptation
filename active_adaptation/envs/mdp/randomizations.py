@@ -608,7 +608,10 @@ class spring_grf(Randomization):
         feet_height = self.asset.data.feet_height
         feet_quat = self.asset.data.body_quat_w[:, self.feet_ids]
         feet_lin_vel = self.asset.data.body_lin_vel_w[:, self.feet_ids]
-        self.forces[:, :, 2] = self.kp * (self.thres - feet_height) * self.flag + 5. * (0. - feet_lin_vel[:, :, 2])
+        self.forces[:, :, 2] = (
+            self.kp * (self.thres - feet_height) + 
+            5. * (0. - feet_lin_vel[:, :, 2])
+        ) * self.flag
         self.asset._external_force_b[:, self.feet_ids] += quat_rotate_inverse(feet_quat, self.forces)
         self.asset.has_external_wrench = True
 
