@@ -485,6 +485,23 @@ class projected_gravity_b(Observation):
         return gravity
 
 
+class gravity_multistep(Observation):
+    def __init__(self, env, steps: int=4, noise_std: float=0.):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.noise_std = noise_std
+        self.gravity_multistep = torch.zeros((self.num_envs, steps, 3), device=self.device)
+    
+    def update(self):
+        gravity = random_noise(self.asset.data.projected_gravity_b, self.noise_std)
+        gravity = gravity / gravity.norm(dim=-1, keepdim=True)
+        self.gravity_multistep = self.gravity_multistep.roll(1, dims=1)
+        self.gravity_multistep[:, 0] = gravity
+    
+    def compute(self):
+        return self.gravity_multistep.reshape(self.num_envs, -1)
+
+
 class gravity_substep(Observation):
     def __init__(self, env, steps: int=None, flatten: bool=False):
         super().__init__(env)

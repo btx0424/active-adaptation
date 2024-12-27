@@ -69,9 +69,10 @@ observation:
   policy:
     # _max_delay_: 0.5
     # root_angvel_b: {noise_std: 0.2}
-    projected_gravity_b: {noise_std: 0.05}
+    # projected_gravity_b: {noise_std: 0.05}
     # joint_pos:    {noise_std: 0.05, subtract_offset: true}
     # joint_vel:    {noise_std: 0.2}
+    gravity_multistep:  {steps: 4, noise_std: 0.05}
     joint_pos_multistep: {steps: 8, noise_std: 0.05, diff: false}
     joint_vel_multistep: {steps: 8, noise_std: 0.4, diff: false}
     prev_actions: {steps: 3}
@@ -197,9 +198,8 @@ randomization:
     F[L,R]_thigh_joint: [-0.05, 0.05]
     R[L,R]_thigh_joint: [-0.05, 0.05]
     .*calf_joint: [-0.05, 0.05]
-  stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.1, 0.4]}
-  # random_pull: 
-  #   force_xy_range: [-40., 40.]
-  #   force_z_range:  [-10., 30.]
-  #   prob: 0.005
-  #   duration: [0.5, 1.5]
+  # stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.1, 0.4]}
+  spring_grf:
+    feet_names: .*_foot
+    kp_range: [200, 300]
+    thres_range: [0.1, 0.2]

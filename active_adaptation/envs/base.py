@@ -338,12 +338,10 @@ class Env(EnvBase):
         for callback in self._reset_callbacks:
             callback(env_ids)
 
-        if tensordict is None:
-            tensordict = TensorDict({}, self.num_envs, device=self.device)
-            self._compute_observation(tensordict)
-        else:
-            # tensordict.update(self.observation_spec.zero())
-            self._compute_observation(tensordict)
+        tensordict = TensorDict({}, self.num_envs, device=self.device)
+        # tensordict.update(self.observation_spec.zero())
+        self._compute_observation(tensordict)
+        
         if self.record_now and env_mask[self.lookat_env_i]:
             if self.complete_video_frames is None:
                 self.complete_video_frames = []

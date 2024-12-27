@@ -585,6 +585,38 @@ class random_pull(Randomization):
         )
 
 
+class spring_grf(Randomization):
+    def __init__(self, env, feet_names: str = ".*_foot", thres_range = (0.1, 0.2), kp_range = (200, 300)):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.thres_range = thres_range
+        self.kp_range = kp_range
+
+        self.feet_ids = self.asset.find_bodies(feet_names)[0]
+        self.kp = torch.zeros(self.num_envs, 4, device=self.device)
+        self.thres = torch.zeros(self.num_envs, 4, device=self.device)
+        self.forces = torch.zeros(self.num_envs, 4, 3, device=self.device)
+        self.flag = torch.zeros(self.num_envs, 4, dtype=bool, device=self.device)
+
+    def update(self):
+        resample = (self.env.episode_length_buf % 100 == 0).unsqueeze(1) # [num_envs, 1]
+        self.flag = torch.where(resample, self.flag, torch.rand(self.flag.shape, device=self.device) < 0.2)
+        self.kp = torch.where(resample, self.kp, uniform_like(self.kp, *self.kp_range))
+        self.thres = torch.where(resample, self.thres, uniform_like(self.thres, *self.thres_range))
+
+    def step(self, substep):
+        feet_height = self.asset.data.feet_height
+        feet_quat = self.asset.data.body_quat_w[:, self.feet_ids]
+        feet_lin_vel = self.asset.data.body_lin_vel_w[:, self.feet_ids]
+        self.forces[:, :, 2] = self.kp * (self.thres - feet_height) * self.flag + 5. * (0. - feet_lin_vel[:, :, 2])
+        self.asset._external_force_b[:, self.feet_ids] += quat_rotate_inverse(feet_quat, self.forces)
+        self.asset.has_external_wrench = True
+
+    def debug_draw(self):
+        feet_pos = self.asset.data.body_pos_w[:, self.feet_ids]
+        self.env.debug_draw.vector(feet_pos, self.forces / 9.81, color=(0.8, 0.6, 0.6, 1.))
+
+
 def random_scale(x: torch.Tensor, low: float, high: float, homogeneous: bool=False):
     if homogeneous:
         u = torch.rand(*x.shape[:1], 1, device=x.device)
@@ -600,6 +632,10 @@ def sample_uniform(size, low: float, high: float, device: torch.device = "cpu"):
 
 def uniform(low: torch.Tensor, high: torch.Tensor):
     r = torch.rand_like(low)
+    return low + r * (high - low)
+
+def uniform_like(x: torch.Tensor, low: torch.Tensor, high: torch.Tensor):
+    r = torch.rand_like(x)
     return low + r * (high - low)
 
 def log_uniform(low: torch.Tensor, high: torch.Tensor):
