@@ -597,21 +597,29 @@ class spring_grf(Randomization):
         self.thres = torch.zeros(self.num_envs, 4, device=self.device)
         self.forces = torch.zeros(self.num_envs, 4, 3, device=self.device)
         self.flag = torch.zeros(self.num_envs, 4, dtype=bool, device=self.device)
+        self.axis = torch.zeros(self.num_envs, 4, 3, device=self.device)
 
     def update(self):
         resample = (self.env.episode_length_buf % 100 == 0).unsqueeze(1) # [num_envs, 1]
-        self.flag = torch.where(resample, self.flag, torch.rand(self.flag.shape, device=self.device) < 0.2)
-        self.kp = torch.where(resample, self.kp, uniform_like(self.kp, *self.kp_range))
-        self.thres = torch.where(resample, self.thres, uniform_like(self.thres, *self.thres_range))
+        self.flag = torch.where(resample, torch.rand(self.flag.shape, device=self.device) < 0.2, self.flag)
+        self.kp = torch.where(resample, uniform_like(self.kp, *self.kp_range), self.kp)
+        self.thres = torch.where(resample, uniform_like(self.thres, *self.thres_range), self.thres)
+        axis = torch.zeros(self.num_envs, 4, 3, device=self.device)
+        axis[:, :, 1].uniform_(-0.5, 0.5)
+        axis[:, :, 0].uniform_(-0.5, 0.5)
+        axis[:, :, 2] = 1.
+        axis = axis / axis.norm(dim=-1, keepdim=True)
+        self.axis = torch.where(resample.unsqueeze(-1), axis, self.axis)
 
     def step(self, substep):
         feet_height = self.asset.data.feet_height
         feet_quat = self.asset.data.body_quat_w[:, self.feet_ids]
         feet_lin_vel = self.asset.data.body_lin_vel_w[:, self.feet_ids]
-        self.forces[:, :, 2] = (
+        forces = (
             self.kp * (self.thres - feet_height) + 
             5. * (0. - feet_lin_vel[:, :, 2])
         ) * self.flag
+        self.forces = forces.unsqueeze(-1) * self.axis 
         self.asset._external_force_b[:, self.feet_ids] += quat_rotate_inverse(feet_quat, self.forces)
         self.asset.has_external_wrench = True
 

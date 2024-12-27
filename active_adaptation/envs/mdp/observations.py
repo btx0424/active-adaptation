@@ -1743,3 +1743,38 @@ class actuator_type(Observation):
 
     def compute(self):
         return self.actuator.implicit.reshape(self.num_envs, -1)
+
+
+class cartesian_force(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.feet_ids = torch.as_tensor(self.asset.find_bodies(".*_foot")[0], device=self.device)
+        self.feet_names = self.asset.find_bodies(".*_foot")[1]
+        # print(self.feet_names)
+        self.joint_ids = torch.as_tensor(
+            [
+                self.asset.find_joints("FL_.*_joint")[0],
+                self.asset.find_joints("FR_.*_joint")[0],
+                self.asset.find_joints("RL_.*_joint")[0],
+                self.asset.find_joints("RR_.*_joint")[0],
+            ],
+            device=self.device,
+        )
+
+    def compute(self):
+        self.jacobian = self.asset.root_physx_view.get_jacobians()[:, :, :3, 6:]
+        jacobian = einops.rearrange(self.jacobian, "n b c j -> n b j c")
+        jacobian = jacobian[:, self.feet_ids.unsqueeze(1), self.joint_ids] # [env, feet, joint, 3]
+        torques = self.asset.data.applied_torque[:, self.joint_ids]
+        self.force_w = (jacobian.transpose(-1, -2) @ torques.unsqueeze(-1)).squeeze(-1) # [env, feet, 3]
+        return self.force_w[:, :, 2].reshape(self.num_envs, -1)
+
+    # def debug_draw(self):
+    #     self.feet_pos_w = self.asset.data.body_pos_w[:, self.feet_ids]
+    #     self.env.debug_draw.vector(
+    #         self.feet_pos_w,
+    #         - self.force_w / 9.81,
+    #         color=(1., 0., 1., 1.)
+    #     )
+
