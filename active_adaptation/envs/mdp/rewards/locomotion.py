@@ -1509,6 +1509,7 @@ class oscillator(Reward):
         self.target_swing_height = 0.08
 
         self.asset: Quadruped = self.env.scene["robot"]
+        self.art_feet_ids = self.asset.find_bodies(feet_names)[0]
         self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
         self.command_manager: Command2 = self.env.command_manager
 
@@ -1539,6 +1540,7 @@ class oscillator(Reward):
 
     def post_step(self, substep):
         grf = self.contact_sensor.data.net_forces_w[:, self.feet_ids].norm(dim=-1)
+        grf += self.asset._external_force_b[:, self.art_feet_ids].norm(dim=-1)
         self.grf_substep[:, substep] = grf
 
     def update(self):

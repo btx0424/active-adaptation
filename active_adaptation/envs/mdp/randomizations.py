@@ -605,8 +605,8 @@ class spring_grf(Randomization):
         self.kp = torch.where(resample, uniform_like(self.kp, *self.kp_range), self.kp)
         self.thres = torch.where(resample, uniform_like(self.thres, *self.thres_range), self.thres)
         axis = torch.zeros(self.num_envs, 4, 3, device=self.device)
-        axis[:, :, 1].uniform_(-0.5, 0.5)
-        axis[:, :, 0].uniform_(-0.5, 0.5)
+        axis[:, :, 1].uniform_(-0.3, 0.3)
+        axis[:, :, 0].uniform_(-0.3, 0.3)
         axis[:, :, 2] = 1.
         axis = axis / axis.norm(dim=-1, keepdim=True)
         self.axis = torch.where(resample.unsqueeze(-1), axis, self.axis)
