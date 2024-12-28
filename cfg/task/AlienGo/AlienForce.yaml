@@ -31,29 +31,37 @@ action:
 
 command:
   _target_: active_adaptation.envs.mdp.Impedance
-  virtual_mass_range: [0.25, 1.0]
+  virtual_mass_range: [1.0, 5.0]
   compliant_ratio: 0.25
   force_type_probs: [0.0, 0.8, 0.2]
-  constant_force_scale: [120., 120., 20.]
+  constant_force_scale: [100., 100., 20.]
   constant_force_duration_range: [1, 4]
   impulse_force_momentum_scale: [5.0, 5.0, 1.0]
   impulse_force_duration_range: [0.1, 0.4]
-  temporal_smoothing: 16
+  temporal_smoothing: 20
   force_offset_scale: [0.3, 0.2, 0.1]
+  linear_kp_range: [0.5, 8.0]
   teleop: false
+  max_acc_xy: [8.0, 8.0]
+  max_vel_xy: [1.5, 0.9]
 
 observation:
   command_:
     command:
     oscillator: {history: false}
   policy:
-    projected_gravity_b: {noise_std: 0.05}
-    joint_pos_multistep: {steps: 4, noise_std: 0.05, diff: true}
-    joint_vel_multistep: {steps: 4, noise_std: 0.2, diff: true}
+    # projected_gravity_b: {noise_std: 0.05}
+    # root_gyro_multistep: {steps: 4, noise_std: 0.2}
+    gravity_multistep:  {steps: 4, noise_std: 0.05}
+    joint_pos_multistep: {steps: 8, noise_std: 0.05, diff: false}
+    joint_vel_multistep: {steps: 8, noise_std: 0.2, diff: false}
     prev_actions: {steps: 3}
   priv:
     command_hidden:
     applied_action:
+    projected_gravity_b: {noise_std: 0.}
+    joint_pos:    {noise_std: 0.}
+    joint_vel:    {noise_std: 0.}
     root_linvel_b:    {yaw_only: true}
     root_angvel_b:
     feet_pos_b:
@@ -74,13 +82,14 @@ observation:
 
 reward:
   loco:
-    linvel_exp:         {weight: 1.5, enabled: false, dim: 3, yaw_only: true}
-    angvel_z_exp:       {weight: 1.0, enabled: false}
+    # linvel_exp:         {weight: 1.5, enabled: false, dim: 3, yaw_only: true}
+    # angvel_z_exp:       {weight: 1.0, enabled: false}
     impedance_yaw_pos:      {weight: 1.0, enabled: true}
     impedance_yaw_vel:      {weight: 1.5, enabled: true}
     impedance_pos:      {weight: 1.0, enabled: true}
     impedance_vel:      {weight: 1.5, enabled: true}
-    # angvel_z_exp_shaped: {weight: 0.75, enabled: false}
+    oscillator:         {weight: 1.0, enabled: true}
+
     linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
     # linacc_z_l2:        {weight: 0.005, enabled: false}
     angvel_xy_l2:       {weight: 0.02, enabled: true}
@@ -91,11 +100,11 @@ reward:
     # energy_dist_fb:     {weight: 0.0002, enabled: false}
     joint_acc_l2:       {weight: 2.5e-7, enabled: true}
     joint_torques_l2:   {weight: 1.0e-4, enabled: true}
-    # quadruped_stand:    {weight: 0.5}
+    quadruped_stand:    {weight: 0.5}
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.01, enabled: true}
     action_rate2_l2:    {weight: 0.005, enabled: true}
-    feet_air_time:      {weight: 2.0, enabled: true, body_names: .*_foot, thres: 0.3}
+    feet_air_time:      {weight: 0.2, enabled: true, body_names: .*_foot, thres: 0.3}
     # feet_swing_height:  {weight: 1.0, enabled: true, target_height: 0.1}
     feet_slip:          {weight: 1.0, enabled: true, body_names: .*_foot}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
@@ -151,9 +160,8 @@ randomization:
     F[L,R]_thigh_joint: [-0.05, 0.05]
     R[L,R]_thigh_joint: [-0.05, 0.05]
     .*calf_joint: [-0.05, 0.05]
-  stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.1, 0.4]}
-  random_pull: 
-    force_xy_range: [-40., 40.]
-    force_z_range:  [-10., 30.]
-    prob: 0.005
-    duration: [0.5, 1.5]
+  # stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.1, 0.4]}
+  # spring_grf:
+  #   feet_names: .*_foot
+  #   kp_range: [200, 300]
+  #   thres_range: [0.15, 0.25]

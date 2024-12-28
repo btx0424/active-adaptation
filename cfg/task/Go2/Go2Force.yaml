@@ -74,7 +74,7 @@ observation:
     # joint_vel:    {noise_std: 0.2}
     gravity_multistep:  {steps: 4, noise_std: 0.05}
     joint_pos_multistep: {steps: 8, noise_std: 0.05, diff: false}
-    joint_vel_multistep: {steps: 8, noise_std: 0.4, diff: false}
+    joint_vel_multistep: {steps: 8, noise_std: 0.2, diff: false}
     prev_actions: {steps: 3}
   priv:
     command_hidden:
