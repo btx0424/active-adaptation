@@ -38,7 +38,7 @@ command:
   constant_force_duration_range: [1, 4]
   impulse_force_momentum_scale: [5.0, 5.0, 1.0]
   impulse_force_duration_range: [0.1, 0.4]
-  temporal_smoothing: 20
+  temporal_smoothing: 6
   force_offset_scale: [0.3, 0.2, 0.1]
   linear_kp_range: [0.5, 8.0]
   teleop: false
@@ -52,9 +52,9 @@ observation:
   policy:
     # projected_gravity_b: {noise_std: 0.05}
     # root_gyro_multistep: {steps: 4, noise_std: 0.2}
-    gravity_multistep:  {steps: 4, noise_std: 0.05}
-    joint_pos_multistep: {steps: 8, noise_std: 0.05, diff: false}
-    joint_vel_multistep: {steps: 8, noise_std: 0.2, diff: false}
+    gravity_multistep:  {steps: 3, noise_std: 0.05}
+    joint_pos_multistep: {steps: 3, noise_std: 0.05, diff: false}
+    joint_vel_multistep: {steps: 3, noise_std: 0.2, diff: false}
     prev_actions: {steps: 3}
   priv:
     command_hidden:
@@ -133,23 +133,23 @@ randomization:
   motor_params:
     actuator_name: base_legs
     stiffness_range:  
-      F[L,R]_hip_joint:   [0.9, 1.1]
-      F[L,R]_thigh_joint: [0.9, 1.1]
-      F[L,R]_calf_joint:  [0.9, 1.1]
-      R[L,R]_hip_joint:   [0.9, 1.1]
-      R[L,R]_thigh_joint: [0.9, 1.1]
-      R[L,R]_calf_joint:  [0.9, 1.1]
+      F[L,R]_hip_joint:   [0.8, 1.2]
+      F[L,R]_thigh_joint: [0.8, 1.2]
+      F[L,R]_calf_joint:  [0.8, 1.2]
+      R[L,R]_hip_joint:   [0.8, 1.2]
+      R[L,R]_thigh_joint: [0.8, 1.2]
+      R[L,R]_calf_joint:  [0.8, 1.2]
     damping_range:
-      F[L,R]_hip_joint:   [0.9, 1.1]
-      F[L,R]_thigh_joint: [0.9, 1.1]
-      F[L,R]_calf_joint:  [0.9, 1.1]
-      R[L,R]_hip_joint:   [0.9, 1.1]
-      R[L,R]_thigh_joint: [0.9, 1.1]
-      R[L,R]_calf_joint:  [0.9, 1.1]
+      F[L,R]_hip_joint:   [0.8, 1.2]
+      F[L,R]_thigh_joint: [0.8, 1.2]
+      F[L,R]_calf_joint:  [0.8, 1.2]
+      R[L,R]_hip_joint:   [0.8, 1.2]
+      R[L,R]_thigh_joint: [0.8, 1.2]
+      R[L,R]_calf_joint:  [0.8, 1.2]
     scale_factor_range:
-      .*_hip_joint:   [0.9, 1.1]
-      .*_thigh_joint: [0.9, 1.1]
-      .*_calf_joint:  [0.9, 1.1]
+      .*_hip_joint:   [0.8, 1.2]
+      .*_thigh_joint: [0.8, 1.2]
+      .*_calf_joint:  [0.8, 1.2]
     armature_range:
       .*: [0.0, 0.02]
   reset_joint_states_scale:

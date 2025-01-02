@@ -55,7 +55,7 @@ command:
   constant_force_duration_range: [1, 4]
   impulse_force_momentum_scale: [5.0, 5.0, 1.0]
   impulse_force_duration_range: [0.1, 0.4]
-  temporal_smoothing: 20
+  temporal_smoothing: 6
   force_offset_scale: [0.3, 0.2, 0.1]
   linear_kp_range: [0.5, 8.0]
   teleop: false
@@ -65,23 +65,23 @@ command:
 observation:
   command_:
     command:
-    oscillator:
+    oscillator: {history: false}
   policy:
     # _max_delay_: 0.5
     # root_angvel_b: {noise_std: 0.2}
     # projected_gravity_b: {noise_std: 0.05}
     # joint_pos:    {noise_std: 0.05, subtract_offset: true}
     # joint_vel:    {noise_std: 0.2}
-    gravity_multistep:  {steps: 4, noise_std: 0.05}
-    joint_pos_multistep: {steps: 8, noise_std: 0.05, diff: false}
-    joint_vel_multistep: {steps: 8, noise_std: 0.2, diff: false}
+    gravity_multistep:  {steps: 3, noise_std: 0.05}
+    joint_pos_multistep: {steps: 3, noise_std: 0.05, diff: false}
+    joint_vel_multistep: {steps: 3, noise_std: 0.2, diff: false}
     prev_actions: {steps: 3}
   priv:
     command_hidden:
     applied_action:
     projected_gravity_b: {noise_std: 0.00}
-    joint_pos_multistep: {steps: 4, noise_std: 0.00, diff: true}
-    joint_vel_multistep: {steps: 4, noise_std: 0.00, diff: true}
+    joint_pos_multistep: {steps: 3, noise_std: 0.00, diff: false}
+    joint_vel_multistep: {steps: 3, noise_std: 0.00, diff: false}
     root_linvel_b:    {yaw_only: true}
     root_angvel_b:
     root_linacc_b:
@@ -200,7 +200,7 @@ randomization:
     R[L,R]_thigh_joint: [-0.05, 0.05]
     .*calf_joint: [-0.05, 0.05]
   # stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.1, 0.4]}
-  spring_grf:
-    feet_names: .*_foot
-    kp_range: [200, 300]
-    thres_range: [0.1, 0.2]
+  # spring_grf:
+  #   feet_names: .*_foot
+  #   kp_range: [200, 300]
+  #   thres_range: [0.1, 0.2]

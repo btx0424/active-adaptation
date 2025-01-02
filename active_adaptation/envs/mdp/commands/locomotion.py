@@ -896,10 +896,18 @@ class Impedance(Command):
         desired_acc_w = desired_acc_w * self.xy
         desired_acc_w = clamp_along(desired_acc_w, x_b, -self.max_acc_xyz[0], self.max_acc_xyz[0])
         desired_acc_w = clamp_along(desired_acc_w, y_b, -self.max_acc_xyz[1], self.max_acc_xyz[1])
+
+        acc_low_mask = torch.norm(desired_acc_w, dim=-1) < 0.8
+        desired_acc_w[acc_low_mask] = 0.0
+
         self.desired_lin_acc_w[:] = desired_acc_w
         desired_vel_w = self.desired_lin_vel_w + self.desired_lin_acc_w * dt
         desired_vel_w = clamp_along(desired_vel_w, x_b, -self.max_vel_xyz[0], self.max_vel_xyz[0])
         desired_vel_w = clamp_along(desired_vel_w, y_b, -self.max_vel_xyz[1], self.max_vel_xyz[1])  
+        
+        vel_low_mask = (torch.norm(desired_vel_w, dim=-1) < 0.8) & acc_low_mask
+        desired_vel_w[vel_low_mask] = 0.0
+        
         self.desired_lin_vel_w[:] = desired_vel_w
         self.desired_pos_w.add_(self.desired_lin_vel_w * dt)
 
@@ -1020,6 +1028,8 @@ class Impedance(Command):
         self.command_hidden[:, 3:6] = self.command_linvel
         self.command_hidden[:, 6] = self.command_angvel
         self.command_hidden[:, 7:8] = command_yaw_diff
+        
+        # print(self.command)
 
         if self.teleop:
             for key, vec in self.key_mappings_pos.items():

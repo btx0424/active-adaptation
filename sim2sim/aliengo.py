@@ -74,9 +74,51 @@ class FixedCommandForce(CommandManager):
         self.command[9] = self.virtual_mass
 
 
+class Oscillator:
+    def __init__(self, use_history: bool = False):
+        self.use_history = use_history
+        self.phi = np.zeros(4)
+        self.phi[0] = np.pi
+        self.phi[3] = np.pi
+        self.phi_dot = np.zeros(4)
+        self.phi_history = np.zeros((4, 4))
+
+    def update_phis(self, command, dt=0.02):
+        omega = np.pi * 4
+        move = True
+        if move:
+            dphi = self._trot(self.phi) + omega
+        else:
+            dphi = self._stand(self.phi)
+        self.phi_dot[:] = dphi
+        self.phi = (self.phi + self.phi_dot * dt) % (2 * np.pi)
+        self.phi_history = np.roll(self.phi_history, 1, axis=0)
+        self.phi_history[0] = self.phi
+
+    def _trot(self, phi: np.ndarray):
+        dphi = np.zeros(4)
+        dphi[0] = phi[3] - phi[0]
+        dphi[1] = (phi[2] - phi[1]) + ((phi[0] + np.pi - phi[1]) % (2 * np.pi))
+        dphi[2] = (phi[1] - phi[2]) + ((phi[0] + np.pi - phi[2]) % (2 * np.pi))
+        dphi[3] = phi[0] - phi[3]
+        return dphi
+
+    def _stand(self, phi: np.ndarray, target=np.pi * 3 / 2):
+        return 2.0 * ((target - phi) % (2 * np.pi))
+
+    def get_osc(self):
+        phi_sin = np.sin(self.phi)
+        phi_cos = np.cos(self.phi)
+        osc = np.concatenate([phi_sin, phi_cos, self.phi_dot], axis=-1)
+        return osc
+
+
 class MJCRobot:
 
     smoothing: int = 2
+    jpos_steps = 3
+    jvel_steps = 3
+    gravity_steps = 3
 
     def __init__(self, xml_path, command_manager: CommandManager, headless=False):
         self.model = mujoco.MjModel.from_xml_path(xml_path)
@@ -118,6 +160,10 @@ class MJCRobot:
         
         self.qpos_default = np.zeros(self.action_dim)
 
+        self.jpos_multistep = np.zeros((self.jpos_steps, self.action_dim))
+        self.jvel_multistep = np.zeros((self.jvel_steps, self.action_dim))
+        self.gravity_multistep = np.zeros((self.gravity_steps, 3))
+
         if DEBUG:
             self.kp = np.ones(self.action_dim) * 50
             self.kp[[2, 3]] = 30
@@ -134,6 +180,9 @@ class MJCRobot:
             # self.kp[[-1, -2, -7, -8]] = 20
             # self.kd[[-1, -2, -7, -8]] = 0.6
 
+        self.oscillator = Oscillator()
+        self.command = np.zeros(22, dtype=np.float32)
+
         mujoco.mj_step(self.model, self.data)
 
     def reset(self):
@@ -149,11 +198,31 @@ class MJCRobot:
         self.qvel = np.mean(self.qvel_buf, axis=1)
         
         self.command_manager.update()
+        self.oscillator.update_phis(self.command_manager.command)
+        self.update_command()
         
         # angvel = self.data.sensor("angular-velocity").data
         # self.angvel_buf = np.roll(self.angvel_buf, 1, axis=1)
         # self.angvel_buf[:, 0] = angvel
         # self.angvel = np.mean(self.angvel_buf, axis=1)
+
+        # 更新多步 jpos, jvel
+        self.jpos_multistep = np.roll(self.jpos_multistep, 1, axis=0)
+        self.jpos_multistep[0] = self.qpos
+        self.jvel_multistep = np.roll(self.jvel_multistep, 1, axis=0)
+        self.jvel_multistep[0] = self.qvel
+
+        # 更新多步 gravity
+        quat = self.data.sensor("orientation").data[[1, 2, 3, 0]]
+        rot = R.from_quat(quat)
+        gravity_vec = rot.inv().apply([0, 0, -1.0])
+        self.gravity_multistep = np.roll(self.gravity_multistep, 1, axis=0)
+        self.gravity_multistep[0] = gravity_vec
+
+    def update_command(self):
+        # 真实部署里前10维是基础力指令，后12维为振荡器数据
+        self.command[:10] = self.command_manager.command
+        self.command[10:22] = self.oscillator.get_osc()
 
     def step(self, action=None):
         if action is not None:
@@ -188,16 +257,12 @@ class MJCRobot:
         return self.compute_obs()
     
     def compute_obs(self):
-        quat = self.data.sensor("orientation").data[[1, 2, 3, 0]]
-        rot = R.from_quat(quat)
-        gravity_vec = rot.inv().apply([0, 0, -1.])
-
+        # 用多步数据替代单步 gravity_vec、qpos、qvel
         obs = [
-            self.command_manager.command,
-            # self.angvel,
-            gravity_vec,
-            self.qpos[mjc2isaac],
-            self.qvel[mjc2isaac],
+            self.command,
+            self.gravity_multistep.reshape(-1),
+            self.jpos_multistep.reshape(-1),
+            self.jvel_multistep.reshape(-1),
             self.action_buf.flatten(),
         ]
         return np.concatenate(obs, dtype=np.float32)
