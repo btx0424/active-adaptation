@@ -538,7 +538,7 @@ class tracking_yaw(Reward):
 
     def compute(self):
         yaw_diff = self.command_manager.ref_yaw - self.asset.data.heading_w.unsqueeze(1)
-        return torch.exp(-yaw_diff.abs())
+        return torch.exp(- yaw_diff.square())
 
 
 class angvel_z_exp_shaped(Reward):
