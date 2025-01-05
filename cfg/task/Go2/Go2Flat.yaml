@@ -112,7 +112,7 @@ reward:
     action_rate_l2:     {weight: 0.01, enabled: true}
     action_rate2_l2:    {weight: 0.005, enabled: true}
     feet_air_time:      {weight: 0.2, enabled: true, body_names: .*_foot, thres: 0.4}
-    feet_slip:          {weight: 1.0, enabled: true, body_names: .*_foot}
+    feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
     undesired_contact:  {body_names: [.*_calf, .*thigh, Head.*], weight: 0.25, enabled: true}
     feet_swing_height:  {weight: 0.1, enabled: false, target_height: 0.1}

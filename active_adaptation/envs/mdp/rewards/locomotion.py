@@ -530,6 +530,29 @@ class angvel_z_exp(Reward):
             )
 
 
+class tracking_lin_vel(Reward):
+    def __init__(self, env, weight, enabled = True, clip_range=(-torch.inf, +torch.inf)):
+        super().__init__(env, weight, enabled, clip_range)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.command_manager = self.env.command_manager
+        self.decay = torch.tensor([0.0, 0.5, 0.8], device=self.device)
+        self.lin_vel_w = torch.zeros(self.num_envs, 3, len(self.decay), device=self.device)
+        self.cnt = torch.zeros(self.num_envs, 1, 3, device=self.device)
+
+    def reset(self, env_ids):
+        self.lin_vel_w[env_ids] = 0.0
+        self.cnt[env_ids] = 0.0
+        
+    def update(self):
+        self.lin_vel_w.mul_(self.decay).add_(self.asset.data.root_lin_vel_w.unsqueeze(-1))
+        self.cnt.mul_(self.decay).add_(1.0)
+    
+    def compute(self):
+        command_linvel = self.command_manager.command_linvel_w[:, :2].unsqueeze(-1)
+        error = (command_linvel - (self.lin_vel_w[:, :2] / self.cnt)).square().sum(1)
+        return torch.exp(- error.min(dim=1, keepdim=True).values.square() / 0.25)
+
+
 class tracking_yaw(Reward):
     def __init__(self, env, weight, enabled = True, clip_range=(-torch.inf, +torch.inf)):
         super().__init__(env, weight, enabled, clip_range)
