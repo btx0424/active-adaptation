@@ -23,6 +23,12 @@ MJC_JOINT_ORDER = [
     'RR_hip_joint', 'RR_thigh_joint', 'RR_calf_joint'
 ]
 
+ISAAC_JOINT_ORDER = [
+    'FL_hip_joint', 'FR_hip_joint', 'RL_hip_joint', 'RR_hip_joint', 
+    'FL_thigh_joint', 'FR_thigh_joint', 'RL_thigh_joint', 'RR_thigh_joint', 
+    'FL_calf_joint', 'FR_calf_joint', 'RL_calf_joint', 'RR_calf_joint'
+]
+
 RANGES = [
     [-1.0472, 1.0472], [-1.5708, 3.4907], [-2.7227, -0.],
     [-1.0472, 1.0472], [-1.5708, 3.4907], [-2.7227, -0.],
@@ -193,6 +199,10 @@ if __name__ == '__main__':
         jorder = np.array(MJC_JOINT_ORDER).reshape(4, 3)
     elif args.jorder == "sdk":
         jorder = np.array(SDK_JOINT_ORDER).reshape(4, 3)
+    elif args.jorder == "isaac":
+        jorder = np.array(ISAAC_JOINT_ORDER).reshape(3, 4)
+    else:
+        raise ValueError
     
     jrange = np.array(RANGES).reshape(4, 3, 2)
 
