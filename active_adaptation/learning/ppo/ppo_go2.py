@@ -54,7 +54,7 @@ class PPOConfig:
     num_minibatches: int = 8
     lr: float = 5e-4
     clip_param: float = 0.2
-    entropy_coef: float = 0.004
+    entropy_coef: float = 0.006
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
@@ -70,7 +70,12 @@ class MixedEncoder(nn.Module):
     def __init__(self, ):
         super().__init__()
         self.mlp_encoder = make_mlp([256])
-        self.cnn_encoder = nn.Sequential(make_conv([8, 8, 8], flatten=True), nn.LazyLinear(32))
+        self.cnn_encoder = nn.Sequential(
+            make_conv([8, 8, 8], flatten=True),
+            nn.LazyLinear(32),
+            nn.LayerNorm(32),
+            nn.Mish(),
+        )
 
     def forward(self, mlp_inp, cnn_inp):
         mlp_feature = self.mlp_encoder(mlp_inp)

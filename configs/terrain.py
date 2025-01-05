@@ -51,29 +51,6 @@ class HfRandomGridTerrainCfg(HfTerrainBaseCfg):
     """The minimum and maximum height of the grid cells (in m)."""
 
 
-FLAT = TerrainGeneratorCfg(
-    seed=0,
-    size=(8.0, 8.0),
-    border_width=65.0,
-    num_rows=10,
-    num_cols=10,
-    horizontal_scale=0.1,
-    vertical_scale=0.005,
-    slope_threshold=0.75,
-    use_cache=False,
-    sub_terrains={
-        "flat": MeshPlaneTerrainCfg(
-            proportion=0.5,
-        ),
-        "random_rough_easy": HfRandomUniformTerrainCfg(
-            proportion=0.5,
-            noise_range=(0.0, 0.06),
-            noise_step=0.02,
-            border_width=0.5
-        ),
-    },
-)
-
 ORCA_LOCO = TerrainGeneratorCfg(
     seed=0,
     size=(8.0, 8.0),
@@ -114,7 +91,7 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
     seed=0,
     size=(8.0, 8.0),
     border_width=65.0,
-    num_rows=10,
+    num_rows=20,
     num_cols=20,
     horizontal_scale=0.1,
     vertical_scale=0.005,
@@ -122,20 +99,20 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
     use_cache=False,
     sub_terrains={
         "flat": MeshPlaneTerrainCfg(
-            proportion=0.10,
+            proportion=0.20,
         ),
-        "random_rough_easy": HfRandomUniformTerrainCfg(
-            proportion=0.15,
-            noise_range=(0.0, 0.06),
-            noise_step=0.02,
-            border_width=0.5
-        ),
-        "boxes": MeshRandomGridTerrainCfg(
-            proportion=0.15,
-            grid_width=0.45, 
-            grid_height_range=(0.02, 0.05), 
-            platform_width=2.0
-        ),
+        # "random_rough_easy": HfRandomUniformTerrainCfg(
+        #     proportion=0.15,
+        #     noise_range=(0.0, 0.06),
+        #     noise_step=0.02,
+        #     border_width=0.5
+        # ),
+        # "boxes": MeshRandomGridTerrainCfg(
+        #     proportion=0.15,
+        #     grid_width=0.45, 
+        #     grid_height_range=(0.02, 0.05), 
+        #     platform_width=2.0
+        # ),
         # "box": MeshRepeatedBoxesTerrainCfg(
         #     proportion=0.20,
         #     object_params_start=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
@@ -160,18 +137,18 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
             border_width=1.0,
             holes=False,
         ),
-        "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
-            proportion=0.1,
-            slope_range=(0.15, 0.25),
-            platform_width=1.0,
-            border_width=0.25
-        ),
-        "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
-            proportion=0.1,
-            slope_range=(0.15, 0.25),
-            platform_width=1.0,
-            border_width=0.25
-        ),
+        # "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
+        #     proportion=0.1,
+        #     slope_range=(0.15, 0.25),
+        #     platform_width=1.0,
+        #     border_width=0.25
+        # ),
+        # "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
+        #     proportion=0.1,
+        #     slope_range=(0.15, 0.25),
+        #     platform_width=1.0,
+        #     border_width=0.25
+        # ),
     },
 )
 
@@ -447,22 +424,7 @@ DIC = TerrainGeneratorCfg(
     },
 )
 
-
-TERRAINS = {
-    "medium": ROUGH_MEDIUM,
-    "easy": ROUGH_EASY,
-    "hard": ROUGH_HARD,
-    "flat": FLAT,
-    "stairs": STAIRS,
-    "snc": SLOPES_AND_CURBS,
-    "stairs_test": STAIRS_TEST,
-    "stairs_easy": STAIRS_EASY,
-    "slopes_boxes": SLOPES_AND_BOXES,
-    "dic": DIC,
-    "orca_loco": ORCA_LOCO
-}
-
-FLAT_TERRAIN_CFG = TerrainImporterCfg(
+PLANE_TERRAIN_CFG = TerrainImporterCfg(
     prim_path="/World/ground",
     terrain_type="plane",
     physics_material = sim_utils.RigidBodyMaterialCfg(
@@ -470,11 +432,12 @@ FLAT_TERRAIN_CFG = TerrainImporterCfg(
         restitution_combine_mode="multiply",
         static_friction=1.0,
         dynamic_friction=1.0,
+        restitution=1.0,
         improve_patch_friction=True
     ),
 )
 
-ROUGH_TERRAIN_CFG = TerrainImporterCfg(
+ROUGH_TERRAIN_BASE_CFG = TerrainImporterCfg(
     prim_path="/World/ground",
     terrain_type="generator",
     terrain_generator=MISSING,
@@ -492,3 +455,40 @@ ROUGH_TERRAIN_CFG = TerrainImporterCfg(
     # ),
     debug_vis=False,
 )
+
+
+TRACK_TERRAIN_CFG = TerrainImporterCfg(
+    prim_path="/World/ground",
+    terrain_type="usd",
+    collision_group=-1,
+    physics_material=sim_utils.RigidBodyMaterialCfg(
+        friction_combine_mode="multiply",
+        restitution_combine_mode="multiply",
+        static_friction=1.0,
+        dynamic_friction=1.0,
+        # restitution=1.0,
+    ),
+    usd_path="/home/btx0424/track.usd",
+)
+TRACK_TERRAIN_CFG.origins = [
+    [11.0, -3., 0.],
+    [11.0, -1., 0.],
+    [11.0, 1., 0.],
+    [11.0, 3., 0.],
+]
+
+
+TERRAINS = {
+    "medium": ROUGH_TERRAIN_BASE_CFG.replace(terrain_generator=ROUGH_MEDIUM),
+    "easy": ROUGH_TERRAIN_BASE_CFG.replace(terrain_generator=ROUGH_EASY),
+    "hard": ROUGH_TERRAIN_BASE_CFG.replace(terrain_generator=ROUGH_HARD),
+    "plane": PLANE_TERRAIN_CFG,
+    "stairs": ROUGH_TERRAIN_BASE_CFG.replace(terrain_generator=STAIRS),
+    "stairs_test": ROUGH_TERRAIN_BASE_CFG.replace(terrain_generator=STAIRS_TEST),
+    "stairs_easy": ROUGH_TERRAIN_BASE_CFG.replace(terrain_generator=STAIRS_EASY),
+    "dic": DIC,
+    "orca_loco": ORCA_LOCO,
+    "track": TRACK_TERRAIN_CFG
+}
+
+

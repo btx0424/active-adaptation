@@ -8,12 +8,15 @@ from omni.isaac.lab.actuators import DCMotorCfg, ImplicitActuatorCfg, ImplicitAc
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.utils.math import quat_rotate_inverse
 from omni.isaac.lab.sensors import ContactSensor
-from active_adaptation.envs.base import EnvBase
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from active_adaptation.envs.base import EnvBase
 
 
 class Quadruped(Articulation):
 
-    _env: EnvBase
+    _env: "EnvBase"
 
     def _create_buffers(self):
         super()._create_buffers()

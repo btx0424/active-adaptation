@@ -492,7 +492,7 @@ class angvel_z_exp(Reward):
         self.asset: Articulation = self.env.scene["robot"]
         self.world_frame = world_frame
         self.gamma = gamma
-        self.target_angvel: torch.Tensor = self.env.command_manager.command_angvel
+        self.target_angvel: torch.Tensor = self.env.command_manager.command_angvel.reshape(self.num_envs)
         self.count = torch.zeros(self.num_envs, 1, device=self.device)
         self.angvel_sum = torch.zeros(self.num_envs, 3, device=self.device)
         if body_name is not None:
@@ -528,6 +528,17 @@ class angvel_z_exp(Reward):
             self.env.debug_draw.vector(
                 self.asset.data.root_pos_w, fwd, color=(1.0, 0.0, 0.0, 1.0), size=2.0
             )
+
+
+class tracking_yaw(Reward):
+    def __init__(self, env, weight, enabled = True, clip_range=(-torch.inf, +torch.inf)):
+        super().__init__(env, weight, enabled, clip_range)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.command_manager = self.env.command_manager
+
+    def compute(self):
+        yaw_diff = self.command_manager.ref_yaw - self.asset.data.heading_w.unsqueeze(1)
+        return torch.exp(-yaw_diff.abs())
 
 
 class angvel_z_exp_shaped(Reward):
