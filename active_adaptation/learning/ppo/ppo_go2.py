@@ -54,7 +54,7 @@ class PPOConfig:
     num_minibatches: int = 8
     lr: float = 5e-4
     clip_param: float = 0.2
-    entropy_coef: float = 0.006
+    entropy_coef: float = 0.008
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
@@ -111,14 +111,19 @@ class PPOPolicy(TensorDictModuleBase):
         self.value_norm = value_norm_cls(input_shape=1).to(self.device)
 
         fake_input = observation_spec.zero()
-        self.vecnorm = VecNorm([OBS_KEY, OBS_PRIV_KEY]).to(self.device)
+        self.vecnorm = VecNorm(
+            in_keys=[OBS_KEY, OBS_PRIV_KEY, "height_scan"],
+            shapes=[fake_input[OBS_KEY].shape[-1],
+                    fake_input[OBS_PRIV_KEY].shape[-1],
+                    fake_input["height_scan"].shape[-2:]]
+        ).to(self.device)
         self.vecnorm(fake_input)
         
         _actor = nn.Sequential(make_mlp([256, 128]), Actor(self.action_dim))
         actor_module = TensorDictSequential(
             CatTensors([CMD_KEY, OBS_KEY, OBS_PRIV_KEY], "mlp_inp", sort=False),
-            TensorDictModule(MixedEncoder(), ["mlp_inp", "height_scan"], ["_actor_feature"]),
-            TensorDictModule(_actor, ["_actor_feature"], ["loc", "scale"])
+            TensorDictModule(MixedEncoder(), ["mlp_inp", "height_scan"], ["actor_feature"]),
+            TensorDictModule(_actor, ["actor_feature"], ["loc", "scale"])
         )
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=actor_module,
@@ -150,6 +155,9 @@ class PPOPolicy(TensorDictModuleBase):
             if isinstance(module, nn.Linear):
                 nn.init.orthogonal_(module.weight, 0.01)
                 nn.init.constant_(module.bias, 0.)
+            # if isinstance(module, nn.Conv2d):
+            #     nn.init.orthogonal_(module.weight, 0.01)
+            #     nn.init.constant_(module.bias, 0.)
         
         self.actor.apply(init_)
         self.critic.apply(init_)
@@ -166,6 +174,10 @@ class PPOPolicy(TensorDictModuleBase):
     def train_op(self, tensordict: TensorDict):
         tensordict = tensordict.copy()
         infos = []
+        mix_feature = tensordict["actor_feature"]
+        mlp_feature, cnn_feature = mix_feature.split([256, 32], dim=-1)
+        cnn_ratio = (cnn_feature.mean(-1, True) / mix_feature.mean(-1, True))
+
         self._compute_advantage(tensordict, self.critic, "adv", "ret", update_value_norm=True)
         tensordict["adv"] = normalize(tensordict["adv"], subtract_mean=True)
 
@@ -174,11 +186,14 @@ class PPOPolicy(TensorDictModuleBase):
             for minibatch in batch:
                 infos.append(TensorDict(self._update(minibatch), []))
         
-        infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
+        infos = {k: v.mean().item() for k, v in torch.stack(infos).items()}
         infos["critic/value_mean"] = tensordict["ret"].mean().item()
+        infos["actor/cnn_mean"] = cnn_feature.mean().item()
+        infos["actor/mlp_mean"] = mlp_feature.mean().item()
+        infos["actor/cnn_ratio"] = cnn_ratio.mean().item()
         # infos["misc", "obs_mean"] = tensordict[OBS_KEY].mean()
         # infos["misc", "obs_std"] = tensordict[OBS_KEY].std()
-        return infos
+        return dict(sorted(infos.items()))
 
     @torch.no_grad()
     def _compute_advantage(
