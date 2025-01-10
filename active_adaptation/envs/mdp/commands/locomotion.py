@@ -822,7 +822,6 @@ class Impedance(Command):
 
             self.force_ext_w = torch.zeros(self.num_envs, 3)
             self.torque_ext_w = torch.zeros(self.num_envs, 3)
-            self.force_offset_b = torch.zeros(self.num_envs, 3)
 
             """
             Force Types:
@@ -839,17 +838,20 @@ class Impedance(Command):
             self.constant_force_scale = torch.tensor(constant_force_scale)
             self.constant_force_duration_range = constant_force_duration_range
 
-            self.force_offset_scale = torch.tensor(force_offset_scale)
-
             self.force_type_probs = torch.tensor(force_type_probs)
             self.force_type = torch.zeros(self.num_envs, 1, dtype=torch.int64)
 
             self.constant_force = torch.zeros(self.num_envs, 3)
+            self.constant_force_offset = torch.zeros(self.num_envs, 3)
             self.constant_force_duration = torch.zeros(self.num_envs, 1)
             self.constant_force_time = torch.zeros(self.num_envs, 1)
 
+            # in regular mode, constant force and impulse force are randomly applied
+            # in compliant mode, kp is zero
+            # in large force mode, a large spring force is applied and other forces are disabled
+            # the three modes are exclusive
             self.large_force_mode = torch.zeros(self.num_envs, 1, dtype=bool)
-            self.large_force_prob = 0.4
+            self.large_force_prob = 0.0
             self.compliant = torch.zeros(self.num_envs, 1, dtype=bool)
             self.max_output_force_range = (80., 120.)
             self.max_output_force = torch.zeros(self.num_envs, 1)
@@ -865,12 +867,10 @@ class Impedance(Command):
             self.spring_end_mass = torch.zeros(self.num_envs, 1)
             self.spring_end_vel = torch.zeros(self.num_envs, 1)
 
-            self.impulse_force_struct = torch.zeros(
-                self.num_envs, 3 + 1 + 1
-            )  # force, duration, time
-            self.impulse_force_duration = self.impulse_force_struct[:, -2].unsqueeze(1)
-            self.impulse_force_duration.fill_(0.1)  # non-zero placeholder
-            self.impulse_force_time = self.impulse_force_struct[:, -1].unsqueeze(1)
+            self.impulse_force = torch.zeros(self.num_envs, 3)
+            self.impulse_force_peak = torch.zeros(self.num_envs, 1)
+            self.impulse_force_duration = torch.zeros(self.num_envs, 1)
+            self.impulse_force_time = torch.zeros(self.num_envs, 1)
 
             self._cum_error = torch.zeros(self.num_envs, 3)
 
@@ -918,13 +918,17 @@ class Impedance(Command):
         self.spring_force_duration[env_ids] = -1.
 
     def step(self, substep: int):
-        forces_b = self.asset._external_force_b.clone()
+        forces_b = self.asset._external_force_b
         forces_b[:, 0] += quat_rotate_inverse(
             self.asset.data.root_quat_w, self.force_ext_w
         )
-        torques_b = self.asset._external_torque_b.clone()
-        torques_b[:, 0] += self.force_offset_b.cross(forces_b[:, 0], dim=-1)
-        self.asset.set_external_force_and_torque(forces_b, torques_b)
+        torques_b = self.asset._external_torque_b
+        torques_b[:, 0] += torch.cross(
+            self.constant_force_offset,
+            quat_rotate_inverse(self.asset.data.root_quat_w, self.constant_force),
+            dim=-1
+        )
+        self.asset.has_external_wrench = True
 
     def _integrate(self, dt: float):
         desired_acc_w = (
@@ -954,10 +958,11 @@ class Impedance(Command):
         self.desired_lin_vel_w[:] = desired_vel_w
         self.desired_pos_w.add_(self.desired_lin_vel_w * dt)
 
-        force_offset_w = yaw_rotate(
-            self.desired_yaw_w, self.force_offset_b.unsqueeze(1)
+        torque = torch.cross(
+            yaw_rotate(self.desired_yaw_w,self.constant_force_offset.unsqueeze(1)),
+            self.constant_force.unsqueeze(1),
+            dim=-1
         )
-        torque = torch.cross(force_offset_w, self.force_ext_w.unsqueeze(1), dim=-1)
 
         yaw_diff = self.command_setrpy_w[:, 2:3].unsqueeze(1) - self.desired_yaw_w
         desired_yaw_acc_w = (
@@ -993,17 +998,6 @@ class Impedance(Command):
         self.desired_pos_w[:, 0] = self.asset.data.root_pos_w
         self.desired_yaw_vel_w[:, 0] = self.asset.data.root_ang_vel_w[:, 2:3]
         self.desired_yaw_w[:, 0] = self.asset.data.heading_w.unsqueeze(1)
-
-        impulse_force_t = (self.impulse_force_time / self.impulse_force_duration).clamp(
-            0.0, 1.0
-        )
-        impulse_force = torch.where(
-            impulse_force_t < 0.5,
-            impulse_force_t * self.impulse_force_struct[:, 0:3] * 2,
-            (1 - impulse_force_t) * self.impulse_force_struct[:, 0:3] * 2,
-        )
-
-        self.force_ext_w[:] = self.constant_force + impulse_force + self.spring_force
 
         # for _ in range(self.decimation):
         #     self._integrate(self.env.physics_dt)
@@ -1118,6 +1112,12 @@ class Impedance(Command):
             0.,
             self.constant_force_time + self.env.step_dt
         )
+        offset = torch.rand(self.num_envs, 3, device=self.device) * 2 - 1
+        self.constant_force_offset = torch.where(
+            sample,
+            offset * torch.tensor([0.2, 0.1, 0.1], device=self.device),
+            self.constant_force_offset
+        )
         self.constant_force *= (self.constant_force_time < self.constant_force_duration)
 
         expire = self.spring_force_time > self.spring_force_duration - 1e-4
@@ -1167,6 +1167,41 @@ class Impedance(Command):
             + self.spring_force_kd * (0. - self.asset.data.root_lin_vel_w)    
         ) * (self.spring_force_time < self.spring_force_duration)
         self.spring_force = clamp_norm(self.spring_force, max=self.spring_force_max)
+
+        expire = self.impulse_force_time > self.impulse_force_duration
+        sample = (torch.rand(self.num_envs, 1, device=self.device) < 0.01) & expire & ~self.large_force_mode
+        
+        self.impulse_force_time = torch.where(
+            sample,
+            0.,
+            self.impulse_force_time + self.env.step_dt
+        )
+        self.impulse_force_duration = torch.where(
+            sample,
+            scalar.uniform_(0.16, 0.24),
+            self.impulse_force_duration
+        )
+        force = torch.zeros(self.num_envs, 3, device=self.device)
+        force[:, 0].uniform_(80., 160.)
+        force[:, 1].uniform_(80., 160.)
+        force[:, 2].uniform_(0., 20.)
+        force *= (torch.rand(self.num_envs, 3, device=self.device) - 0.5).sign()
+
+        self.impulse_force_peak = torch.where(
+            sample,
+            force,
+            self.impulse_force_peak
+        )
+        t = (self.impulse_force_time / self.impulse_force_duration).clamp(0., 1.)
+        self.impulse_force = torch.where(
+            t < 0.5,
+            t * self.impulse_force_peak * 2,
+            (1 - t) * self.impulse_force_peak * 2
+        )
+        self.force_ext_w[:] = (
+            (self.constant_force + self.impulse_force) * (~self.large_force_mode) 
+            + self.spring_force
+        )
 
     def _sample_command(self, env_ids: torch.Tensor):
         scalar = torch.empty(len(env_ids), 1, device=self.device)
@@ -1254,12 +1289,12 @@ class Impedance(Command):
             self.command_setpos_w - self.asset.data.root_pos_w,
             color=(1.0, 0.0, 0.0, 1.0),
         )
-        self.env.debug_draw.vector(
-            self.asset.data.root_pos_w,
-            self.spring_force_setpoint - self.asset.data.root_pos_w,
-            color=(1.0, 0.0, 1.0, 1.0),
-            size=4.0
-        )
+        # self.env.debug_draw.vector(
+        #     self.asset.data.root_pos_w,
+        #     self.spring_force_setpoint - self.asset.data.root_pos_w,
+        #     color=(1.0, 0.0, 1.0, 1.0),
+        #     size=4.0
+        # )
         # draw desired pos (green)
         self.env.debug_draw.point(
             self.desired_pos_w[:, -1], color=(0.0, 1.0, 0.0, 1.0), size=40.0
@@ -1271,11 +1306,16 @@ class Impedance(Command):
 
         # draw external forces (orange)
         self.env.debug_draw.vector(
-            self.asset.data.root_pos_w
-            + yaw_rotate(self.asset.data.heading_w.unsqueeze(1), self.force_offset_b),
-            self.force_ext_w / (self.virtual_mass * 9.81),
+            self.asset.data.root_pos_w + quat_rotate(self.asset.data.root_quat_w, self.constant_force_offset),
+            self.constant_force / (self.virtual_mass * 9.81),
             color=(1.0, 0.5, 0.0, 1.0),
-            size=2.0,
+            size=3.0,
+        )
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            self.impulse_force / (self.virtual_mass * 9.81),
+            color=(1.0, 0.6, 0.0, 1.0),
+            size=3.0,
         )
         ext_pred = self.env.input_tensordict.get("ext_rec", None)
         if ext_pred is not None:
