@@ -1070,12 +1070,14 @@ class base_height_l1(Reward):
             self.scale = self.scale.to(self.device)
         else:
             self.scale = torch.tensor(1.0, device=self.device)
+        self.feet_ids = self.asset.find_bodies(".*_foot")[0]
 
     def compute(self) -> torch.Tensor:
         target_height = self.target_height * self.scale
-        # height = (self.asset.data.feet_height - self.asset.data.feet_pos_b[:, :, 2]).max(1, keepdim=True)[0]
-        height = self.asset.data.root_pos_w[:, 2].unsqueeze(1)
-        return height.clamp(max=target_height)
+        ref_height = (self.asset.data.body_pos_w[:, self.feet_ids, 2] - self.asset.data.feet_height).min(dim=1).values
+        height = self.asset.data.root_pos_w[:, 2] - ref_height
+        # height = self.asset.data.root_pos_w[:, 2].unsqueeze(1)
+        return height.clamp(max=target_height).reshape(self.num_envs, 1)
 
 
 class quadruped_stand_always(Reward):
@@ -1552,6 +1554,9 @@ class oscillator(Reward):
         self.gravity = self.mass * 9.81
 
         self.phi: torch.Tensor = self.asset.phi
+        self.phi_dot: torch.Tensor = self.asset.phi_dot
+        self.phi[:, 0] = torch.pi
+        self.phi[:, 3] = torch.pi
         self.grf_substep = torch.zeros(
             self.num_envs,
             self.env.cfg.decimation,
@@ -1585,11 +1590,11 @@ class oscillator(Reward):
         ) > 0.1
         phi_dot = torch.where(
             inp | self.keep_steping,
-            self.omega + self.trot(self.phi),
+            self.omega, # + self.trot(self.phi),
             self.stand(self.phi),
         )
-        self.asset.phi_dot[:] = phi_dot
-        self.asset.phi[:] = (self.phi + phi_dot * self.env.step_dt) % (2 * torch.pi)
+        self.asset.phi_dot[:] = self.omega
+        self.asset.phi[:] = (self.phi + self.asset.phi_dot * self.env.step_dt) % (2 * torch.pi)
 
     def compute(self):
         phi_sin = self.phi.sin()
