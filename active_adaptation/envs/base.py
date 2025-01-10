@@ -255,10 +255,15 @@ class Env(EnvBase):
         self.clip_rewards = self.cfg.reward.pop("_clip_", True)
         self.mult_dt = self.cfg.reward.pop("_mult_dt_", True)
 
+        self._stats_ema = {}
+        self._stats_ema_decay = 0.99
+
         self.reward_groups = OrderedDict()
         for group_name, func_specs in self.cfg.reward.items():
             print(f"Reward group: {group_name}")
             funcs = OrderedDict()
+            self._stats_ema[group_name] = {}
+
             for key, params in func_specs.items():
                 reward: mdp.Reward = REW_FUNCS[key](self, **params)
                 funcs[key] = reward
@@ -269,6 +274,8 @@ class Env(EnvBase):
                 self._pre_step_callbacks.append(reward.step)
                 self._post_step_callbacks.append(reward.post_step)
                 print(f"\t{key}: \t{reward.weight:.2f}, \t{reward.enabled}")
+                self._stats_ema[group_name][key] = (torch.tensor(0., device=self.device), torch.tensor(0., device=self.device))
+
             self.reward_groups[group_name] = RewardGroup(self, group_name, funcs)
             reward_spec["stats", group_name, "return"] = UnboundedContinuous(1, device=self.device)
             reward_spec["stats", group_name, "reward_clip_ratio"] = UnboundedContinuous(1, device=self.device)
@@ -324,6 +331,15 @@ class Env(EnvBase):
     @property
     def physics_dt(self) -> float:
         return self.sim.get_physics_dt()
+
+    @property
+    def stats_ema(self):
+        result = {}
+        for group_key, group in self._stats_ema.items():
+            result[group_key] = {}
+            for rew_key, (sum, cnt) in group.items():
+                result[group_key][rew_key] = (sum / cnt).item()
+        return result
     
     def _reset(self, tensordict: TensorDictBase, **kwargs) -> TensorDictBase:
         if tensordict is not None:
@@ -541,9 +557,15 @@ class RewardGroup:
         rewards = []
         for key, func in self.funcs.items():
             reward = func()
+            
             self.env.stats[self.name, key].add_(reward)
+            sum, cnt = self.env._stats_ema[self.name][key]
+            sum.mul_(self.env._stats_ema_decay).add_(reward.sum())
+            cnt.mul_(self.env._stats_ema_decay).add_(reward.shape[0])
+
             if func.enabled:
                 rewards.append(reward)
-        self.rew_buf[:] = torch.cat(rewards, 1)
+        if len(rewards):
+            self.rew_buf[:] = torch.cat(rewards, 1)
         return self.rew_buf.sum(1, True)
 

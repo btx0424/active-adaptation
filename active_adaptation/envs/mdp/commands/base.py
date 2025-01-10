@@ -47,6 +47,14 @@ class Command:
                 lambda event, *args, obj=weakref.proxy(self): obj._on_keyboard_event(event, *args),
             )
             self.key_pressed = defaultdict(lambda: False)
+        
+        terrain_type = self.env.scene.terrain.cfg.terrain_type
+        if terrain_type == "plane":
+            pass
+        elif terrain_type == "usd":
+            self._origins = torch.tensor(self.env.scene.terrain.cfg.origins, device=self.device)
+        elif terrain_type == "generator":
+            self._origins = self.env.scene.env_origins.clone()
 
     @property
     def num_envs(self):
@@ -73,11 +81,8 @@ class Command:
         if self.env.scene.terrain.cfg.terrain_type == "plane":
             origins = self.env.scene.env_origins[env_ids]
         else:
-            origins = self.env.scene.env_origins[
-                torch.randint(
-                    0, self.env.scene.num_envs, (len(env_ids),), device=self.device
-                )
-            ]
+            idx = torch.randint(0, self.env.num_envs, (len(env_ids),), device=self.device)
+            origins = self._origins[idx % len(self._origins)]
         init_root_state[:, :3] += origins
         init_root_state[:, 3:7] = quat_mul(
             init_root_state[:, 3:7],
