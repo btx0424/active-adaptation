@@ -15,8 +15,8 @@ observation:
 
 reward:
   loco:
-    linvel_exp:         {weight: 1.5, enabled: false, dim: 2, yaw_only: true}
-    angvel_z_exp:       {weight: 0.75, enabled: false}
-    tracking_lin_vel:   {weight: 1.5, enabled: true}
-    tracking_yaw:   {weight: 1.0, enabled: true}
+    linvel_exp:         {weight: 1.5, enabled: true, dim: 2, yaw_only: true}
+    angvel_z_exp:       {weight: 0.75, enabled: true}
+  reg:
+    angvel_xy_l2:       {weight: 0.01, enabled: true}
     feet_air_time:      {weight: 0.2, enabled: true, body_names: .*_foot, thres: 0.4}

@@ -254,7 +254,7 @@ class PPODICPolicy(TensorDictModuleBase):
         
         self.encoder_priv = Seq(
             Mod(nn.Sequential(make_mlp([128]), nn.LazyLinear(128)), [OBS_PRIV_KEY], ["priv_feature"]),
-            Mod(nn.Sequential(make_mlp([32]), nn.LazyLinear(32)), ["ext"], ["_ext_feature"]),
+            Mod(nn.Sequential(make_mlp([32]), nn.LazyLinear(32)), ["ext"], ["ext_feature"]),
         ).to(self.device)
 
         if self.cfg.short_history > 0:
@@ -268,7 +268,7 @@ class PPODICPolicy(TensorDictModuleBase):
             ["priv_pred", "ext_pred", ("info", "ext_rec"), ("next", "adapt_hx")]
         ).to(self.device)
         
-        in_keys = ["command_", OBS_KEY, "priv_feature", "_ext_feature"]
+        in_keys = ["command_", OBS_KEY, "priv_feature", "ext_feature"]
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=Seq(
                 CatTensors(in_keys, "_actor_inp", del_keys=False, sort=False),
@@ -386,10 +386,10 @@ class PPODICPolicy(TensorDictModuleBase):
         # self.dynamics.apply(init_)
         self.retro.apply(init_)
 
-        self.symmetry = nn.Sequential(make_mlp([256, 256]), nn.LazyLinear(1)).to(self.device)
-        self.symmetry(fake_input["symmetry"])
-        self.symmetry.apply(init_)
-        self.opt_symmetry = torch.optim.Adam(self.symmetry.parameters(), lr=5e-4)
+        # self.symmetry = nn.Sequential(make_mlp([256, 256]), nn.LazyLinear(1)).to(self.device)
+        # self.symmetry(fake_input["symmetry"])
+        # self.symmetry.apply(init_)
+        # self.opt_symmetry = torch.optim.Adam(self.symmetry.parameters(), lr=5e-4)
         
         self.num_updates = 0
     
@@ -404,8 +404,13 @@ class PPODICPolicy(TensorDictModuleBase):
     def get_rollout_policy(self, mode: str="train"):
         modules = []
         
+        def mask(x):
+            return torch.zeros_like(x)
+        
         if self.cfg.phase == "train":
             modules.append(self.encoder_priv)
+            # modules.append(Mod(mask, ["ext_feature"], ["ext_feature"]))
+            # modules.append(Mod(mask, ["priv_feature"], ["priv_feature"]))
             modules.append(self.actor)
             modules.append(self.adapt_module)
         elif self.cfg.phase == "adapt":
@@ -458,6 +463,11 @@ class PPODICPolicy(TensorDictModuleBase):
         policy_inference = self.policy_train_inference if self.cfg.phase == "train" else self.policy_adapt_inference
         opt = self.opt if self.cfg.phase == "train" else self.opt_finetune
 
+        with torch.no_grad():
+            both = self.actor.get_dist(tensordict).mean
+            wo_ext = self.actor.get_dist(tensordict.replace(ext_feature=torch.zeros_like(tensordict["ext_feature"]))).mean
+            wo_priv = self.actor.get_dist(tensordict.replace(priv_feature=torch.zeros_like(tensordict["priv_feature"]))).mean
+            
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches)
             for minibatch in batch:
@@ -470,6 +480,8 @@ class PPODICPolicy(TensorDictModuleBase):
         else:
             infos["actor/feature_std"] = tensordict["priv_pred"].std(dim=(0, 1)).mean().item()
         infos["critic/value_mean"] = tensordict["ret"].mean().item()
+        infos["actor/diff_ext"] = F.l1_loss(both, wo_ext).item()
+        infos["actor/diff_priv"] = F.l1_loss(both, wo_priv).item()
         return infos
     
     @set_recurrent_mode(True)
@@ -484,7 +496,7 @@ class PPODICPolicy(TensorDictModuleBase):
                 self.adapt_module(minibatch)
                 priv_loss = self.adapt_loss_fn(minibatch["priv_pred"], minibatch["priv_feature"])
                 priv_loss = (priv_loss * (~minibatch["is_init"])).mean()
-                ext_loss = self.adapt_loss_fn(minibatch["ext_pred"], minibatch["_ext_feature"])
+                ext_loss = self.adapt_loss_fn(minibatch["ext_pred"], minibatch["ext_feature"])
                 ext_loss = (ext_loss * (~minibatch["is_init"])).mean()
                 if self.ext_rec_lambda > 0:
                     ext_rec_error = self.rec_loss(minibatch["info", "ext_rec"], minibatch["ext_"])

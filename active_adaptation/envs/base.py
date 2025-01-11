@@ -355,8 +355,8 @@ class Env(EnvBase):
             callback(env_ids)
 
         tensordict = TensorDict({}, self.num_envs, device=self.device)
-        # tensordict.update(self.observation_spec.zero())
-        self._compute_observation(tensordict)
+        tensordict.update(self.observation_spec.zero())
+        # self._compute_observation(tensordict)
         
         if self.record_now and env_mask[self.lookat_env_i]:
             if self.complete_video_frames is None:

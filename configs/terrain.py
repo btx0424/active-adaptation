@@ -137,18 +137,18 @@ ROUGH_MEDIUM = TerrainGeneratorCfg(
             border_width=1.0,
             holes=False,
         ),
-        # "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
-        #     proportion=0.1,
-        #     slope_range=(0.15, 0.25),
-        #     platform_width=1.0,
-        #     border_width=0.25
-        # ),
-        # "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
-        #     proportion=0.1,
-        #     slope_range=(0.15, 0.25),
-        #     platform_width=1.0,
-        #     border_width=0.25
-        # ),
+        "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
+            proportion=0.1,
+            slope_range=(0.15, 0.25),
+            platform_width=1.0,
+            border_width=0.25
+        ),
+        "hf_pyramid_slope": HfPyramidSlopedTerrainCfg(
+            proportion=0.1,
+            slope_range=(0.15, 0.25),
+            platform_width=1.0,
+            border_width=0.25
+        ),
     },
 )
 
