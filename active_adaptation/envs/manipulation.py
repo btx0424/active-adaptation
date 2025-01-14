@@ -39,8 +39,8 @@ class QuadrupedManip(LocomotionEnv):
     
     def __init__(self, cfg):
         super().__init__(cfg)
-        self.base_legs_indices = self.robot.actuators["base_legs"].joint_indices
-        self.arm_indices = self.robot.actuators["arm"].joint_indices
+        # self.base_legs_indices = self.robot.actuators["base_legs"].joint_indices
+        # self.arm_indices = self.robot.actuators["arm"].joint_indices
         self.door = self.scene.articulations.get("door", None)
 
     class joint_acc_l2(Reward):

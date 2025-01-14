@@ -14,7 +14,7 @@ from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from active_adaptation.assets import Quadruped
 from omni.isaac.lab.terrains.trimesh.utils import make_plane
-from omni.isaac.lab.utils.math import convert_quat, quat_apply, quat_apply_yaw, yaw_quat
+from omni.isaac.lab.utils.math import convert_quat, quat_apply, quat_apply_yaw, yaw_quat, quat_mul, quat_inv
 from omni.isaac.lab.utils.warp import convert_to_warp_mesh, raycast_mesh
 from omni.isaac.lab.utils.string import resolve_matching_names
 from pxr import UsdGeom, UsdPhysics
@@ -272,6 +272,30 @@ class body_pos(CartesianObs):
     def compute(self):
         return self.body_pos_b.reshape(self.num_envs, -1)
 
+class body_quat(CartesianObs):
+    def __init__(
+        self,
+        env,
+        body_names: str,
+        left_bodies: str=None,
+        right_bodies: str=None,
+        yaw_only: bool=False
+    ):
+        super().__init__(env, body_names, left_bodies, right_bodies)
+        self.yaw_only = yaw_only
+        print(f"Track body quat for {self.body_names}")
+        self.body_quat_b = torch.zeros(self.env.num_envs, len(self.body_indices), 4, device=self.env.device)
+
+    def update(self):
+        if self.yaw_only:
+            quat = yaw_quat(self.asset.data.root_quat_w).unsqueeze(1)
+        else:
+            quat = self.asset.data.root_quat_w.unsqueeze(1)
+        body_quat_w = self.asset.data.body_pos_w[:, self.body_indices]
+        self.body_quat_b[:] = quat_mul(quat_inv(quat), body_quat_w)
+        
+    def compute(self):
+        return self.body_quat_b.reshape(self.num_envs, -1)
 
 class body_vel(CartesianObs):
     def __init__(
@@ -624,7 +648,7 @@ class joint_pos(JointObs):
         self.noise_std = noise_std
         self.subtract_offset = subtract_offset
         self.offset = self.asset.data.default_joint_pos[:, self.joint_ids]
-        shape = (self.num_envs, 2, self.asset.num_joints)
+        shape = (self.num_envs, 2, len(self.joint_names))
         self.joint_pos = torch.zeros(shape, device=self.device)
     
     def post_step(self, substep):

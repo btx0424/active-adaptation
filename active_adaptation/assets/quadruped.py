@@ -80,6 +80,10 @@ class QuadrupedManipulator(Articulation):
     def _create_buffers(self):
         super()._create_buffers()
 
+        # oscillators
+        self.phi = torch.zeros(self.num_instances, 4, device=self.device)
+        self.phi_dot = torch.zeros(self.num_instances, 4, device=self.device)
+
         self.ee_body_id = self.find_bodies(self.cfg.ee_body_name)[0][0]
         self.ee_pos_w = self.data.body_pos_w[:, self.ee_body_id].clone()
         self.ee_pos_b = torch.zeros_like(self.ee_pos_w)
@@ -225,13 +229,16 @@ UNITREE_GO2ARX_CFG.actuators["arm"] = DCMotorCfg(
 # UNITREE_GO2ABP_CFG.init_state.joint_pos["joint3"] = 0.3
 UNITREE_ALIENGO_CFG = copy.deepcopy(UNITREE_GO2_CFG)
 UNITREE_ALIENGO_CFG.spawn.usd_path = f"{ASSET_PATH}/Aliengo/aliengo.usd"
-UNITREE_ALIENGO_CFG.init_state.pos = (0.0, 0.0, 0.35)
+UNITREE_ALIENGO_CFG.init_state.pos = (0.0, 0.0, 0.30)
 UNITREE_ALIENGO_CFG.init_state.joint_pos = {
-    ".*L_hip_joint": 0.1,
-    ".*R_hip_joint": -0.1,
-    ".*thigh_joint": 0.8,
-    ".*calf_joint": -1.5,
+    ".*L_hip_joint": 0.3,
+    ".*R_hip_joint": -0.3,
+    "F.*_thigh_joint": 1.0,
+    "R.*_thigh_joint": 1.1,
+    "F.*_calf_joint": -2.0,
+    "R.*_calf_joint": -2.1,
 }
+
 UNITREE_ALIENGO_CFG.actuators["base_legs"] = ImplicitActuatorCfg(
     joint_names_expr=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
     effort_limit={
@@ -247,20 +254,46 @@ UNITREE_ALIENGO_CFG.actuators["base_legs"] = ImplicitActuatorCfg(
 )
 
 UNITREE_ALIENGO_A1_CFG = copy.deepcopy(UNITREE_ALIENGO_CFG)
+UNITREE_ALIENGO_A1_CFG.init_state.joint_pos = {
+    ".*L_hip_joint": 0.3,
+    ".*R_hip_joint": -0.3,
+    "F.*_thigh_joint": 1.0,
+    "R.*_thigh_joint": 1.1,
+    "F.*_calf_joint": -2.0,
+    "R.*_calf_joint": -2.1,
+    "arm_joint1": 0.0,
+    "arm_joint2": 0.6,
+    "arm_joint3": -0.6,
+    "arm_joint4": 0.0,
+    "arm_joint5": 0.0,
+    "arm_joint6": 0.0,
+}
+
 UNITREE_ALIENGO_A1_CFG.class_type = QuadrupedManipulator
 UNITREE_ALIENGO_A1_CFG.ee_body_name = "arm_link6"
 UNITREE_ALIENGO_A1_CFG.spawn.usd_path = f"{ASSET_PATH}/Aliengo/aliengo_a1.usd"
-UNITREE_ALIENGO_A1_CFG.actuators["arm"] = ImplicitActuatorCfg(
-    joint_names_expr=["arm_joint[1-6]"],
-    effort_limit=200.0,
-    velocity_limit=5.0,
+UNITREE_ALIENGO_A1_CFG.actuators.pop("base_legs")
+UNITREE_ALIENGO_A1_CFG.actuators["base_arm"] = ImplicitActuatorCfg(
+    joint_names_expr=["arm_joint[1-6]", ".*_(hip|thigh|calf)_joint"],
+    effort_limit={
+        "arm_joint[1-6]": 200.0,
+        ".*_(hip|thigh)_joint": 44.0,
+        ".*_(calf)_joint": 55.0,
+    },
+    velocity_limit={
+        "arm_joint[1-6]": 5.0,
+        ".*_(hip|thigh)_joint": 30.0,
+        ".*_(calf)_joint": 30.0,
+    },
     stiffness={
         "arm_joint[1-3]": 40.0,
         "arm_joint[4-6]": 30.0,
+        ".*_(hip|thigh|calf)_joint": 80.0,
     },
     damping={
         "arm_joint[1-3]": 2.0,
         "arm_joint[4-6]": 1.0,
+        ".*_(hip|thigh|calf)_joint": 2.0,
     },
     friction=0.001,
 )

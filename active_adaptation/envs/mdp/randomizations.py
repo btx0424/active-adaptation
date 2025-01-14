@@ -147,6 +147,28 @@ class motor_params(Randomization):
             self.asset.write_joint_stiffness_to_sim(stiffness, self.actuator.joint_indices, env_ids)
             self.asset.write_joint_damping_to_sim(damping, self.actuator.joint_indices, env_ids)
 
+# class motor_params_implicit(Randomization):
+#     def __init__(self, env, actuator_name: str, stiffness_range: NestedRangeType = (1.0, 1.0), damping_range: NestedRangeType = (1.0, 1.0), scale_factor_range: NestedRangeType = (1.0, 1.0), armature_range: NestedRangeType = (0.0, 0.0)):
+#         super().__init__(env)
+#         self.asset: Articulation = self.env.scene["robot"]
+#         self.actuator: ImplicitActuator = self.asset.actuators[actuator_name]
+#         self.joint_ids, self.joint_names = self.asset.find_joints(self.actuator.joint_names)
+#         self.joint_ids = torch.as_tensor(self.joint_ids, device=self.device)
+
+#         from omegaconf import ListConfig
+#         def parse(range: NestedRangeType, default: torch.Tensor):
+#             if isinstance(range, (tuple, list, ListConfig)):
+#                 range = {".*": range}
+#             result = {}
+#             for key, value in range.items():
+#                 ids, names = string_utils.resolve_matching_names(key, self.joint_names)
+#                 result[key] = (ids, names, value, default[ids])
+#             return result
+        
+#         self.stiffness_range    = parse(stiffness_range, self.actuator.stiffness[0])
+#         self.damping_range      = parse(damping_range, self.actuator.damping[0])
+#         self.scale_factor_range = parse(scale_factor_range, torch.ones(len(self.joint_ids), device=self.device))
+#         self.armature_range     = parse(armature_range, torch.zeros(len(self.joint_ids), device=self.device))
 
 class random_motor_failure(Randomization):
     def __init__(
