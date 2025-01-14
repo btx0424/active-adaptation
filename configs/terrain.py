@@ -448,6 +448,7 @@ ROUGH_TERRAIN_BASE_CFG = TerrainImporterCfg(
         restitution_combine_mode="multiply",
         static_friction=1.0,
         dynamic_friction=1.0,
+        restitution=1.0,
     ),
     # visual_material=sim_utils.MdlFileCfg(
     #     mdl_path="{NVIDIA_NUCLEUS_DIR}/Materials/Base/Architecture/Shingles_01.mdl",

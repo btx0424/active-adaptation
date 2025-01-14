@@ -738,14 +738,16 @@ class Impedance(Command):
         env,
         virtual_mass_range=(0.5, 1.0),
         compliant_ratio: float = 0.2,
-        force_type_probs=(0.4, 0.3, 0.3),
         linear_kp_range=(2.0, 12.0),
+        angular_kp_range=(2.0, 12.0),
         impulse_force_momentum_scale=(5.0, 5.0, 1.0),
         impulse_force_duration_range=(0.1, 0.5),
+        
         constant_force_scale=(50, 50, 10),
         constant_force_duration_range=(1, 4),
+        force_offset_scale=(0.0, 0.0, 0.0),
+
         temporal_smoothing: int = 5,
-        force_offset_scale=(0.3, 0.2, 0.1),
         max_acc_xy: float = (8.0, 4.0),
         max_vel_xy: float = (1.6, 1.0),
         teleop: bool = False,
@@ -756,7 +758,7 @@ class Impedance(Command):
         self.resample_prob = 0.01
         self.compliant_ratio = compliant_ratio  # kp=0 for compliant mode
         self.linear_kp_range = linear_kp_range
-        self.angular_kp_range = linear_kp_range
+        self.angular_kp_range = angular_kp_range
         self.temporal_smoothing = temporal_smoothing
 
         self.max_acc_xyz = max_acc_xy + (0.,)
@@ -838,20 +840,18 @@ class Impedance(Command):
             self.constant_force_scale = torch.tensor(constant_force_scale)
             self.constant_force_duration_range = constant_force_duration_range
 
-            self.force_type_probs = torch.tensor(force_type_probs)
-            self.force_type = torch.zeros(self.num_envs, 1, dtype=torch.int64)
-
             self.constant_force = torch.zeros(self.num_envs, 3)
             self.constant_force_offset = torch.zeros(self.num_envs, 3)
             self.constant_force_duration = torch.zeros(self.num_envs, 1)
             self.constant_force_time = torch.zeros(self.num_envs, 1)
+            self.constant_force_offset_scale = torch.tensor(force_offset_scale)
 
             # in regular mode, constant force and impulse force are randomly applied
             # in compliant mode, kp is zero
             # in large force mode, a large spring force is applied and other forces are disabled
             # the three modes are exclusive
             self.large_force_mode = torch.zeros(self.num_envs, 1, dtype=bool)
-            self.large_force_prob = 0.0
+            self.large_force_prob = 0.1
             self.compliant = torch.zeros(self.num_envs, 1, dtype=bool)
             self.max_output_force_range = (80., 120.)
             self.max_output_force = torch.zeros(self.num_envs, 1)
@@ -916,6 +916,7 @@ class Impedance(Command):
         self.desired_yaw_vel_w[env_ids] = 0.0
 
         self.spring_force_duration[env_ids] = -1.
+        self.spring_end_mass[env_ids] = 250.
 
     def step(self, substep: int):
         forces_b = self.asset._external_force_b
@@ -1115,7 +1116,7 @@ class Impedance(Command):
         offset = torch.rand(self.num_envs, 3, device=self.device) * 2 - 1
         self.constant_force_offset = torch.where(
             sample,
-            offset * torch.tensor([0.2, 0.1, 0.1], device=self.device),
+            offset * self.constant_force_offset_scale,
             self.constant_force_offset
         )
         self.constant_force *= (self.constant_force_time < self.constant_force_duration)
@@ -1126,7 +1127,11 @@ class Impedance(Command):
         offset = torch.zeros(self.num_envs, 3, device=self.device)
         offset[:, 0] = -0.5
         offset[:, 2].uniform_(-0.15, 0.15)
-        self.spring_end_mass[:] = 250
+        self.spring_end_mass = torch.where(
+            sample,
+            torch.randint(1, 4, (self.num_envs, 1), device=self.device) * 250.,
+            self.spring_end_mass
+        )
         self.spring_end_vel = torch.where(
             sample,
             0.,
@@ -1307,7 +1312,7 @@ class Impedance(Command):
         # draw external forces (orange)
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w + quat_rotate(self.asset.data.root_quat_w, self.constant_force_offset),
-            self.constant_force / (self.virtual_mass * 9.81),
+            self.spring_force / (self.virtual_mass * 9.81),
             color=(1.0, 0.5, 0.0, 1.0),
             size=3.0,
         )
