@@ -278,7 +278,7 @@ def evaluate(
         frames.clear()
         video_path = os.path.join(os.path.dirname(__file__), f"recording-{time_str}.mp4")
         write_video(
-            video_path, video_array=video_array, fps=1 / env.step_dt, video_codec="h264"
+            video_path, video_array=video_array, fps=int(1 / env.step_dt), video_codec="h264"
         )
 
     info["episode_cnt"] = episode_cnt
