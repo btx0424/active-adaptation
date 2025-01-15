@@ -12,42 +12,18 @@ import datetime
 
 from omegaconf import OmegaConf, DictConfig
 from collections import OrderedDict
-from tqdm import tqdm
 from setproctitle import setproctitle
 
 from omni.isaac.lab.app import AppLauncher
-# from omni_drones.utils.wandb import init_wandb
-from active_adaptation.utils.torchrl import SyncDataCollector
+import active_adaptation.learning
+from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker, StepCounter
 
 # local import
-from scripts.helpers import make_env_policy, EpisodeStats, evaluate
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
-
-
-def log_video(env, it, render_interval, render_decimation):
-    if it == 0 or it - env.last_recording_it >= render_interval:
-        env.start_recording(render_decimation)
-        env.last_recording_it = it
-
-    frames = env.get_complete_frames()
-    if len(frames) > 0:
-        env.pause_recording()
-        video_array = np.stack(frames, axis=0).transpose(0, 3, 1, 2)
-        video_tensor = torch.from_numpy(video_array)
-
-        run_dir = wandb.run.dir
-        video_path = os.path.join(run_dir, f"video_{it}.mp4")
-        torchvision.io.write_video(
-            video_path,
-            video_tensor.permute(0, 2, 3, 1),  # Change to (T, H, W, C) format
-            fps=1 / env.step_dt / env.render_decimation
-        )
-        
-        wandb.log({"video": wandb.Video(video_path)}, step=it)
 
 FILE_PATH = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(FILE_PATH, "..", "cfg")
@@ -56,7 +32,6 @@ CONFIG_PATH = os.path.join(FILE_PATH, "..", "cfg")
 def main(cfg: DictConfig):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
-    cfg.vecnorm = None
     
     app_launcher = AppLauncher(OmegaConf.to_container(cfg.app))
     simulation_app = app_launcher.app
@@ -80,63 +55,38 @@ def main(cfg: DictConfig):
     run.save(cfg_save_path, policy="now")
     run.save(os.path.join(run.dir, "config.yaml"), policy="now")
 
-    env, policy, vecnorm = make_env_policy(cfg)
+    from active_adaptation.envs import TASKS
+    from configs.rough import LocomotionEnvCfg
 
-    import inspect
-    import shutil
-    source_path = inspect.getfile(policy.__class__)
-    target_path = os.path.join(run.dir, source_path.split("/")[-1])
-    shutil.copy(source_path, target_path)
-    wandb.save(target_path, policy="now")
+    env_cfg = LocomotionEnvCfg(cfg.task)
+    base_env = TASKS[cfg.task.task](env_cfg)
+    transform = Compose(InitTracker(), StepCounter())
+    env = TransformedEnv(base_env, transform)
+    env.set_seed(cfg.seed)
 
-    frames_per_batch = env.num_envs * cfg.algo.train_every
-    total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
-    total_iters = total_frames // frames_per_batch
-    eval_interval = cfg.get("eval_interval", -1)
-    render_interval = cfg.get("render_interval", -1)
-    render_decimation = cfg.get("render_decimation", 1)
-    save_interval = cfg.get("save_interval", -1)
+    policy_cls = hydra.utils.get_class(cfg.algo._target_)
+    policy = policy_cls(
+        cfg.algo,
+        env.observation_spec, 
+        env.action_spec, 
+        env.reward_spec,
+        device=base_env.device
+    )
+    if cfg.checkpoint_path is not None:
+        state_dict = torch.load(cfg.checkpoint_path)
+        policy.load_state_dict(state_dict)
+
+    policy.learn(env, cfg)
+    
+    wandb.finish()
+    base_env.close()
+    simulation_app.close()
+    return
 
     log_interval = (env.max_episode_length // cfg.algo.train_every) + 1
     logging.info(f"Log interval: {log_interval} steps")
 
-    stats_keys = [
-        k for k in env.reward_spec.keys(True, True) 
-        if isinstance(k, tuple) and k[0] == "stats"
-    ]
-    episode_stats = EpisodeStats(stats_keys)
 
-    rollout_policy = policy.get_rollout_policy("train")
-    compile_policy = cfg.get("compile", False)
-    assert compile_policy in (True, False, "auto")
-    if compile_policy or compile_policy == "auto":
-        fake_td = env.fake_tensordict()
-        rollout_policy_compiled = torch.compile(rollout_policy)
-        for _ in range(16): 
-            rollout_policy_compiled(fake_td)
-    if compile_policy == "auto":
-        @torch.inference_mode()
-        def _timeit(policy):
-            start = time.perf_counter()
-            for _ in range(128): 
-                policy(fake_td)
-            return (time.perf_counter() - start) / 128
-        inference_time = _timeit(rollout_policy)
-        inference_time_compiled = _timeit(rollout_policy_compiled)
-        print(f"Inference time: {inference_time:.4f} -> {inference_time_compiled:.4f}")
-        if inference_time_compiled < inference_time:
-            rollout_policy = rollout_policy_compiled
-            print("Using compiled policy")
-
-    collector = SyncDataCollector(
-        env,
-        policy=rollout_policy,
-        frames_per_batch=frames_per_batch,
-        total_frames=total_frames,
-        device=cfg.sim.device,
-        return_same_td=True,
-    )
-    
     def save(policy, checkpoint_name: str, artifact: bool=False):
         ckpt_path = os.path.join(run.dir, f"{checkpoint_name}.pt")
         state_dict = OrderedDict()
@@ -156,11 +106,6 @@ def main(cfg: DictConfig):
             run.log_artifact(artifact)
         run.save(ckpt_path, policy="now", base_path=run.dir)
         logging.info(f"Saved checkpoint to {str(ckpt_path)}")
-
-    pbar = tqdm(collector, total=total_iters)
-    
-    for i, data in enumerate(pbar):
-        start = time.perf_counter()
         
         info = {}
 
@@ -183,9 +128,6 @@ def main(cfg: DictConfig):
         if save_interval > 0  and i % save_interval == 0:
             save(policy, f"checkpoint_{i}")
 
-        if render_interval > 0:
-            log_video(env, i, render_interval, render_decimation)
-
         run.log(info)
 
         print()
@@ -198,11 +140,8 @@ def main(cfg: DictConfig):
     info["env_frames"] = collector._frames
     run.log(info)
 
-    wandb.finish()
     exit(0)
     
-    base_env.close()
-    simulation_app.close()
     exit(0)
 
 
