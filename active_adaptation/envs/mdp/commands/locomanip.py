@@ -1340,6 +1340,8 @@ class BaseEEImpedance(Command):
 
         # misc
         temporal_smoothing: int = 8,
+        use_internal_force: bool = True,
+        use_internal_torque: bool = True,
 
         # force randomization
         force_type_probs = (0.4, 0.6, 0.0),
@@ -1376,10 +1378,12 @@ class BaseEEImpedance(Command):
         self.compliant_ee_ratio = compliant_ee_ratio
 
         self.resample_force_prob = 0.005
+        self.resample_force_prob = 0.00
         self.resample_command_interval = 300
         self.no_command_steps = 20
-        self.decimation = int(self.env.step_dt / self.env.physics_dt)
         self.temporal_smoothing = temporal_smoothing
+        self.use_internal_force = use_internal_force
+        self.use_internal_torque = use_internal_torque
 
         from active_adaptation.assets.quadruped import QuadrupedManipulator
 
@@ -1673,7 +1677,6 @@ class BaseEEImpedance(Command):
         coriolis_vel_ee_w[:, 2] = 0.0
 
         self.pos_ee_b[:] = yaw_rotate(-self.asset.data.heading_w[:, None], pos_ee_w)
-        print(self.pos_ee_b)
         self.linvel_ee_b[:] = yaw_rotate(
             -self.asset.data.heading_w[:, None],
             self.asset.data.body_lin_vel_w[:, self.ee_body_id] - coriolis_vel_ee_w,
@@ -1729,7 +1732,7 @@ class BaseEEImpedance(Command):
 
         desired_linacc_base_w = (
             self.force_spring_base_w
-            - self.force_spring_ee_w
+            - (self.force_spring_ee_w if self.use_internal_force else 0.0)
             + self.force_ext_base_w.unsqueeze(1)
         ) / self.virtual_mass_base.unsqueeze(1)
         desired_linacc_base_w[:, :, 2] = 0.0
@@ -1773,7 +1776,7 @@ class BaseEEImpedance(Command):
 
         desired_yaw_acc_w = (
             self.torque_spring_yaw_w
-            + torque_int_z
+            + (torque_int_z if self.use_internal_torque else 0.0)
             + torque_ext_z
         ) / self.virtual_inertia_z.unsqueeze(1)
         desired_yaw_acc_w[desired_yaw_acc_w.abs() < 0.5] = 0.0
@@ -1851,6 +1854,8 @@ class BaseEEImpedance(Command):
         self.command[:, 15:16] = self.virtual_mass_base
         self.command[:, 16:17] = self.virtual_inertia_z
         self.command[:, 17:18] = self.virtual_mass_ee
+
+        # print("base setpoint diff", self.command_setpoint_pos_base_diff_b[:2, :2])
 
         self.command_hidden[:, 0:2] = self.command_pos_base_diff_b[:, :2]
         self.command_hidden[:, 2:3] = self.command_yaw_diff
@@ -2234,8 +2239,8 @@ class BaseEEImpedance(Command):
 
     def debug_draw(self):
         self._debug_draw_ee()
-        # self._debug_draw_base()
-        # self._debug_draw_yaw()
+        self._debug_draw_base()
+        self._debug_draw_yaw()
         self._debug_draw_forces()
 
 

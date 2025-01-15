@@ -82,8 +82,8 @@ observation:
   policy:
     # root_angvel_b: {noise_std: 0.05}
     projected_gravity_b: {noise_std: 0.05}
-    joint_pos:    {noise_std: 0.02}
-    joint_vel:    {noise_std: 0.05}
+    joint_pos_multistep:    {noise_std: 0.02, steps: 3}
+    joint_vel_multistep:    {noise_std: 0.05, steps: 3}
     # joint_pos:    {noise_std: 0.02, joint_names: ["(F|R)(L|R)_(hip|thigh|calf)_joint", "arm_joint[1-5]"]}
     # joint_vel:    {noise_std: 0.05, joint_names: ["(F|R)(L|R)_(hip|thigh|calf)_joint", "arm_joint[1-5]"]}
     prev_actions: {steps: 3}
