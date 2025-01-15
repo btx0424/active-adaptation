@@ -174,12 +174,13 @@ randomization:
     dynamic_friction_range: [0.6, 2.0]
     restitution_range:      [0.0, 0.2]
     homogeneous: true # ${task.homogeneous}
-  # motor_params:
-  #   actuator_name: base_arm
-  #   stiffness_range:  [0.8, 1.2]
-  #   damping_range:    [0.8, 1.2]
-  #   armature_range:   [0.0, 0.02]
-  #   homogeneous: ${task.homogeneous}
+  motor_params_implicit:
+    stiffness_range:
+      .*: [0.9, 1.1]
+    damping_range:
+      .*: [0.9, 1.1]
+    armature_range:
+      .*: [0.0, 0.2]
   reset_joint_states_uniform:
     pos_ranges:
       .*_thigh_joint: [-0.2, 0.2]
