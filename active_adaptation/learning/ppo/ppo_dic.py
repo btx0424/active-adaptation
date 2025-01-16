@@ -69,6 +69,8 @@ class PPOConfig:
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
+    grad_pen: bool = True
+
     phase: str = "train"
     short_history: int = 0
     vecnorm: Union[str, None] = None
@@ -540,7 +542,7 @@ class PPODICPolicy(TensorDictModuleBase):
 
     # @torch.compile
     def _update(self, tensordict: TensorDict, policy_inference: PolicyUpdateInferenceMod, opt: torch.optim.Optimizer):
-        log_probs, entropy, grad = policy_inference(tensordict, grad_pen=False)
+        log_probs, entropy, grad = policy_inference(tensordict, grad_pen=self.cfg.grad_pen)
 
         if self.cfg.phase == "train":
             valid = (tensordict["step_count"] > 1)

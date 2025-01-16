@@ -1359,7 +1359,6 @@ class BaseEEImpedance(Command):
         super().__init__(env)
         self.base_body_id = self.asset.find_bodies("base")[0][0]
         self.ee_body_id = self.asset.find_bodies(ee_name)[0][0]
-        self.ee_base_body_id = self.asset.find_bodies(ee_base_name)[0][0]
         self.body_ids = [self.base_body_id, self.ee_body_id]
 
         self.base_setpoint_radius_range = base_setpoint_radius_range
@@ -1378,7 +1377,6 @@ class BaseEEImpedance(Command):
         self.compliant_ee_ratio = compliant_ee_ratio
 
         self.resample_force_prob = 0.005
-        self.resample_force_prob = 0.00
         self.resample_command_interval = 300
         self.no_command_steps = 20
         self.temporal_smoothing = temporal_smoothing
@@ -1419,6 +1417,8 @@ class BaseEEImpedance(Command):
 
             self.command_setpoint_pos_ee_b = torch.zeros(self.num_envs, 3)
             self.command_setpoint_pos_ee_diff_b = torch.zeros(self.num_envs, 3)
+            
+            self.root_to_arm_offset = torch.tensor([0.08, 0.0, 0.07])
 
             self.command_setpoint_yaw_w = torch.zeros(self.num_envs, 1)
             self.command_setpoint_yaw_diff = torch.zeros(self.num_envs, 1)
@@ -1555,7 +1555,7 @@ class BaseEEImpedance(Command):
             setpoint_ee_r * torch.cos(setpoint_ee_pitch) * torch.sin(setpoint_ee_yaw),
             setpoint_ee_r * torch.sin(setpoint_ee_pitch),
         ], dim=-1)
-        self.command_setpoint_pos_ee_b[env_ids] = command_setpoint_pos_ee_b
+        self.command_setpoint_pos_ee_b[env_ids] = command_setpoint_pos_ee_b + self.root_to_arm_offset
 
         command_setpoint_yaw_w = torch.empty(len(env_ids), 1, device=self.device).uniform_(-torch.pi / 2, torch.pi / 2)
         command_setpoint_yaw_w += self.asset.data.heading_w[env_ids].unsqueeze(1)
@@ -1631,8 +1631,33 @@ class BaseEEImpedance(Command):
         self.command_hidden[env_ids] = 0.0
 
         self.force_ext_base_w[env_ids] = 0.0
-        self.force_ext_ee_w[env_ids] = 0.0
         self.force_base_offset_b[env_ids] = 0.0
+        self.force_ext_ee_w[env_ids] = 0.0
+        
+        self.constant_force_duration[env_ids] = 0
+        self.constant_force_time[env_ids] = 0
+        self.impulse_force_duration[env_ids] = 0.1
+        self.impulse_force_time[env_ids] = 0.1
+        self.eef_force_duration[env_ids] = 0
+        self.eef_force_time[env_ids] = 0
+        
+
+        self.desired_pos_base_w[env_ids] = self.asset.data.root_pos_w[env_ids, None]
+        self.desired_linvel_base_w[env_ids] = self.asset.data.root_lin_vel_w[env_ids, None]
+        self.desired_linacc_base_w[env_ids] = 0.0
+        
+        self.desired_pos_ee_w[env_ids] = self.asset.data.root_pos_w[env_ids, None]
+        self.desired_linvel_ee_w[env_ids] = self.asset.data.root_lin_vel_w[env_ids, None]
+        self.desired_lin_acc_ee_w[env_ids] = 0.0
+        
+        self.desired_yaw_w[env_ids] = self.asset.data.heading_w[env_ids, None, None]
+        self.desired_angvel_w[env_ids] = 0.0
+        self.desired_yawacc_w[env_ids] = 0.0
+        
+        self.command_setpoint_pos_base_w[env_ids] = self.asset.data.root_pos_w[env_ids]
+        self.command_setpoint_pos_ee_b[env_ids] = self.root_to_arm_offset
+        self.command_setpoint_yaw_w[env_ids] = self.asset.data.heading_w[env_ids, None]
+            
 
     def step(self, substep: int):
         forces_ext_base_b = quat_rotate_inverse(
@@ -1664,19 +1689,17 @@ class BaseEEImpedance(Command):
         """update pos_ee_b and linvel_ee_b.
         
         do not call from reset as body_pos_w is not updated yet."""
-        pos_ee_w = (
-            self.asset.data.body_pos_w[:, self.ee_body_id] - self.asset.data.root_pos_w
-        )
+        pos_ee_to_root_w = self.asset.data.body_pos_w[:, self.ee_body_id] - self.asset.data.root_pos_w
         root_ang_vel_w_only_yaw = self.asset.data.root_ang_vel_w.clone()
         root_ang_vel_w_only_yaw[:, :2] = 0.0
         coriolis_vel_ee_w = self.asset.data.root_lin_vel_w + torch.cross(
             root_ang_vel_w_only_yaw,
-            pos_ee_w,
+            pos_ee_to_root_w,
             dim=-1,
         )
         coriolis_vel_ee_w[:, 2] = 0.0
 
-        self.pos_ee_b[:] = yaw_rotate(-self.asset.data.heading_w[:, None], pos_ee_w)
+        self.pos_ee_b[:] = yaw_rotate(-self.asset.data.heading_w[:, None], pos_ee_to_root_w)
         self.linvel_ee_b[:] = yaw_rotate(
             -self.asset.data.heading_w[:, None],
             self.asset.data.body_lin_vel_w[:, self.ee_body_id] - coriolis_vel_ee_w,
@@ -1748,13 +1771,11 @@ class BaseEEImpedance(Command):
         self.desired_linvel_base_w.add_(self.desired_linacc_base_w * dt)
         self.desired_pos_base_w.add_(self.desired_linvel_base_w * dt)
 
-        self.desired_lin_acc_ee_w[:] = clamp_norm(desired_lin_acc_ee_w, max=10.0)
+        self.desired_lin_acc_ee_w[:] = clamp_norm(desired_lin_acc_ee_w - desired_linacc_base_w, max=10.0) + desired_linacc_base_w
         self.desired_linvel_ee_w.add_(self.desired_lin_acc_ee_w * dt)
-        self.desired_linvel_ee_w[:] = clamp_norm(self.desired_linvel_ee_w, max=0.5)
+        self.desired_linvel_ee_w[:] = clamp_norm(self.desired_linvel_ee_w - self.desired_linvel_base_w, max=0.5) + self.desired_linvel_base_w
         self.desired_pos_ee_w.add_(self.desired_linvel_ee_w * dt)
-        desired_pos_ee_b = yaw_rotate(-self.desired_yaw_w, self.desired_pos_ee_w - self.desired_pos_base_w)
-        desired_pos_ee_b = clamp_norm(desired_pos_ee_b, max=0.9)
-        self.desired_pos_ee_w[:] = yaw_rotate(self.desired_yaw_w, desired_pos_ee_b) + self.desired_pos_base_w
+        self.desired_pos_ee_w[:] = clamp_norm(self.desired_pos_ee_w - self.desired_pos_base_w, max=0.9) + self.desired_pos_base_w
 
         kp_yaw = self.kp_yaw.unsqueeze(1)
         kd_yaw = self.kd_yaw.unsqueeze(1)

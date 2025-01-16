@@ -286,13 +286,25 @@ UNITREE_ALIENGO_A1_CFG.actuators["base_arm"] = ImplicitActuatorCfg(
         ".*_(calf)_joint": 30.0,
     },
     stiffness={
-        "arm_joint[1-3]": 40.0,
-        "arm_joint[4-6]": 30.0,
+        # "arm_joint[1-3]": 40.0,
+        # "arm_joint[4-6]": 30.0,
+
+        "arm_joint1": 40.0,
+        "arm_joint2": 47.0,
+        "arm_joint3": 42.0,
+        "arm_joint[4-6]": 18.0,
+
         ".*_(hip|thigh|calf)_joint": 80.0,
     },
     damping={
-        "arm_joint[1-3]": 2.0,
-        "arm_joint[4-6]": 1.0,
+        # "arm_joint[1-3]": 2.0,
+        # "arm_joint[4-6]": 1.0,
+
+        "arm_joint1": 1.2,
+        "arm_joint2": 1.2,
+        "arm_joint3": 1.2,
+        "arm_joint[4-6]": 0.7,
+
         ".*_(hip|thigh|calf)_joint": 2.0,
     },
     friction=0.001,

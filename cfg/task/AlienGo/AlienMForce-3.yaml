@@ -43,7 +43,7 @@ action:
 command:
   _target_: active_adaptation.envs.mdp.BaseEEImpedance
   ee_name: 'arm_link6'
-  ee_base_name: 'base'
+  ee_base_name: 'arm_base'
   base_setpoint_radius_range: [0.0, 2.0]
 
   kp_base_range: [5.0, 20.0]
@@ -61,7 +61,7 @@ command:
   continuous_walking_ratio: 0.25
 
   temporal_smoothing: 16
-  use_internal_force: true
+  use_internal_force: false
   use_internal_torque: false
 
   force_type_probs: [0.4, 0.6, 0.0]
@@ -125,7 +125,7 @@ reward:
     angvel_z_exp:       {weight: 1.0, enabled: false}
     linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
 
-    oscillator:         {weight: 1.0, enabled: true}
+    oscillator:         {weight: 0.2, enabled: true}
     # impedance pos&vel tracking
     impedance_base_pos:      {weight: 0.5, enabled: true, l: 0.1}
     impedance_base_vel:      {weight: 1.0, enabled: true, l: 0.25}
@@ -139,7 +139,7 @@ reward:
     # regularizarions
     ee_angvel_penalty:    {weight: 0.01, enabled: true, ee_name: "arm_link6"}
     angvel_xy_l2:       {weight: 0.01, enabled: true}
-    # linvel_z_l2:        {weight: 2.0, enabled: true}
+    linvel_z_l2:        {weight: 2.0, enabled: true}
     base_height_l1:     {weight: 2.0, enabled: true, target_height: 0.35}
     energy_l1:          {weight: 0.0002, enabled: true}
     energy_dist_lr:     {weight: 0.0001, enabled: false}
@@ -176,9 +176,11 @@ randomization:
     homogeneous: true # ${task.homogeneous}
   motor_params_implicit:
     stiffness_range:
-      .*: [0.9, 1.1]
+      (F|R)(L|R)_(hip|thigh|calf)_joint: [0.9, 1.1]
+      arm_joint[1-5]: [0.8, 1.2]
     damping_range:
-      .*: [0.9, 1.1]
+      (F|R)(L|R)_(hip|thigh|calf)_joint: [0.9, 1.1]
+      arm_joint[1-5]: [0.5, 2.0]
     armature_range:
       .*: [0.0, 0.2]
   reset_joint_states_uniform:
