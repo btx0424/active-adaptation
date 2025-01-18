@@ -335,8 +335,8 @@ class Command2(Command):
         self.command[:, 2] = self.command_angvel
         self.command[:, 3] = self.aux_input.squeeze(1)
         # self.command[:, :2] = torch.tensor([1.0, 0.], device=self.device)
-        self.is_standing_env[:, 0] = (self.command_linvel.norm(dim=-1) < 0.1) & (
-            self.command_angvel < 0.1
+        self.is_standing_env[:, 0] = (
+            (self.command_linvel.norm(dim=-1) < 0.1) & (self.command_angvel < 0.1)
         )
 
     def sample_vel_command(self, env_ids: torch.Tensor):
@@ -345,14 +345,20 @@ class Command2(Command):
         next_command_linvel[:, 1].uniform_(*self.linvel_y_range)
 
         speed = next_command_linvel.norm(dim=-1, keepdim=True)
-        r = torch.rand(len(env_ids), 1, device=self.device) > self.stand_prob
-        self.next_command_linvel[env_ids] = next_command_linvel * ((speed > 0.15) | r)
+        r = torch.rand(len(env_ids), 1, device=self.device) < self.stand_prob
+        valid = ~((speed < 0.10) | r)
+        self.next_command_linvel[env_ids] = next_command_linvel * valid
         self.aux_input[env_ids] = sample_uniform(
             env_ids.shape, *self.aux_input_range, self.device
         ).unsqueeze(1)
 
     def sample_yaw_command(self, env_ids: torch.Tensor):
-        self.target_yaw[env_ids] = self.target_yaw_dist.sample(env_ids.shape)
+        r = torch.rand(len(env_ids), device=self.device) < self.stand_prob
+        self.target_yaw[env_ids] = torch.where(
+            r,
+            self.asset.data.heading_w[env_ids],
+            self.target_yaw_dist.sample(env_ids.shape)
+        )
         self.yaw_stiffness[env_ids] = sample_uniform(
             env_ids.shape, *self.yaw_stiffness_range, self.device
         )
@@ -851,7 +857,7 @@ class Impedance(Command):
             # in large force mode, a large spring force is applied and other forces are disabled
             # the three modes are exclusive
             self.large_force_mode = torch.zeros(self.num_envs, 1, dtype=bool)
-            self.large_force_prob = 0.1
+            self.large_force_prob = 0.
             self.compliant = torch.zeros(self.num_envs, 1, dtype=bool)
             self.max_output_force_range = (80., 120.)
             self.max_output_force = torch.zeros(self.num_envs, 1)
@@ -1211,12 +1217,12 @@ class Impedance(Command):
     def _sample_command(self, env_ids: torch.Tensor):
         scalar = torch.empty(len(env_ids), 1, device=self.device)
         
+        expired = (self.spring_force_time[env_ids] > self.spring_force_duration[env_ids])
         large_force_mode = (
             (torch.rand(len(env_ids), 1, device=self.device) < self.large_force_prob) 
             & (self.env.episode_length_buf[env_ids].unsqueeze(1) > 20)
-            | (self.spring_force_time[env_ids] < self.spring_force_duration[env_ids])
         )
-        self.large_force_mode[env_ids] = large_force_mode
+        self.large_force_mode[env_ids] = torch.where(expired, large_force_mode, self.large_force_mode[env_ids])
         self.max_output_force[env_ids] = scalar.uniform_(*self.max_output_force_range)
 
         lin_kp = torch.where(
@@ -1312,7 +1318,7 @@ class Impedance(Command):
         # draw external forces (orange)
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w + quat_rotate(self.asset.data.root_quat_w, self.constant_force_offset),
-            self.spring_force / (self.virtual_mass * 9.81),
+            self.constant_force / (self.virtual_mass * 9.81),
             color=(1.0, 0.5, 0.0, 1.0),
             size=3.0,
         )

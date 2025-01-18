@@ -1143,10 +1143,8 @@ class quadruped_stand(Reward):
         )
         cost = -(jpos_error + front_symmetry + back_symmetry)
 
-        is_standing = self.env.command_manager.is_standing_env.squeeze(1)
-        cost[~is_standing] = 0
-        cost[is_standing] -= cost[is_standing].mean()
-        return cost
+        is_standing = self.env.command_manager.is_standing_env.reshape(self.num_envs, 1)
+        return cost * is_standing
 
 
 class quadruped_stand_feet_contact_force(Reward):
@@ -1553,10 +1551,8 @@ class oscillator(Reward):
         self.mass = self.asset.data.default_mass[0].sum().to(self.device)
         self.gravity = self.mass * 9.81
 
-        self.phi: torch.Tensor = self.asset.phi
-        self.phi_dot: torch.Tensor = self.asset.phi_dot
-        self.phi[:, 0] = torch.pi
-        self.phi[:, 3] = torch.pi
+        self.asset.phi[:, 0] = torch.pi
+        self.asset.phi[:, 3] = torch.pi
         self.grf_substep = torch.zeros(
             self.num_envs,
             self.env.cfg.decimation,
@@ -1573,9 +1569,8 @@ class oscillator(Reward):
         )
 
     def reset(self, env_ids):
-        self.keep_steping[env_ids] = (
-            torch.rand(len(env_ids), 1, device=self.device) < 0.5
-        )
+        self.keep_steping[env_ids] = (torch.rand(len(env_ids), 1, device=self.device) < 0.)
+        self.asset.phi_dot[env_ids] = self.omega[env_ids]
 
     def post_step(self, substep):
         grf = self.contact_sensor.data.net_forces_w[:, self.feet_ids].norm(dim=-1)
@@ -1585,19 +1580,23 @@ class oscillator(Reward):
     def update(self):
         self.grf = self.grf_substep.mean(1) / self.gravity
         inp = (
-            self.command_manager.command_speed
-            + self.command_manager.command_angvel.reshape(-1, 1).abs()
-        ) > 0.1
-        phi_dot = torch.where(
-            inp | self.keep_steping,
-            self.omega, # + self.trot(self.phi),
-            self.stand(self.phi),
+            (self.command_manager.command_speed.abs() > 0.08)
+            | (self.command_manager.command_angvel.reshape(-1, 1).abs() > 0.1)
+            | self.keep_steping
         )
-        self.asset.phi_dot[:] = self.omega
-        self.asset.phi[:] = (self.phi + self.asset.phi_dot * self.env.step_dt) % (2 * torch.pi)
+        correction = self.trot(self.asset.phi, self.asset.phi_dot)
+        phi_dot = torch.where(
+            inp,
+            self.omega + correction,
+            self.stand(self.asset.phi, self.asset.phi_dot),
+        )
+        
+        self.asset.phi_dot = phi_dot
+        self.asset.phi += self.asset.phi_dot * self.env.step_dt
+        self.asset.phi = torch.where((self.asset.phi > torch.pi * 2).all(1, True), self.asset.phi - torch.pi * 2, self.asset.phi)
 
     def compute(self):
-        phi_sin = self.phi.sin()
+        phi_sin = self.asset.phi.sin()
         feet_height = self.asset.data.feet_height.clamp_max(self.target_swing_height)
         r = (
             (feet_height - self.grf.clamp_max(0.4))
@@ -1606,20 +1605,21 @@ class oscillator(Reward):
         )
         return r.sum(1, True)
 
-    def stand(self, phi: torch.Tensor):
-        phi_dot = 2.0 * ((self.rest_target - phi) % (2 * torch.pi))
-        return phi_dot
+    def stand(self, phi: torch.Tensor, phi_dot: torch.Tensor,):
+        two_pi = torch.pi * 2
+        target = self.rest_target
+        dt = self.env.step_dt
+        a = ((phi % two_pi) < target - 1e-4) & (((phi + phi_dot * dt) % two_pi) > target + 1e-4)
+        b = ((phi % two_pi) - target).abs() < 1e-4
+        phi_dot = torch.where(a, (((target - phi) % two_pi) / dt), phi_dot)
+        return phi_dot * (~b)
 
-    def trot(self, phi: torch.Tensor):
+    def trot(self, phi: torch.Tensor, phi_dot: torch.Tensor):
         phi_dot = torch.zeros_like(phi)
-        phi_dot[:, 0] = phi[:, 3] - phi[:, 0]
-        phi_dot[:, 1] = (phi[:, 2] - phi[:, 1]) + (
-            (phi[:, 0] + torch.pi - phi[:, 1]) % (2 * torch.pi)
-        )
-        phi_dot[:, 2] = (phi[:, 1] - phi[:, 2]) + (
-            (phi[:, 0] + torch.pi - phi[:, 2]) % (2 * torch.pi)
-        )
-        phi_dot[:, 3] = phi[:, 0] - phi[:, 3]
+        phi_dot[:, 0] = (phi[:, 3] - phi[:, 0]) + (phi[:, 1] + torch.pi - phi[:, 0]) 
+        phi_dot[:, 1] = (phi[:, 2] - phi[:, 1]) + (phi[:, 0] - torch.pi - phi[:, 1]) 
+        phi_dot[:, 2] = (phi[:, 1] - phi[:, 2]) + (phi[:, 0] - torch.pi - phi[:, 2])
+        phi_dot[:, 3] = (phi[:, 0] - phi[:, 3]) + (phi[:, 1] + torch.pi - phi[:, 3])
         return phi_dot
 
 
