@@ -43,7 +43,7 @@ action:
 command:
   _target_: active_adaptation.envs.mdp.BaseEEImpedance
   ee_name: 'arm_link6'
-  ee_base_name: 'base'
+  ee_base_name: 'arm_base'
   base_setpoint_radius_range: [0.0, 2.0]
 
   kp_base_range: [5.0, 20.0]

@@ -674,6 +674,16 @@ class joint_pos_substep(Observation):
     def compute(self):
         return self.joint_pos
 
+
+class continuous_walking(Observation):
+    def __init__(self, env, mask_ratio = 0):
+        super().__init__(env, mask_ratio)
+        self.continuous_walking = env.command_manager.continuous_walking
+    
+    def compute(self):
+        return self.continuous_walking
+
+    
 class joint_pos_multistep(Observation):
     def __init__(self, env, steps: int=4, interval:int=1, noise_std: float=0., diff: bool=False, mask_ratio = 0):
         super().__init__(env, mask_ratio)

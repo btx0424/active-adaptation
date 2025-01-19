@@ -117,6 +117,8 @@ observation:
     external_torques: {body_names: ["base"]}
   # symmetry:
     # symmetry_quad:    {}
+  cont_:
+    continuous_walking:
 
 reward:
   all:
@@ -125,7 +127,7 @@ reward:
     angvel_z_exp:       {weight: 1.0, enabled: false}
     linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
 
-    oscillator:         {weight: 0.2, enabled: true}
+    oscillator:         {weight: 0.5, enabled: true}
     # impedance pos&vel tracking
     impedance_base_pos:      {weight: 0.5, enabled: true, l: 0.1}
     impedance_base_vel:      {weight: 1.0, enabled: true, l: 0.25}
@@ -180,9 +182,13 @@ randomization:
       arm_joint[1-5]: [0.8, 1.2]
     damping_range:
       (F|R)(L|R)_(hip|thigh|calf)_joint: [0.9, 1.1]
-      arm_joint[1-5]: [0.5, 2.0]
+      arm_joint[1-5]: [0.8, 1.2]
     armature_range:
-      .*: [0.0, 0.2]
+      .*: [0.01, 0.02]
+
+      # (F|R)(L|R)_(hip|thigh|calf)_joint: [0.1, 0.2]
+      # (F|R)(L|R)_(hip|thigh|calf)_joint: [0.01, 0.02]
+      # arm_joint[1-5]: [0.01, 0.02]
   reset_joint_states_uniform:
     pos_ranges:
       .*_thigh_joint: [-0.2, 0.2]
