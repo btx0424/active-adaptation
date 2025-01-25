@@ -68,10 +68,10 @@ def make_conv(num_channels, activation=nn.LeakyReLU, kernel_sizes=3, flatten: bo
         layers.append(activation())
     if flatten:
         layers.append(nn.Flatten())
-    return _FlattenBatch(nn.Sequential(*layers), data_dim=3)
+    return FlattenBatch(nn.Sequential(*layers), data_dim=3)
 
 
-class _FlattenBatch(nn.Module):
+class FlattenBatch(nn.Module):
     def __init__(self, module, data_dim: int=1):
         super().__init__()
         self.module = module
@@ -186,20 +186,21 @@ class GAE(nn.Module):
         terminated: torch.Tensor,
         done: torch.Tensor, 
         value: torch.Tensor, 
-        next_value: torch.Tensor
+        next_value: torch.Tensor,
+        discount: torch.Tensor=None
     ):
         num_steps = terminated.shape[1]
         advantages = torch.zeros_like(reward)
         nonterm = 1 - terminated.float() # whether to backup value
         nondone = 1 - done.float()       # whether to backup reward
+        if discount is None:
+            discount = torch.ones_like(nonterm)
         gae = 0
         for step in reversed(range(num_steps)):
-            if self.fake_bootstrap:
-                next_value_t = torch.where(terminated[:, step], value[:, step], next_value[:, step])
-            else:
-                next_value_t = next_value[:, step] * nonterm[:, step]
-            delta = reward[:, step] + self.gamma * next_value_t - value[:, step]
-            advantages[:, step] = gae = delta + (self.gamma * self.lmbda * nondone[:, step] * gae)
+            next_value_t = next_value[:, step] * nonterm[:, step]
+            gamma_t = discount[:, step] * self.gamma
+            delta = reward[:, step] + gamma_t * next_value_t - value[:, step]
+            advantages[:, step] = gae = delta + (gamma_t * self.lmbda * nondone[:, step] * gae)
         returns = advantages + value
         return advantages, returns
 
