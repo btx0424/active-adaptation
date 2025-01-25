@@ -281,8 +281,9 @@ class Env(EnvBase):
             reward_spec["stats", group_name, "reward_clip_ratio"] = UnboundedContinuous(1, device=self.device)
 
         reward_spec["reward"] = UnboundedContinuous(len(self.reward_groups), device=self.device)
-        # reward_spec["discount"] = UnboundedContinuous(1, device=self.device)
+        reward_spec["discount"] = UnboundedContinuous(1, device=self.device)
         self.reward_spec.update(reward_spec.expand(self.num_envs).to(self.device))
+        self.discount = torch.ones((self.num_envs, 1), device=self.device)
 
         observation_spec = {}
         for group_key, group in self.observation_funcs.items():
@@ -355,8 +356,8 @@ class Env(EnvBase):
             callback(env_ids)
 
         tensordict = TensorDict({}, self.num_envs, device=self.device)
-        tensordict.update(self.observation_spec.zero())
-        # self._compute_observation(tensordict)
+        # tensordict.update(self.observation_spec.zero())
+        self._compute_observation(tensordict)
         
         if self.record_now and env_mask[self.lookat_env_i]:
             if self.complete_video_frames is None:
@@ -439,6 +440,7 @@ class Env(EnvBase):
                 callback(substep)
         # end = time.perf_counter()
         # print(end - start, self.cfg.decimation)
+        self.discount.fill_(1.0)
         self._update()
         
         if self.timestamp % self.render_decimation == 0:
@@ -453,6 +455,7 @@ class Env(EnvBase):
         tensordict.set("terminated", terminated)
         tensordict.set("truncated", truncated)
         tensordict.set("done", terminated | truncated)
+        tensordict.set("discount", self.discount.clone())
         tensordict["stats"] = self.stats.clone()
 
         if self.sim.has_gui() and hasattr(self, "debug_draw"):
