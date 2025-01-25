@@ -51,13 +51,21 @@ torch.set_float32_matmul_precision('high')
 
 CMD_KEY = "command_"
 
+
+@torch.no_grad()
+def grad_norm(parameters):
+    norms = torch._foreach_norm(list(parameters), ord=2)
+    total_norm = torch.linalg.norm(torch.stack(norms), ord=2)
+    return total_norm
+
+
 @dataclass
 class PPOConfig:
     _target_: str = "active_adaptation.learning.ppo.ppo_go2.PPOPolicy"
     name: str = "ppo_go2"
     train_every: int = 32
     ppo_epochs: int = 5
-    num_minibatches: int = 8
+    num_minibatches: int = 4
     lr: float = 5e-4
     clip_param: float = 0.2
     entropy_coef: float = 0.006
@@ -77,47 +85,38 @@ class MixedEncoder(nn.Module):
         super().__init__()
         self.mlp_out = mlp_out
         self.cnn_out = cnn_out
-        self.mlp_encoder = make_mlp([self.mlp_out])
-        # self.cnn_encoder = nn.Sequential(
-        #     make_conv([8, 8, 8], flatten=True),
-        #     nn.LazyLinear(32),
-        #     nn.LayerNorm(32),
-        #     nn.Mish(),
-        # )
-        self.cnn_encoder = nn.Sequential(
-            nn.Flatten(start_dim=-3),
-            make_mlp([self.cnn_out])
+        self.mlp_encoder = nn.Sequential(
+            nn.LazyLinear(256),
+            nn.Mish(), nn.LayerNorm(256), 
+            nn.LazyLinear(256)
         )
-        self.linear = nn.LazyLinear(256)
-        self.activation = nn.Sequential(nn.LayerNorm(256), nn.Mish())
-
-        self.register_buffer("u_sum", torch.zeros(self.mlp_out + self.cnn_out))
-        self.register_buffer("o_sum", torch.tensor(0.))
-        self.register_buffer("cnt", torch.tensor(0.))
-        self.u_sum: torch.Tensor
-        self.o_sum: torch.Tensor
-        self.cnt: torch.Tensor
-        self.update_ema = True
-    
-    @property
-    def u_ratios(self):
-        ratios = (self.u_sum / self.u_sum.mean()).split([self.mlp_out, self.cnn_out])
-        return ratios
+        self.cnn_encoder = nn.Sequential(
+            FlattenBatch(
+                nn.Sequential(
+                    nn.LazyConv2d(2, kernel_size=3, stride=2, padding=1), 
+                    nn.Mish(), nn.GroupNorm(num_channels=8, num_groups=2),
+                    nn.LazyConv2d(4, kernel_size=3, stride=2, padding=1),
+                    nn.Mish(), nn.GroupNorm(num_channels=8, num_groups=2),
+                    nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1),
+                    nn.Mish(), nn.GroupNorm(num_channels=8, num_groups=2), 
+                    nn.Flatten(),
+                ),
+                data_dim=3,
+            ),
+            nn.LazyLinear(32),
+            nn.Mish(),
+            nn.LayerNorm(32),
+            nn.LazyLinear(256)
+        )
+        self.out = nn.Mish()
 
     def forward(self, mlp_inp, cnn_inp, mask_cnn=None):
-        mlp_feature = self.mlp_encoder(mlp_inp)
         cnn_feature = self.cnn_encoder(cnn_inp)
+        mlp_feature = self.mlp_encoder(mlp_inp)
         if mask_cnn is not None:
             cnn_feature = cnn_feature * mask_cnn
-        mix_feature = torch.cat([mlp_feature, cnn_feature], dim=-1)
-        o = self.linear(mix_feature)
-        if self.update_ema:
-            assert o.ndim == 2
-            w = self.linear.weight.data.detach()
-            u = (mix_feature.abs().unsqueeze(1) * w.abs()).sum(1)
-            self.u_sum.mul_(0.99).add_(u.sum(0))
-            self.cnt.mul_(0.99).add_(u.shape[0])
-        return self.activation(o)
+        feature = mlp_feature + cnn_feature
+        return self.out(feature)
 
 
 class PPOPolicy(TensorDictModuleBase):
@@ -156,7 +155,7 @@ class PPOPolicy(TensorDictModuleBase):
         ).to(self.device)
         self.vecnorm(fake_input)
         
-        _actor = nn.Sequential(make_mlp([128]), Actor(self.action_dim))
+        _actor = nn.Sequential(make_mlp([128], norm="after"), Actor(self.action_dim))
         self.actor_encoder = MixedEncoder()
         actor_module = Seq(
             CatTensors([CMD_KEY, OBS_KEY, OBS_PRIV_KEY], "mlp_inp", sort=False),
@@ -172,7 +171,7 @@ class PPOPolicy(TensorDictModuleBase):
             return_log_prob=True
         ).to(self.device)
         
-        _critic = nn.Sequential(make_mlp([128]), nn.LazyLinear(1))
+        _critic = nn.Sequential(make_mlp([128], norm="after"), nn.LazyLinear(1))
         self.critic_encoder = MixedEncoder()
         self.critic = Seq(
             CatTensors([CMD_KEY, OBS_KEY, OBS_PRIV_KEY], "mlp_inp", sort=False),
@@ -183,22 +182,21 @@ class PPOPolicy(TensorDictModuleBase):
         self.actor(fake_input)
         self.critic(fake_input)
 
-        self.opt = torch.optim.AdamW(
+        self.opt = torch.optim.Adam(
             [
                 {"params": self.actor.parameters()},
                 {"params": self.critic.parameters()},
             ],
             lr=cfg.lr,
-            weight_decay=0.02
         )
         
         def init_(module):
             if isinstance(module, nn.Linear):
                 nn.init.orthogonal_(module.weight, 0.01)
                 nn.init.constant_(module.bias, 0.)
-            # if isinstance(module, nn.Conv2d):
-            #     nn.init.orthogonal_(module.weight, 0.01)
-            #     nn.init.constant_(module.bias, 0.)
+            if isinstance(module, nn.Conv2d):
+                nn.init.orthogonal_(module.weight, 0.01)
+                nn.init.constant_(module.bias, 0.)
         
         self.actor.apply(init_)
         self.critic.apply(init_)
@@ -213,8 +211,6 @@ class PPOPolicy(TensorDictModuleBase):
 
     # @torch.compile
     def train_op(self, tensordict: TensorDict):
-        self.actor_encoder.update_ema = False
-        self.critic_encoder.update_ema = False
 
         tensordict = tensordict.copy()
         infos = []
@@ -237,18 +233,8 @@ class PPOPolicy(TensorDictModuleBase):
 
         infos = {k: v.mean().item() for k, v in torch.stack(infos).items()}
         infos["critic/value_mean"] = tensordict["ret"].mean().item()
-        
-        mlp_ratios, cnn_ratios = self.actor_encoder.u_ratios
-        infos["actor/cnn_ratio"] = cnn_ratios.mean().item()
-        infos["actor/mlp_ratio"] = mlp_ratios.mean().item()
-        mlp_ratios, cnn_ratios = self.critic_encoder.u_ratios
-        infos["critic/cnn_ratio"] = cnn_ratios.mean().item()
-        infos["critic/mlp_ratio"] = mlp_ratios.mean().item()
-
         infos["actor/policy_diff"] = policy_diff.item()
         infos["critic/value_diff"] = value_diff.item()
-        self.actor_encoder.update_ema = True
-        self.critic_encoder.update_ema = True
         return dict(sorted(infos.items()))
 
     @torch.no_grad()
@@ -273,10 +259,11 @@ class PPOPolicy(TensorDictModuleBase):
         rewards = tensordict[REWARD_KEY].sum(-1, keepdim=True)
         terms = tensordict[TERM_KEY]
         dones = tensordict[DONE_KEY]
+        discount = tensordict["next", "discount"]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
 
-        adv, ret = self.gae(rewards, terms, dones, values, next_values)
+        adv, ret = self.gae(rewards, terms, dones, values, next_values, discount)
         if update_value_norm:
             self.value_norm.update(ret)
         ret = self.value_norm.normalize(ret)
@@ -304,13 +291,15 @@ class PPOPolicy(TensorDictModuleBase):
         value_loss = self.critic_loss_fn(b_returns, values)
         value_loss = (value_loss * (~tensordict["is_init"])).mean()
 
-        aux_loss = F.mse_loss(tensordict["aux_pred"], b_returns)
+        # aux_loss = F.mse_loss(tensordict["aux_pred"], b_returns)
         
-        loss = policy_loss + entropy_loss + value_loss + 1.0 * aux_loss
+        loss = policy_loss + entropy_loss + value_loss # + 1.0 * aux_loss
         self.opt.zero_grad()
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
         critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
+        actor_cnn_grad_norm = grad_norm(self.actor_encoder.cnn_encoder.parameters())
+        critic_cnn_grad_norm = grad_norm(self.critic_encoder.cnn_encoder.parameters())
         self.opt.step()
         explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
         return {
@@ -319,7 +308,8 @@ class PPOPolicy(TensorDictModuleBase):
             "actor/noise_std": tensordict["scale"].mean(),
             "actor/grad_norm": actor_grad_norm,
             'actor/approx_kl': ((ratio - 1) - log_ratio).mean(),
-            "actor/aux_loss": aux_loss,
+            "actor/cnn_grad_norm": actor_cnn_grad_norm,
+            "critic/cnn_grad_norm": critic_cnn_grad_norm,
             "critic/value_loss": value_loss,
             "critic/grad_norm": critic_grad_norm,
             "critic/explained_var": explained_var,
@@ -343,14 +333,6 @@ class PPOPolicy(TensorDictModuleBase):
                 warnings.warn(f"Failed to load state dict for {name}: {str(e)}")
                 failed_keys.append(name)
         print(f"Successfully loaded {succeed_keys}.")
-        
-        def init_(module):
-            if isinstance(module, nn.Linear):
-                nn.init.orthogonal_(module.weight, 0.01)
-                nn.init.constant_(module.bias, 0.)
-        
-        # self.actor_encoder.cnn_encoder.apply(init_)
-        # nn.init.orthogonal_(self.actor_encoder.linear.weight[:, -32:], 0.01)
         return failed_keys
     
     def learn(self, env, cfg):
@@ -358,7 +340,7 @@ class PPOPolicy(TensorDictModuleBase):
         import wandb
         import logging
 
-        from torchrl.collectors import SyncDataCollector
+        from active_adaptation.utils.torchrl import SyncDataCollector
         from tqdm import tqdm
         from omegaconf import OmegaConf
 
