@@ -16,6 +16,8 @@ from .base import Command
 if TYPE_CHECKING:
     from active_adaptation.envs.base import Env
 
+quat_rotate = batchify(quat_rotate)
+quat_rotate_inverse = batchify(quat_rotate_inverse)
 
 class Command1(Command):
     """
@@ -135,6 +137,78 @@ class Command1(Command):
         )
 
 
+class Command3(Command):
+    def __init__(self, env):
+        super().__init__(env)
+        
+        with torch.device(self.device):
+            self.offsets_b = torch.tensor([[0.25, 0., 0.], [-0.15, 0., 0.]])
+            self.des_pos_w = torch.zeros(self.num_envs, 3)
+            self.des_yaw_w = torch.zeros(self.num_envs, 1)
+            self.des_vel_w = torch.zeros(self.num_envs, 3)
+            # self.des_key_pos_w = torch.zeros(self.num_envs, 2, 3)
+            self.key_pos_w = torch.zeros(self.num_envs, 2, 3)
+            self.key_vel_w = torch.zeros(self.num_envs, 2, 3)
+
+            self.command = torch.zeros(self.num_envs, 10)
+            self._cum_error = torch.zeros(self.num_envs, 1)
+            self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
+        
+        self.mesh = _initialize_warp_meshes("/World/ground", "cuda")
+
+    def get_height_at(self, pos_w):
+        ray_starts = pos_w + torch.tensor([0., 0., 10.], device=self.device)
+        ray_directions = torch.tensor([0., 0., -1.], device=self.device).expand_as(ray_starts)
+        ray_hit_w = raycast_mesh(ray_starts, ray_directions, self.mesh)[0]
+        return ray_hit_w[..., 2]
+
+    def reset(self, env_ids):
+        self.des_pos_w[env_ids] = self.asset.data.root_pos_w[env_ids]
+        self.des_yaw_w[env_ids] = 0.
+        des_vel_w = torch.zeros(len(env_ids), 3, device=self.device)
+        des_vel_w[:, 0].uniform_(0.3, 1.3)
+        des_vel_w[:, 1].uniform_(-0.2, 0.2)
+        self.des_vel_w[env_ids] = des_vel_w
+        self._cum_error[env_ids] = 0.
+        self.key_vel_w[env_ids] = 0.
+    
+    @property
+    def des_key_pos_w(self):
+        des_key_pos_w = self.des_pos_w.unsqueeze(1) + self.offsets_b
+        des_key_pos_w[:, :, 2] = self.get_height_at(des_key_pos_w) + 0.35
+        return des_key_pos_w
+    
+    def update(self):
+        quat = yaw_quat(self.asset.data.root_quat_w)
+        key_pos_w = (
+            self.asset.data.root_pos_w.unsqueeze(1) +
+            quat_rotate(self.asset.data.root_quat_w.unsqueeze(1), self.offsets_b.unsqueeze(0))
+        )
+        self.key_vel_w = (key_pos_w - self.key_pos_w) / self.env.step_dt
+        self.key_pos_w = key_pos_w
+
+        diff = self.des_key_pos_w - self.key_pos_w
+        self._cum_error = diff.norm(dim=-1, keepdim=True).mean(1)
+        self.command[:, 0:6] = quat_rotate_inverse(quat.unsqueeze(1), diff).reshape(self.num_envs, 6)
+        self.command[:, 6:9] = quat_rotate_inverse(quat, self.des_vel_w)
+        self.command[:, 9:10] = math_utils.wrap_to_pi(self.des_yaw_w - self.asset.data.heading_w.unsqueeze(1))
+        
+        self.des_pos_w += self.des_vel_w * self.env.step_dt
+        self.des_pos_w[:, 2] = self.get_height_at(self.des_pos_w) + 0.35
+    
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            self.des_pos_w - self.asset.data.root_pos_w,
+            color=(1.0, 0.5, 0.5, 1.0),
+        )
+        down = torch.tensor([0., 0., -1.], device=self.device)
+        self.env.debug_draw.vector(
+            self.key_pos_w.reshape(-1, 3),
+            self.des_key_pos_w.reshape(-1, 3) - self.key_pos_w.reshape(-1, 3),
+            color=(0.5, 1.0, 0.5, 1.0),
+        )
+
 
 class Command2(Command):
 
@@ -237,6 +311,7 @@ class Command2(Command):
 
         self._cum_linvel_error[env_ids] = 0.0
         self._cum_angvel_error[env_ids] = 0.0
+        self.is_standing_env[env_ids] = True
         self.env.extra["stats/avg_error"] = self._avg_error.item()
 
     def update(self):
@@ -1012,6 +1087,7 @@ class Impedance(Command):
 
         yaw = self.asset.data.heading_w
         self.command_linvel_w[:] = self._smooth(self.desired_lin_vel_w)
+        self.command_linvel_w[:, 2] = 0.0
         
         self.command_angvel[:] = self._smooth(self.desired_yaw_vel_w).squeeze(-1)
         self.command_pos_w[:] = self._smooth(self.desired_pos_w)
@@ -1021,9 +1097,6 @@ class Impedance(Command):
         )
         self.command_yaw_w[:] = self._smooth(self.desired_yaw_w)
 
-        self.is_standing_env[:] = (
-            self.command_linvel_w[:, :2].norm(dim=-1, keepdim=True) < 0.1
-        ) & (self.command_angvel.abs() < 0.1).unsqueeze(1)
 
         # check if here should be yaw rotate
         command_pos_b = quat_rotate_inverse(
@@ -1040,6 +1113,7 @@ class Impedance(Command):
         # print((self.command_linvel[:, 0].abs() - self.max_vel_xyz[0]).max())
         # print((self.command_linvel[:, 1].abs() - self.max_vel_xyz[1]).max())
         self.command_speed[:] = self.command_linvel.norm(dim=-1, keepdim=True)
+        self.is_standing_env[:] = (self.command_speed < 0.1) & (self.command_angvel.abs() < 0.1).unsqueeze(1)
 
         yaw_diff = math_utils.wrap_to_pi(self.command_setrpy_w[:, 2] - yaw)
         command_yaw_diff = math_utils.wrap_to_pi(self.command_yaw_w - yaw.unsqueeze(1))
@@ -1104,9 +1178,10 @@ class Impedance(Command):
         constant_force.uniform_(-1., 1.)
         duration = torch.zeros(self.num_envs, 1, device=self.device)
         duration.uniform_(*self.constant_force_duration_range)
+        valid = (torch.rand(self.num_envs, 1, device=self.device) > 0.5)
         self.constant_force = torch.where(
             sample.reshape(self.num_envs, 1),
-            constant_force * self.constant_force_scale,
+            constant_force * self.constant_force_scale * valid,
             self.constant_force
         )
         self.constant_force_duration[:] = torch.where(
@@ -1180,7 +1255,7 @@ class Impedance(Command):
         self.spring_force = clamp_norm(self.spring_force, max=self.spring_force_max)
 
         expire = self.impulse_force_time > self.impulse_force_duration
-        sample = (torch.rand(self.num_envs, 1, device=self.device) < 0.01) & expire & ~self.large_force_mode
+        sample = (torch.rand(self.num_envs, 1, device=self.device) < 0.005) & expire & ~self.large_force_mode
         
         self.impulse_force_time = torch.where(
             sample,

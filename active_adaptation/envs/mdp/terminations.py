@@ -62,6 +62,20 @@ class crash(Termination):
         undesired_contact = (self.count > self._thres).any(-1)
         return (undesired_contact & valid).reshape(self.num_envs, 1)
 
+class soft_contact(Termination):
+    def __init__(self, env, body_names: str):
+        super().__init__(env)
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+        self.body_indices, self.body_names = self.contact_sensor.find_bodies(body_names)
+    
+    def update(self):
+        forces = self.contact_sensor.data.net_forces_w[:, self.body_indices].norm(dim=-1, keepdim=True)
+        in_contact = (forces > 1.0).sum(dim=1)
+        self.env.discount.mul_(0.4 ** in_contact)
+
+    def __call__(self):
+        return torch.zeros(self.num_envs, 1, device=self.env.device, dtype=bool)
+    
 
 class fall_over(Termination):
     def __init__(

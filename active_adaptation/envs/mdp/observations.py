@@ -1295,8 +1295,9 @@ class height_scan(Observation):
 
     def update(self):
         height_scan = (
-            self.asset.data.root_pos_w[:, 2].unsqueeze(1)
+            self.height_scanner.data.pos_w[:, 2].unsqueeze(1)
             - self.height_scanner.data.ray_hits_w[..., 2]
+            - 0.5
         )
         self.height_scan[:] = height_scan.reshape(self.num_envs, 11, 17)
 

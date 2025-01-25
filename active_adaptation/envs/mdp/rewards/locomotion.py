@@ -1324,8 +1324,8 @@ class impedance_vel(Reward):
         lin_vel_w = self.lin_vel_sum / self.cnt.unsqueeze(1)
         command_lin_vel_w = self.command_manager.command_linvel_w.unsqueeze(-1)
         diff = lin_vel_w - command_lin_vel_w
-        error_l2 = diff[:, :2].square().sum(dim=1, keepdim=True)
-        error_l2 = error_l2.min(-1)[0]
+        error_l2 = diff.square().sum(dim=1, keepdim=True)
+        error_l2 = error_l2.min(-1).values
         p = torch.exp(-error_l2 / 0.25)
         r = p - 0.5 * error_l2
         self.asset.data.linvel_exp = p
@@ -1683,6 +1683,52 @@ class quad_leg_swing(Reward):
             swing_feet_pos_w, color=(1.0, 0.0, 0.0, 1.0), size=15.0
         )
 
+
+class pos_tracking(Reward):
+    def __init__(self, env, weight, enabled = True, clip_range=(-torch.inf, +torch.inf)):
+        super().__init__(env, weight, enabled, clip_range)
+        self.command_manager: Command3 = self.env.command_manager
+        self.asset: Articulation = self.env.scene["robot"]
+
+    def compute(self):
+        diff = self.command_manager.des_key_pos_w - self.command_manager.key_pos_w
+        error_l2 = diff.square().sum(-1, True)
+        return torch.exp(-error_l2 / 0.25).mean(1)
+
+
+class yaw_tracking(Reward):
+    def __init__(self, env, weight, enabled = True, clip_range=(-torch.inf, +torch.inf)):
+        super().__init__(env, weight, enabled, clip_range)
+        self.command_manager: Command3 = self.env.command_manager
+        self.asset: Articulation = self.env.scene["robot"]
+    
+    def compute(self):
+        return torch.cos(self.asset.data.heading_w.unsqueeze(1) - self.command_manager.des_yaw_w)
+
+
+class vel_tracking(Reward):
+    def __init__(self, env, weight, enabled = True, clip_range=(-torch.inf, +torch.inf)):
+        super().__init__(env, weight, enabled, clip_range)
+        self.command_manager: Command3 = self.env.command_manager
+        self.asset: Articulation = self.env.scene["robot"]
+    
+    def compute(self):
+        diff = self.command_manager.des_key_pos_w - self.command_manager.key_pos_w
+        target_vel_z = 2.0 * diff[:, 0, 2]
+        r = (self.command_manager.key_vel_w[:, 0, 2] - target_vel_z) * (target_vel_z > 0.)
+        return r.unsqueeze(1)
+
+class vel_xy_tracking(Reward):
+    def __init__(self, env, weight, enabled = True, clip_range=(-torch.inf, +torch.inf)):
+        super().__init__(env, weight, enabled, clip_range)
+        self.command_manager: Command3 = self.env.command_manager
+        self.asset: Articulation = self.env.scene["robot"]
+    
+    def compute(self):
+        diff = self.command_manager.des_vel_w - self.asset.data.root_lin_vel_w
+        error_l2 = diff[:, :2].square().sum(-1, True)
+        return torch.exp(- error_l2 / 0.25)
+    
 
 def normalize(x: torch.Tensor):
     return x / x.norm(dim=-1, keepdim=True).clamp_min(1e-6)
