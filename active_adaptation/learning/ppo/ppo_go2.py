@@ -80,25 +80,35 @@ cs = ConfigStore.instance()
 cs.store("ppo_go2", node=PPOConfig, group="algo")
 
 
+class ResidualFC(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.linear = nn.LazyLinear(dim)
+        self.act = nn.Mish()
+        self.ln = nn.LayerNorm(dim)
+    
+    def forward(self, x):
+        return self.ln(self.act(self.linear(x)) + x)
+
+
 class MixedEncoder(nn.Module):
     def __init__(self, mlp_out=256, cnn_out=32):
         super().__init__()
         self.mlp_out = mlp_out
         self.cnn_out = cnn_out
         self.mlp_encoder = nn.Sequential(
-            nn.LazyLinear(256),
-            nn.Mish(), nn.LayerNorm(256), 
+            nn.LazyLinear(256), nn.Mish(), nn.LayerNorm(256), 
             nn.LazyLinear(256)
         )
         self.cnn_encoder = nn.Sequential(
             FlattenBatch(
                 nn.Sequential(
-                    nn.LazyConv2d(2, kernel_size=3, stride=2, padding=1), 
-                    nn.Mish(), nn.GroupNorm(num_channels=8, num_groups=2),
-                    nn.LazyConv2d(4, kernel_size=3, stride=2, padding=1),
-                    nn.Mish(), nn.GroupNorm(num_channels=8, num_groups=2),
+                    nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1), 
+                    nn.Mish(), # nn.GroupNorm(num_channels=2, num_groups=2),
                     nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1),
-                    nn.Mish(), nn.GroupNorm(num_channels=8, num_groups=2), 
+                    nn.Mish(), # nn.GroupNorm(num_channels=4, num_groups=2),
+                    nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1),
+                    nn.Mish(), # nn.GroupNorm(num_channels=8, num_groups=2), 
                     nn.Flatten(),
                 ),
                 data_dim=3,
@@ -155,7 +165,7 @@ class PPOPolicy(TensorDictModuleBase):
         ).to(self.device)
         self.vecnorm(fake_input)
         
-        _actor = nn.Sequential(make_mlp([128], norm="after"), Actor(self.action_dim))
+        _actor = nn.Sequential(ResidualFC(256), Actor(self.action_dim))
         self.actor_encoder = MixedEncoder()
         actor_module = Seq(
             CatTensors([CMD_KEY, OBS_KEY, OBS_PRIV_KEY], "mlp_inp", sort=False),
@@ -171,7 +181,7 @@ class PPOPolicy(TensorDictModuleBase):
             return_log_prob=True
         ).to(self.device)
         
-        _critic = nn.Sequential(make_mlp([128], norm="after"), nn.LazyLinear(1))
+        _critic = nn.Sequential(ResidualFC(256), nn.LazyLinear(1))
         self.critic_encoder = MixedEncoder()
         self.critic = Seq(
             CatTensors([CMD_KEY, OBS_KEY, OBS_PRIV_KEY], "mlp_inp", sort=False),

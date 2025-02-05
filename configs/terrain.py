@@ -13,6 +13,9 @@ from omni.isaac.lab.terrains import (
     MeshRandomGridTerrainCfg,
     HfDiscreteObstaclesTerrainCfg,
     MeshRepeatedBoxesTerrainCfg,
+    MeshGapTerrainCfg,
+    MeshPitTerrainCfg,
+    MeshRailsTerrainCfg,
     height_field
 )
 from omni.isaac.lab.terrains.config.rough import ROUGH_TERRAINS_CFG as ROUGH_HARD
@@ -219,13 +222,24 @@ STAIRS = TerrainGeneratorCfg(
             noise_step=0.02,
             border_width=0.5
         ),
-        "box": MeshRepeatedBoxesTerrainCfg(
+        # "box": MeshRepeatedBoxesTerrainCfg(
+        #     proportion=0.20,
+        #     object_params_start=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
+        #         num_objects=36, height=0.15, size=(0.6, 0.6), max_yx_angle=15),
+        #     object_params_end=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
+        #         num_objects=36, height=0.15, size=(0.6, 0.6), max_yx_angle=15),
+        #     platform_width=2.0
+        # ),
+        # "rail": MeshRailsTerrainCfg(
+        #     proportion=0.20,
+        #     rail_thickness_range=(0.2, 0.3),
+        #     rail_height_range=(0.2, 0.3),
+        #     platform_width=2.5,
+        # ),
+        "pit": MeshPitTerrainCfg(
             proportion=0.20,
-            object_params_start=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
-                num_objects=36, height=0.15, size=(0.6, 0.6), max_yx_angle=15),
-            object_params_end=MeshRepeatedBoxesTerrainCfg.ObjectCfg(
-                num_objects=36, height=0.15, size=(0.6, 0.6), max_yx_angle=15),
-            platform_width=2.0
+            pit_depth_range=(0.2, 0.4),
+            platform_width=4.0,
         ),
         "pyramid_stairs_inv_a": MeshInvertedPyramidStairsTerrainCfg(
             proportion=0.20,
