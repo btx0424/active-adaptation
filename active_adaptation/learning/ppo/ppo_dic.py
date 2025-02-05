@@ -56,8 +56,8 @@ class PPOConfig:
     _target_: str = "active_adaptation.learning.ppo.ppo_dic.PPODICPolicy"
     name: str = "ppo_dic"
     train_every: int = 32
-    ppo_epochs: int = 4
-    num_minibatches: int = 16
+    ppo_epochs: int = 5
+    num_minibatches: int = 4
     lr: float = 5e-4
     clip_param: float = 0.2
     # entropy_coef: float = 0.004

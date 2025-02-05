@@ -523,6 +523,95 @@ class pull(Randomization):
         )
 
 
+class external_force(Randomization):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+
+        with torch.device(self.device):
+            self.large_force_mode = torch.zeros(self.num_envs, 1, dtype=bool)
+            self.spring_force_max_range = (80., 120.)
+            self.spring_force_max = torch.zeros(self.num_envs, 1)
+            self.spring_force = torch.zeros(self.num_envs, 3)
+            self.spring_force_duration = torch.zeros(self.num_envs, 1)
+            self.spring_force_time = torch.zeros(self.num_envs, 1)
+            self.spring_force_setpoint = torch.zeros(self.num_envs, 1)
+            self.spring_force_kp = torch.zeros(self.num_envs, 1)
+            self.spring_force_kd = torch.zeros(self.num_envs, 1)
+            self.spring_end_mass = torch.zeros(self.num_envs, 1)
+            self.spring_end_vel = torch.zeros(self.num_envs, 1)
+    
+    def reset(self, env_ids):
+        self.large_force_mode[env_ids] = torch.rand(len(env_ids), 1, device=self.device) < 0.5
+        self.spring_force_duration[env_ids] = -1.
+        self.spring_end_mass[env_ids] = 250.
+
+    def step(self, substep):
+        self.asset._external_force_b[:, 0] += quat_rotate_inverse(
+            self.asset.data.root_quat_w, 
+            self.spring_force
+        )
+        self.asset.has_external_wrench = True
+    
+    def update(self):
+        expire = self.spring_force_time > self.spring_force_duration - 1e-4
+        sample = (torch.rand(self.num_envs, 1, device=self.device) < 0.1) & expire & self.large_force_mode
+        scalar = torch.zeros(self.num_envs, 1, device=self.device)
+        self.spring_end_mass = torch.where(
+            sample,
+            torch.randint(1, 4, (self.num_envs, 1), device=self.device) * 250.,
+            self.spring_end_mass
+        )
+        self.spring_end_vel = torch.where(
+            sample,
+            0.,
+            self.spring_end_vel.mul_(0.98) - (self.spring_force / self.spring_end_mass) * self.env.step_dt
+        )
+        self.spring_force_setpoint = torch.where(
+            sample,
+            self.asset.data.root_pos_w + torch.tensor([-0.5, 0., 0.], device=self.device),
+            self.spring_force_setpoint + self.spring_end_vel * self.env.step_dt
+        )
+        self.spring_force_kp = torch.where(
+            sample,
+            scalar.uniform_(80., 120.),
+            self.spring_force_kp,
+        )
+        self.spring_force_kd = torch.where(
+            sample,
+            scalar.uniform_(10., 20.),
+            self.spring_force_kd,
+        )
+        self.spring_force_duration = torch.where(
+            sample,
+            scalar.uniform_(2., 4.),
+            self.spring_force_duration
+        )
+        self.spring_force_time = torch.where(
+            sample,
+            0.,
+            self.spring_force_time + self.env.step_dt
+        )
+        self.spring_force_max = torch.where(
+            sample,
+            scalar.uniform_(*self.spring_force_max_range),
+            self.spring_force_max
+        )
+        self.spring_force = (
+            self.spring_force_kp * (self.spring_force_setpoint - self.asset.data.root_pos_w)
+            + self.spring_force_kd * (0. - self.asset.data.root_lin_vel_w)    
+        ) * (self.spring_force_time < self.spring_force_duration)
+        self.spring_force = clamp_norm(self.spring_force, max=self.spring_force_max)
+
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            self.spring_force / (20 * 9.81),
+            color=(1.0, 0.5, 0.0, 1.0),
+            size=3.0,
+        )
+
+
 class random_joint_offset(Randomization):
     def __init__(self, env, **offset_range: Tuple[float, float]):
         super().__init__(env)
@@ -626,6 +715,13 @@ class spring_grf(Randomization):
     def debug_draw(self):
         feet_pos = self.asset.data.body_pos_w[:, self.feet_ids]
         self.env.debug_draw.vector(feet_pos, self.forces / 9.81, color=(0.8, 0.6, 0.6, 1.))
+
+
+def clamp_norm(x: torch.Tensor, min: float = 0.0, max: float = torch.inf):
+    x_norm = x.norm(dim=-1, keepdim=True).clamp(1e-6)
+    x = torch.where(x_norm < min, x / x_norm * min, x)
+    x = torch.where(x_norm > max, x / x_norm * max, x)
+    return x
 
 
 def random_scale(x: torch.Tensor, low: float, high: float, homogeneous: bool=False):
