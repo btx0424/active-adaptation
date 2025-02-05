@@ -169,9 +169,9 @@ def main(cfg: DictConfig):
             for k, v in sorted(episode_stats.pop().items(True, True)):
                 key = "train/" + ("/".join(k) if isinstance(k, tuple) else k)
                 info[key] = torch.mean(v.float()).item()
-            info.update(env.extra)
         
         info.update(policy.train_op(data))
+        info.update(env.extra)
         if hasattr(policy, "step_schedule"):
             policy.step_schedule(i / total_iters)
 
