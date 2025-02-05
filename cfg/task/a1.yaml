@@ -25,7 +25,7 @@ homogeneous: false
 action:
   _target_: active_adaptation.envs.mdp.action.JointPosition
   action_scaling:
-    arm_joint[1-5]: 0.5
+    arm_joint[1-5]: 1.0
   max_delay: 3
   alpha: 0.8
   clip_joint_targets: 0.2
@@ -53,9 +53,9 @@ observation:
   command:
     command:
   policy:
-    joint_pos:    {joint_names: ["arm_joint[1-5]"], noise_std: 0.05}
-    joint_vel:    {joint_names: ["arm_joint[1-5]"], noise_std: 0.2}
-    prev_actions: {steps: 3}
+    joint_pos:    {joint_names: ["arm_joint[1-5]"], noise_std: 0.04}
+    joint_vel:    {joint_names: ["arm_joint[1-5]"], noise_std: 0.1}
+    # prev_actions: {steps: 3}
   priv:
     command_hidden:
     applied_action:
@@ -76,6 +76,7 @@ reward:
     # common loco rewards just for sanity check
     impedance_ee_pos:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 0.1}
     impedance_ee_vel:   {weight: 1.0, enabled: true, ee_name: 'arm_link6', l: 1.5}
+    impedance_ee_acc:     {weight: 2.0, enabled: true, ee_name: 'arm_link6', l: 4.0}
     ee_angvel_penalty:  {weight: 1.0e-3, enabled: true, ee_name: 'arm_link6'}
     joint_acc_l2:       {weight: 1.0e-5, enabled: true, joint_names: "arm_joint[1-5]"}
     joint_vel_l2:       {weight: 1.0e-2, enabled: true, joint_names: "arm_joint[1-5]"}

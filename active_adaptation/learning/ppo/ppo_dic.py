@@ -69,6 +69,8 @@ class PPOConfig:
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
+    grad_pen: bool = False
+
     phase: str = "train"
     short_history: int = 0
     vecnorm: Union[str, None] = None
@@ -241,7 +243,7 @@ class PPODICPolicy(TensorDictModuleBase):
         self.gae = GAE(0.99, 0.95)
         self.reg_lambda = 0.0
         self.ext_rec_lambda = 0.1
-        self.symmetry_coef = 0.
+        # self.symmetry_coef = 0.
         self.rec_rew = 0.
         
         if cfg.value_norm:
@@ -436,7 +438,7 @@ class PPODICPolicy(TensorDictModuleBase):
     def step_schedule(self, progress: float):
         self.reg_lambda = progress * self.cfg.reg_lambda
         self.entropy_coef = self.cfg.entropy_coef_start + (self.cfg.entropy_coef_end - self.cfg.entropy_coef_start) * progress
-        self.symmetry_coef = min(progress * 2, 1.)
+        # self.symmetry_coef = min(progress * 2, 1.)
         self.rec_rew = min(progress * 2, 1.)
 
     def train_op(self, tensordict: TensorDict):
@@ -552,7 +554,7 @@ class PPODICPolicy(TensorDictModuleBase):
 
     # @torch.compile
     def _update(self, tensordict: TensorDict, policy_inference: PolicyUpdateInferenceMod, opt: torch.optim.Optimizer):
-        log_probs, entropy, grad = policy_inference(tensordict, grad_pen=False)
+        log_probs, entropy, grad = policy_inference(tensordict, grad_pen=self.cfg.grad_pen)
 
         if self.cfg.phase == "train":
             valid = (tensordict["step_count"] > 1)
@@ -618,39 +620,39 @@ class PPODICPolicy(TensorDictModuleBase):
         }
         return info
 
-    def _update_symmetry(self, tensordict: TensorDict):
-        # left_obs, right_obs = tensordict["symmetry"].unbind(1)
-        # rnd_pred = self.random_pred(left_obs)
-        # rnd_loss = F.mse_loss(rnd_pred, self.random(left_obs))
+    # def _update_symmetry(self, tensordict: TensorDict):
+    #     # left_obs, right_obs = tensordict["symmetry"].unbind(1)
+    #     # rnd_pred = self.random_pred(left_obs)
+    #     # rnd_loss = F.mse_loss(rnd_pred, self.random(left_obs))
 
-        left_obs, right_obs = tensordict["symmetry"].unbind(1)
-        left_obs.requires_grad_(True)
-        left_score = self.symmetry(left_obs)
-        right_score = self.symmetry(right_obs)
-        valid = (~tensordict["is_init"]).float()
-        loss_left = (left_score - 1).square()
-        loss_right = (right_score + 1).square()
-        symmetry_loss = torch.mean((loss_left + loss_right) * valid)
+    #     left_obs, right_obs = tensordict["symmetry"].unbind(1)
+    #     left_obs.requires_grad_(True)
+    #     left_score = self.symmetry(left_obs)
+    #     right_score = self.symmetry(right_obs)
+    #     valid = (~tensordict["is_init"]).float()
+    #     loss_left = (left_score - 1).square()
+    #     loss_right = (right_score + 1).square()
+    #     symmetry_loss = torch.mean((loss_left + loss_right) * valid)
 
-        grad = torch.autograd.grad(
-            left_score,
-            left_obs, 
-            torch.ones_like(left_score),
-            retain_graph=True,
-            create_graph=True
-        )[0]
-        gradient_penalty = torch.mean(grad.square().sum(dim=-1))
+    #     grad = torch.autograd.grad(
+    #         left_score,
+    #         left_obs, 
+    #         torch.ones_like(left_score),
+    #         retain_graph=True,
+    #         create_graph=True
+    #     )[0]
+    #     gradient_penalty = torch.mean(grad.square().sum(dim=-1))
         
-        self.opt_symmetry.zero_grad()
-        (symmetry_loss + 5 * gradient_penalty).backward()
-        self.opt_symmetry.step()
+    #     self.opt_symmetry.zero_grad()
+    #     (symmetry_loss + 5 * gradient_penalty).backward()
+    #     self.opt_symmetry.step()
 
-        return {
-            "symmetry/loss": symmetry_loss,
-            "symmetry/gradient_penalty": gradient_penalty,
-            # "symmetry/acc": ((left_score > 0) & (right_score < 0)).float().mean(),
-            # "symmetry/loss_rnd": rnd_loss
-        }
+    #     return {
+    #         "symmetry/loss": symmetry_loss,
+    #         "symmetry/gradient_penalty": gradient_penalty,
+    #         # "symmetry/acc": ((left_score > 0) & (right_score < 0)).float().mean(),
+    #         # "symmetry/loss_rnd": rnd_loss
+    #     }
     
     def state_dict(self):
         state_dict = OrderedDict()

@@ -147,6 +147,67 @@ class motor_params(Randomization):
             self.asset.write_joint_stiffness_to_sim(stiffness, self.actuator.joint_indices, env_ids)
             self.asset.write_joint_damping_to_sim(damping, self.actuator.joint_indices, env_ids)
 
+# class motor_params_implicit(Randomization):
+#     def __init__(self, env, actuator_name: str, stiffness_range: NestedRangeType = (1.0, 1.0), damping_range: NestedRangeType = (1.0, 1.0), scale_factor_range: NestedRangeType = (1.0, 1.0), armature_range: NestedRangeType = (0.0, 0.0)):
+#         super().__init__(env)
+#         self.asset: Articulation = self.env.scene["robot"]
+#         self.actuator: ImplicitActuator = self.asset.actuators[actuator_name]
+#         self.joint_ids, self.joint_names = self.asset.find_joints(self.actuator.joint_names)
+#         self.joint_ids = torch.as_tensor(self.joint_ids, device=self.device)
+
+#         from omegaconf import ListConfig
+#         def parse(range: NestedRangeType, default: torch.Tensor):
+#             if isinstance(range, (tuple, list, ListConfig)):
+#                 range = {".*": range}
+#             result = {}
+#             for key, value in range.items():
+#                 ids, names = string_utils.resolve_matching_names(key, self.joint_names)
+#                 result[key] = (ids, names, value, default[ids])
+#             return result
+        
+#         self.stiffness_range    = parse(stiffness_range, self.actuator.stiffness[0])
+#         self.damping_range      = parse(damping_range, self.actuator.damping[0])
+#         self.scale_factor_range = parse(scale_factor_range, torch.ones(len(self.joint_ids), device=self.device))
+#         self.armature_range     = parse(armature_range, torch.zeros(len(self.joint_ids), device=self.device))
+
+class motor_params_implicit(Randomization):
+    def __init__(self, env, stiffness_range, damping_range, armature_range):
+        super().__init__(env),
+        self.asset: Articulation = self.env.scene["robot"]
+        self.stiffness_range = dict(stiffness_range)
+        self.damping_range = dict(damping_range)
+        self.armature_range = dict(armature_range)
+
+        ids, _, value = string_utils.resolve_matching_names_values(self.stiffness_range, self.asset.joint_names)
+        self.stiffness_id = torch.tensor(ids, device=self.device)
+        self.stiffness_default = self.asset.data.joint_stiffness[0, self.stiffness_id]
+        low, high = (torch.tensor(value, device=self.device) * self.stiffness_default.unsqueeze(1)).unbind(1)
+        self.stiffness_low = low
+        self.stiffness_scale = high - low
+
+        ids, _, value = string_utils.resolve_matching_names_values(self.damping_range, self.asset.joint_names)
+        self.damping_id = torch.tensor(ids, device=self.device)
+        self.damping_default = self.asset.data.joint_damping[0, self.damping_id]
+        low, high = (torch.tensor(value, device=self.device) * self.damping_default.unsqueeze(1)).unbind(1)
+        self.damping_low = low
+        self.damping_scale = high - low
+
+        ids, _, value = string_utils.resolve_matching_names_values(self.armature_range, self.asset.joint_names)
+        self.armature_id = torch.tensor(ids, device=self.device)
+        low, high = torch.tensor(value, device=self.device).unbind(1)
+        self.armature_low = low
+        self.armature_scale = high - low
+    
+    def reset(self, env_ids):
+        stiffness = torch.rand(len(env_ids), len(self.stiffness_id), device=self.device) * self.stiffness_scale + self.stiffness_low
+        self.asset.write_joint_stiffness_to_sim(stiffness, self.stiffness_id, env_ids)
+
+        damping = torch.rand(len(env_ids), len(self.damping_id), device=self.device) * self.damping_scale + self.damping_low
+        self.asset.write_joint_damping_to_sim(damping, self.damping_id, env_ids)
+
+        armature = torch.rand(len(env_ids), len(self.armature_id), device=self.device) * self.armature_scale + self.armature_low
+        self.asset.write_joint_armature_to_sim(armature, self.armature_id, env_ids)
+
 
 class random_motor_failure(Randomization):
     def __init__(
