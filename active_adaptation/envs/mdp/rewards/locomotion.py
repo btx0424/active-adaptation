@@ -1309,6 +1309,7 @@ class impedance_vel(Reward):
         self.lin_vel_sum = torch.zeros(
             self.num_envs, 3, len(self.decay), device=self.device
         )
+        self._idx = [-1, -8]
 
     def reset(self, env_ids):
         self.lin_vel_sum[env_ids] = 0.0
@@ -1321,15 +1322,13 @@ class impedance_vel(Reward):
         )
 
     def compute(self) -> torch.Tensor:
-        lin_vel_w = self.lin_vel_sum / self.cnt.unsqueeze(1)
-        command_lin_vel_w = self.command_manager.command_linvel_w.unsqueeze(-1)
-        diff = lin_vel_w - command_lin_vel_w
-        error_l2 = diff.square().sum(dim=1, keepdim=True)
-        error_l2 = error_l2.min(-1).values
-        p = torch.exp(-error_l2 / 0.25)
-        r = p - 0.5 * error_l2
+        lin_vel_w = self.asset.data.root_lin_vel_w
+        lin_vel_w_target = self.command_manager.desired_lin_vel_w[:, self._idx]
+        diff = (lin_vel_w_target - lin_vel_w.unsqueeze(1))
+        error_l2 = diff[:, :, :2].square().sum(dim=-1, keepdim=True)
+        p = torch.exp(- error_l2 / 0.25).mean(1)
         self.asset.data.linvel_exp = p
-        return r
+        return p
 
 
 class impedance_acc(Reward):

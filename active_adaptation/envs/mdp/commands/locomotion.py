@@ -1,5 +1,6 @@
 from math import pi
 import torch
+import torch.nn.functional as F
 import torch.distributions as D
 import math
 import warp as wp
@@ -814,11 +815,14 @@ class CommandPosVel(Command2):
 
 class Impedance(Command):
 
+    COMPLIANT = 0
+    SET_LINVEL = 1
+    SET_POSITION = 2
+
     def __init__(
         self,
         env,
         virtual_mass_range=(0.5, 1.0),
-        compliant_ratio: float = 0.2,
         linear_kp_range=(2.0, 12.0),
         angular_kp_range=(2.0, 12.0),
         impulse_force_momentum_scale=(5.0, 5.0, 1.0),
@@ -837,7 +841,6 @@ class Impedance(Command):
 
         self.virtual_mass_range = virtual_mass_range
         self.resample_prob = 0.01
-        self.compliant_ratio = compliant_ratio  # kp=0 for compliant mode
         self.linear_kp_range = linear_kp_range
         self.angular_kp_range = angular_kp_range
         self.temporal_smoothing = temporal_smoothing
@@ -933,7 +936,7 @@ class Impedance(Command):
             # the three modes are exclusive
             self.large_force_mode = torch.zeros(self.num_envs, 1, dtype=bool)
             self.large_force_prob = 0.
-            self.compliant = torch.zeros(self.num_envs, 1, dtype=bool)
+
             self.max_output_force_range = (80., 120.)
             self.max_output_force = torch.zeros(self.num_envs, 1)
 
@@ -954,9 +957,20 @@ class Impedance(Command):
             self.impulse_force_time = torch.zeros(self.num_envs, 1)
 
             self._cum_error = torch.zeros(self.num_envs, 3)
+            # debugging info
+            # how much distance (percentage) is covered
+            self.distance_commanded = torch.zeros(self.num_envs, 1)
+            self.distance_covered = torch.zeros(self.num_envs, 1)
 
             self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
             self.xy = torch.tensor([1.0, 1.0, 0.0], device=self.device)
+
+            self.command_mode = torch.zeros(self.num_envs, 3, dtype=int)
+            self.command_transition = torch.tensor([
+                [0., 0.5, 0.5], # compliant
+                [0.2, 0.4, 0.4], # set_linvel
+                [0.2, 0.4, 0.4], # set_position
+            ])
 
         self.decimation = int(self.env.step_dt / self.env.physics_dt)
         self.cnt = 0
@@ -986,8 +1000,13 @@ class Impedance(Command):
             self.vis_arrow.set_visibility(True)
 
     def reset(self, env_ids: torch.Tensor):
+        self.command_mode[env_ids] = F.one_hot(torch.randint(3, size=env_ids.shape, device=self.device), num_classes=3)
         self._sample_command(env_ids)
         self._cum_error[env_ids] = 0.0
+        self.env.extra["stats/distance_commanded"] = self.distance_commanded.mean().item()
+        self.env.extra["stats/distance_covered"] = self.distance_covered.mean().item()
+        self.distance_covered[env_ids] = 0.0
+        self.distance_commanded[env_ids] = 0.0
 
         self.desired_pos_w[env_ids] = self.asset.data.root_pos_w[env_ids].unsqueeze(1)
         self.desired_lin_vel_w[env_ids] = 0.0
@@ -1026,7 +1045,7 @@ class Impedance(Command):
         desired_acc_w = clamp_along(desired_acc_w, x_b, -self.max_acc_xyz[0], self.max_acc_xyz[0])
         desired_acc_w = clamp_along(desired_acc_w, y_b, -self.max_acc_xyz[1], self.max_acc_xyz[1])
 
-        acc_low_mask = torch.norm(desired_acc_w, dim=-1) < 0.8
+        acc_low_mask = torch.norm(desired_acc_w, dim=-1) < 0.5
         desired_acc_w[acc_low_mask] = 0.0
 
         self.desired_lin_acc_w[:] = desired_acc_w
@@ -1034,8 +1053,10 @@ class Impedance(Command):
         desired_vel_w = clamp_along(desired_vel_w, x_b, -self.max_vel_xyz[0], self.max_vel_xyz[0])
         desired_vel_w = clamp_along(desired_vel_w, y_b, -self.max_vel_xyz[1], self.max_vel_xyz[1])  
         
-        vel_low_mask = (torch.norm(desired_vel_w, dim=-1) < 0.8) & acc_low_mask
-        desired_vel_w[vel_low_mask] = 0.0
+        ## Do not do this here. Small values may integrate to large values.
+        ## Instead, zero-out small values when computing the command.
+        # vel_low_mask = (torch.norm(desired_vel_w, dim=-1) < 0.8) & acc_low_mask
+        # desired_vel_w[vel_low_mask] = 0.0
         
         self.desired_lin_vel_w[:] = desired_vel_w
         self.desired_pos_w.add_(self.desired_lin_vel_w * dt)
@@ -1058,18 +1079,25 @@ class Impedance(Command):
         self.desired_yaw_w.add_(self.desired_yaw_vel_w * dt)
 
     def _smooth(self, q: torch.Tensor):
+        return q[:, -1]
         return (q * self.smoothing_weight.unsqueeze(-1)).sum(1)
 
     def update(self):
-        self._compute_errors()
+        # compute cumulative errors
+        # might be used for early termination
+        linvel_error = (self.command_linvel_w - self.asset.data.root_lin_vel_w).norm(
+            dim=-1
+        )
+        pos_error = (self.command_pos_w - self.asset.data.root_pos_w).norm(dim=-1)
+        angvel_error = (
+            self.command_angvel - self.asset.data.root_ang_vel_w[:, 2]
+        ).abs()
+        self._cum_error[:, 0].add_(linvel_error * self.env.step_dt).mul_(0.99)
+        self._cum_error[:, 1].add_(pos_error * self.env.step_dt).mul_(0.99)
+        self._cum_error[:, 2].add_(angvel_error * self.env.step_dt).mul_(0.99)
 
-        # self.desired_lin_vel_w[:, :-1] = self.desired_lin_vel_w[:, :-1].roll(1, dims=1)
-        # self.desired_pos_w[:, :-1] = self.desired_pos_w[:, :-1].roll(1, dims=1)
-        # self.desired_yaw_vel_w[:, :-1] = self.desired_yaw_vel_w[:, :-1].roll(1, dims=1)
-        # self.desired_yaw_w[:, :-1] = self.desired_yaw_w[:, :-1].roll(1, dims=1)
-
-        # self.desired_pos_w[:, -1].lerp_(self.asset.data.root_pos_w, 0.01)
-        # self.desired_yaw_vel_w[:, -1].lerp_(self.asset.data.root_ang_vel_w[:, 2:3], 0.01)
+        self.distance_commanded.add_(self.command_linvel_w.norm(dim=-1, keepdim=True))
+        self.distance_covered.add_(self.asset.data.root_lin_vel_w.norm(dim=-1, keepdim=True))
 
         self.desired_lin_vel_w[:] = self.desired_lin_vel_w.roll(1, dims=1)
         self.desired_pos_w[:] = self.desired_pos_w.roll(1, dims=1)
@@ -1081,8 +1109,6 @@ class Impedance(Command):
         self.desired_yaw_vel_w[:, 0] = self.asset.data.root_ang_vel_w[:, 2:3]
         self.desired_yaw_w[:, 0] = self.asset.data.heading_w.unsqueeze(1)
 
-        # for _ in range(self.decimation):
-        #     self._integrate(self.env.physics_dt)
         self._integrate(self.env.step_dt)
 
         yaw = self.asset.data.heading_w
@@ -1168,6 +1194,7 @@ class Impedance(Command):
         self.update_forces()
 
     def update_forces(self):
+        # sample constant force
         expire = self.constant_force_time > self.constant_force_duration - 1e-4
         sample = (
             (torch.rand(self.num_envs, 1, device=self.device) < self.resample_prob)
@@ -1202,6 +1229,7 @@ class Impedance(Command):
         )
         self.constant_force *= (self.constant_force_time < self.constant_force_duration)
 
+        # sample spring force
         expire = self.spring_force_time > self.spring_force_duration - 1e-4
         sample = (torch.rand(self.num_envs, 1, device=self.device) < 0.1) & expire & self.large_force_mode
         scalar = torch.zeros(self.num_envs, 1, device=self.device)
@@ -1291,11 +1319,18 @@ class Impedance(Command):
 
     def _sample_command(self, env_ids: torch.Tensor):
         scalar = torch.empty(len(env_ids), 1, device=self.device)
+
+
+        command_mode_prob =  self.command_mode[env_ids].float() @ self.command_transition
+        command_mode = torch.multinomial(command_mode_prob, 1, replacement=True).squeeze(1)
+        command_mode = F.one_hot(command_mode, num_classes=3)
+        self.command_mode[env_ids] = command_mode
         
         expired = (self.spring_force_time[env_ids] > self.spring_force_duration[env_ids])
         large_force_mode = (
             (torch.rand(len(env_ids), 1, device=self.device) < self.large_force_prob) 
             & (self.env.episode_length_buf[env_ids].unsqueeze(1) > 20)
+            & (~command_mode[:, 0].unsqueeze(1).bool()) # not in compliant mode
         )
         self.large_force_mode[env_ids] = torch.where(expired, large_force_mode, self.large_force_mode[env_ids])
         self.max_output_force[env_ids] = scalar.uniform_(*self.max_output_force_range)
@@ -1306,8 +1341,8 @@ class Impedance(Command):
             scalar.clone().uniform_(*self.linear_kp_range)
         )
         lin_kd = 2.0 * lin_kp.sqrt()  # to make the system critically damped
-        compliant = (torch.rand(len(env_ids), 1, device=self.device) < self.compliant_ratio) & ~large_force_mode
-        self.compliant[env_ids] = compliant
+
+        compliant = command_mode[:, 0].unsqueeze(1).bool()
         lin_kp *= ~compliant
 
         self.lin_kp[env_ids] = lin_kp
@@ -1321,9 +1356,9 @@ class Impedance(Command):
         self.ang_kd[env_ids] = ang_kd
 
         set_linvel = torch.zeros(len(env_ids), 3, device=self.device)
-        set_linvel[:, 0].uniform_(0.4, 1.2)
-        use_set_linvel = torch.rand(len(env_ids), 1, device=self.device) < 0.5
-        use_set_linvel = use_set_linvel & ~compliant & ~large_force_mode
+        set_linvel[:, 0].uniform_(0.2, 1.2)
+        use_set_linvel = command_mode[:, 1].unsqueeze(1).bool()
+        use_set_linvel = use_set_linvel & ~large_force_mode
 
         root_pos_w = self.asset.data.root_pos_w[env_ids]
         command_setpoint_w = torch.zeros(len(env_ids), 3, device=self.device)
@@ -1347,19 +1382,7 @@ class Impedance(Command):
 
         virtual_mass = scalar.uniform_(*self.virtual_mass_range)
         self.virtual_mass[env_ids] = virtual_mass  # * self.default_mass
-        self.virtual_inertia[env_ids] = self.default_inertia
-
-    def _compute_errors(self):
-        linvel_error = (self.command_linvel_w - self.asset.data.root_lin_vel_w).norm(
-            dim=-1
-        )
-        pos_error = (self.command_pos_w - self.asset.data.root_pos_w).norm(dim=-1)
-        angvel_error = (
-            self.command_angvel - self.asset.data.root_ang_vel_w[:, 2]
-        ).abs()
-        self._cum_error[:, 0].add_(linvel_error * self.env.step_dt).mul_(0.99)
-        self._cum_error[:, 1].add_(pos_error * self.env.step_dt).mul_(0.99)
-        self._cum_error[:, 2].add_(angvel_error * self.env.step_dt).mul_(0.99)
+        self.virtual_inertia[env_ids] = self.default_inertia        
 
     def debug_draw(self):
         # draw command linvel (green)
