@@ -1052,7 +1052,7 @@ class Impedance(Command):
         desired_vel_w = self.desired_lin_vel_w + self.desired_lin_acc_w * dt
         desired_vel_w = clamp_along(desired_vel_w, x_b, -self.max_vel_xyz[0], self.max_vel_xyz[0])
         desired_vel_w = clamp_along(desired_vel_w, y_b, -self.max_vel_xyz[1], self.max_vel_xyz[1])  
-        
+        desired_vel_w[:, 2] = 0.
         ## Do not do this here. Small values may integrate to large values.
         ## Instead, zero-out small values when computing the command.
         # vel_low_mask = (torch.norm(desired_vel_w, dim=-1) < 0.8) & acc_low_mask
@@ -1407,6 +1407,12 @@ class Impedance(Command):
         # draw desired pos (green)
         self.env.debug_draw.point(
             self.desired_pos_w[:, -1], color=(0.0, 1.0, 0.0, 1.0), size=40.0
+        )
+        self.env.debug_draw.point(
+            self.desired_pos_w[:, -4], color=(0.0, 1.0, 0.0, 0.8), size=40.0
+        )
+        self.env.debug_draw.point(
+            self.desired_pos_w[:, -8], color=(0.0, 1.0, 0.0, 0.4), size=40.0
         )
         # draw setpoint pos (red)
         self.env.debug_draw.point(
