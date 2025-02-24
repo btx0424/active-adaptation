@@ -275,7 +275,8 @@ class PPODICPolicy(TensorDictModuleBase):
             module=Seq(
                 CatTensors(in_keys, "_actor_inp", del_keys=False, sort=False),
                 Mod(make_mlp([512, 256, 256]), ["_actor_inp"], ["_actor_feature"]),
-                Mod(Actor(self.action_dim), ["_actor_feature"], ["loc", "scale"])
+                Mod(Actor(self.action_dim), ["_actor_feature"], ["loc", "scale"]),
+                Mod(nn.LazyLinear(1), ["_actor_feature"], ["flag"])
             ),
             in_keys=["loc", "scale"],
             out_keys=[ACTION_KEY],
@@ -300,7 +301,8 @@ class PPODICPolicy(TensorDictModuleBase):
             module=Seq(
                 CatTensors(in_keys, "_actor_inp", del_keys=False, sort=False),
                 Mod(make_mlp([512, 256, 256]), ["_actor_inp"], ["_actor_feature"]),
-                Mod(Actor(self.action_dim), ["_actor_feature"], ["loc", "scale"])
+                Mod(Actor(self.action_dim), ["_actor_feature"], ["loc", "scale"]),
+                Mod(nn.LazyLinear(1), ["_actor_feature"], ["flag"])
             ),
             in_keys=["loc", "scale"],
             out_keys=[ACTION_KEY],
@@ -465,10 +467,10 @@ class PPODICPolicy(TensorDictModuleBase):
         policy_inference = self.policy_train_inference if self.cfg.phase == "train" else self.policy_adapt_inference
         opt = self.opt if self.cfg.phase == "train" else self.opt_finetune
 
-        with torch.no_grad():
-            both = self.actor.get_dist(tensordict).mean
-            wo_ext = self.actor.get_dist(tensordict.replace(ext_feature=torch.zeros_like(tensordict["ext_feature"]))).mean
-            wo_priv = self.actor.get_dist(tensordict.replace(priv_feature=torch.zeros_like(tensordict["priv_feature"]))).mean
+        # with torch.no_grad():
+        #     both = self.actor.get_dist(tensordict).mean
+        #     wo_ext = self.actor.get_dist(tensordict.replace(ext_feature=torch.zeros_like(tensordict["ext_feature"]))).mean
+        #     wo_priv = self.actor.get_dist(tensordict.replace(priv_feature=torch.zeros_like(tensordict["priv_feature"]))).mean
             
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches)
@@ -482,8 +484,8 @@ class PPODICPolicy(TensorDictModuleBase):
         else:
             infos["actor/feature_std"] = tensordict["priv_pred"].std(dim=(0, 1)).mean().item()
         infos["critic/value_mean"] = tensordict["ret"].mean().item()
-        infos["actor/diff_ext"] = F.l1_loss(both, wo_ext).item()
-        infos["actor/diff_priv"] = F.l1_loss(both, wo_priv).item()
+        # infos["actor/diff_ext"] = F.l1_loss(both, wo_ext).item()
+        # infos["actor/diff_priv"] = F.l1_loss(both, wo_priv).item()
         return infos
     
     @set_recurrent_mode(True)
@@ -592,8 +594,9 @@ class PPODICPolicy(TensorDictModuleBase):
             reg_loss = self.reg_lambda * (reg_loss * (~tensordict["is_init"])).mean()
         else:
             reg_loss = 0.
-            
-        loss = policy_loss + entropy_loss + value_loss + reg_loss + 0.002 * gradient_penalty
+        
+        flag_loss = F.binary_cross_entropy_with_logits(tensordict["flag"], tensordict["flag_"].float())
+        loss = policy_loss + entropy_loss + value_loss + reg_loss + 0.002 * gradient_penalty + flag_loss
         
         opt.zero_grad()
         loss.backward()
@@ -609,6 +612,7 @@ class PPODICPolicy(TensorDictModuleBase):
             "actor/grad_norm": actor_grad_norm,
             'actor/approx_kl': ((ratio - 1) - log_ratio).mean(),
             "actor/gradient_penalty": gradient_penalty,
+            "adapt/flag_loss": flag_loss,
             # "actor/smth1_loss": smth1_loss,
             # "actor/smth2_loss": smth2_loss,
             # "actor/dyn_loss": dyn_loss,

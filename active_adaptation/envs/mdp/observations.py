@@ -1748,6 +1748,17 @@ class oscillator(Observation):
         return obs.reshape(self.num_envs, -1)
 
 
+class is_standing(Observation):
+    def __init__(self, env, mask_ratio = 0):
+        super().__init__(env, mask_ratio)
+        self.command_manager = self.env.command_manager
+        if not hasattr(self.command_manager, "is_standing_env"):
+            raise RuntimeError(" ")
+
+    def compute(self):
+        return self.command_manager.is_standing_env.reshape(self.num_envs, 1)
+
+
 class feet_contact_multistep(Observation):
     def __init__(self, env, steps: int=4, thres: float=1.):
         super().__init__(env)
