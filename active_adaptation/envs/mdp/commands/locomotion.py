@@ -1296,9 +1296,9 @@ class Impedance(Command):
             self.impulse_force_duration
         )
         force = torch.zeros(self.num_envs, 3, device=self.device)
-        force[:, 0].uniform_(80., 160.)
-        force[:, 1].uniform_(80., 160.)
-        force[:, 2].uniform_(0., 20.)
+        # force[:, 0].uniform_(80., 160.)
+        # force[:, 1].uniform_(80., 160.)
+        # force[:, 2].uniform_(0., 20.)
         force *= (torch.rand(self.num_envs, 3, device=self.device) - 0.5).sign()
 
         self.impulse_force_peak = torch.where(
@@ -1361,15 +1361,14 @@ class Impedance(Command):
         use_set_linvel = use_set_linvel & ~large_force_mode
 
         root_pos_w = self.asset.data.root_pos_w[env_ids]
-        command_setpoint_w = torch.zeros(len(env_ids), 3, device=self.device)
-        command_setpoint_w[:, 0].uniform_(-2.0, 2.0)
-        command_setpoint_w[:, 1].uniform_(-1.0, 1.0)
-        command_setpoint_w.add_(root_pos_w)
+        offset = torch.zeros(len(env_ids), 3, device=self.device)
+        offset[:, 0].uniform_(1.0, 2.0)
+        offset[:, 1].uniform_(1.0, 2.0)
 
         command_setpoint_w = torch.where(
             use_set_linvel,
             lin_kd / lin_kp * set_linvel + root_pos_w,
-            command_setpoint_w,
+            root_pos_w + offset * torch.randn_like(offset).sign(),
         )
 
         self.set_linvel[env_ids] = set_linvel
