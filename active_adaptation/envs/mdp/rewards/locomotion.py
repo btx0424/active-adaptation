@@ -1290,8 +1290,9 @@ class impedance_pos(Reward):
         self.command_manager: Impedance = self.env.command_manager
 
     def compute(self) -> torch.Tensor:
-        diff = self.command_manager.command_pos_w - self.asset.data.root_pos_w
-        r = torch.exp(-diff.norm(dim=-1, keepdim=True) / 0.25)
+        diff = self.command_manager.surrogate_pos_target - self.asset.data.root_pos_w.unsqueeze(1)
+        error_l2 = diff[:, :, :2].square().sum(dim=-1, keepdim=True)
+        r = torch.exp(- error_l2 / 0.25).mean(1)
         return r
 
 
@@ -1304,26 +1305,9 @@ class impedance_vel(Reward):
         self.asset: Articulation = self.env.scene["robot"]
         self.command_manager: Impedance = self.env.command_manager
 
-        self.decay = torch.tensor([0.0, 0.5], device=self.device)
-        self.cnt = torch.zeros(self.num_envs, len(self.decay), device=self.device)
-        self.lin_vel_sum = torch.zeros(
-            self.num_envs, 3, len(self.decay), device=self.device
-        )
-        self._idx = [-1, -8]
-
-    def reset(self, env_ids):
-        self.lin_vel_sum[env_ids] = 0.0
-        self.cnt[env_ids] = 0
-
-    def update(self):
-        self.cnt.mul_(self.decay).add_(1.0)
-        self.lin_vel_sum.mul_(self.decay).add_(
-            self.asset.data.root_lin_vel_w.unsqueeze(-1)
-        )
-
     def compute(self) -> torch.Tensor:
         lin_vel_w = self.asset.data.root_lin_vel_w
-        lin_vel_w_target = self.command_manager.desired_lin_vel_w[:, self._idx]
+        lin_vel_w_target = self.command_manager.surrogate_lin_vel_target
         diff = (lin_vel_w_target - lin_vel_w.unsqueeze(1))
         error_l2 = diff[:, :, :2].square().sum(dim=-1, keepdim=True)
         p = torch.exp(- error_l2 / 0.25).mean(1)

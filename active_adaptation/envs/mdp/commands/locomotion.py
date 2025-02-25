@@ -850,12 +850,13 @@ class Impedance(Command):
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 10)
-            self.command_hidden = torch.zeros(self.num_envs, 8)
+            self.command_hidden = torch.zeros(self.num_envs, 14)
+            self.surrogate_lin_vel_target = torch.zeros(self.num_envs, 2, 3)
+            self.surrogate_pos_target = torch.zeros(self.num_envs, 2, 3)
 
             self.command_linvel = torch.zeros(self.num_envs, 3)
             self.command_speed = torch.zeros(self.num_envs, 1)
 
-            self.command_pos_w = torch.zeros(self.num_envs, 3)
             self.command_linvel_w = torch.zeros(self.num_envs, 3)
 
             self.command_yaw_w = torch.zeros(self.num_envs, 1)
@@ -1088,12 +1089,11 @@ class Impedance(Command):
         linvel_error = (self.command_linvel_w - self.asset.data.root_lin_vel_w).norm(
             dim=-1
         )
-        pos_error = (self.command_pos_w - self.asset.data.root_pos_w).norm(dim=-1)
         angvel_error = (
             self.command_angvel - self.asset.data.root_ang_vel_w[:, 2]
         ).abs()
         self._cum_error[:, 0].add_(linvel_error * self.env.step_dt).mul_(0.99)
-        self._cum_error[:, 1].add_(pos_error * self.env.step_dt).mul_(0.99)
+        # self._cum_error[:, 1].add_(pos_error * self.env.step_dt).mul_(0.99)
         self._cum_error[:, 2].add_(angvel_error * self.env.step_dt).mul_(0.99)
 
         self.distance_commanded.add_(self.command_linvel_w.norm(dim=-1, keepdim=True))
@@ -1116,7 +1116,6 @@ class Impedance(Command):
         self.command_linvel_w[:, 2] = 0.0
         
         self.command_angvel[:] = self._smooth(self.desired_yaw_vel_w).squeeze(-1)
-        self.command_pos_w[:] = self._smooth(self.desired_pos_w)
         _yaw_diff = self.desired_yaw_w - self.desired_yaw_w[:, 0:1]
         self.desired_yaw_w[:] = self.desired_yaw_w[:, 0:1] + math_utils.wrap_to_pi(
             _yaw_diff
@@ -1124,10 +1123,8 @@ class Impedance(Command):
         self.command_yaw_w[:] = self._smooth(self.desired_yaw_w)
 
 
+        root_pos = self.asset.data.root_pos_w
         # check if here should be yaw rotate
-        command_pos_b = quat_rotate_inverse(
-            self.asset.data.root_quat_w, self.command_pos_w - self.asset.data.root_pos_w
-        )
         command_setpos_b = quat_rotate_inverse(
             self.asset.data.root_quat_w,
             self.command_setpos_w - self.asset.data.root_pos_w,
@@ -1151,10 +1148,19 @@ class Impedance(Command):
         self.command[:, 8:9] = self.ang_kp * yaw_diff.unsqueeze(1)
         self.command[:, 9:10] = self.virtual_mass
 
-        self.command_hidden[:, 0:3] = command_pos_b
-        self.command_hidden[:, 3:6] = self.command_linvel
-        self.command_hidden[:, 6] = self.command_angvel
-        self.command_hidden[:, 7:8] = command_yaw_diff
+        self.surrogate_pos_target = self.desired_pos_w[:, [-1, -8]]
+        self.surrogate_lin_vel_target = self.desired_lin_vel_w[:, [-1, -8]] 
+
+        self.command_hidden[:, 0:6] = quat_rotate_inverse(
+            self.asset.data.root_quat_w.unsqueeze(1),
+            self.surrogate_pos_target - root_pos.unsqueeze(1),
+        ).reshape(self.num_envs, -1)
+        self.command_hidden[:, 6:12] = quat_rotate_inverse(
+            self.asset.data.root_quat_w.unsqueeze(1),
+            self.surrogate_lin_vel_target
+        ).reshape(self.num_envs, -1)
+        self.command_hidden[:, 12] = self.command_angvel
+        self.command_hidden[:, 12:13] = command_yaw_diff
         
 
         if self.teleop:
@@ -1174,13 +1180,9 @@ class Impedance(Command):
             sample_command = sample_command.nonzero().squeeze(-1)
             if len(sample_command) > 0:
                 self._sample_command(sample_command)
-            root_pos = self.asset.data.root_pos_w
             self.command_setpos_w[:] = torch.where(
                 self.use_set_linvel,
-                self.command_setpos_w.lerp(
-                    self.lin_kd / self.lin_kp * self.set_linvel + root_pos,
-                    0.5,
-                ),
+                self.lin_kd / self.lin_kp * self.set_linvel + root_pos,
                 self.command_setpos_w,
             )
             offset = torch.zeros(self.num_envs, 3, device=self.device)
@@ -1356,14 +1358,14 @@ class Impedance(Command):
         self.ang_kd[env_ids] = ang_kd
 
         set_linvel = torch.zeros(len(env_ids), 3, device=self.device)
-        set_linvel[:, 0].uniform_(0.2, 1.2)
+        set_linvel[:, 0].uniform_(0.4, 1.2)
         use_set_linvel = command_mode[:, 1].unsqueeze(1).bool()
         use_set_linvel = use_set_linvel & ~large_force_mode
 
         root_pos_w = self.asset.data.root_pos_w[env_ids]
         offset = torch.zeros(len(env_ids), 3, device=self.device)
-        offset[:, 0].uniform_(1.0, 2.0)
-        offset[:, 1].uniform_(1.0, 2.0)
+        offset[:, 0].uniform_(0.5, 1.6)
+        offset[:, 1].uniform_(0.5, 1.6)
 
         command_setpoint_w = torch.where(
             use_set_linvel,
@@ -1383,12 +1385,13 @@ class Impedance(Command):
         self.virtual_mass[env_ids] = virtual_mass  # * self.default_mass
         self.virtual_inertia[env_ids] = self.default_inertia        
 
+
     def debug_draw(self):
         # draw command linvel (green)
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w
             + torch.tensor([0.0, 0.0, 0.2], device=self.device),
-            self.command_linvel_w,
+            self.desired_lin_vel_w[:, -1],
             color=(0.0, 1.0, 0.0, 1.0),
         )
         # draw vector to setpoint pos (red)
