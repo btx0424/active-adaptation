@@ -1190,7 +1190,7 @@ class Impedance(Command):
             & ~self.large_force_mode
         )
         constant_force = torch.zeros(self.num_envs, 3, device=self.device)
-        # constant_force.uniform_(-1., 1.)
+        constant_force.uniform_(-1., 1.)
         duration = torch.zeros(self.num_envs, 1, device=self.device)
         duration.uniform_(*self.constant_force_duration_range)
         valid = (torch.rand(self.num_envs, 1, device=self.device) > 0.5)
@@ -1284,9 +1284,9 @@ class Impedance(Command):
             self.impulse_force_duration
         )
         force = torch.zeros(self.num_envs, 3, device=self.device)
-        # force[:, 0].uniform_(80., 160.)
-        # force[:, 1].uniform_(80., 160.)
-        # force[:, 2].uniform_(0., 20.)
+        force[:, 0].uniform_(80., 160.)
+        force[:, 1].uniform_(80., 160.)
+        force[:, 2].uniform_(0., 20.)
         force *= (torch.rand(self.num_envs, 3, device=self.device) - 0.5).sign()
 
         self.impulse_force_peak = torch.where(
@@ -1356,7 +1356,7 @@ class Impedance(Command):
 
         command_setpoint_w = torch.where(
             use_set_linvel,
-            lin_kd / lin_kp * set_linvel + root_pos_w,
+            root_pos_w,
             root_pos_w + offset * torch.randn_like(offset).sign(),
         )
 
