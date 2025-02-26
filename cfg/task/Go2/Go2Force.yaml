@@ -136,10 +136,9 @@ reward:
     feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
     undesired_contact:  {body_names: [Head.*, .*_calf, .*thigh], weight: 2.0, enabled: true}
-    # step_up:            {weight: 2.0, enabled: true}
-    # step_up_needed:     {weight: 1.0, enabled: false}
-    # com_support:        {weight: 1.0, enabled: false}
-    # is_standing_env:    {weight: 1.0, enabled: false}
+  metrics:
+    impedance_acc_error: {weight: 1.0, enabled: false}
+    impedance_pos_error: {weight: 1.0, enabled: false}
 
 termination:
   crash: {body_names_expr: ["base", ".*_calf"], t_thres: 0.1, z_thres: -0.2}

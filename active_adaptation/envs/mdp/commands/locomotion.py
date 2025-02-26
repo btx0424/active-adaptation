@@ -862,28 +862,14 @@ class Impedance(Command):
             self.command_yaw_w = torch.zeros(self.num_envs, 1)
             self.command_angvel = torch.zeros(self.num_envs)
             # integration
-            self.desired_lin_acc_w = torch.zeros(
-                self.num_envs, self.temporal_smoothing, 3
-            )
-            self.desired_lin_vel_w = torch.zeros(
-                self.num_envs, self.temporal_smoothing, 3
-            )
-            self.desired_pos_w = torch.zeros(self.num_envs, self.temporal_smoothing, 3)
+            bshape = (self.num_envs, self.temporal_smoothing + 1)
+            self.desired_lin_acc_w = torch.zeros(*bshape, 3)
+            self.desired_lin_vel_w = torch.zeros(*bshape, 3)
+            self.desired_pos_w = torch.zeros(*bshape, 3)
 
-            self.desired_yaw_acc_w = torch.zeros(
-                self.num_envs, self.temporal_smoothing, 1
-            )
-            self.desired_yaw_vel_w = torch.zeros(
-                self.num_envs, self.temporal_smoothing, 1
-            )
-            self.desired_yaw_w = torch.zeros(self.num_envs, self.temporal_smoothing, 1)
-
-            self.smoothing_weight = torch.full(
-                (1, self.temporal_smoothing), 0.9
-            ).cumprod(1)
-            self.smoothing_weight = (
-                self.smoothing_weight.flip(dims=(1,)) / self.smoothing_weight.sum()
-            )
+            self.desired_yaw_acc_w = torch.zeros(*bshape, 1)
+            self.desired_yaw_vel_w = torch.zeros(*bshape, 1)
+            self.desired_yaw_w = torch.zeros(*bshape, 1)
 
             self.command_setpos_w = torch.zeros(self.num_envs, 3)
             self.command_setrpy_w = torch.zeros(self.num_envs, 3)
@@ -1080,8 +1066,7 @@ class Impedance(Command):
         self.desired_yaw_w.add_(self.desired_yaw_vel_w * dt)
 
     def _smooth(self, q: torch.Tensor):
-        return q[:, -1]
-        return (q * self.smoothing_weight.unsqueeze(-1)).sum(1)
+        return q[:, [-2, -8]].mean(1)
 
     def update(self):
         # compute cumulative errors
@@ -1099,10 +1084,10 @@ class Impedance(Command):
         self.distance_commanded.add_(self.command_linvel_w.norm(dim=-1, keepdim=True))
         self.distance_covered.add_(self.asset.data.root_lin_vel_w.norm(dim=-1, keepdim=True))
 
-        self.desired_lin_vel_w[:] = self.desired_lin_vel_w.roll(1, dims=1)
-        self.desired_pos_w[:] = self.desired_pos_w.roll(1, dims=1)
-        self.desired_yaw_vel_w[:] = self.desired_yaw_vel_w.roll(1, dims=1)
-        self.desired_yaw_w[:] = self.desired_yaw_w.roll(1, dims=1)
+        self.desired_lin_vel_w[:, :-1] = self.desired_lin_vel_w[:, :-1].roll(1, dims=1)
+        self.desired_pos_w[:, :-1] = self.desired_pos_w[:, :-1].roll(1, dims=1)
+        self.desired_yaw_vel_w[:, :-1] = self.desired_yaw_vel_w[:, :-1].roll(1, dims=1)
+        self.desired_yaw_w[:, :-1] = self.desired_yaw_w[:, :-1].roll(1, dims=1)
 
         self.desired_lin_vel_w[:, 0] = self.asset.data.root_lin_vel_w
         self.desired_pos_w[:, 0] = self.asset.data.root_pos_w
@@ -1148,8 +1133,8 @@ class Impedance(Command):
         self.command[:, 8:9] = self.ang_kp * yaw_diff.unsqueeze(1)
         self.command[:, 9:10] = self.virtual_mass
 
-        self.surrogate_pos_target = self.desired_pos_w[:, [-1, -8]]
-        self.surrogate_lin_vel_target = self.desired_lin_vel_w[:, [-1, -8]] 
+        self.surrogate_pos_target = self.desired_pos_w[:, [-2, -8]]
+        self.surrogate_lin_vel_target = self.desired_lin_vel_w[:, [-2, -8]] 
 
         self.command_hidden[:, 0:6] = quat_rotate_inverse(
             self.asset.data.root_quat_w.unsqueeze(1),

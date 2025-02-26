@@ -1331,6 +1331,34 @@ class impedance_acc(Reward):
         return r
 
 
+class impedance_acc_error(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.command_manager: Impedance = self.env.command_manager
+
+    def compute(self) -> torch.Tensor:
+        lin_acc_w = self.asset.data.body_acc_w[:, 0, :2]
+        error_l2 = (self.command_manager.desired_lin_acc_w[:, 0, :2] - lin_acc_w).square().sum(1, True)
+        return error_l2
+
+
+class impedance_pos_error(Reward):
+    """
+    Tracking error relative to the **open-loop** desired position obtained by integrating
+    from the initial state.
+    """
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.command_manager: Impedance = self.env.command_manager
+
+    def compute(self) -> torch.Tensor:
+        desired_pos_w = self.command_manager.desired_pos_w[:, -1]
+        error_l2 = (desired_pos_w - self.asset.data.root_pos_w)[:, :2].square().sum(1, True)
+        return error_l2
+
+
 class impedance_yaw_pos(Reward):
     def __init__(self, env, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
