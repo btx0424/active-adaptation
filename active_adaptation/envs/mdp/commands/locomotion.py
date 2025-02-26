@@ -1167,7 +1167,8 @@ class Impedance(Command):
                 self._sample_command(sample_command)
             self.command_setpos_w[:] = torch.where(
                 self.use_set_linvel,
-                self.lin_kd / self.lin_kp * self.set_linvel + root_pos,
+                # self.lin_kd / self.lin_kp * self.set_linvel + root_pos,
+                self.command_setpos_w + self.set_linvel * self.env.step_dt,
                 self.command_setpos_w,
             )
             offset = torch.zeros(self.num_envs, 3, device=self.device)
@@ -1189,7 +1190,7 @@ class Impedance(Command):
             & ~self.large_force_mode
         )
         constant_force = torch.zeros(self.num_envs, 3, device=self.device)
-        constant_force.uniform_(-1., 1.)
+        # constant_force.uniform_(-1., 1.)
         duration = torch.zeros(self.num_envs, 1, device=self.device)
         duration.uniform_(*self.constant_force_duration_range)
         valid = (torch.rand(self.num_envs, 1, device=self.device) > 0.5)
@@ -1309,6 +1310,7 @@ class Impedance(Command):
 
 
         command_mode_prob =  self.command_mode[env_ids].float() @ self.command_transition
+        # command_mode_prob = torch.tensor([0., 1., 0.], device=self.device).expand(len(env_ids), -1)
         command_mode = torch.multinomial(command_mode_prob, 1, replacement=True).squeeze(1)
         command_mode = F.one_hot(command_mode, num_classes=3)
         self.command_mode[env_ids] = command_mode
@@ -1385,12 +1387,13 @@ class Impedance(Command):
             self.command_setpos_w - self.asset.data.root_pos_w,
             color=(1.0, 0.0, 0.0, 1.0),
         )
-        # self.env.debug_draw.vector(
-        #     self.asset.data.root_pos_w,
-        #     self.spring_force_setpoint - self.asset.data.root_pos_w,
-        #     color=(1.0, 0.0, 1.0, 1.0),
-        #     size=4.0
-        # )
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w + torch.tensor([0.0, 0.0, 0.3], device=self.device),
+            # self.spring_force_setpoint - self.asset.data.root_pos_w,
+            self.set_linvel,
+            color=(1.0, 0.0, 1.0, 1.0),
+            size=4.0
+        )
         # draw desired pos (green)
         self.env.debug_draw.point(
             self.desired_pos_w[:, -1], color=(0.0, 1.0, 0.0, 1.0), size=40.0
