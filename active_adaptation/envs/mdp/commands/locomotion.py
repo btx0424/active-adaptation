@@ -848,11 +848,16 @@ class Impedance(Command):
         self.max_acc_xyz = max_acc_xy + (0.,)
         self.max_vel_xyz = max_vel_xy + (0.,)
 
+        assert self.temporal_smoothing >= 32
+        self.surr_steps = [16, 24, 32]
+        # self.surr_steps = [1]
+        # self.surr_steps = [-1]
+
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 10)
             self.command_hidden = torch.zeros(self.num_envs, 14)
-            self.surrogate_lin_vel_target = torch.zeros(self.num_envs, 2, 3)
-            self.surrogate_pos_target = torch.zeros(self.num_envs, 2, 3)
+            self.surrogate_lin_vel_target = torch.zeros(self.num_envs, len(self.surr_steps), 3)
+            self.surrogate_pos_target = torch.zeros(self.num_envs, len(self.surr_steps), 3)
 
             self.command_linvel = torch.zeros(self.num_envs, 3)
             self.command_speed = torch.zeros(self.num_envs, 1)
