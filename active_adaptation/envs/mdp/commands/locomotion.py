@@ -855,7 +855,7 @@ class Impedance(Command):
 
         with torch.device(self.device):
             self.command = torch.zeros(self.num_envs, 10)
-            self.command_hidden = torch.zeros(self.num_envs, 14)
+            self.command_hidden = torch.zeros(self.num_envs, 2 + len(self.surr_steps) * 6)
             self.surrogate_lin_vel_target = torch.zeros(self.num_envs, len(self.surr_steps), 3)
             self.surrogate_pos_target = torch.zeros(self.num_envs, len(self.surr_steps), 3)
 
@@ -1138,19 +1138,29 @@ class Impedance(Command):
         self.command[:, 8:9] = self.ang_kp * yaw_diff.unsqueeze(1)
         self.command[:, 9:10] = self.virtual_mass
 
-        self.surrogate_pos_target = self.desired_pos_w[:, [-2, -8]]
-        self.surrogate_lin_vel_target = self.desired_lin_vel_w[:, [-2, -8]] 
+        self.surrogate_pos_target = self.desired_pos_w[:, self.surr_steps]
+        self.surrogate_lin_vel_target = self.desired_lin_vel_w[:, self.surr_steps] 
 
-        self.command_hidden[:, 0:6] = quat_rotate_inverse(
-            self.asset.data.root_quat_w.unsqueeze(1),
-            self.surrogate_pos_target - root_pos.unsqueeze(1),
-        ).reshape(self.num_envs, -1)
-        self.command_hidden[:, 6:12] = quat_rotate_inverse(
-            self.asset.data.root_quat_w.unsqueeze(1),
-            self.surrogate_lin_vel_target
-        ).reshape(self.num_envs, -1)
-        self.command_hidden[:, 12] = self.command_angvel
-        self.command_hidden[:, 12:13] = command_yaw_diff
+        self.command_hidden = torch.cat([
+            quat_rotate_inverse(
+                self.asset.data.root_quat_w.unsqueeze(1),
+                self.surrogate_pos_target - root_pos.unsqueeze(1)).reshape(self.num_envs, -1),
+            quat_rotate_inverse(
+                self.asset.data.root_quat_w.unsqueeze(1),
+                self.surrogate_lin_vel_target).reshape(self.num_envs, -1),
+            self.command_angvel.unsqueeze(1),
+            command_yaw_diff
+        ], dim=1)
+        # self.command_hidden[:, 0:self.surr_steps*3] = quat_rotate_inverse(
+        #     self.asset.data.root_quat_w.unsqueeze(1),
+        #     self.surrogate_pos_target - root_pos.unsqueeze(1),
+        # ).reshape(self.num_envs, -1)
+        # self.command_hidden[:, self.surr_steps*3: self.surr_steps*6] = quat_rotate_inverse(
+        #     self.asset.data.root_quat_w.unsqueeze(1),
+        #     self.surrogate_lin_vel_target
+        # ).reshape(self.num_envs, -1)
+        # self.command_hidden[:, self.surr_steps*6] = self.command_angvel
+        # self.command_hidden[:, self.surr_steps*6:] = command_yaw_diff
         
 
         if self.teleop:
