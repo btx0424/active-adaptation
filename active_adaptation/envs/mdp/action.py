@@ -1074,6 +1074,47 @@ class JointPositionAndPhase(ActionManager):
             ) % (2 * torch.pi)
 
 
+class LegWheel(ActionManager):
+    def __init__(
+        self,
+        env,
+        leg_scaling: Dict[str, float],
+        wheel_scaling: Dict[str, float]
+    ):
+        super().__init__(env)
+        self.leg_ids, self.leg_names, self.leg_scaling = (
+            string_utils.resolve_matching_names_values(
+                dict(leg_scaling), self.asset.joint_names
+            )
+        )
+        self.wheel_ids, self.wheel_names, self.wheel_scaling = (
+            string_utils.resolve_matching_names_values(
+                dict(wheel_scaling), self.asset.joint_names
+            )
+        )
+        self.leg_scaling = torch.tensor(self.leg_scaling, device=self.device)
+        self.wheel_scaling = torch.tensor(self.wheel_scaling, device=self.device)
+
+        self.leg_action_dim = len(self.leg_ids)
+        self.wheel_action_dim = len(self.wheel_ids)
+        self.action_dim = len(self.leg_ids) + len(self.wheel_ids)
+        
+        self.applied_action = torch.zeros(self.num_envs, self.action_dim, device=self.device)
+        self.action_buf = torch.zeros(self.num_envs, self.action_dim, 4, device=self.device)
+
+    def __call__(self, tensordict: TensorDictBase, substep: int):
+        action = tensordict["action"].clamp(-10., 10.)
+        self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
+        self.action_buf[:, :, 0] = action
+
+        self.applied_action = self.applied_action.lerp(action, 0.8)
+        leg_action, wheel_action = self.applied_action.split([self.leg_action_dim, self.wheel_action_dim], dim=-1)
+        leg_pos_target = self.asset.data.default_joint_pos[:, self.leg_ids] + self.leg_scaling * leg_action
+        self.asset.set_joint_position_target(leg_pos_target, self.leg_ids)
+        wheel_vel_target = self.wheel_scaling * wheel_action
+        self.asset.set_joint_velocity_target(wheel_vel_target, self.wheel_ids)
+
+
 def clamp_norm(x: torch.Tensor, max_norm: float):
     norm = x.norm(dim=-1, keepdim=True)
     return x * (max_norm / norm.clamp(min=1e-6)).clamp(max=1.0)

@@ -20,6 +20,7 @@ from .quadruped import *
 from .humanoid import *
 from .scene import *
 from .arm import *
+from .sirius import *
 
 
 ASSET_PATH = os.path.dirname(__file__)
@@ -69,6 +70,7 @@ ROBOTS = {
     "cyberdog": CYBERDOG_CFG,
     "abp": ABP_CFG,
     "a1-arm": A1_CFG,
+    "sirius": SIRIUS_CFG
 }
 
 for robot in ROBOTS.values():
