@@ -172,13 +172,12 @@ class ActorCov(nn.Module):
 
 
 class GAE(nn.Module):
-    def __init__(self, gamma, lmbda, fake_bootstrap=False):
+    def __init__(self, gamma, lmbda):
         super().__init__()
         self.register_buffer("gamma", torch.tensor(gamma))
         self.register_buffer("lmbda", torch.tensor(lmbda))
         self.gamma: torch.Tensor
         self.lmbda: torch.Tensor
-        self.fake_bootstrap = fake_bootstrap
     
     def forward(
         self, 
