@@ -12,95 +12,7 @@ from omni.isaac.lab.utils.math import (
     quat_from_euler_xyz
 )
 from active_adaptation.utils.math import yaw_rotate, clamp_along, clamp_norm
-from dataclasses import dataclass
-from tensordict import TensorClass
-
-
-class SpringForce(TensorClass):
-    duration: torch.Tensor
-    time: torch.Tensor # the time elapsed since the start of the force
-    setpoint : torch.Tensor
-    setpoint_mass: torch.Tensor
-    setpoint_vel: torch.Tensor
-    
-    kp: torch.Tensor
-    kd: torch.Tensor
-    
-    @classmethod
-    def sample(cls, size: int, device: str):
-        scalar = torch.empty(size, 1, device=device)
-        offset = torch.zeros(size, 3, device=device)
-        offset[:, 0] = -0.5
-        offset[:, 2].uniform_(-0.15, 0.15)
-        return cls(
-            duration=scalar.uniform_(2., 4.).clone(),
-            time=torch.zeros(size, 1, device=device),
-            setpoint=offset,
-            setpoint_mass=400.*torch.ones(size, 1, device=device),
-            setpoint_vel=torch.zeros(size, 3, device=device),
-            kp=scalar.uniform_(80., 120.).clone(),
-            kd=scalar.uniform_(10., 20.).clone(),
-        )
-    
-    def get_force(self, pos: torch.Tensor, vel: torch.Tensor):
-        """Return the world-frame force."""
-        force = self.kp * (self.setpoint - pos) - self.kd * vel
-        force = clamp_norm(force, 100.)
-        force *= (self.time < self.duration)
-        return force
-
-
-class ConstantForce(TensorClass):
-    duration: torch.Tensor
-    time: torch.Tensor # the time elapsed since the start of the force
-    offset: torch.Tensor
-    force: torch.Tensor
-    
-    @classmethod
-    def sample(cls, size: int, device: str):
-        duration = torch.zeros(size, 1, device=device)
-        duration.uniform_(1.0, 4.0)
-        offset = torch.rand(size, 3, device=device) * 2. - 1.
-        offset *= torch.tensor([0.2, 0.1, 0.1], device=device)
-        force = torch.rand(size, 3, device=device) * 2. - 1.
-        force *= torch.tensor([40., 40., 15.], device=device)
-        return cls(
-            duration=duration,
-            time=torch.zeros(size, 1, device=device),
-            offset=offset,
-            force=torch.rand(size, 3, device=device) * 2 - 1,
-        )
-
-    def get_force(self):
-        """Return the world-frame force."""
-        return self.force * (self.time < self.duration)
-
-
-class ImpulseForce(TensorClass):
-    duration: torch.Tensor
-    time: torch.Tensor # the time elapsed since the start of the force
-    peak: torch.Tensor
-
-    @classmethod
-    def sample(cls, size: int, device: str):
-        duration = torch.zeros(size, 1, device=device)
-        duration.uniform_(0.16, 0.24)
-        peak = torch.zeros(size, 3, device=device)
-        peak[:, 0].uniform_(80., 160.)
-        peak[:, 1].uniform_(80., 160.)
-        peak[:, 2].uniform_(0., 20.)
-        peak *= (torch.rand(size, 3, device=device) - 0.5).sign()
-        return cls(
-            duration=duration,
-            time=torch.zeros(size, 1, device=device),
-            peak=peak,
-        )
-
-    def get_force(self):
-        """Return the world-frame force."""
-        t = (self.time / self.duration).clamp(0., 1.)
-        force = torch.where(t < 0.5, t * 2 * self.peak, (1 - t) * 2 * self.peak)
-        return force
+from active_adaptation.envs.mdp.utils.forces import ConstantForce, ImpulseForce, SpringForce
 
 
 class Impedance(Command):
@@ -212,7 +124,6 @@ class Impedance(Command):
             self.distance_covered = torch.zeros(self.num_envs, 1)
 
             self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
-            self.xy = torch.tensor([1.0, 1.0, 0.0], device=self.device)
 
             self.command_mode = torch.zeros(self.num_envs, 3, dtype=int)
             self.command_transition = torch.tensor([
@@ -377,17 +288,10 @@ class Impedance(Command):
             math_utils.wrap_to_pi(self.surrogate_yaw_target.squeeze(-1) - yaw.unsqueeze(1))
         ], dim=1)
         
-        # if self.teleop:
-        #     for key, vec in self.key_mappings_pos.items():
-        #         if self.key_pressed[key]:
-        #             self.command_setpos_w.add_(vec * self.env.step_dt)
-        #     for key, delta in self.key_mappings_rpy.items():
-        #         if self.key_pressed[key]:
-        #             self.command_setrpy_w.add_(delta * self.env.step_dt)
-        #             self.command_setrpy_w[:] = math_utils.wrap_to_pi(
-        #                 self.command_setrpy_w
-        #             )
-        # else:
+        self.update_command()
+        self.update_forces()
+
+    def update_command(self):
         sample_command = (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
         sample_command = sample_command.nonzero().squeeze(-1)
         if len(sample_command) > 0:
@@ -402,32 +306,30 @@ class Impedance(Command):
         offset[:, 0] = (self.max_output_force / self.lin_kp).squeeze(1)
         self.command_setpos_w[:] = torch.where(
             self.large_force_mode,
-            root_pos + offset,
+            self.asset.data.root_pos_w + offset,
             self.command_setpos_w
         )
-        
-        self.update_forces()
 
     def update_forces(self):
         # sample constant force
         expire = self.constant_force.time > self.constant_force.duration - 1e-4
-        sample = (
-            (torch.rand(self.num_envs, 1, device=self.device) < self.resample_prob)
-            & expire
-            & ~self.large_force_mode
-        )
+        r = (torch.rand(self.num_envs, 1, device=self.device) < self.resample_prob)
+        sample = (r & expire & ~self.large_force_mode)
         constant_force = ConstantForce.sample(self.num_envs, device=self.device)
+        self.constant_force.time.add_(self.env.step_dt)
         self.constant_force: ConstantForce = constant_force.where(sample, self.constant_force)
 
         # sample spring force
         expire = self.spring_force.time > self.spring_force.duration
-        sample = (torch.rand(self.num_envs, 1, device=self.device) < 0.1) & expire & self.large_force_mode
+        r = (torch.rand(self.num_envs, 1, device=self.device) < 0.1)
+        sample = r & expire & self.large_force_mode
         spring_force = SpringForce.sample(self.num_envs, self.device)
         self.spring_force.time.add_(self.env.step_dt)
         self.spring_force: SpringForce = spring_force.where(sample, self.spring_force)
 
         expire = self.impulse_force.time > self.impulse_force.duration
-        sample = (torch.rand(self.num_envs, 1, device=self.device) < 0.005) & expire & ~self.large_force_mode
+        r = (torch.rand(self.num_envs, 1, device=self.device) < 0.005)
+        sample = r & expire & ~self.large_force_mode
         impulse_force = ImpulseForce.sample(self.num_envs, self.device)
         self.impulse_force.time.add_(self.env.step_dt)
         self.impulse_force: ImpulseForce = impulse_force.where(sample, self.impulse_force)
@@ -541,12 +443,12 @@ class Impedance(Command):
         )
 
         # draw external forces (orange)
-        self.env.debug_draw.vector(
-            self.asset.data.root_pos_w + quat_rotate(self.asset.data.root_quat_w, self.constant_force.offset),
-            self.constant_force.get_force() / (self.virtual_mass * 9.81),
-            color=(1.0, 0.5, 0.0, 1.0),
-            size=3.0,
-        )
+        # self.env.debug_draw.vector(
+        #     self.asset.data.root_pos_w + quat_rotate(self.asset.data.root_quat_w, self.constant_force.offset),
+        #     self.constant_force.get_force() / (self.virtual_mass * 9.81),
+        #     color=(1.0, 0.5, 0.0, 1.0),
+        #     size=3.0,
+        # )
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w,
             self.impulse_force.get_force() / (self.virtual_mass * 9.81),
@@ -568,5 +470,47 @@ class Impedance(Command):
             self.asset.data.root_pos_w + torch.tensor([0.0, 0.0, 0.2], device=self.device),
             quat_from_euler_xyz(*self.command_setrpy_w.unbind(-1)),
             scales=torch.tensor([[4., 1., 0.1]]).expand(self.num_envs, 3),
+        )
+
+
+class ImpedanceImpulse(Impedance):
+    def _sample_command(self, env_ids):
+        scalar = torch.empty(len(env_ids), 1, device=self.device)
+        lin_kp = scalar.uniform_(4., 24.).clone()
+        lin_kd = 2. * lin_kp.sqrt()
+        ang_kp = lin_kp.clone()
+        ang_kd = lin_kd.clone()
+
+        self.lin_kp[env_ids] = lin_kp
+        self.lin_kd[env_ids] = lin_kd
+        self.ang_kp[env_ids] = ang_kp
+        self.ang_kd[env_ids] = ang_kd
+
+        root_pos_w = self.asset.data.root_pos_w[env_ids]
+        
+        self.set_linvel[env_ids] = torch.tensor([1., 0., 0.], device=self.device)
+        self.use_set_linvel[env_ids] = True
+        self.command_setpos_w[env_ids] = root_pos_w + lin_kd / lin_kp * self.set_linvel[env_ids]
+
+        self.virtual_mass[env_ids] = 1.0
+        self.virtual_inertia[env_ids] = self.default_inertia 
+
+    def update_command(self):
+        sample_command = (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
+        sample_command = sample_command.nonzero().squeeze(-1)
+        if len(sample_command) > 0:
+            self._sample_command(sample_command)
+        self.command_setpos_w[:] = torch.where(
+            self.use_set_linvel,
+            self.lin_kd / self.lin_kp * self.set_linvel + self.asset.data.root_pos_w,
+            # self.command_setpos_w + self.set_linvel * self.env.step_dt,
+            self.command_setpos_w,
+        )
+        offset = torch.zeros(self.num_envs, 3, device=self.device)
+        offset[:, 0] = (self.max_output_force / self.lin_kp).squeeze(1)
+        self.command_setpos_w[:] = torch.where(
+            self.large_force_mode,
+            self.asset.data.root_pos_w + offset,
+            self.command_setpos_w
         )
 
