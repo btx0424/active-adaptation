@@ -149,6 +149,13 @@ class Env(EnvBase):
         for _ in range(4):
             self.sim.step(render=True)
         
+        try:
+            from active_adaptation.utils.debug import DebugDraw
+            self.debug_draw = DebugDraw()
+            print("[INFO] Debug Draw API enabled.")
+        except ModuleNotFoundError:
+            pass
+        
         self.max_episode_length = self.cfg.max_episode_length
         self.episode_length_buf = torch.zeros(self.num_envs, dtype=int, device=self.device)
         self.step_dt = self.physics_dt * self.cfg.decimation

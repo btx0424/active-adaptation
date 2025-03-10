@@ -31,13 +31,6 @@ class LocomotionEnv(Env):
         
         self.default_joint_pos = self.init_joint_pos.clone()
         
-        try:
-            from active_adaptation.utils.debug import DebugDraw
-            self.debug_draw = DebugDraw()
-            print("[INFO] Debug Draw API enabled.")
-        except ModuleNotFoundError:
-            pass
-        
         self.lookat_env_i = (
             self.scene._default_env_origins.cpu() 
             - torch.tensor(self.cfg.viewer.lookat)
