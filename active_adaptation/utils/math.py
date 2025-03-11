@@ -1,7 +1,14 @@
+# This file contains additional math utilities
+# that are not covered by IsaacLab
+
 import torch
 import torch.distributions as D
+from omni.isaac.lab.utils.math import yaw_quat, wrap_to_pi
+
+from .helpers import batchify
 
 # @torch.compile
+@batchify
 def quat_rotate(q, v):
     shape = q.shape
     q_w = q[:, 0]
@@ -13,6 +20,7 @@ def quat_rotate(q, v):
 
 
 # @torch.compile
+@batchify
 def quat_rotate_inverse(q, v):
     shape = q.shape
     q_w = q[:, 0]
@@ -32,6 +40,32 @@ def clamp_norm(x: torch.Tensor, min: float=0., max: float=torch.inf):
 def clamp_along(x: torch.Tensor, axis: torch.Tensor, min: float, max: float):
     projection = (x * axis).sum(dim=-1, keepdim=True)
     return x - projection * axis + projection.clamp(min, max) * axis
+
+
+@batchify
+def yaw_rotate(yaw: torch.Tensor, vec: torch.Tensor):
+    yaw_cos = torch.cos(yaw).squeeze(-1)
+    yaw_sin = torch.sin(yaw).squeeze(-1)
+    return torch.stack(
+        [
+            yaw_cos * vec[:, 0] - yaw_sin * vec[:, 1],
+            yaw_sin * vec[:, 0] + yaw_cos * vec[:, 1],
+            vec[:, 2],
+        ],
+        1,
+    )
+
+
+def quat_from_yaw(yaw: torch.Tensor):
+    return torch.cat(
+        [
+            torch.cos(yaw / 2).unsqueeze(-1),
+            torch.zeros_like(yaw).unsqueeze(-1),
+            torch.zeros_like(yaw).unsqueeze(-1),
+            torch.sin(yaw / 2).unsqueeze(-1),
+        ],
+        dim=-1,
+    )
 
 
 class MultiUniform(D.Distribution):

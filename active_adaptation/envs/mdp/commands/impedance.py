@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 
 from active_adaptation.envs.mdp.commands.base import Command
+from active_adaptation.envs.mdp.commands.locomotion import Command2
 import omni.isaac.lab.utils.math as math_utils
 from omni.isaac.lab.utils.math import (
     quat_rotate_inverse,
@@ -132,20 +133,7 @@ class Impedance(Command):
                 [0.2, 0.4, 0.4], # set_position
             ])
 
-        self.decimation = int(self.env.step_dt / self.env.physics_dt)
         self.cnt = 0
-
-        if self.teleop:
-            self.key_mappings_pos = {
-                "W": torch.tensor([1.0, 0.0, 0.0], device=self.device),
-                "S": torch.tensor([-1.0, 0.0, 0.0], device=self.device),
-                "A": torch.tensor([0.0, 1.0, 0.0], device=self.device),
-                "D": torch.tensor([0.0, -1.0, 0.0], device=self.device),
-            }
-            self.key_mappings_rpy = {
-                "Q": torch.tensor([0.0, 0.0, +torch.pi], device=self.device),
-                "E": torch.tensor([0.0, 0.0, -torch.pi], device=self.device),
-            }
         
         self.vis_arrow = None
         if self.env.sim.has_gui():
@@ -513,4 +501,32 @@ class ImpedanceImpulse(Impedance):
             self.asset.data.root_pos_w + offset,
             self.command_setpos_w
         )
+
+
+class VelocityImpulse(Command2):
+    def sample_init(self, env_ids):
+        init_root_state = self.init_root_state[env_ids]
+        if self.env.scene.terrain.cfg.terrain_type == "plane":
+            origins = self.env.scene.env_origins[env_ids]
+        else:
+            idx = torch.randint(0, self.env.num_envs, (len(env_ids),), device=self.device)
+            origins = self._origins[idx % len(self._origins)]
+        init_root_state[:, :3] += origins
+        return init_root_state
+    
+    def sample_vel_command(self, env_ids):
+        next_command_linvel = torch.zeros(len(env_ids), 3, device=self.device)
+        next_command_linvel[:, 0] = 1.0
+
+        speed = next_command_linvel.norm(dim=-1, keepdim=True)
+        r = torch.rand(len(env_ids), 1, device=self.device) < self.stand_prob
+        valid = ~((speed < 0.10) | r)
+        self.next_command_linvel[env_ids] = next_command_linvel * valid
+        self.aux_input[env_ids] = 0.5
+    
+    def sample_yaw_command(self, env_ids):
+        self.target_yaw[env_ids] = 0.
+        self.yaw_stiffness[env_ids] = 1.0
+        self.use_stiffness[env_ids] = True
+        self.fixed_yaw_speed[env_ids] = 0.
 

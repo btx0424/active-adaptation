@@ -5,7 +5,7 @@ from omni.isaac.lab.actuators import DCMotor, ImplicitActuator
 from omni.isaac.lab.sensors import RayCaster
 from active_adaptation.envs.actuator import HybridActuator
 import omni.isaac.lab.utils.string as string_utils
-from typing import Union
+from typing import Union, TYPE_CHECKING
 import logging
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from active_adaptation.utils.helpers import batchify
@@ -13,9 +13,14 @@ from typing import Dict, Tuple, Union
 
 quat_rotate_inverse = batchify(quat_rotate_inverse)
 
+
+if TYPE_CHECKING:
+    from active_adaptation.envs.base import Env
+
+
 class Randomization:
     def __init__(self, env):
-        self.env = env
+        self.env: Env = env
 
     @property
     def num_envs(self):
@@ -282,7 +287,7 @@ class perturb_body_materials(Randomization):
 
     def startup(self):
         logging.info(f"Randomize body materials of {self.body_names} upon startup.")
-        
+
         materials = self.default_materials.clone()
         if self.homogeneous:
             shape = (self.num_envs, 1)
@@ -295,6 +300,52 @@ class perturb_body_materials(Randomization):
         indices = torch.arange(self.asset.num_instances)
         self.asset.root_physx_view.set_material_properties(materials.flatten(), indices)
         self.asset.data.body_materials = materials.to(self.device)
+
+
+class rand_body_materials(Randomization):
+    def __init__(
+        self,
+        env,
+        static_friction_range: NestedRangeType,
+        dynamic_friction_range: NestedRangeType,
+        restitution_range: NestedRangeType,
+    ):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        
+        num_shapes_per_body = []
+        for link_path in self.asset.root_physx_view.link_paths[0]:
+            link_physx_view = self.asset._physics_sim_view.create_rigid_body_view(link_path)  # type: ignore
+            num_shapes_per_body.append(link_physx_view.max_shapes)
+        shape_start_id = np.cumsum([0,] + num_shapes_per_body)
+        
+        def parse(body_ids, values):
+            shape_ids = []
+            ranges = []
+            for body_id, value in zip(body_ids, values):
+                body_shape_ids = torch.arange(shape_start_id[body_id], shape_start_id[body_id+1])
+                shape_ids.append(body_shape_ids)
+                ranges.extend([value] * len(body_shape_ids))
+            return torch.cat(shape_ids), torch.as_tensor(ranges).T
+
+        body_ids, body_names, values = string_utils.resolve_matching_names_values(dict(static_friction_range), self.asset.body_names)
+        self.static_friction_shape_ids, self.static_friction_range = parse(body_ids, values)
+        
+        body_ids, body_names, values = string_utils.resolve_matching_names_values(dict(dynamic_friction_range), self.asset.body_names)
+        self.dynamic_friction_shape_ids, self.dynamic_friction_range = parse(body_ids, values)
+
+        body_ids, body_names, values = string_utils.resolve_matching_names_values(dict(restitution_range), self.asset.body_names)
+        self.restitution_shape_ids, self.restitution_range = parse(body_ids, values)
+
+        self.default_materials = self.asset.root_physx_view.get_material_properties()
+    
+    def startup(self):
+        materials = self.default_materials.clone()
+        materials[:, self.static_friction_shape_ids, 0] = sample_uniform(len(self.static_friction_shape_ids), *self.static_friction_range)
+        materials[:, self.dynamic_friction_shape_ids, 1] = sample_uniform(len(self.dynamic_friction_shape_ids), *self.dynamic_friction_range)
+        materials[:, self.restitution_shape_ids, 2] = sample_uniform(len(self.restitution_shape_ids), *self.restitution_range)
+        indices = torch.arange(self.asset.num_instances)
+        self.asset.root_physx_view.set_material_properties(materials.flatten(), indices)
 
 
 class perturb_body_mass(Randomization):
@@ -777,6 +828,36 @@ class spring_grf(Randomization):
         feet_pos = self.asset.data.body_pos_w[:, self.feet_ids]
         self.env.debug_draw.vector(feet_pos, self.forces / 9.81, color=(0.8, 0.6, 0.6, 1.))
 
+
+from active_adaptation.envs.mdp.utils.forces import ImpulseForce
+class impulse(Randomization):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.impulse_force = ImpulseForce.sample(self.num_envs, device=self.device)
+        
+    def step(self, substep):
+        forces_b = self.asset._external_force_b
+        impulse_force = self.impulse_force.get_force()
+        forces_b[:, 0] += quat_rotate_inverse(self.asset.data.root_quat_w, impulse_force)
+        self.asset.has_external_wrench = True
+
+    def update(self):
+        expire = self.impulse_force.time > self.impulse_force.duration
+        r = (torch.rand(self.num_envs, 1, device=self.device) < 0.005)
+        sample = r & expire
+        impulse_force = ImpulseForce.sample(self.num_envs, self.device)
+        self.impulse_force.time.add_(self.env.step_dt)
+        self.impulse_force: ImpulseForce = impulse_force.where(sample, self.impulse_force)
+
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            self.impulse_force.get_force() /  9.81,
+            color=(1.0, 0.6, 0.0, 1.0),
+            size=3.0,
+        )
+    
 
 def clamp_norm(x: torch.Tensor, min: float = 0.0, max: float = torch.inf):
     x_norm = x.norm(dim=-1, keepdim=True).clamp(1e-6)
