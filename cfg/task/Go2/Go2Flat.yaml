@@ -32,9 +32,9 @@ action:
 command:
   _target_: active_adaptation.envs.mdp.Command2
   linvel_x_range: [-1.0, 1.6]
-  linvel_y_range: [-0.7, 0.7]
+  linvel_y_range: [-0.8, 0.8]
   angvel_range:   [-2.0, 2.0]
-  yaw_stiffness_range: [0.5, 0.7]
+  yaw_stiffness_range: [0.5, 1.1]
   use_stiffness_ratio: 0.99
   aux_input_range: [.5, 1.]
   resample_prob: 0.5
@@ -46,18 +46,8 @@ command:
     - [ 4.3197,  5.1051]
   adaptive: true
 
-# command:
-#   _target_: active_adaptation.envs.mdp.Command1
-
-# sensor:
-#   base_height_map:
-#     _target_: ...
-#   feet_height_map:
-#     _target_: ...
-#   feet_grf:
-
 observation:
-  command_:
+  command_: # won't be normalized
     command:
     oscillator: {history: false}
   policy:
@@ -139,8 +129,7 @@ reward:
     feet_swing_height:  {weight: 0.1, enabled: false, target_height: 0.1}
 
 termination:
-  crash: {body_names_expr: [Head.*, "base"], t_thres: 0.5}
-  # joint_acc_exceeds: {thres: 5000}
+  crash: {body_names_expr: [Head.*, base, .*_calf], t_thres: 0.1}
   fall_over: {xy_thres: 0.9}
   cum_error: {thres: 1.0}
 
@@ -150,12 +139,10 @@ randomization:
     (?!(payload|base|Head.*)).*: [0.8, 1.2]
     base: [0.8, 1.4]
     # Head.*: [25.0, 250.0]
-  perturb_body_materials:
-    body_names: ".*_foot"
-    static_friction_range:  [0.5, 4.0]
-    dynamic_friction_range: [0.5, 4.0]
-    restitution_range:      [0.0, 0.5]
-    homogeneous: true # ${task.homogeneous}
+  rand_body_materials:
+    static_friction_range:  {".*_foot": [0.5, 4.0], ".*_calf": [1.0, 1.0]}
+    dynamic_friction_range: {".*_foot": [0.5, 4.0], ".*_calf": [1.0, 1.0]}
+    restitution_range:      {".*_foot": [0.0, 0.5]}
   motor_params:
     actuator_name: base_legs
     stiffness_range:  
@@ -184,9 +171,4 @@ randomization:
     F[L,R]_thigh_joint: [-0.05, 0.05]
     R[L,R]_thigh_joint: [-0.05, 0.05]
     .*calf_joint: [-0.05, 0.05]
-  random_pull: 
-    force_xy_range: [-40., 40.]
-    force_z_range:  [-10., 30.]
-    prob: 0.005
-    duration: [0.5, 1.5]
-  # external_force: {}
+  impulse: {}
