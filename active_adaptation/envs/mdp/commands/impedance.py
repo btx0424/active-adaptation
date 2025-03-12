@@ -174,9 +174,14 @@ class Impedance(Command):
         self.asset.has_external_wrench = True
 
     def _integrate(self, dt: float):
+        setpos_w = torch.where(
+            self.use_set_linvel.unsqueeze(1),
+            self.desired_pos_w + (self.lin_kd / self.lin_kp * self.set_linvel).unsqueeze(1),
+            self.command_setpos_w.unsqueeze(1)
+        )
         desired_acc_w = (
             self.lin_kp.unsqueeze(1)
-            * (self.command_setpos_w.unsqueeze(1) - self.desired_pos_w)
+            * (setpos_w - self.desired_pos_w)
             + self.lin_kd.unsqueeze(1) * (0.0 - self.desired_lin_vel_w)
             + self.force_ext_w.unsqueeze(1)
         ) / self.virtual_mass.unsqueeze(1) # [n, t, 3]
@@ -286,8 +291,8 @@ class Impedance(Command):
             self._sample_command(sample_command)
         self.command_setpos_w[:] = torch.where(
             self.use_set_linvel,
-            # self.lin_kd / self.lin_kp * self.set_linvel + root_pos,
-            self.command_setpos_w + self.set_linvel * self.env.step_dt,
+            self.lin_kd / self.lin_kp * self.set_linvel + self.asset.data.root_pos_w,
+            # self.command_setpos_w + self.set_linvel * self.env.step_dt,
             self.command_setpos_w,
         )
         offset = torch.zeros(self.num_envs, 3, device=self.device)
@@ -350,7 +355,7 @@ class Impedance(Command):
             scalar.clone().uniform_(20., 40.),
             scalar.clone().uniform_(*self.linear_kp_range)
         )
-        lin_kd = 2.0 * lin_kp.sqrt()  # to make the system critically damped
+        lin_kd = 0.8 * 2.0 * lin_kp.sqrt()  # to make the system critically damped
 
         compliant = command_mode[:, 0].unsqueeze(1).bool()
         lin_kp *= ~compliant
@@ -359,7 +364,7 @@ class Impedance(Command):
         self.lin_kd[env_ids] = lin_kd
 
         ang_kp = lin_kp #.uniform_(*self.angular_kp_range)
-        ang_kd = 2.0 * ang_kp.sqrt()  # to make the system critically damped
+        ang_kd = 0.8 * 2.0 * ang_kp.sqrt()  # to make the system critically damped
         ang_kp *= ~compliant
 
         self.ang_kp[env_ids] = ang_kp
@@ -504,6 +509,10 @@ class ImpedanceImpulse(Impedance):
 
 
 class VelocityImpulse(Command2):
+    def __init__(self, env, linvel_x_range=..., linvel_y_range=..., angvel_range=..., yaw_stiffness_range=..., use_stiffness_ratio = 0.5, aux_input_range=..., resample_interval = 300, resample_prob = 0.75, stand_prob=0.2, target_yaw_range=..., adaptive = False, body_name = None, teleop = False):
+        super().__init__(env, linvel_x_range, linvel_y_range, angvel_range, yaw_stiffness_range, use_stiffness_ratio, aux_input_range, resample_interval, resample_prob, stand_prob, target_yaw_range, adaptive, body_name, teleop)
+        self.impulse_force = ImpulseForce.sample(self.num_envs, device=self.device)
+
     def sample_init(self, env_ids):
         init_root_state = self.init_root_state[env_ids]
         if self.env.scene.terrain.cfg.terrain_type == "plane":
@@ -530,3 +539,25 @@ class VelocityImpulse(Command2):
         self.use_stiffness[env_ids] = True
         self.fixed_yaw_speed[env_ids] = 0.
 
+    def step(self, substep):
+        super().step(substep)
+        forces_b = self.asset._external_force_b
+        impulse_force = self.impulse_force.get_force()
+        forces_b[:, 0] += quat_rotate_inverse(self.asset.data.root_quat_w, impulse_force)
+        self.asset.has_external_wrench = True
+
+    def update(self):
+        super().update()
+        sample = (self.env.episode_length_buf-100) % 300 == 0
+        impulse_force = ImpulseForce.sample(self.num_envs, self.device)
+        self.impulse_force.time.add_(self.env.step_dt)
+        self.impulse_force: ImpulseForce = impulse_force.where(sample, self.impulse_force)
+
+    def debug_draw(self):
+        super().debug_draw()
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            self.impulse_force.get_force() /  9.81,
+            color=(1.0, 0.6, 0.0, 1.0),
+            size=3.0,
+        )

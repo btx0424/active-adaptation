@@ -678,7 +678,7 @@ class feet_slip(Reward):
         )
         feet_vel = self.asset.data.body_lin_vel_w[:, self.articulation_body_ids, :2]
         slip = (in_contact * feet_vel.norm(dim=-1).square()).sum(dim=1, keepdim=True)
-        return -slip * self.asset.data.linvel_exp
+        return -slip
 
 
 class feet_air_time(Reward):
@@ -1074,9 +1074,9 @@ class base_height_l1(Reward):
 
     def compute(self) -> torch.Tensor:
         target_height = self.target_height * self.scale
-        ref_height = (self.asset.data.body_pos_w[:, self.feet_ids, 2] - self.asset.data.feet_height).min(dim=1).values
-        height = self.asset.data.root_pos_w[:, 2] - ref_height
-        # height = self.asset.data.root_pos_w[:, 2].unsqueeze(1)
+        # ref_height = (self.asset.data.body_pos_w[:, self.feet_ids, 2] - self.asset.data.feet_height).min(dim=1).values
+        # height = self.asset.data.root_pos_w[:, 2] - ref_height
+        height = self.asset.data.root_pos_w[:, 2].unsqueeze(1)
         return height.clamp(max=target_height).reshape(self.num_envs, 1)
 
 
@@ -1296,7 +1296,7 @@ class impedance_pos(Reward):
         return r
 
 
-from ..commands.impedance import rpy_from_quat, ImpedanceBase
+# from ..commands.impedance import rpy_from_quat, ImpedanceBase
 
 
 class impedance_vel(Reward):
@@ -1310,8 +1310,8 @@ class impedance_vel(Reward):
         lin_vel_w_target = self.command_manager.surrogate_lin_vel_target
         diff = (lin_vel_w_target - lin_vel_w.unsqueeze(1))
         error_l2 = diff[:, :, :2].square().sum(dim=-1, keepdim=True)
-        p = torch.exp(- error_l2 / 0.25).mean(1)
-        self.asset.data.linvel_exp = p
+        p = ((- error_l2 / 0.25).exp() - 0.5 * error_l2).mean(1)
+        # self.asset.data.linvel_exp = p
         return p
 
 
@@ -1362,27 +1362,11 @@ class impedance_yaw_pos(Reward):
         self.command_manager: Impedance = self.env.command_manager
 
     def compute(self) -> torch.Tensor:
-        diff = wrap_to_pi(
-            self.command_manager.command_yaw_w - self.asset.data.heading_w.unsqueeze(1)
-        )
-        error_l2 = diff.square().sum(dim=-1, keepdim=True)
-        r = torch.exp(-error_l2 / 0.25) - error_l2
-        return r
-
-
-class impedance_pitch_pos(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True):
-        super().__init__(env, weight, enabled)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: ImpedanceBase = self.env.command_manager
-
-    def compute(self):
-        rpy = rpy_from_quat(self.asset.data.root_quat_w)
-        diff = self.command_manager.setpoint_rpy_w[:, 1].unsqueeze(1) - rpy[
-            :, 1
-        ].unsqueeze(1)
-        error_l1 = diff.abs()
-        r = torch.exp(-error_l1 / 0.4)
+        target_yaw = self.command_manager.surrogate_yaw_target 
+        diff = target_yaw - self.asset.data.heading_w.reshape(-1, 1, 1)
+        diff = wrap_to_pi(diff)
+        error_l2 = diff.square()
+        r = torch.exp(-error_l2 / 0.25).mean(1)
         return r
 
 
@@ -1393,10 +1377,10 @@ class impedance_yaw_vel(Reward):
         self.command_manager: Impedance = self.env.command_manager
 
     def compute(self) -> torch.Tensor:
-        command_angvel = self.command_manager.command_angvel.reshape(self.num_envs, 1)
-        diff = command_angvel - self.asset.data.root_ang_vel_b[:, 2:3]
-        error_l2 = diff.square().sum(dim=-1, keepdim=True)
-        r = torch.exp(-error_l2 / 0.25) - 0.5 * error_l2
+        target_angvel = self.command_manager.surrogate_yaw_vel_target
+        diff = target_angvel - self.asset.data.root_ang_vel_w[:, 2:3].unsqueeze(1)
+        error_l2 = diff.square()
+        r = ((-error_l2 / 0.25).exp() - 0.5 * error_l2).mean(1)
         return r
 
 
@@ -1587,8 +1571,7 @@ class oscillator(Reward):
     def update(self):
         self.grf = self.grf_substep.mean(1) / self.gravity
         inp = (
-            (self.command_manager.command_speed.abs() > 0.08)
-            | (self.command_manager.command_angvel.reshape(-1, 1).abs() > 0.1)
+            (~self.command_manager.is_standing_env)
             | self.keep_steping
         )
         correction = self.trot(self.asset.phi, self.asset.phi_dot)

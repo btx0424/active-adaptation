@@ -73,8 +73,8 @@ class ImpulseForce(TensorClass):
         duration = torch.zeros(size, 1, device=device)
         duration.uniform_(0.40, 0.60)
         peak = torch.zeros(size, 3, device=device)
-        peak[:, 0].uniform_(80., 160.)
-        peak[:, 1].uniform_(80., 160.)
+        peak[:, 0].uniform_(80., 200.)
+        peak[:, 1].uniform_(80., 200.)
         peak[:, 2].uniform_(0., 20.)
         peak *= (torch.rand(size, 3, device=device) - 0.5).sign()
         return cls(
