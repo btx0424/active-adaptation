@@ -3,10 +3,7 @@ import numpy as np
 import abc
 import einops
 from typing import Tuple, TYPE_CHECKING
-from torchvision.utils import make_grid
-from torchvision.io import write_jpeg
 
-from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.sensors import ContactSensor, RayCaster, patterns, RayCasterData, Imu
 from omni.isaac.lab.sensors import Camera, TiledCamera
 import omni.isaac.lab.sim as sim_utils
@@ -20,24 +17,12 @@ from omni.isaac.lab.utils.string import resolve_matching_names
 from pxr import UsdGeom, UsdPhysics
 
 if TYPE_CHECKING:
+    from omni.isaac.lab.assets import Articulation
     from active_adaptation.envs.base import Env
+
 
 quat_rotate = batchify(quat_rotate)
 quat_rotate_inverse = batchify(quat_rotate_inverse)
-
-class Buffer:
-    def __init__(self, shape, size, device):
-        self.data = torch.zeros(*shape, size, device=device)
-        self.time_stamp = 0
-
-    def reset(self, env_ids: torch.Tensor, value=0.):
-        self.data[env_ids] = value
-    
-    def update(self, value: torch.Tensor, time_stamp: int):
-        if time_stamp > self.time_stamp:
-            self.data[..., :-1] = self.data[..., 1:]
-            self.data[..., -1] = value
-            self.time_stamp = time_stamp
 
 
 class Observation:
@@ -93,46 +78,6 @@ class Observation:
     def debug_draw(self):
         """Called at each step **after** simulation, if GUI is enabled"""
         pass
-
-
-class BufferedObs(Observation):
-    def __init__(self, env, shape, size):
-        super().__init__(env)
-        self.buffer = Buffer(shape, size, self.env.device)
-        setattr(self.env, f"_{self.__class__.__name__}")
-    
-    def compute(self):
-        return self.buffer.data.reshape(self.env.num_envs, -1)
-
-    def reset(self, env_ids: torch.Tensor):
-        self.buffer.reset(env_ids)
-
-
-class linvel_b_buffer(BufferedObs):
-    def __init__(self, env, size: int=4):
-        self.asset = env.scene["robot"]
-        super().__init__(env, self.asset.data.root_lin_vel_b.shape, size)
-
-    def update(self):
-        self.buffer.update(self.asset.data.root_linvel_b, self.env.time_stamp)
-
-
-class joint_pos_buffer(BufferedObs):
-    def __init__(self, env, size: int=4):
-        self.asset = env.scene["robot"]
-        super().__init__(env, self.asset.data.joint_pos.shape, size)
-
-    def update(self):
-        self.buffer.update(self.asset.data.joint_pos, self.env.time_stamp)
-
-
-class joint_vel_buffer(BufferedObs):
-    def __init__(self, env, size: int=4):
-        self.asset = env.scene["robot"]
-        super().__init__(env, self.asset.data.joint_pos.shape, size)
-
-    def update(self):
-        self.buffer.update(self.asset.data.joint_vel, self.env.time_stamp)
 
 
 class CartesianObs(Observation):
@@ -949,35 +894,6 @@ class motor_failure(Observation):
     
     def compute(self) -> torch.Tensor:
         return self.motor_failure
-
-
-class com(Observation):
-    def __init__(self, env):
-        super().__init__(env)
-        self.asset: Articulation = self.env.scene["robot"]
-        default_masses = self.asset.root_physx_view.get_masses()[0].to(self.env.device)
-        self.default_mass_distribution = (default_masses / default_masses.sum()).unsqueeze(-1)
-        self.default_coms = self.asset.root_physx_view.get_coms()[0, :, :3].to(self.env.device)
-
-        self.com_b = torch.zeros(self.env.num_envs, 3, device=self.env.device)
-        self.com_w_buffer = Buffer((self.env.num_envs, 3), 4, self.env.device)
-
-    def update(self):
-        body_com_pos_w = self.asset.data.body_pos_w + quat_rotate(self.asset.data.body_quat_w, self.default_coms.unsqueeze(0))
-        self.com_w = (body_com_pos_w * self.default_mass_distribution).sum(1)
-        self.com_w_buffer.update(self.com_w, self.env.time_stamp)
-        com_diff = self.com_w_buffer.data[:, :, 1:] - self.com_w_buffer.data[:, :, :-1]
-        self.com_vel_w = (com_diff / self.env.step_dt).mean(dim=-1)
-
-    def compute(self) -> torch.Tensor:
-        return self.com_b
-
-    def debug_draw(self):
-        self.env.debug_draw.vector(
-            self.com_w,
-            self.com_vel_w,
-            color=(0., 1., 1., 1.)
-        )
 
 
 class external_forces(Observation):
