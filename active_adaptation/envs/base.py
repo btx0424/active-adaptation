@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import hydra
-import cv2
+import inspect
 
 from tensordict.tensordict import TensorDictBase, TensorDict
 from torchrl.envs import EnvBase
@@ -89,7 +89,7 @@ class ObsGroup:
         return tensordict
 
 
-class Env(EnvBase):
+class _Env(EnvBase):
     """
     
     2024.10.10
@@ -107,71 +107,21 @@ class Env(EnvBase):
         # store inputs to class
         self.cfg = cfg
         # initialize internal variables
-        self._is_closed = False
         self.enable_render = False
+        self.setup_scene()
 
-        # create a simulation context to control the simulator
-        if SimulationContext.instance() is None:
-            self.sim = SimulationContext(self.cfg.sim)
-        else:
-            raise RuntimeError("Simulation context already exists. Cannot create a new one.")
-        # set camera view for "/OmniverseKit_Persp" camera
-        self.sim.set_camera_view(eye=self.cfg.viewer.eye, target=self.cfg.viewer.lookat)
-        try:
-            import omni.replicator.core as rep
-            # create render product
-            self._render_product = rep.create.render_product(
-                "/OmniverseKit_Persp", tuple(self.cfg.viewer.resolution)
-            )
-            # create rgb annotator -- used to read data from the render product
-            self._rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cpu")
-            self._rgb_annotator.attach([self._render_product])
-        except ModuleNotFoundError as e:
-            print(e)
-            print("Set enable_cameras=true to use cameras.")
-
-        # print useful information
-        print("[INFO]: Base environment:")
-        print(f"\tEnvironment device    : {self.device}")
-        print(f"\tPhysics step-size     : {self.physics_dt}")
-
-        # generate scene
-        with Timer("[INFO]: Time taken for scene creation"):
-            self.scene = InteractiveScene(self.cfg.scene)
-            for k, v in self.scene.articulations.items():
-                v._env = self
-        print("[INFO]: Scene manager: ", self.scene)
-
-        if builtins.ISAAC_LAUNCHED_FROM_TERMINAL is False:
-            print("[INFO]: Starting the simulation. This may take a few seconds. Please wait...")
-            with Timer("[INFO]: Time taken for simulation start"):
-                self.sim.reset()
-        for _ in range(4):
-            self.sim.step(render=True)
-        
-        try:
-            from active_adaptation.utils.debug import DebugDraw
-            self.debug_draw = DebugDraw()
-            print("[INFO] Debug Draw API enabled.")
-        except ModuleNotFoundError:
-            pass
-        
         self.max_episode_length = self.cfg.max_episode_length
         self.episode_length_buf = torch.zeros(self.num_envs, dtype=int, device=self.device)
-        self.step_dt = self.physics_dt * self.cfg.decimation
-        self.fix_root_link = self.scene.articulations["robot"].cfg.spawn.articulation_props.fix_root_link
+        self.decimation = self.cfg.decimation
+        self.step_dt = self.physics_dt * self.decimation
 
         # parse obs and reward functions
-        self.done_spec = (
-            Composite(
-                {
-                    "done": Binary(1, dtype=bool),
-                    "terminated": Binary(1, dtype=bool),
-                    "truncated": Binary(1, dtype=bool),
-                },
-            )
-            .expand(self.num_envs)
-            .to(self.device)
+        self.done_spec = Composite(
+            done=Binary(1, [self.num_envs, 1], dtype=bool, device=self.device),
+            terminated=Binary(1, [self.num_envs, 1], dtype=bool, device=self.device),
+            truncated=Binary(1, [self.num_envs, 1], dtype=bool, device=self.device),
+            shape=[self.num_envs, 1],
+            device=self.device
         )
 
         self.reward_spec = Composite(
@@ -184,8 +134,8 @@ class Env(EnvBase):
             shape=[self.num_envs]
         ).to(self.device)
 
-        import inspect
         members = dict(inspect.getmembers(self.__class__, inspect.isclass))
+        self.command_manager: mdp.Command = hydra.utils.instantiate(self.cfg.command, env=self)
 
         RAND_FUNCS = mdp.RAND_FUNCS
         RAND_FUNCS.update(mdp.get_obj_by_class(members, mdp.Randomization))
@@ -194,7 +144,14 @@ class Env(EnvBase):
         REW_FUNCS = mdp.REW_FUNCS
         REW_FUNCS.update(mdp.get_obj_by_class(members, mdp.Reward))
         TERM_FUNCS = mdp.TERM_FUNCS
-        TERM_FUNCS.update(mdp.get_obj_by_class(members, mdp.Termination))
+
+        for k, v in inspect.getmembers(self.command_manager):
+            if getattr(v, "is_reward", False):
+                REW_FUNCS[k] = mdp.reward_wrapper(v)
+            elif getattr(v, "is_observation", False):
+                OBS_FUNCS[k] = mdp.observation_wrapper(v)
+            elif getattr(v, "is_termination", False):
+                TERM_FUNCS[k] = mdp.termination_wrapper(v)
 
         self.randomizations = OrderedDict()
         self.observation_funcs: Dict[str, ObsGroup] = OrderedDict()
@@ -206,7 +163,6 @@ class Env(EnvBase):
         self._pre_step_callbacks = []
         self._post_step_callbacks = []
 
-        self.command_manager: mdp.Command = hydra.utils.instantiate(self.cfg.command, env=self)
         self._pre_step_callbacks.append(self.command_manager.step)
         # self._update_callbacks.append(self.command_manager.update)
         self._reset_callbacks.append(self.command_manager.reset)
@@ -314,14 +270,7 @@ class Env(EnvBase):
 
         self.stats = self.reward_spec["stats"].zero()
     
-        # Video recording variables
-        self.video_frames = []
-        self.complete_video_frames = None
-        self.record_now = False
-        self.render_decimation = 1
-        self.last_recording_it = 0
         self.input_tensordict = None
-
         self.lookat_env_i = 0
 
         self.extra = {}
@@ -349,6 +298,9 @@ class Env(EnvBase):
                 result[group_key][rew_key] = (sum / cnt).item()
         return result
     
+    def setup_scene(self):
+        raise NotImplementedError
+    
     def _reset(self, tensordict: TensorDictBase, **kwargs) -> TensorDictBase:
         if tensordict is not None:
             env_mask = tensordict.get("_reset").reshape(self.num_envs)
@@ -361,17 +313,9 @@ class Env(EnvBase):
         self.scene.update(self.step_dt)
         for callback in self._reset_callbacks:
             callback(env_ids)
-
         tensordict = TensorDict({}, self.num_envs, device=self.device)
         # tensordict.update(self.observation_spec.zero())
         self._compute_observation(tensordict)
-        
-        if self.record_now and env_mask[self.lookat_env_i]:
-            if self.complete_video_frames is None:
-                self.complete_video_frames = []
-            else:
-                self.complete_video_frames.extend(self.video_frames)
-            self.video_frames = []
         return tensordict
 
     @abstractmethod
@@ -450,9 +394,6 @@ class Env(EnvBase):
         self.discount.fill_(1.0)
         self._update()
         
-        if self.timestamp % self.render_decimation == 0:
-            self._render_headless()
-        
         tensordict = TensorDict({}, self.num_envs, device=self.device)
         tensordict.update(self._compute_reward())
         self.command_manager.update()
@@ -478,29 +419,6 @@ class Env(EnvBase):
         # rep.set_global_seed(seed)
         torch.manual_seed(seed)
 
-    def start_recording(self, render_decimation: int = 1):
-        if not self.record_now:
-            self.complete_video_frames = None
-            self.render_decimation = render_decimation
-            self.record_now = True
-
-    def pause_recording(self):
-        self.complete_video_frames = self.video_frames[:]
-        self.video_frames = []
-        self.record_now = False
-
-    def get_complete_frames(self):
-        if self.complete_video_frames is None:
-            return []
-        return self.complete_video_frames
-
-    def _render_headless(self):
-        if self.record_now and self.complete_video_frames is not None and len(self.complete_video_frames) == 0:
-            frame = self.render(mode="rgb_array")
-            # font = cv2.FONT_HERSHEY_SIMPLEX
-            # cv2.putText(frame, f'Timestamp: {self.timestamp}', (10, 30), font, 1, (255, 255, 255), 2, cv2.LINE_AA)
-            self.video_frames.append(frame)
-
     def render(self, mode: str = "human"):
         if mode == "rgb_array":
             robot_pos = self.robot.data.root_pos_w[self.lookat_env_i].cpu()
@@ -524,15 +442,6 @@ class Env(EnvBase):
     def debug_vis(self):
         pass
     
-    def close(self):
-        if not self._is_closed:
-            # destructor is order-sensitive
-            del self.scene
-            # clear callbacks and instance
-            self.sim.clear_all_callbacks()
-            self.sim.clear_instance()
-            # update closing status
-            super().close()
 
     def state_dict(self):
         sd = super().state_dict()
@@ -543,6 +452,64 @@ class Env(EnvBase):
 
     def get_extra_state(self) -> dict:
         return dict(self.extra)
+
+
+class Env(_Env):
+    def setup_scene(self):
+        # create a simulation context to control the simulator
+        if SimulationContext.instance() is None:
+            self.sim = SimulationContext(self.cfg.sim)
+        else:
+            raise RuntimeError("Simulation context already exists. Cannot create a new one.")
+        # set camera view for "/OmniverseKit_Persp" camera
+        self.sim.set_camera_view(eye=self.cfg.viewer.eye, target=self.cfg.viewer.lookat)
+        try:
+            import omni.replicator.core as rep
+            # create render product
+            self._render_product = rep.create.render_product(
+                "/OmniverseKit_Persp", tuple(self.cfg.viewer.resolution)
+            )
+            # create rgb annotator -- used to read data from the render product
+            self._rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cpu")
+            self._rgb_annotator.attach([self._render_product])
+        except ModuleNotFoundError as e:
+            print(e)
+            print("Set enable_cameras=true to use cameras.")
+
+        # print useful information
+        print("[INFO]: Base environment:")
+        print(f"\tEnvironment device    : {self.device}")
+        print(f"\tPhysics step-size     : {self.physics_dt}")
+
+        # generate scene
+        with Timer("[INFO]: Time taken for scene creation"):
+            self.scene = InteractiveScene(self.cfg.scene)
+
+        print("[INFO]: Scene manager: ", self.scene)
+
+        if builtins.ISAAC_LAUNCHED_FROM_TERMINAL is False:
+            print("[INFO]: Starting the simulation. This may take a few seconds. Please wait...")
+            with Timer("[INFO]: Time taken for simulation start"):
+                self.sim.reset()
+        for _ in range(4):
+            self.sim.step(render=True)
+        
+        try:
+            from active_adaptation.utils.debug import DebugDraw
+            self.debug_draw = DebugDraw()
+            print("[INFO] Debug Draw API enabled.")
+        except ModuleNotFoundError:
+            pass
+
+    def close(self):
+        if not self.is_closed:
+            # destructor is order-sensitive
+            del self.scene
+            # clear callbacks and instance
+            self.sim.clear_all_callbacks()
+            self.sim.clear_instance()
+            # update closing status
+            super().close()
 
 
 def generate_mask(size: int, split: torch.Tensor, device: str):
@@ -565,16 +532,17 @@ class RewardGroup:
     
     def compute(self) -> torch.Tensor:
         rewards = []
-        for key, func in self.funcs.items():
-            reward = func()
-            
-            self.env.stats[self.name, key].add_(reward)
-            sum, cnt = self.env._stats_ema[self.name][key]
-            sum.mul_(self.env._stats_ema_decay).add_(reward.sum())
-            cnt.mul_(self.env._stats_ema_decay).add_(reward.shape[0])
-
-            if func.enabled:
-                rewards.append(reward)
+        try:
+            for key, func in self.funcs.items():
+                reward, count = func()
+                self.env.stats[self.name, key].add_(reward)
+                sum, cnt = self.env._stats_ema[self.name][key]
+                sum.mul_(self.env._stats_ema_decay).add_(reward.sum())
+                cnt.mul_(self.env._stats_ema_decay).add_(count)
+                if func.enabled:
+                    rewards.append(reward)
+        except Exception as e:
+            raise RuntimeError(f"Error in computing reward for {key}: {e}")
         if len(rewards):
             self.rew_buf[:] = torch.cat(rewards, 1)
         return self.rew_buf.sum(1, True)

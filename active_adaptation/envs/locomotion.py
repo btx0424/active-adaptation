@@ -83,12 +83,6 @@ class LocomotionEnv(Env):
     def orientation(self):
         return -self.scene["robot"].data.projected_gravity_b[:, :2].square().sum(-1, True)
         return self.scene["robot"].data.projected_gravity_b[:, [2]].square()
-    
-    @mdp.reward_func
-    def stand(self):
-        jpos_error = square_norm(self.scene["robot"].data.joint_pos - self.scene["robot"].data.default_joint_pos)
-        cost = - (jpos_error) * self.command_manager.is_standing_env
-        return cost
 
     class feet_pos_b(mdp.body_pos):
         def __init__(self, env: "LocomotionEnv", feet_names=None, yaw_only: bool=False):

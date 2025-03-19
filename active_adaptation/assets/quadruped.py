@@ -27,57 +27,6 @@ class Quadruped(Articulation):
         self.phi = torch.zeros(self.num_instances, 4, device=self.device)
         self.phi_dot = torch.zeros(self.num_instances, 4, device=self.device)
 
-        self.decimation = self._env.cfg.decimation
-
-        self.contact_sensor: ContactSensor = self._env.scene.sensors.get(
-            "contact_forces", None
-        )
-        if self.contact_sensor is not None:
-            shape = (self.num_instances, len(self.feet_ids))
-            self._feet_contact_ids = None
-            # self.in_contact = torch.zeros(*shape, dtype=bool, device=self.device)
-            # self.impact = torch.zeros(*shape, dtype=bool, device=self.device)
-            # self.detach = torch.zeros(*shape, dtype=bool, device=self.device)
-            # self.has_impact = torch.zeros(*shape, dtype=bool, device=self.device)
-            # self.impact_point_w = torch.zeros(*shape, 3, device=self.device)
-            # self.detach_point_w = torch.zeros(*shape, 3, device=self.device)
-
-            self.grf_substep = torch.zeros(
-                self.num_instances, self._env.cfg.decimation, 4, device=self.device
-            )
-
-    def post_step(self, substep: int):
-        if substep < self.decimation:
-            if self.contact_sensor.is_initialized:
-                if self._feet_contact_ids is None:
-                    self._feet_contact_ids = self.contact_sensor.find_bodies(".*_foot")[
-                        0
-                    ]
-                contact_force = self.contact_sensor.data.net_forces_w[
-                    :, self._feet_contact_ids
-                ]
-                self.grf_substep[:, substep] = contact_force.norm(dim=-1)
-        else:
-            root_quat_w = self.data.root_quat_w
-            root_pos_w = self.data.root_pos_w
-
-            self.feet_pos_w = self.data.body_pos_w[:, self.feet_ids]
-            self.feet_pos_b = quat_rotate_inverse(
-                root_quat_w.unsqueeze(1), self.feet_pos_w - root_pos_w.unsqueeze(1)
-            )
-            self.feet_lin_vel_w = self.data.body_lin_vel_w[:, self.feet_ids]
-
-        # if self.contact_sensor.is_initialized and self._feet_contact_ids is None:
-        #     self._feet_contact_ids = self.contact_sensor.find_bodies(".*_foot")[0]
-
-        #     in_contact = (contact_force.norm(dim=-1) > 0.01).any(dim=1)
-        #     self.impact = (~self.in_contact) & in_contact
-        #     self.detach = self.in_contact & (~in_contact)
-        #     self.in_contact = in_contact
-        #     self.has_impact.logical_or_(self.impact)
-        #     self.impact_point_w[self.impact] = self.feet_pos_w[self.impact]
-        #     self.detach_point_w[self.detach] = self.feet_pos_w[self.detach]
-
 
 class QuadrupedManipulator(Articulation):
     def _create_buffers(self):

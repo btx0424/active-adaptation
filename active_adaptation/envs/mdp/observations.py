@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import abc
 import einops
-from typing import Tuple, TYPE_CHECKING
+from typing import Tuple, TYPE_CHECKING, Callable
 
 from omni.isaac.lab.sensors import ContactSensor, RayCaster, patterns, RayCasterData, Imu
 from omni.isaac.lab.sensors import Camera, TiledCamera
@@ -78,6 +78,13 @@ class Observation:
     def debug_draw(self):
         """Called at each step **after** simulation, if GUI is enabled"""
         pass
+
+
+def observation_wrapper(func: Callable[[], torch.Tensor]):
+    class ObservationWrapper(Observation):
+        def compute(self):
+            return func()
+    return ObservationWrapper
 
 
 class CartesianObs(Observation):
@@ -630,19 +637,26 @@ class continuous_walking(Observation):
 
     
 class joint_pos_multistep(Observation):
-    def __init__(self, env, steps: int=4, interval:int=1, noise_std: float=0., diff: bool=False, mask_ratio = 0):
-        super().__init__(env, mask_ratio)
+    def __init__(
+        self,
+        env,
+        joint_names: str=".*",
+        steps: int=4, 
+        noise_std: float=0.,
+    ):
+        super().__init__(env)
         self.steps = steps
-        self.interval = interval
-        self.noise_std = noise_std
-        self.diff = diff
+        self.noise_std = max(noise_std, 0.)
         self.asset: Articulation = self.env.scene["robot"]
-        shape = (self.num_envs, steps * interval, self.asset.num_joints)
+        self.joint_ids = self.asset.find_joints(joint_names)[0]
+        self.num_joints = len(self.joint_ids)
+
+        shape = (self.num_envs, steps, self.num_joints)
         self.joint_pos_multistep = torch.zeros(shape, device=self.device)
-        self.joint_pos = torch.zeros(self.num_envs, 2, self.asset.num_joints, device=self.device)
+        self.joint_pos = torch.zeros(self.num_envs, 2, self.num_joints, device=self.device)
     
     def post_step(self, substep):
-        self.joint_pos[:, substep % 2] = self.asset.data.joint_pos
+        self.joint_pos[:, substep % 2] = self.asset.data.joint_pos[:, self.joint_ids]
     
     def update(self):
         self.joint_pos_multistep = self.joint_pos_multistep.roll(1, 1)
@@ -652,30 +666,36 @@ class joint_pos_multistep(Observation):
         self.joint_pos_multistep[:, 0] = joint_pos
     
     def compute(self):
-        joint_pos = self.joint_pos_multistep[:, ::self.interval].clone()
-        if self.diff:
-            joint_pos[:, 1:] = joint_pos[:, 1:] - joint_pos[:, :-1]
+        joint_pos = self.joint_pos_multistep.clone()
         return joint_pos.reshape(self.num_envs, -1)
 
 
 class joint_vel_multistep(Observation):
-    def __init__(self, env, steps: int=4, noise_std: float=0., diff: bool=False, mask_ratio = 0):
-        super().__init__(env, mask_ratio)
+    def __init__(
+        self,
+        env,
+        joint_names=".*",
+        steps: int=4,
+        noise_std: float=0.,
+    ):
+        super().__init__(env)
         self.steps = steps
         self.noise_std_max = max(noise_std, 0.)
-        self.diff = diff
         self.from_pos = True
         self.asset: Articulation = self.env.scene["robot"]
-        shape = (self.num_envs, steps, self.asset.num_joints)
+        self.joint_ids = self.asset.find_joints(joint_names)[0]
+        self.num_joints = len(self.joint_ids)
+
+        shape = (self.num_envs, steps, self.num_joints)
         
         self.joint_vel_multistep = torch.zeros(shape, device=self.device)
         
         self.noise_std = torch.zeros(self.num_envs, self.asset.num_joints, device=self.device)
         if self.from_pos:
-            shape = (self.num_envs, self.env.cfg.decimation, self.asset.num_joints)
+            shape = (self.num_envs, self.env.decimation, self.num_joints)
             self.joint_pos_substep = torch.zeros(shape, device=self.device)
         else:
-            shape = (self.num_envs, 2, self.asset.num_joints)
+            shape = (self.num_envs, 2, self.num_joints)
             self.joint_vel_substep = torch.zeros(shape, device=self.device)
     
     def reset(self, env_ids: torch.Tensor):
@@ -683,9 +703,9 @@ class joint_vel_multistep(Observation):
 
     def post_step(self, substep):
         if self.from_pos:
-            self.joint_pos_substep[:, substep] = self.asset.data.joint_pos
+            self.joint_pos_substep[:, substep] = self.asset.data.joint_pos[:, self.joint_ids]
         else:
-            self.joint_vel_substep[:, substep % 2] = self.asset.data.joint_vel
+            self.joint_vel_substep[:, substep % 2] = self.asset.data.joint_vel[:, self.joint_ids]
     
     def update(self):
         self.joint_vel_multistep = self.joint_vel_multistep.roll(1, 1)
@@ -698,8 +718,6 @@ class joint_vel_multistep(Observation):
     
     def compute(self):
         joint_vel = self.joint_vel_multistep.clone()
-        if self.diff:
-            joint_vel[:, 1:] = joint_vel[:, 1:] - joint_vel[:, :-1]
         return joint_vel.reshape(self.num_envs, -1)
 
 
@@ -1399,6 +1417,7 @@ class joint_forces(JointObs):
 class jacobians(Observation):
     def __init__(self, env, body_names: str=".*"):
         super().__init__(env)
+        raise NotImplementedError
         self.asset: Articulation = self.env.scene["robot"]
         self.body_ids, self.body_names = self.asset.find_bodies(body_names)
         self.body_ids = torch.tensor(self.body_ids, device=self.device)
@@ -1739,4 +1758,14 @@ class cartesian_force(Observation):
     #         - self.force_w / 9.81,
     #         color=(1., 0., 1., 1.)
     #     )
+
+
+class body_height(Observation):
+    def __init__(self, env, body_names: str, mask_ratio = 0):
+        super().__init__(env, mask_ratio)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_ids = torch.as_tensor(self.asset.find_bodies(body_names)[0], device=self.device)
+    
+    def compute(self):
+        return self.asset.data.body_pos_w[:, self.body_ids, 2]
 

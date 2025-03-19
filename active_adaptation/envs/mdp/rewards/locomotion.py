@@ -1,7 +1,7 @@
 from math import inf
 import torch
 import abc
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from omni.isaac.lab.sensors import ContactSensor
 from omni.isaac.lab.assets import Articulation
@@ -24,12 +24,10 @@ class Reward:
         env,
         weight: float,
         enabled: bool = True,
-        clip_range=(-torch.inf, +torch.inf),
     ):
         self.env: Env = env
         self.weight = weight
         self.enabled = enabled
-        self.clip_range = clip_range
 
     @property
     def num_envs(self):
@@ -48,11 +46,18 @@ class Reward:
     def update(self):
         pass
 
-    def reset(self, env_ids):
+    def reset(self, env_ids: torch.Tensor):
         pass
 
     def __call__(self) -> torch.Tensor:
-        return (self.weight * self.compute()).clip(*self.clip_range)
+        result = self.compute()
+        if isinstance(result, torch.Tensor):
+            rew, count = result, result.numel()
+        elif isinstance(result, tuple):
+            rew, is_active = result
+            rew = rew * is_active.float()
+            count = is_active.sum().item()
+        return self.weight * rew, count 
 
     @abc.abstractmethod
     def compute(self) -> torch.Tensor:
@@ -68,6 +73,13 @@ def reward_func(func):
             return func(self.env)
 
     return RewFunc
+
+
+def reward_wrapper(func: Callable[[], torch.Tensor]):
+    class RewardWrapper(Reward):
+        def compute(self):
+            return func()
+    return RewardWrapper
 
 
 @reward_func
@@ -463,9 +475,8 @@ class linvel_yaw_exp(Reward):
         env,
         weight: float,
         enabled: bool = True,
-        clip_range=(-torch.inf, +torch.inf),
     ):
-        super().__init__(env, weight, enabled, clip_range)
+        super().__init__(env, weight, enabled,)
         self.asset: Articulation = self.env.scene["robot"]
 
     def compute(self) -> torch.Tensor:
@@ -531,8 +542,8 @@ class angvel_z_exp(Reward):
 
 
 class tracking_lin_vel(Reward):
-    def __init__(self, env, weight, enabled = True, clip_range=(-torch.inf, +torch.inf)):
-        super().__init__(env, weight, enabled, clip_range)
+    def __init__(self, env, weight, enabled = True):
+        super().__init__(env, weight, enabled,)
         self.asset: Articulation = self.env.scene["robot"]
         self.command_manager = self.env.command_manager
         self.decay = torch.tensor([0.0, 0.5, 0.8], device=self.device)
@@ -554,8 +565,8 @@ class tracking_lin_vel(Reward):
 
 
 class tracking_yaw(Reward):
-    def __init__(self, env, weight, enabled = True, clip_range=(-torch.inf, +torch.inf)):
-        super().__init__(env, weight, enabled, clip_range)
+    def __init__(self, env, weight, enabled = True):
+        super().__init__(env, weight, enabled,)
         self.asset: Articulation = self.env.scene["robot"]
         self.command_manager = self.env.command_manager
 
@@ -1070,7 +1081,7 @@ class base_height_l1(Reward):
             self.scale = self.scale.to(self.device)
         else:
             self.scale = torch.tensor(1.0, device=self.device)
-        self.feet_ids = self.asset.find_bodies(".*_foot")[0]
+        # self.feet_ids = self.asset.find_bodies(".*_foot")[0]
 
     def compute(self) -> torch.Tensor:
         target_height = self.target_height * self.scale
@@ -1086,9 +1097,8 @@ class quadruped_stand_always(Reward):
         env,
         weight: float,
         enabled: bool = True,
-        clip_range=(-torch.inf, +torch.inf),
     ):
-        super().__init__(env, weight, enabled, clip_range)
+        super().__init__(env, weight, enabled,)
         self.asset: Articulation = self.env.scene["robot"]
         self.joint_ids = self.asset.actuators["base_legs"].joint_indices
 
@@ -1119,9 +1129,8 @@ class quadruped_stand(Reward):
         env,
         weight: float,
         enabled: bool = True,
-        clip_range=(-torch.inf, +torch.inf),
     ):
-        super().__init__(env, weight, enabled, clip_range)
+        super().__init__(env, weight, enabled,)
         self.asset: Articulation = self.env.scene["robot"]
         self.joint_ids = self.asset.actuators["base_legs"].joint_indices
 
@@ -1196,9 +1205,8 @@ class is_standing_env(Reward):
         env,
         weight: float,
         enabled: bool = False,
-        clip_range=(-torch.inf, +torch.inf),
     ):
-        super().__init__(env, weight, enabled, clip_range)
+        super().__init__(env, weight, enabled,)
 
     def compute(self) -> torch.Tensor:
         return self.env.command_manager.is_standing_env.reshape(self.num_envs, 1)
@@ -1210,11 +1218,10 @@ class stance_width(Reward):
         env,
         weight: float,
         enabled: bool = True,
-        clip_range=(-torch.inf, +torch.inf),
         target_width=0.15,
     ):
         """penalize stance width smaller than target_width"""
-        super().__init__(env, weight, enabled, clip_range)
+        super().__init__(env, weight, enabled,)
         self.asset: Articulation = self.env.scene["robot"]
         self.target_width = target_width
 
@@ -1231,39 +1238,6 @@ class stance_width(Reward):
         )
         width = torch.cat([front_width, back_width], dim=1)
         return -(self.target_width - width).clamp_min(0.0).sum(1, keepdim=True)
-
-
-class stand_up_height(Reward):
-    def __init__(
-        self,
-        env,
-        weight: float,
-        enabled: bool = True,
-        clip_range=(-torch.inf, +torch.inf),
-    ):
-        super().__init__(env, weight, enabled, clip_range)
-        self.asset: Articulation = self.env.scene["robot"]
-
-    def compute(self) -> torch.Tensor:
-        height = self.asset.data.root_pos_w[:, 2]
-        return (height.clamp(max=0.7)).unsqueeze(-1)
-
-
-class stand_up_orientation(Reward):
-    def __init__(
-        self,
-        env,
-        weight: float,
-        enabled: bool = True,
-        clip_range=(-torch.inf, +torch.inf),
-    ):
-        super().__init__(env, weight, enabled, clip_range)
-        self.asset: Articulation = self.env.scene["robot"]
-
-    def compute(self) -> torch.Tensor:
-        return (-self.asset.data.projected_gravity_b[:, 0].clamp_min_(-0.8)).unsqueeze(
-            -1
-        )
 
 
 class joint_vel_l2(Reward):
@@ -1486,8 +1460,8 @@ from active_adaptation.assets.quadruped import Quadruped
 
 
 class step_vel(Reward):
-    def __init__(self, env, weight, enabled=True, clip_range=(-torch.inf, +torch.inf)):
-        super().__init__(env, weight, enabled, clip_range)
+    def __init__(self, env, weight, enabled=True):
+        super().__init__(env, weight, enabled,)
         self.asset: Quadruped = self.env.scene["robot"]
         self.prev_root_pos_w = torch.zeros(self.num_envs, 4, 3, device=self.device)
         self.last_impact_time = torch.zeros(self.num_envs, 4, 1, device=self.device)
@@ -1675,8 +1649,8 @@ class quad_leg_swing(Reward):
 
 
 class pos_tracking(Reward):
-    def __init__(self, env, weight, enabled = True, clip_range=(-torch.inf, +torch.inf)):
-        super().__init__(env, weight, enabled, clip_range)
+    def __init__(self, env, weight, enabled = True):
+        super().__init__(env, weight, enabled,)
         self.command_manager: Command3 = self.env.command_manager
         self.asset: Articulation = self.env.scene["robot"]
 
@@ -1687,8 +1661,8 @@ class pos_tracking(Reward):
 
 
 class yaw_tracking(Reward):
-    def __init__(self, env, weight, enabled = True, clip_range=(-torch.inf, +torch.inf)):
-        super().__init__(env, weight, enabled, clip_range)
+    def __init__(self, env, weight, enabled = True):
+        super().__init__(env, weight, enabled,)
         self.command_manager: Command3 = self.env.command_manager
         self.asset: Articulation = self.env.scene["robot"]
     
@@ -1697,8 +1671,8 @@ class yaw_tracking(Reward):
 
 
 class vel_tracking(Reward):
-    def __init__(self, env, weight, enabled = True, clip_range=(-torch.inf, +torch.inf)):
-        super().__init__(env, weight, enabled, clip_range)
+    def __init__(self, env, weight, enabled = True):
+        super().__init__(env, weight, enabled,)
         self.command_manager: Command3 = self.env.command_manager
         self.asset: Articulation = self.env.scene["robot"]
     
@@ -1709,8 +1683,8 @@ class vel_tracking(Reward):
         return r.unsqueeze(1)
 
 class vel_xy_tracking(Reward):
-    def __init__(self, env, weight, enabled = True, clip_range=(-torch.inf, +torch.inf)):
-        super().__init__(env, weight, enabled, clip_range)
+    def __init__(self, env, weight, enabled = True):
+        super().__init__(env, weight, enabled,)
         self.command_manager: Command3 = self.env.command_manager
         self.asset: Articulation = self.env.scene["robot"]
     
@@ -1744,6 +1718,27 @@ class joint_deviation_l2(Reward):
     def compute(self) -> torch.Tensor:
         dev = self.asset.data.joint_pos[:, self.joint_ids] - self.default_joint_pos
         return - dev.square().sum(1, True)
+
+
+class pitch_exp(Reward):
+    def compute(self):
+        error = self.env.command_manager.pitch_error_l2
+        return torch.exp( -error ) - error
+
+class lin_vel_exp(Reward):
+    def compute(self):
+        error = self.env.command_manager.lin_vel_error_l2
+        return torch.exp( -error / 0.25) - 0.5 * error
+
+class ang_vel_x_exp(Reward):
+    def compute(self):
+        error = self.env.command_manager.ang_vel_x_error_l2
+        return torch.exp( -error / 0.25) - 0.5 * error
+
+class ang_vel_z_exp(Reward):
+    def compute(self):
+        error = self.env.command_manager.ang_vel_z_error_l2
+        return torch.exp( -error / 0.25) - 0.5 * error
 
 
 def normalize(x: torch.Tensor):

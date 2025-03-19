@@ -1104,9 +1104,9 @@ class LegWheel(ActionManager):
 
     def __call__(self, tensordict: TensorDictBase, substep: int):
         action = tensordict["action"].clamp(-10., 10.)
-        self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
-        self.action_buf[:, :, 0] = action
-
+        if substep == 0:
+            self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
+            self.action_buf[:, :, 0] = action
         self.applied_action = self.applied_action.lerp(action, 0.8)
         leg_action, wheel_action = self.applied_action.split([self.leg_action_dim, self.wheel_action_dim], dim=-1)
         leg_pos_target = self.asset.data.default_joint_pos[:, self.leg_ids] + self.leg_scaling * leg_action

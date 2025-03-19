@@ -3,7 +3,7 @@
 
 import torch
 import torch.distributions as D
-from omni.isaac.lab.utils.math import yaw_quat, wrap_to_pi
+from omni.isaac.lab.utils.math import yaw_quat, wrap_to_pi, euler_xyz_from_quat, quat_from_euler_xyz
 
 from .helpers import batchify
 

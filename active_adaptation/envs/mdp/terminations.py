@@ -30,6 +30,13 @@ def termination_func(func):
     return TermFunc
 
 
+def termination_wrapper(func):
+    class TerminationWrapper(Termination):
+        def __call__(self):
+            return func()
+    return TerminationWrapper
+
+
 class crash(Termination):
     def __init__(
         self, 

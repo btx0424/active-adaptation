@@ -172,6 +172,7 @@ def main(cfg: DictConfig):
         
         info.update(policy.train_op(data))
         info.update(env.extra)
+        info.update(env.stats_ema)
         if hasattr(policy, "step_schedule"):
             policy.step_schedule(i / total_iters)
 
