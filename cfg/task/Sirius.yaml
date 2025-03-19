@@ -11,7 +11,7 @@ defaults:
 robot:
   name: sirius
 
-terrain: easy
+terrain: plane
 payload: false
 homogeneous: false
 
@@ -21,31 +21,38 @@ action:
   wheel_scaling: {wheel_.*: 2.0}
 
 command:
-  _target_: active_adaptation.envs.mdp.Command2
-  linvel_x_range: [-1.0, 1.6]
-  linvel_y_range: [-0.7, 0.7]
-  angvel_range:   [-2.0, 2.0]
-  yaw_stiffness_range: [0.5, 0.7]
-  use_stiffness_ratio: 0.99
-  aux_input_range: [.5, 1.]
-  resample_prob: 0.5
-  stand_prob: 0.08
-  target_yaw_range: 
-    - [-0.3927,  0.3927]
-    - [ 1.1781,  1.9635]
-    - [ 2.7489,  3.5343]
-    - [ 4.3197,  5.1051]
-  adaptive: true
+  _target_: active_adaptation.envs.mdp.commands.sirius.SiriusCommandManager
+  # _target_: active_adaptation.envs.mdp.Command2
+  # linvel_x_range: [-1.0, 1.6]
+  # linvel_y_range: [-0.7, 0.7]
+  # angvel_range:   [-2.0, 2.0]
+  # yaw_stiffness_range: [0.5, 0.7]
+  # use_stiffness_ratio: 0.99
+  # aux_input_range: [.5, 1.]
+  # resample_prob: 0.5
+  # stand_prob: 0.08
+  # target_yaw_range: 
+  #   - [-0.3927,  0.3927]
+  #   - [ 1.1781,  1.9635]
+  #   - [ 2.7489,  3.5343]
+  #   - [ 4.3197,  5.1051]
+  # adaptive: true
 
 observation:
-  # command_:
-  policy:
+  command_mode_: # won't be normalized
+    command_mode:
+  command_end_: # won't be normalized
+    command_end:
+  command_: # won't be normalized
     command:
+  policy:
     projected_gravity_b: {noise_std: 0.05}
-    joint_pos:    {noise_std: 0.05, joint_names: .*_(HAA|HFE|KFE)}
-    joint_vel:    {noise_std: 0.3, joint_names: .*}
+    # joint_pos:    {noise_std: 0.05, joint_names: }
+    # joint_vel:    {noise_std: 0.3, joint_names: .*}
+    joint_pos_multistep: {steps: 4, noise_std: 0.05, joint_names: .*_(HAA|HFE|KFE)}
+    joint_vel_multistep: {steps: 4, noise_std: 0.2, joint_names: .*}
     prev_actions: {steps: 3}
-  # priv:
+  priv:
     applied_action:
     root_linvel_b:    {yaw_only: true}
     root_angvel_b:
@@ -54,40 +61,48 @@ observation:
     feet_height_map:  {feet_names: .*_WHEEL }
     applied_torques:  {actuator_name: base_legs}
     external_forces:  {body_names: ["base"]}
+    cum_error:
+    body_height:      {body_names: ["front", "back"]}
 
 reward:
   _clip_: true
   loco:
-    linvel_exp:         {weight: 1.5, enabled: true, dim: 3, yaw_only: true}
-    angvel_z_exp:       {weight: 0.8, enabled: true}
-    # quadruped_stand:    {weight: 0.5, enabled: true}
+    lin_vel_exp:        {weight: 1.5, enabled: true}
+    ang_vel_z_exp:      {weight: 1.0, enabled: true}
+    pitch_exp:          {weight: 1.5, enabled: true}
+
+    # stand_lin_vel:      {weight: 2.0, enabled: true}
+    # stand_height:       {weight: 2.0, enabled: true}
+    
+    jump_roll:          {weight: 2.0, enabled: true}
+    jump_height:        {weight: 4.0, enabled: true}
+    # jump_lin_vel:       {weight: 2.0, enabled: true}
+    jump_ang_vel:       {weight: 1.0, enabled: true}
 
   # reg:
-    angvel_xy_l2:       {weight: 0.02, enabled: true}
-    linvel_z_l2:        {weight: 2.0, enabled: true}
-    # base_height_l1:     {weight: 2.0, enabled: true, target_height: 0.35}
-    energy_l1:          {weight: 0.0002, enabled: true}
+    walk_angvel_xy_l2:  {weight: 0.02, enabled: true}
+    walk_linvel_z_l2:   {weight: 2.0, enabled: true}
+    energy_l1:          {weight: 0.0001, enabled: true}
     joint_acc_l2:       {weight: 2.5e-7, enabled: true}
-    joint_torques_l2:   {weight: 2.0e-4, enabled: true}
+    joint_torques_l2:   {weight: 1.0e-4, enabled: true}
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.01, enabled: true}
     action_rate2_l2:    {weight: 0.002, enabled: true}
     # feet_air_time:      {weight: 0.2, enabled: true, body_names: .*_WHEEL, thres: 0.4}
     undesired_contact:  {body_names: ["base", "thigh_.*", "shank_.*"], weight: 0.25, enabled: true}
   debug:
-    linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
     feet_slip:          {weight: 1.0, enabled: false, body_names: .*_WHEEL}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_WHEEL}
 
 termination:
-  crash: {body_names_expr: ["base", "thigh_.*"], t_thres: 0.1}
-  fall_over: {xy_thres: 0.9}
-  cum_error: {thres: 1.0}
+  crash: {body_names_expr: ["base", "front", "back", "thigh_.*"], t_thres: 0.01}
+  jump_error_exceeds: {}
+  stand_error_exceeds: {}
 
 randomization:
   perturb_body_mass:
     (?!(payload|base|Head.*)).*: [0.8, 1.2]
-    base: [0.8, 1.4]
+    base: [0.8, 1.2]
   perturb_body_materials:
     body_names: ".*_WHEEL"
     static_friction_range:  [0.5, 4.0]
@@ -117,14 +132,4 @@ randomization:
   reset_joint_states_scale:
     pos_scales:
       .*: [0.8, 1.2]
-  # random_joint_offset:
-  #   .*hip_joint: [-0.05, 0.05]
-  #   F[L,R]_thigh_joint: [-0.05, 0.05]
-  #   R[L,R]_thigh_joint: [-0.05, 0.05]
-  #   .*calf_joint: [-0.05, 0.05]
-  random_pull: 
-    force_xy_range: [-40., 40.]
-    force_z_range:  [-10., 30.]
-    prob: 0.005
-    duration: [0.5, 1.5]
   # external_force: {}
