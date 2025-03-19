@@ -1,14 +1,15 @@
 import os
-import omni.isaac.lab.sim as sim_utils
+import isaaclab.sim as sim_utils
 
-from omni.isaac.lab_assets import ArticulationCfg
-from omni.isaac.lab.actuators import ImplicitActuatorCfg
+from isaaclab_assets import ArticulationCfg
+from isaaclab.actuators import ImplicitActuatorCfg
 
 ASSET_PATH = os.path.dirname(__file__)
 
 SIRIUS_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ASSET_PATH}/sirius_mid_wheel.usd",
+        # usd_path=f"{ASSET_PATH}/sirius_mid_wheel/sirius_mid_wheel.usd",
+        usd_path="/home/btx0424/lab/active-adaptation/active_adaptation/assets/sirius_mid_wheel.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -40,8 +41,8 @@ SIRIUS_CFG = ArticulationCfg(
     actuators={
         "base_legs": ImplicitActuatorCfg(
             joint_names_expr=".*",
-            effort_limit=100.0,
-            velocity_limit=40.,
+            effort_limit_sim=100.0,
+            velocity_limit_sim=40.,
             stiffness={
                 ".*_HAA": 40.,
                 ".*_HFE": 40.,

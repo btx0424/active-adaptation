@@ -3,24 +3,18 @@ import hydra
 import numpy as np
 import einops
 import itertools
+import os
+import datetime
 from omegaconf import OmegaConf
 
-from omni.isaac.lab.app import AppLauncher
-# from omni_drones.utils.wandb import init_wandb
-# from omni_drones.utils.torchrl import SyncDataCollector
+from isaaclab.app import AppLauncher
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from tensordict.nn import TensorDictSequential
+
 from active_adaptation.learning import ALGOS
 from active_adaptation.utils.export import export_onnx
-from collections import OrderedDict
 
-import wandb
-import logging
-from tqdm import tqdm
-
-import os
-import datetime
 
 @hydra.main(config_path="../cfg", config_name="play")
 @torch.inference_mode()

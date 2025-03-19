@@ -1,8 +1,8 @@
 import torch
 
-from omni.isaac.lab.sensors import ContactSensor, RayCaster
-from omni.isaac.lab.actuators import DCMotor
-from omni.isaac.lab.assets import Articulation
+from isaaclab.sensors import ContactSensor, RayCaster
+from isaaclab.actuators import DCMotor
+from isaaclab.assets import Articulation
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 

@@ -14,7 +14,7 @@ from omegaconf import OmegaConf, DictConfig
 from collections import OrderedDict
 from setproctitle import setproctitle
 
-from omni.isaac.lab.app import AppLauncher
+from isaaclab.app import AppLauncher
 import active_adaptation.learning
 from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker, StepCounter
 

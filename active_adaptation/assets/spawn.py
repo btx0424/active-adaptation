@@ -8,8 +8,8 @@ import functools
 from omni.physx import get_physx_replicator_interface, get_physx_simulation_interface
 from pxr import Gf, PhysxSchema, Sdf, Usd, UsdGeom, UsdUtils, Vt, Semantics
 
-from omni.isaac.cloner import Cloner
-from omni.isaac.lab.sim import schemas, SpawnerCfg, find_matching_prim_paths
+from isaacsim.core.cloner import Cloner
+from isaaclab.sim import schemas, SpawnerCfg, find_matching_prim_paths
 
 class MyCloner(Cloner):
 

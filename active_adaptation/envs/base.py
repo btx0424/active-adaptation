@@ -12,9 +12,9 @@ from torchrl.data import (
 )
 import builtins
 
-from omni.isaac.lab.scene import InteractiveScene
-from omni.isaac.lab.sim import SimulationContext
-from omni.isaac.lab.utils.timer import Timer
+from isaaclab.scene import InteractiveScene
+from isaaclab.sim import SimulationContext
+from isaaclab.utils.timer import Timer
 from collections import OrderedDict
 
 from abc import abstractmethod
@@ -532,17 +532,17 @@ class RewardGroup:
     
     def compute(self) -> torch.Tensor:
         rewards = []
-        try:
-            for key, func in self.funcs.items():
-                reward, count = func()
-                self.env.stats[self.name, key].add_(reward)
-                sum, cnt = self.env._stats_ema[self.name][key]
-                sum.mul_(self.env._stats_ema_decay).add_(reward.sum())
-                cnt.mul_(self.env._stats_ema_decay).add_(count)
-                if func.enabled:
-                    rewards.append(reward)
-        except Exception as e:
-            raise RuntimeError(f"Error in computing reward for {key}: {e}")
+        # try:
+        for key, func in self.funcs.items():
+            reward, count = func()
+            self.env.stats[self.name, key].add_(reward)
+            sum, cnt = self.env._stats_ema[self.name][key]
+            sum.mul_(self.env._stats_ema_decay).add_(reward.sum())
+            cnt.mul_(self.env._stats_ema_decay).add_(count)
+            if func.enabled:
+                rewards.append(reward)
+        # except Exception as e:
+        #     raise RuntimeError(f"Error in computing reward for {key}: {e}")
         if len(rewards):
             self.rew_buf[:] = torch.cat(rewards, 1)
         return self.rew_buf.sum(1, True)

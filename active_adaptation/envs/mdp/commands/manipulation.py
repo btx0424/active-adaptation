@@ -1,6 +1,6 @@
 from .base import Command
 from .locomotion import clamp_norm, quat_rotate_inverse, quat_rotate
-from omni.isaac.lab.assets import Articulation
+from isaaclab.assets import Articulation
 import torch
 
 

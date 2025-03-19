@@ -1,17 +1,17 @@
 from active_adaptation.assets import *
-from omni.isaac.lab.scene import InteractiveSceneCfg
-from omni.isaac.lab.utils import configclass
-from omni.isaac.lab.terrains import TerrainImporterCfg
-from omni.isaac.lab.envs import ViewerCfg
-from omni.isaac.lab.assets import AssetBaseCfg
-from omni.isaac.lab.sensors import (
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.utils import configclass
+from isaaclab.terrains import TerrainImporterCfg
+from isaaclab.envs import ViewerCfg
+from isaaclab.assets import AssetBaseCfg
+from isaaclab.sensors import (
     ContactSensorCfg,
     RayCasterCfg,
     patterns,
     TiledCameraCfg,
     ImuCfg,
 )
-import omni.isaac.lab.sim as sim_utils
+import isaaclab.sim as sim_utils
 
 from dataclasses import MISSING
 from typing import Dict, List
@@ -188,7 +188,6 @@ class LocoManipSceneCfg(LocomotionSceneCfg):
 class EnvCfg:
 
     max_episode_length: int = 1000
-    payload: bool = False
 
     history_length: int = 32
 
@@ -199,7 +198,7 @@ class EnvCfg:
     # sim = sim_utils.SimulationCfg(dt=0.01, disable_contact_processing=True)
 
     decimation: int = 4
-    sim = sim_utils.SimulationCfg(dt=0.005, disable_contact_processing=True)
+    sim = sim_utils.SimulationCfg(dt=0.005)
 
     action: Dict = MISSING
     command: Dict = MISSING
@@ -207,10 +206,6 @@ class EnvCfg:
     observation: Dict[str, List] = MISSING
     termination: List = MISSING
     randomization: List = MISSING
-
-    def __post_init__(self):
-        if self.payload:
-            self.scene.robot.spawn.func = spawn_with_payload
 
 
 def LocomotionEnvCfg(task_cfg):
@@ -237,7 +232,6 @@ def LocomotionEnvCfg(task_cfg):
 
     env_cfg = EnvCfg(
         max_episode_length=task_cfg.max_episode_length,
-        payload=task_cfg.payload,
         scene=scene_cfg_class(
             num_envs=task_cfg.num_envs,
             robot=robot_cfg,

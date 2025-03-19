@@ -1,7 +1,7 @@
 import torch
 
-from omni.isaac.lab.assets import Articulation
-from omni.isaac.lab.utils.math import wrap_to_pi, quat_rotate, yaw_quat, normalize
+from isaaclab.assets import Articulation
+from isaaclab.utils.math import wrap_to_pi, quat_rotate, yaw_quat, normalize
 from active_adaptation.utils.helpers import batchify
 from ..commands import BaseEEImpedance, Impedance
 from .locomotion import Reward

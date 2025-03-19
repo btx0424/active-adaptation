@@ -1,6 +1,6 @@
 import torch
 from .locomotion import Reward
-from omni.isaac.lab.assets import Articulation
+from isaaclab.assets import Articulation
 from ..commands import EEImpedance, EEPosition
 
 

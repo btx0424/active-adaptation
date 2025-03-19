@@ -3,7 +3,7 @@ import yaml
 import torch
 import numpy as np
 from tqdm import tqdm
-from omni.isaac.lab.app import AppLauncher
+from isaaclab.app import AppLauncher
 
 from omegaconf import OmegaConf
 
@@ -12,14 +12,14 @@ def main():
     app_launcher = AppLauncher({"headless": False})
     simulation_app = app_launcher.app
 
-    from omni.isaac.lab.sim import SimulationContext
-    import omni.isaac.lab.sim as sim_utils
-    from omni.isaac.lab.assets import AssetBaseCfg
-    from omni.isaac.lab.terrains import TerrainImporterCfg
-    from omni.isaac.lab.scene import InteractiveScene, InteractiveSceneCfg
-    from omni.isaac.lab.utils import configclass, class_to_dict
-    from omni.isaac.lab.sensors import ContactSensorCfg, ContactSensor, RayCasterCfg, patterns
-    from omni.isaac.lab.sim import schemas
+    from isaaclab.sim import SimulationContext
+    import isaaclab.sim as sim_utils
+    from isaaclab.assets import AssetBaseCfg
+    from isaaclab.terrains import TerrainImporterCfg
+    from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+    from isaaclab.utils import configclass, class_to_dict
+    from isaaclab.sensors import ContactSensorCfg, ContactSensor, RayCasterCfg, patterns
+    from isaaclab.sim import schemas
     from omni.isaac.core.utils.torch.rotations import quat_rotate
 
 

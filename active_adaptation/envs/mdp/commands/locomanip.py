@@ -3,8 +3,8 @@ import einops
 import warp as wp
 
 from torchrl.data import UnboundedContinuousTensorSpec
-from omni.isaac.lab.assets import Articulation
-from omni.isaac.lab.utils.math import yaw_quat, quat_from_euler_xyz, quat_mul, quat_inv, euler_xyz_from_quat, normalize
+from isaaclab.assets import Articulation
+from isaaclab.utils.math import yaw_quat, quat_from_euler_xyz, quat_mul, quat_inv, euler_xyz_from_quat, normalize
 
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse, clamp_along
 from active_adaptation.utils.helpers import batchify
@@ -1555,8 +1555,8 @@ class BaseEEImpedance(Command):
         
         self.vis_arrow = None
         if self.env.sim.has_gui():
-            from omni.isaac.lab.markers.config import BLUE_ARROW_X_MARKER_CFG
-            from omni.isaac.lab.markers import VisualizationMarkers
+            from isaaclab.markers.config import BLUE_ARROW_X_MARKER_CFG
+            from isaaclab.markers import VisualizationMarkers
             print(BLUE_ARROW_X_MARKER_CFG.markers["arrow"].scale)
 
             self.vis_arrow = VisualizationMarkers(

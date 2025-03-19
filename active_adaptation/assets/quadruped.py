@@ -2,12 +2,12 @@ import os
 import copy
 import torch
 
-import omni.isaac.lab.sim as sim_utils
-from omni.isaac.lab_assets import UNITREE_GO2_CFG, UNITREE_A1_CFG, ArticulationCfg
-from omni.isaac.lab.actuators import DCMotorCfg, ImplicitActuatorCfg, ImplicitActuator
-from omni.isaac.lab.assets import Articulation
-from omni.isaac.lab.utils.math import quat_rotate_inverse
-from omni.isaac.lab.sensors import ContactSensor
+import isaaclab.sim as sim_utils
+from isaaclab_assets import UNITREE_GO2_CFG, UNITREE_A1_CFG, ArticulationCfg
+from isaaclab.actuators import DCMotorCfg, ImplicitActuatorCfg, ImplicitActuator
+from isaaclab.assets import Articulation
+from isaaclab.utils.math import quat_rotate_inverse
+from isaaclab.sensors import ContactSensor
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -59,53 +59,55 @@ class QuadrupedManipulator(Articulation):
 
 ASSET_PATH = os.path.dirname(__file__)
 
-UNITREE_GO2_CFG = ArticulationCfg(
-    class_type=Quadruped,
-    spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ASSET_PATH}/Go2/go2.usd",
-        activate_contact_sensors=True,
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            disable_gravity=False,
-            retain_accelerations=False,
-            linear_damping=0.0,
-            angular_damping=0.0,
-            max_linear_velocity=1000.0,
-            max_angular_velocity=1000.0,
-            max_depenetration_velocity=1.0,
-        ),
-        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=False,
-            solver_position_iteration_count=8,
-            solver_velocity_iteration_count=0,
-        ),
-    ),
-    init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.4),
-        joint_pos={
-            ".*L_hip_joint": 0.1,
-            ".*R_hip_joint": -0.1,
-            "F[L,R]_thigh_joint": 0.7,
-            "R[L,R]_thigh_joint": 0.8,
-            ".*_calf_joint": -1.5,
-        },
-        joint_vel={".*": 0.0},
-    ),
-    soft_joint_pos_limit_factor=0.9,
-    actuators={
-        "base_legs": ImplicitActuatorCfg(
-            joint_names_expr=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
-            effort_limit={
-                ".*_hip_joint": 23.5,
-                ".*_thigh_joint": 23.5,
-                ".*_calf_joint": 35.5,
-            },
-            # saturation_effort=35.5,
-            velocity_limit=30.0,
-            stiffness=25.0,
-            damping=0.5,
-        ),
-    },
-)
+UNITREE_GO2_CFG = UNITREE_GO2_CFG
+UNITREE_GO2_CFG.class_type = Quadruped
+# UNITREE_GO2_CFG = ArticulationCfg(
+#     class_type=Quadruped,
+#     spawn=sim_utils.UsdFileCfg(
+#         usd_path=f"{ASSET_PATH}/Go2/go2.usd",
+#         activate_contact_sensors=True,
+#         rigid_props=sim_utils.RigidBodyPropertiesCfg(
+#             disable_gravity=False,
+#             retain_accelerations=False,
+#             linear_damping=0.0,
+#             angular_damping=0.0,
+#             max_linear_velocity=1000.0,
+#             max_angular_velocity=1000.0,
+#             max_depenetration_velocity=1.0,
+#         ),
+#         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+#             enabled_self_collisions=False,
+#             solver_position_iteration_count=8,
+#             solver_velocity_iteration_count=0,
+#         ),
+#     ),
+#     init_state=ArticulationCfg.InitialStateCfg(
+#         pos=(0.0, 0.0, 0.4),
+#         joint_pos={
+#             ".*L_hip_joint": 0.1,
+#             ".*R_hip_joint": -0.1,
+#             "F[L,R]_thigh_joint": 0.7,
+#             "R[L,R]_thigh_joint": 0.8,
+#             ".*_calf_joint": -1.5,
+#         },
+#         joint_vel={".*": 0.0},
+#     ),
+#     soft_joint_pos_limit_factor=0.9,
+#     actuators={
+#         "base_legs": ImplicitActuatorCfg(
+#             joint_names_expr=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
+#             effort_limit={
+#                 ".*_hip_joint": 23.5,
+#                 ".*_thigh_joint": 23.5,
+#                 ".*_calf_joint": 35.5,
+#             },
+#             # saturation_effort=35.5,
+#             velocity_limit=30.0,
+#             stiffness=25.0,
+#             damping=0.5,
+#         ),
+#     },
+# )
 
 UNITREE_GO2M_CFG = copy.deepcopy(UNITREE_GO2_CFG)
 UNITREE_GO2M_CFG.spawn.usd_path = f"{ASSET_PATH}/go2m.usd"

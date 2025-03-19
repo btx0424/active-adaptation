@@ -1,10 +1,10 @@
 import torch
 import numpy as np
-from omni.isaac.lab.assets import Articulation
-from omni.isaac.lab.actuators import DCMotor, ImplicitActuator
-from omni.isaac.lab.sensors import RayCaster
+from isaaclab.assets import Articulation
+from isaaclab.actuators import DCMotor, ImplicitActuator
+from isaaclab.sensors import RayCaster
 from active_adaptation.envs.actuator import HybridActuator
-import omni.isaac.lab.utils.string as string_utils
+import isaaclab.utils.string as string_utils
 from typing import Union, TYPE_CHECKING
 import logging
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse

@@ -1,9 +1,9 @@
 import torch
 
-from omni.isaac.lab.assets import Articulation
-from omni.isaac.lab.actuators import ImplicitActuatorCfg, ImplicitActuator
-from omni.isaac.lab.utils import configclass
-from omni.isaac.lab.utils.types import ArticulationActions
+from isaaclab.assets import Articulation
+from isaaclab.actuators import ImplicitActuatorCfg, ImplicitActuator
+from isaaclab.utils import configclass
+from isaaclab.utils.types import ArticulationActions
 
 
 class HybridActuator(ImplicitActuator):

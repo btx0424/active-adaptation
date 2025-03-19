@@ -6,7 +6,7 @@ import math
 import warp as wp
 from typing import Sequence, TYPE_CHECKING
 
-from omni.isaac.lab.assets import Articulation
+from isaaclab.assets import Articulation
 from active_adaptation.utils.math import (
     quat_rotate, 
     quat_rotate_inverse,

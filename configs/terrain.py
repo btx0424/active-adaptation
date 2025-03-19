@@ -1,4 +1,4 @@
-from omni.isaac.lab.terrains import (
+from isaaclab.terrains import (
     TerrainImporterCfg,
     HfTerrainBaseCfg,
     HfRandomUniformTerrainCfg,
@@ -18,12 +18,12 @@ from omni.isaac.lab.terrains import (
     MeshRailsTerrainCfg,
     height_field
 )
-from omni.isaac.lab.terrains.config.rough import ROUGH_TERRAINS_CFG as ROUGH_HARD
-from omni.isaac.lab.utils import configclass
+from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG as ROUGH_HARD
+from isaaclab.utils import configclass
 from dataclasses import MISSING
 import numpy as np
 
-import omni.isaac.lab.sim as sim_utils
+import isaaclab.sim as sim_utils
 
 
 @height_field.utils.height_field_to_mesh

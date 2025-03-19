@@ -6,7 +6,7 @@ import hydra
 import argparse
 
 from omegaconf import OmegaConf
-from omni.isaac.lab.app import AppLauncher
+from isaaclab.app import AppLauncher
 from scripts.play import main as play_main
 from scripts.eval import main as eval_main
 

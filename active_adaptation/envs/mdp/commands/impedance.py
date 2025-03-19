@@ -3,8 +3,8 @@ import torch.nn.functional as F
 
 from active_adaptation.envs.mdp.commands.base import Command
 from active_adaptation.envs.mdp.commands.locomotion import Command2
-import omni.isaac.lab.utils.math as math_utils
-from omni.isaac.lab.utils.math import (
+import isaaclab.utils.math as math_utils
+from isaaclab.utils.math import (
     quat_rotate_inverse,
     quat_rotate,
     yaw_quat,
@@ -137,8 +137,8 @@ class Impedance(Command):
         
         self.vis_arrow = None
         if self.env.sim.has_gui():
-            from omni.isaac.lab.markers.config import BLUE_ARROW_X_MARKER_CFG
-            from omni.isaac.lab.markers import VisualizationMarkers
+            from isaaclab.markers.config import BLUE_ARROW_X_MARKER_CFG
+            from isaaclab.markers import VisualizationMarkers
             print(BLUE_ARROW_X_MARKER_CFG.markers["arrow"].scale)
 
             self.vis_arrow = VisualizationMarkers(

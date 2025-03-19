@@ -2,11 +2,11 @@ import torch
 import os
 import copy
 
-import omni.isaac.lab.sim as sim_utils
-from omni.isaac.lab_assets import ArticulationCfg
-from omni.isaac.lab.actuators import DCMotorCfg, ImplicitActuatorCfg
-from omni.isaac.lab.assets import Articulation
-from omni.isaac.lab.utils.math import quat_rotate_inverse
+import isaaclab.sim as sim_utils
+from isaaclab_assets import ArticulationCfg
+from isaaclab.actuators import DCMotorCfg, ImplicitActuatorCfg
+from isaaclab.assets import Articulation
+from isaaclab.utils.math import quat_rotate_inverse
 
 ASSET_PATH = os.path.dirname(__file__)
 

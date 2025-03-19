@@ -3,8 +3,8 @@ import carb
 import omni
 import weakref
 
-from omni.isaac.lab.assets import Articulation
-from omni.isaac.lab.utils.math import quat_mul
+from isaaclab.assets import Articulation
+from isaaclab.utils.math import quat_mul
 from typing import Sequence, TYPE_CHECKING
 from collections import defaultdict
 

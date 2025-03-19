@@ -1,11 +1,11 @@
 from math import inf
 import torch
 
-from omni.isaac.lab.sensors import ContactSensor, RayCaster
-from omni.isaac.lab.actuators import DCMotor
-from omni.isaac.lab.assets import Articulation
-from omni.isaac.lab.utils.math import yaw_quat, quat_mul
-from omni.isaac.lab.utils.warp import raycast_mesh
+from isaaclab.sensors import ContactSensor, RayCaster
+from isaaclab.actuators import DCMotor
+from isaaclab.assets import Articulation
+from isaaclab.utils.math import yaw_quat, quat_mul
+from isaaclab.utils.warp import raycast_mesh
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 

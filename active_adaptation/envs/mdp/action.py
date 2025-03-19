@@ -2,9 +2,9 @@ import torch
 import einops
 from typing import Dict, Literal, Tuple, Union, TYPE_CHECKING
 from tensordict import TensorDictBase
-from omni.isaac.lab.assets import Articulation
-import omni.isaac.lab.utils.string as string_utils
-from omni.isaac.lab.utils.math import (
+from isaaclab.assets import Articulation
+import isaaclab.utils.string as string_utils
+from isaaclab.utils.math import (
     euler_xyz_from_quat,
     quat_mul,
     quat_conjugate,
