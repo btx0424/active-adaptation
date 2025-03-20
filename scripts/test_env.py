@@ -62,7 +62,6 @@ def main(cfg: DictConfig):
 
     run = wandb.init(
         job_type=cfg.wandb.job_type,
-        entity=cfg.wandb.entity,
         project=cfg.wandb.project,
         mode=cfg.wandb.mode,
         tags=cfg.wandb.tags,

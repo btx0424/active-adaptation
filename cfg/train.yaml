@@ -31,10 +31,7 @@ camera_follow: true
 wandb:
   name: ${..exp_name}/${now:%m-%d}_${now:%H-%M}
   job_type: train
-  entity: cyber dribble
-  project: go2m_impedance
-  # entity: btx0424
-  # project: adaptation
+  project: active-adaptation
   mode: online # set to 'disabled' when debugging locally
   tags: []
 
