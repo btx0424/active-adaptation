@@ -2,12 +2,39 @@
 
 ## Installation
 
-* [Isaac Sim 4.1.0]()
-* [Isaac Lab](https://github.com/isaac-sim/IsaacLab)
-* [TensorDict](https://github.com/btx0424/tensordict) from GitHub source.
-* [TorchRL](https://github.com/btx0424/rl) from GitHub source.
+1. Install [Isaac Sim 4.5.0](https://docs.isaacsim.omniverse.nvidia.com/latest/installation/download.html) by downloading the latest release and unzip it to a desired location `$ISAACSIM_PATH`.
+2. Install [Isaac Lab](https://github.com/isaac-sim/IsaacLab) and setup a conda environment:
+   ```bash
+   conda create -n lab python=3.10
+   conda activate lab
+   # install IsaacLab to the exisiting conda environment
+   # git clone https://github.com/isaac-sim/IsaacLab.git
+   git clone git@github.com:isaac-sim/IsaacLab.git # SSH recommended
+   cd IsaacLab
+   ln -s $ISAACSIM_PATH _isaac_sim
+   ./isaaclab.sh -c lab
+   ./isaaclab.sh -i none # install without additional RL libraries
+   # reactivate the environment
+   conda activate lab
+   echo $PYTHONPATH 
+   ```
+   You should see the isaac-sim related dependencies are added to `$PYTHONPATH`.
+3. [**Recommended**] Isaac Sim comes with its cumstom Python environment which may lead to conflicts with our conda environment.
+   To avoid Python environment conflicts, try the following steps:
+   ```bash
+   cd $ISAACSIM_PATH/exts/omni.isaac.ml_archive
+   mv pip_prebundle pip_prebundle.back # backup the packages shipped with Isaac Sim
+   ln -s $CONDA_PREFIX/lib/python3.10/site-packages
+   ```
+4. [**Optional**] VSCode setup.
+5. `pip install -U torch torchvision tensordict torchrl`
+6. Install this repo:
+   ```bash
+   git clone git@github.com:btx0424/active-adaptation.git # SSH recommended
+   cd active-adaptation
+   pip install -e . 
+   ```
 
-**DO NOT** install tensordict and torchrl using `pip install`. They are under active development so the release versions on PyPi might have bugs and lack new functionalities.
 
 ## Basic Usage
 

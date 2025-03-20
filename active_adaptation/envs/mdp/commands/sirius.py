@@ -102,12 +102,12 @@ class SiriusCommandManager(Command):
         self._command = SiriusCommand.zero(self.num_envs, self.device)
         with torch.device(self.device):
             self.transition = torch.eye(3) # normal, flip, stand
-            self.transition[0] = torch.tensor([.2, .8, 0.]) # normal to others
+            self.transition[0] = torch.tensor([.2, 0., .8]) # normal to others
             self.transition[1] = torch.tensor([1., 0., 0.]) # flip to others
             self.transition[2] = torch.tensor([1., 0., 0.]) # stand to others
 
         if self.env.sim.has_gui():
-            from omni.isaac.lab.markers import RED_ARROW_X_MARKER_CFG, VisualizationMarkers
+            from isaaclab.markers import RED_ARROW_X_MARKER_CFG, VisualizationMarkers
             self.frame_marker = VisualizationMarkers(
                 RED_ARROW_X_MARKER_CFG.replace(
                     prim_path="/Visuals/Command/frame",
@@ -178,11 +178,11 @@ class SiriusCommandManager(Command):
     
     @termination
     def stand_error_exceeds(self):
-        return self.stand_height_error_l2 > 0.2
+        return (self._command.mode == self.CMD_STAND).unsqueeze(1) & (self.stand_height_error_l2 > 0.2)
     
     @termination
     def jump_error_exceeds(self):
-        return self.roll_error_l2 > 0.5
+        return (self._command.mode == self.CMD_FLIP).unsqueeze(1) & (self.roll_error_l2 > 0.5)
 
     @property
     def command(self):
@@ -298,6 +298,7 @@ class SiriusCommandManager(Command):
         command.cmd_lin_vel_xy[:, 0].uniform_(-0.4, 0.4)
         command.des_rpy[:, 1].uniform_(0.4 * torch.pi, 0.45 * torch.pi)
         command.des_rpy[:, 1].mul_(torch.randn(size, device=self.device).sign())
+        command.des_rpy[:, 2] = self.asset.data.heading_w
         command.des_height[:] = 0.4
         command.mode[:] = self.CMD_STAND
         return command

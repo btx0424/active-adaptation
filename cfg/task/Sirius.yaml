@@ -71,13 +71,13 @@ reward:
     ang_vel_z_exp:      {weight: 1.0, enabled: true}
     pitch_exp:          {weight: 1.5, enabled: true}
 
-    # stand_lin_vel:      {weight: 2.0, enabled: true}
-    # stand_height:       {weight: 2.0, enabled: true}
+    stand_lin_vel:      {weight: 2.0, enabled: true}
+    stand_height:       {weight: 2.0, enabled: true}
     
-    jump_roll:          {weight: 2.0, enabled: true}
-    jump_height:        {weight: 4.0, enabled: true}
+    # jump_roll:          {weight: 2.0, enabled: true}
+    # jump_height:        {weight: 4.0, enabled: true}
     # jump_lin_vel:       {weight: 2.0, enabled: true}
-    jump_ang_vel:       {weight: 1.0, enabled: true}
+    # jump_ang_vel:       {weight: 1.0, enabled: true}
 
   # reg:
     walk_angvel_xy_l2:  {weight: 0.02, enabled: true}
