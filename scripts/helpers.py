@@ -129,7 +129,7 @@ def parse_checkpoint_path(path: str):
 def make_env_policy(cfg: DictConfig):
     OmegaConf.set_struct(cfg, False)
 
-    from active_adaptation.envs import TASKS
+    from active_adaptation.envs import TASKS, LocomotionEnv
     from active_adaptation.utils.torchrl import StackFrames
     from configs.rough import LocomotionEnvCfg
     from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker, CatFrames, VecNorm, StepCounter
@@ -152,7 +152,7 @@ def make_env_policy(cfg: DictConfig):
     
     env_cfg = LocomotionEnvCfg(cfg.task)
 
-    base_env = TASKS[cfg.task.task](env_cfg)
+    base_env = TASKS.get(cfg.task.task, LocomotionEnv)(env_cfg)
     obs_keys = [
         key for key, spec in base_env.observation_spec.items(True, True) 
         if not (spec.dtype == bool or key.endswith("_"))

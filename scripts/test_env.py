@@ -16,7 +16,6 @@ from tqdm import tqdm
 from setproctitle import setproctitle
 
 from isaaclab.app import AppLauncher
-# from omni_drones.utils.wandb import init_wandb
 from active_adaptation.utils.torchrl import SyncDataCollector
 
 # local import

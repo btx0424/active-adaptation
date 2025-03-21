@@ -85,9 +85,7 @@ class LocomotionEnv(Env):
         return self.scene["robot"].data.projected_gravity_b[:, [2]].square()
 
     class feet_pos_b(mdp.body_pos):
-        def __init__(self, env: "LocomotionEnv", feet_names=None, yaw_only: bool=False):
-            if feet_names is None:
-                feet_names = env.feet_name_expr
+        def __init__(self, env: "LocomotionEnv", feet_names, yaw_only: bool=False):
             super().__init__(env, feet_names, yaw_only=yaw_only)
             self.asset.data.feet_pos_b = self.body_pos_b
         
@@ -96,9 +94,7 @@ class LocomotionEnv(Env):
             return obs.reshape(self.num_envs, -1)
     
     class feet_vel_b(mdp.body_vel):
-        def __init__(self, env: "LocomotionEnv", feet_names=None, yaw_only: bool=False):
-            if feet_names is None:
-                feet_names = env.feet_name_expr
+        def __init__(self, env: "LocomotionEnv", feet_names, yaw_only: bool=False):
             super().__init__(env, feet_names, yaw_only=yaw_only)
             self.asset.data.feet_vel_b = self.body_vel_b
         
