@@ -6,7 +6,6 @@ import math
 import warp as wp
 from typing import Sequence, TYPE_CHECKING
 
-from isaaclab.assets import Articulation
 from active_adaptation.utils.math import (
     quat_rotate, 
     quat_rotate_inverse,
@@ -17,7 +16,11 @@ from active_adaptation.utils.math import (
 )
 
 from .base import Command
-from ..observations import _initialize_warp_meshes, raycast_mesh
+# from ..observations import _initialize_warp_meshes, raycast_mesh
+
+if TYPE_CHECKING:
+    from active_adaptation.envs.base import Env
+    from isaaclab.assets import Articulation
 
 
 class Command1(Command):

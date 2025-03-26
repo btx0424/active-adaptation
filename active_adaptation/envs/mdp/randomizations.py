@@ -1,21 +1,18 @@
 import torch
 import numpy as np
-from isaaclab.assets import Articulation
-from isaaclab.actuators import DCMotor, ImplicitActuator
-from isaaclab.sensors import RayCaster
-from active_adaptation.envs.actuator import HybridActuator
-import isaaclab.utils.string as string_utils
-from typing import Union, TYPE_CHECKING
 import logging
+from typing import Union, TYPE_CHECKING, Dict, Tuple
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
-from active_adaptation.utils.helpers import batchify
-from typing import Dict, Tuple, Union
 
-quat_rotate_inverse = batchify(quat_rotate_inverse)
+import isaaclab.utils.string as string_utils
 
 
 if TYPE_CHECKING:
+    from isaaclab.assets import Articulation
+    from isaaclab.sensors import RayCaster
+    from isaaclab.actuators import DCMotor, ImplicitActuator
     from active_adaptation.envs.base import Env
+    from active_adaptation.envs.actuator import HybridActuator
 
 
 class Randomization:
@@ -363,8 +360,8 @@ class perturb_body_mass(Randomization):
 
     def startup(self):
         logging.info(f"Randomize body masses of {self.body_names} upon startup.")
-        masses = self.asset.root_physx_view.get_masses().clone()
-        inertias = self.asset.root_physx_view.get_inertias().clone()
+        masses = self.asset.data.default_mass.clone()
+        inertias = self.asset.data.default_inertia.clone()
         print(f"Default masses: {masses[0]}")
         scale = uniform(
             self.mass_ranges[:, 0].expand_as(masses[:, self.body_ids]),

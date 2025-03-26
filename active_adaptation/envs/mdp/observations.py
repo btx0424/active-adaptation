@@ -4,12 +4,7 @@ import abc
 import einops
 from typing import Tuple, TYPE_CHECKING, Callable
 
-from isaaclab.sensors import ContactSensor, RayCaster, patterns, RayCasterData, Imu
-from isaaclab.sensors import Camera, TiledCamera
 import isaaclab.sim as sim_utils
-from active_adaptation.utils.helpers import batchify
-from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
-from active_adaptation.assets import Quadruped
 from isaaclab.terrains.trimesh.utils import make_plane
 from isaaclab.utils.math import convert_quat, quat_apply, quat_apply_yaw, yaw_quat, quat_mul, quat_inv
 from isaaclab.utils.warp import convert_to_warp_mesh, raycast_mesh
@@ -18,11 +13,11 @@ from pxr import UsdGeom, UsdPhysics
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation
+    from isaaclab.sensors import ContactSensor, RayCaster, patterns, RayCasterData, Imu
+    from isaaclab.sensors import Camera, TiledCamera
     from active_adaptation.envs.base import Env
 
-
-quat_rotate = batchify(quat_rotate)
-quat_rotate_inverse = batchify(quat_rotate_inverse)
+from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 
 
 class Observation:
@@ -690,7 +685,7 @@ class joint_vel_multistep(Observation):
         
         self.joint_vel_multistep = torch.zeros(shape, device=self.device)
         
-        self.noise_std = torch.zeros(self.num_envs, self.asset.num_joints, device=self.device)
+        self.noise_std = torch.zeros(self.num_envs, self.num_joints, device=self.device)
         if self.from_pos:
             shape = (self.num_envs, self.env.decimation, self.num_joints)
             self.joint_pos_substep = torch.zeros(shape, device=self.device)
@@ -921,8 +916,8 @@ class external_forces(Observation):
         self.body_indices, self.body_names = self.asset.find_bodies(body_names)
         self.forces_w = torch.zeros(self.env.num_envs, len(self.body_indices) * 3, device=self.device)
         self.forces_b = torch.zeros(self.env.num_envs, len(self.body_indices) * 3, device=self.device)
-    
-        default_mass_total = self.asset.root_physx_view.get_masses()[0].sum() * 9.81
+
+        default_mass_total = self.asset.data.default_mass[0].sum() * 9.81
         self.denom = default_mass_total if divide_by_mass else torch.tensor(scale, device=self.device)
 
     def update(self):
@@ -1601,27 +1596,21 @@ def _initialize_warp_meshes(mesh_prim_path, device):
 class root_pos_w(Observation):
     def __init__(self, env):
         super().__init__(env)
-        self.asset: Quadruped = self.env.scene["robot"]
+        self.asset: Articulation = self.env.scene["robot"]
 
     def compute(self):
         return self.asset.data.root_pos_w
 
-class root_quat_w(Observation):
-    def __init__(self, env):
-        super().__init__(env)
-        self.asset: Quadruped = self.env.scene["robot"]
-
-    def compute(self):
-        return self.asset.data.root_quat_w
 
 class impact_point_w(Observation):
     def __init__(self, env):
         super().__init__(env)
-        self.asset: Quadruped = self.env.scene["robot"]
+        self.asset: Articulation = self.env.scene["robot"]
 
     def compute(self):
         impact_point = self.asset.impact_point_w.reshape(self.num_envs, -1)
         return torch.cat([impact_point, self.asset.impact], dim=1)
+
 
 class feet_orientation(Observation):
     def __init__(self, env, feet_names: str):
@@ -1664,7 +1653,7 @@ class oscillator(Observation):
     def __init__(self, env, history: bool=False,mask_ratio = 0):
         super().__init__(env, mask_ratio)
         self.history = history
-        self.asset: Quadruped = self.env.scene["robot"]        
+        self.asset: Articulation = self.env.scene["robot"]        
         self.phi_history = torch.zeros(self.num_envs, 4, 4, device=self.device)
 
     def update(self):

@@ -3,12 +3,12 @@ import carb
 import omni
 import weakref
 
-from isaaclab.assets import Articulation
 from isaaclab.utils.math import quat_mul
 from typing import Sequence, TYPE_CHECKING
 from collections import defaultdict
 
 if TYPE_CHECKING:
+    from isaaclab.assets import Articulation
     from active_adaptation.envs.base import Env
 
 
@@ -36,6 +36,11 @@ class Command:
         self.init_joint_vel = self.asset.data.default_joint_vel.clone()
         self.teleop = teleop
 
+        if hasattr(self.env.scene, "terrain"):
+            self.terrain_type = self.env.scene.terrain.cfg.terrain_type
+        else:
+            self.terrain_type = "plane"
+
         if self.teleop:
             # acquire omniverse interfaces
             self._appwindow = omni.appwindow.get_default_app_window()
@@ -47,14 +52,6 @@ class Command:
                 lambda event, *args, obj=weakref.proxy(self): obj._on_keyboard_event(event, *args),
             )
             self.key_pressed = defaultdict(lambda: False)
-        
-        terrain_type = self.env.scene.terrain.cfg.terrain_type
-        if terrain_type == "plane":
-            pass
-        elif terrain_type == "usd":
-            self._origins = torch.tensor(self.env.scene.terrain.cfg.origins, device=self.device)
-        elif terrain_type == "generator":
-            self._origins = self.env.scene.env_origins.clone()
 
     @property
     def num_envs(self):
@@ -78,7 +75,7 @@ class Command:
 
     def sample_init(self, env_ids: torch.Tensor) -> torch.Tensor:
         init_root_state = self.init_root_state[env_ids]
-        if self.env.scene.terrain.cfg.terrain_type == "plane":
+        if self.terrain_type == "plane":
             origins = self.env.scene.env_origins[env_ids]
         else:
             idx = torch.randint(0, self.env.num_envs, (len(env_ids),), device=self.device)

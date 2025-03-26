@@ -2,23 +2,20 @@ import torch
 import einops
 from typing import Dict, Literal, Tuple, Union, TYPE_CHECKING
 from tensordict import TensorDictBase
-from isaaclab.assets import Articulation
 import isaaclab.utils.string as string_utils
-from isaaclab.utils.math import (
+from active_adaptation.utils.math import (
     euler_xyz_from_quat,
-    quat_mul,
-    quat_conjugate,
-    axis_angle_from_quat,
-    quat_inv,
+    # quat_mul,
+    # quat_conjugate,
+    # axis_angle_from_quat,
+    # quat_inv,
     quat_rotate_inverse,
     quat_rotate,
     yaw_quat,
 )
-from active_adaptation.utils.helpers import batchify
-
-quat_rotate = batchify(quat_rotate)
 
 if TYPE_CHECKING:
+    from isaaclab.assets import Articulation
     from active_adaptation.envs.base import Env
 
 
@@ -950,128 +947,6 @@ class QuadrupedJointForce(ActionManager):
         self.env.debug_draw.point(
             feet_setpos_w.reshape(-1, 3), size=10.0, color=(0.0, 1.0, 0.0, 1.0)
         )
-
-
-from active_adaptation.assets import Quadruped
-
-
-class JointPositionAndPhase(ActionManager):
-
-    asset: Quadruped
-
-    def __init__(
-        self,
-        env,
-        action_scaling: Dict[str, float] = 0.5,
-        max_delay: int = None,  # delay in simulation steps
-        fixed_delay: bool = False,
-        alpha: Union[
-            float, Tuple[float, float], Dict[str, float], Dict[str, Tuple[float, float]]
-        ] = (0.5, 1.0),
-        cumstom_command: Dict[str, float] = None,
-        clip_joint_targets: float = None,
-    ):
-        super().__init__(env)
-        self.joint_ids, self.joint_names, self.action_scaling = (
-            string_utils.resolve_matching_names_values(
-                dict(action_scaling), self.asset.joint_names
-            )
-        )
-
-        self.action_scaling = torch.tensor(self.action_scaling, device=self.device)
-        self.max_delay = max_delay if max_delay is not None else self.env.cfg.decimation
-        self.max_delay = min(self.max_delay, self.env.cfg.decimation)
-        self.fixed_delay = fixed_delay
-
-        self.action_dim = len(self.joint_ids) + 1
-
-        import omegaconf
-
-        if isinstance(alpha, float):
-            self.alpha_range = (alpha, alpha)
-        elif isinstance(alpha, omegaconf.listconfig.ListConfig):
-            self.alpha_range = tuple(alpha)
-        else:
-            raise ValueError(f"Invalid alpha type: {type(alpha)}")
-
-        if cumstom_command is not None:
-            cumstom_command = dict(cumstom_command)
-            self.cumstom_command_joint_ids, _, self.cumstom_command = (
-                string_utils.resolve_matching_names_values(
-                    cumstom_command, self.asset.joint_names
-                )
-            )
-            self.cumstom_command = torch.tensor(
-                self.cumstom_command, device=self.device
-            )
-        if clip_joint_targets is not None:
-            self.clip_joint_targets = clip_joint_targets
-
-        self.default_joint_pos = self.asset.data.default_joint_pos.clone()
-        self.offset = torch.zeros_like(self.default_joint_pos)
-        self.joint_limits = self.asset.data.joint_limits.clone().unbind(-1)
-        self.decimation = int(self.env.step_dt / self.env.physics_dt)
-
-        with torch.device(self.device):
-            action_buf_hist = max(max_delay + 1, 3) if max_delay is not None else 3
-            self.action_buf = torch.zeros(
-                self.num_envs, self.action_dim, action_buf_hist
-            )  # at least 3 for action_rate_2_l2 reward
-            self.applied_action = torch.zeros(self.num_envs, self.action_dim)
-            self.alpha = torch.ones(self.num_envs, 1)
-            self.delay = torch.zeros(self.num_envs, 1, dtype=int)
-
-        self.omega = torch.pi * 6.0
-        self.asset.phi[:, 0] = torch.pi
-        self.asset.phi[:, 3] = torch.pi
-
-    def reset(self, env_ids: torch.Tensor):
-        self.delay[env_ids] = torch.randint(0, 2, (len(env_ids), 1), device=self.device)
-        self.action_buf[env_ids] = 0
-        self.applied_action[env_ids] = 0
-
-        self.default_joint_pos[env_ids] = self.asset.data.default_joint_pos[
-            env_ids
-        ].clone()
-        self.default_joint_pos[env_ids] += self.offset[env_ids]
-
-        alpha = torch.empty(len(env_ids), 1, device=self.device).uniform_(
-            self.alpha_range[0], self.alpha_range[1]
-        )
-        self.alpha[env_ids] = alpha
-
-        self.asset.phi[env_ids] = (
-            torch.rand(len(env_ids), 4, device=self.device) * torch.pi * 2.0
-        )
-
-    def __call__(self, tensordict: TensorDictBase, substep: int):
-        if substep == 0:
-            action = tensordict["action"].clamp(-10, 10)
-            self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
-            self.action_buf[:, :, 0] = action
-            action = self.action_buf.take_along_dim(
-                self.delay.unsqueeze(1), dim=-1
-            ).squeeze(-1)
-
-            self.applied_action.lerp_(action, self.alpha)
-
-            pos_target = self.default_joint_pos.clone()
-            jpos_des, phase = self.applied_action.split([12, 1], dim=-1)
-            pos_target[:, self.joint_ids] += jpos_des * self.action_scaling
-            if hasattr(self, "cumstom_command"):
-                pos_target[:, self.cumstom_command_joint_ids] = self.cumstom_command
-            if hasattr(self, "clip_joint_targets"):
-                pos_target = self.asset.data.joint_pos + (
-                    pos_target - self.asset.data.joint_pos
-                ).clamp(-self.clip_joint_targets, self.clip_joint_targets)
-            self.asset.set_joint_position_target(pos_target)
-
-            self.asset.phi_dot[:] = (
-                self.omega * phase.sigmoid()
-            )  # + torch.tanh(phase * 0.25) * 2 * torch.pi
-            self.asset.phi[:] = (
-                self.asset.phi + self.asset.phi_dot * self.env.step_dt
-            ) % (2 * torch.pi)
 
 
 class LegWheel(ActionManager):

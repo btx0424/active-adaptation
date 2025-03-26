@@ -11,10 +11,6 @@ from torchrl.data import (
     UnboundedContinuous,
 )
 import builtins
-
-from isaaclab.scene import InteractiveScene
-from isaaclab.sim import SimulationContext
-from isaaclab.utils.timer import Timer
 from collections import OrderedDict
 
 from abc import abstractmethod
@@ -99,21 +95,24 @@ class _Env(EnvBase):
 
     """
     def __init__(self, cfg):
-        super().__init__(
-            device=cfg.sim.device,
-            batch_size=[cfg.scene.num_envs],
-            run_type_checks=False,
-        )
         # store inputs to class
         self.cfg = cfg
         # initialize internal variables
         self.enable_render = False
-        self.setup_scene()
 
         self.max_episode_length = self.cfg.max_episode_length
-        self.episode_length_buf = torch.zeros(self.num_envs, dtype=int, device=self.device)
         self.decimation = self.cfg.decimation
+        self.physics_dt = self.cfg.sim.dt
         self.step_dt = self.physics_dt * self.decimation
+
+        self.setup_scene()
+
+        super().__init__(
+            device=self.sim.device,
+            batch_size=[self.num_envs],
+            run_type_checks=False,
+        )
+        self.episode_length_buf = torch.zeros(self.num_envs, dtype=int, device=self.device)
 
         # parse obs and reward functions
         self.done_spec = Composite(
@@ -243,7 +242,7 @@ class _Env(EnvBase):
             reward_spec["stats", group_name, "return"] = UnboundedContinuous(1, device=self.device)
             reward_spec["stats", group_name, "reward_clip_ratio"] = UnboundedContinuous(1, device=self.device)
 
-        reward_spec["reward"] = UnboundedContinuous(len(self.reward_groups), device=self.device)
+        reward_spec["reward"] = UnboundedContinuous(max(1, len(self.reward_groups)), device=self.device)
         reward_spec["discount"] = UnboundedContinuous(1, device=self.device)
         self.reward_spec.update(reward_spec.expand(self.num_envs).to(self.device))
         self.discount = torch.ones((self.num_envs, 1), device=self.device)
@@ -284,10 +283,6 @@ class _Env(EnvBase):
     def num_envs(self) -> int:
         """The number of instances of the environment that are running."""
         return self.scene.num_envs
-    
-    @property
-    def physics_dt(self) -> float:
-        return self.sim.get_physics_dt()
 
     @property
     def stats_ema(self):
@@ -337,6 +332,9 @@ class _Env(EnvBase):
         self.observation_prev = observation_this.clone()
     
     def _compute_reward(self) -> TensorDictBase:
+        if not self.reward_groups:
+            return {"reward": torch.ones((self.num_envs, 1), device=self.device)}
+        
         rewards = []
         for group, reward_group in self.reward_groups.items():
             reward = reward_group.compute()
@@ -357,6 +355,9 @@ class _Env(EnvBase):
         return {"reward": rewards}
     
     def _compute_termination(self) -> TensorDictBase:
+        if not self.termination_funcs:
+            return torch.zeros((self.num_envs, 1), dtype=bool, device=self.device)
+        
         flags = []
         for key, func in self.termination_funcs.items():
             flag = func()
@@ -368,7 +369,7 @@ class _Env(EnvBase):
     def _update(self):
         for callback in self._update_callbacks:
             callback()
-        if self.sim.has_gui() or self.sim.has_rtx_sensors():
+        if self.sim.has_gui():
             self.sim.render()
         self.episode_length_buf.add_(1)
         self.timestamp += 1
@@ -455,7 +456,12 @@ class _Env(EnvBase):
 
 
 class Env(_Env):
+    
     def setup_scene(self):
+        from isaaclab.scene import InteractiveScene
+        from isaaclab.sim import SimulationContext
+        from isaaclab.utils.timer import Timer
+
         # create a simulation context to control the simulator
         if SimulationContext.instance() is None:
             self.sim = SimulationContext(self.cfg.sim)
@@ -523,7 +529,7 @@ def generate_mask(size: int, split: torch.Tensor, device: str):
 
 
 class RewardGroup:
-    def __init__(self, env: Env, name: str, funcs: OrderedDict[str, mdp.Reward]):
+    def __init__(self, env: _Env, name: str, funcs: OrderedDict[str, mdp.Reward]):
         self.env = env
         self.name = name
         self.funcs = funcs

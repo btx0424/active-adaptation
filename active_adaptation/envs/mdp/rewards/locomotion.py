@@ -3,19 +3,15 @@ import torch
 import abc
 from typing import TYPE_CHECKING, Callable
 
-from isaaclab.sensors import ContactSensor
-from isaaclab.assets import Articulation
 from isaaclab.utils.math import yaw_quat, wrap_to_pi, euler_xyz_from_quat
 import isaaclab.utils.string as string_utils
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
-from active_adaptation.utils.helpers import batchify
 from ..commands import *
 
 if TYPE_CHECKING:
+    from isaaclab.sensors import ContactSensor
+    from isaaclab.assets import Articulation
     from active_adaptation.envs.base import Env
-
-quat_rotate = batchify(quat_rotate)
-quat_rotate_inverse = batchify(quat_rotate_inverse)
 
 
 class Reward:
@@ -1009,7 +1005,7 @@ class step_up_needed(Reward):
         return cnt * (~is_standing)
 
 
-from ..observations import _initialize_warp_meshes, raycast_mesh
+# from ..observations import _initialize_warp_meshes, raycast_mesh
 
 
 class step_lift(Reward):
@@ -1091,7 +1087,7 @@ class base_height_l1(Reward):
         return height.clamp(max=target_height).reshape(self.num_envs, 1)
 
 
-class quadruped_stand_always(Reward):
+class Articulation_stand_always(Reward):
     def __init__(
         self,
         env,
@@ -1123,7 +1119,7 @@ class quadruped_stand_always(Reward):
         return cost
 
 
-class quadruped_stand(Reward):
+class Articulation_stand(Reward):
     def __init__(
         self,
         env,
@@ -1156,7 +1152,7 @@ class quadruped_stand(Reward):
         return cost * is_standing
 
 
-class quadruped_stand_feet_contact_force(Reward):
+class Articulation_stand_feet_contact_force(Reward):
     # expecting the foot to contact the ground firmly but not with too much force
 
     def __init__(self, env, weight, body_names, enabled=True, force_range=(10.0, 80.0)):
@@ -1278,14 +1274,14 @@ class impedance_vel(Reward):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.command_manager: Impedance = self.env.command_manager
+        self.dim_weights = torch.tensor([1., 1., 0.5], device=self.device)
 
     def compute(self) -> torch.Tensor:
         lin_vel_w = self.asset.data.root_lin_vel_w
         lin_vel_w_target = self.command_manager.surrogate_lin_vel_target
         diff = (lin_vel_w_target - lin_vel_w.unsqueeze(1))
-        error_l2 = diff[:, :, :2].square().sum(dim=-1, keepdim=True)
+        error_l2 = (diff * self.dim_weights).square().sum(dim=-1, keepdim=True)
         p = ((- error_l2 / 0.25).exp() - 0.5 * error_l2).mean(1)
-        # self.asset.data.linvel_exp = p
         return p
 
 
@@ -1456,13 +1452,10 @@ class joint_limits(Reward):
         return (violation_min + violation_max).sum(1, keepdim=True)
 
 
-from active_adaptation.assets.quadruped import Quadruped
-
-
 class step_vel(Reward):
     def __init__(self, env, weight, enabled=True):
         super().__init__(env, weight, enabled,)
-        self.asset: Quadruped = self.env.scene["robot"]
+        self.asset: Articulation = self.env.scene["robot"]
         self.prev_root_pos_w = torch.zeros(self.num_envs, 4, 3, device=self.device)
         self.last_impact_time = torch.zeros(self.num_envs, 4, 1, device=self.device)
         self.command_manager: Impedance = self.env.command_manager
@@ -1507,7 +1500,7 @@ class oscillator(Reward):
         self.margin = margin
         self.target_swing_height = 0.08
 
-        self.asset: Quadruped = self.env.scene["robot"]
+        self.asset: Articulation = self.env.scene["robot"]
         self.art_feet_ids = self.asset.find_bodies(feet_names)[0]
         self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
         self.command_manager: Command2 = self.env.command_manager
@@ -1590,7 +1583,7 @@ class oscillator(Reward):
 class gait(Reward):
     def __init__(self, env, weight, enabled=True):
         super().__init__(env, weight, enabled)
-        self.asset: Quadruped = self.env.scene["robot"]
+        self.asset: Articulation = self.env.scene["robot"]
         self.command_manager: Command2 = self.env.command_manager
         self.phi: torch.Tensor = self.asset.phi
 
@@ -1609,7 +1602,7 @@ class gait(Reward):
 class quad_leg_swing(Reward):
     def __init__(self, env, weight, feet_names: str = ".*_foot", enabled=True):
         super().__init__(env, weight, enabled)
-        self.asset: Quadruped = self.env.scene["robot"]
+        self.asset: Articulation = self.env.scene["robot"]
         self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
         self.feet_ids = self.asset.find_bodies(feet_names)[0]
         self.feet_ids_ = self.contact_sensor.find_bodies(feet_names)[0]
@@ -1740,6 +1733,20 @@ class ang_vel_z_exp(Reward):
         error = self.env.command_manager.ang_vel_z_error_l2
         return torch.exp( -error / 0.25) - 0.5 * error
 
+
+@reward_func
+def action_rate_l2(self):
+    action_diff = self.action_buf[:, :, 0] - self.action_buf[:, :, 1]
+    return - action_diff.square().sum(dim=-1, keepdim=True)
+
+
+@reward_func
+def action_rate2_l2(self):
+    action_diff = (
+        self.action_buf[:, :, 0] - 2 * self.action_buf[:, :, 1] + self.action_buf[:, :, 2]
+    )
+    return - action_diff.square().sum(dim=-1, keepdim=True)
+    
 
 def normalize(x: torch.Tensor):
     return x / x.norm(dim=-1, keepdim=True).clamp_min(1e-6)

@@ -1,16 +1,14 @@
 import torch
-
-from isaaclab.sensors import ContactSensor, RayCaster
-from isaaclab.actuators import DCMotor
-from active_adaptation.envs.base import Env
-from active_adaptation.utils.helpers import batchify
-from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 import active_adaptation.envs.mdp as mdp
 
-from tensordict.tensordict import TensorDictBase
+from active_adaptation.envs.base import Env
 
-quat_rotate = batchify(quat_rotate)
-quat_rotate_inverse = batchify(quat_rotate_inverse)
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from isaaclab.sensors import ContactSensor, RayCaster
+    from isaaclab.actuators import DCMotor
+
 
 class LocomotionEnv(Env):
 
@@ -60,24 +58,6 @@ class LocomotionEnv(Env):
             lookat = torch.tensor(self.cfg.viewer.lookat) + robot_pos
             self.sim.set_camera_view(eye, lookat)
         return super().render(mode)
-    
-    # @mdp.reward_func
-    # def heading(self):
-    #     root_quat = self.scene["robot"].data.root_quat_w
-    #     heading_b_x = quat_rotate_inverse(root_quat, self.command_manager._command_heading)[:, [0]]
-    #     return 0.5 * (heading_b_x + heading_b_x.sign() * heading_b_x.square())
-
-    @mdp.reward_func
-    def action_rate_l2(self):
-        action_diff = self.action_buf[:, :, 0] - self.action_buf[:, :, 1]
-        return - action_diff.square().sum(dim=-1, keepdim=True)
-    
-    @mdp.reward_func
-    def action_rate2_l2(self):
-        action_diff = (
-            self.action_buf[:, :, 0] - 2 * self.action_buf[:, :, 1] + self.action_buf[:, :, 2]
-        )
-        return - action_diff.square().sum(dim=-1, keepdim=True)
 
     @mdp.reward_func
     def orientation(self):
