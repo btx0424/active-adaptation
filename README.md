@@ -1,5 +1,40 @@
 # active-adaptation
 
+## Relationship to IsaacLab
+
+This repo started prior to IsaacLab and later borrowed many components from it to ease maintainence. It is slightly more intuitive to use and comes with tailored RL implementations.
+
+Research code should be readable. It is sometimes better to just copy-and-paste than modularize things. This repo aims to strike a balance between
+
+Things suited for modularization and reuse:
+* math operations, e.g., quaternion rotation
+* robot definition
+* terrain definition
+* task-agnostic observation functions, e.g., joint state readings
+* task-agnostic reward functions, e.g. contact penalty
+* task-agnostic domain randomization, e.g., body mass perturbation
+
+More specific things that are better hard-coded at a focused place:
+* scene setup: robots, sensors, terrains, objects to interact with, etc.
+* task-specifc observation, reward functions, etc.
+* command and task logic, e.g. sampling a desired velocity or reference motion clip
+* training logic, e.g., curriculums
+
+so that you can code up your new project in minutes.
+
+Some principles:
+* Explicit over implicit. It is hard to understand a configuration or implementation that has too many **defualt** behaviors.
+
+<!-- ### Environmet Definition
+
+When to subclass `Env`: 
+
+When to subclass `Command`:  -->
+
+<!-- ### TorchRL and TensorDict instead of OpenAI Gym
+
+Realistic robotics tasks usually has complex input-outputs (e.g., nested dict of tensors) that do not fit in the commonly used `gym` interface well. Also, some public environments and algorithms do not explicitly distinguish `termination`, `truncation` and `done`. -->
+
 ## Installation
 
 1. Install [Isaac Sim 4.5.0](https://docs.isaacsim.omniverse.nvidia.com/latest/installation/download.html) by downloading the latest release and unzip it to a desired location `$ISAACSIM_PATH`.

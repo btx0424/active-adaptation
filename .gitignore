@@ -185,4 +185,5 @@ scripts/plot/
 scripts/policies/
 scripts/exports/
 checkpoint*.pt
+test/
 *.csv
