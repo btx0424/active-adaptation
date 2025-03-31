@@ -18,6 +18,7 @@ from collections import OrderedDict
 from torchvision.io import write_video
 from omegaconf import OmegaConf, DictConfig
 import active_adaptation.learning
+from active_adaptation.utils.wandb import parse_checkpoint_path
 
 
 class Every:
@@ -93,46 +94,13 @@ class EpisodeStats:
     def __len__(self):
         return len(self._stats)
 
-def parse_checkpoint_path(path: str):
-    if path is None:
-        return None
-
-    if path.startswith("run:"):
-        api = wandb.Api()
-        run = api.run(path[4:])
-        root = os.path.join(os.path.dirname(__file__), "wandb", run.name)
-        os.makedirs(root, exist_ok=True)
-
-        checkpoints = []
-        for file in run.files():
-            print(file.name)
-            if "checkpoint" in file.name:
-                checkpoints.append(file)
-            elif file.name == "files/cfg.yaml":
-                file.download(root, replace=True)
-
-        def sort_by_time(file):
-            number_str = file.name[:-3].split("_")[-1]
-            if number_str == "final":
-                return 100000
-            else:
-                return int(number_str)
-
-        checkpoints.sort(key=sort_by_time)
-        checkpoint = checkpoints[-1]
-        path = os.path.join(root, checkpoint.name)
-        print(f"Downloading checkpoint to {path}")
-        checkpoint.download(root, replace=True)
-    return path
-
 
 def make_env_policy(cfg: DictConfig):
     OmegaConf.set_struct(cfg, False)
-
-    from active_adaptation.envs import TASKS, LocomotionEnv
-    from active_adaptation.utils.torchrl import StackFrames
-    from configs.rough import LocomotionEnvCfg
-    from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker, CatFrames, VecNorm, StepCounter
+    from active_adaptation.envs import SimpleEnv
+    from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker, VecNorm, StepCounter
+    
+    base_env = SimpleEnv(cfg.task)
 
     checkpoint_path = parse_checkpoint_path(cfg.checkpoint_path)
     if checkpoint_path is not None:
@@ -150,9 +118,6 @@ def make_env_policy(cfg: DictConfig):
             cfg.task.observation.pop(obs_group_key)
             print(colored(f"Discard obs group {obs_group_key} as it is not used.", "yellow"))
     
-    env_cfg = LocomotionEnvCfg(cfg.task)
-
-    base_env = TASKS.get(cfg.task.task, LocomotionEnv)(env_cfg)
     obs_keys = [
         key for key, spec in base_env.observation_spec.items(True, True) 
         if not (spec.dtype == bool or key.endswith("_"))
@@ -175,15 +140,6 @@ def make_env_policy(cfg: DictConfig):
         transform.append(vecnorm.to_observation_norm())
     elif cfg.vecnorm is not None:
         raise ValueError
-
-    long_history = cfg.algo.get("long_history", 0)
-    if long_history > 0:
-        print(colored(f"[Info]: Long history length {long_history}.", "green"))
-        transform.append(StackFrames(long_history, ["policy"], ["policy_h"]))
-    short_history = cfg.algo.get("short_history", 0)
-    if short_history > 0:
-        print(colored(f"[Info]: Short history length {short_history}.", "green"))
-        transform.append(CatFrames(short_history, -1, ["policy"], ["policy_h"]))
 
     env = TransformedEnv(base_env, transform)
     env.set_seed(cfg.seed)

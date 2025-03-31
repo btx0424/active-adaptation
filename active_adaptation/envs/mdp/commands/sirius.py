@@ -70,11 +70,12 @@ class SiriusCommand(TensorClass):
 
 class SiriusCommandManager(Command):
     
-    jump_prep: float = 0.1
+    jump_prep: float = 0.16
     
-    CMD_NORMAL = 0
-    CMD_FLIP = 1
-    CMD_STAND = 2
+    CMD_WALK = 0
+    CMD_STAND = 1
+    CMD_JUMP = 2
+    CMD_FLIP = 3
 
     def __init__(self, env):
         super().__init__(env)
@@ -86,10 +87,12 @@ class SiriusCommandManager(Command):
         self.lin_vel_error_l2 = torch.zeros(self.num_envs, 1, device=self.device)
         self.ang_vel_z_error_l2 = torch.zeros(self.num_envs, 1, device=self.device)
         self.ang_vel_x_error_l2 = torch.zeros(self.num_envs, 1, device=self.device)
-        self.base_height_error_l2 = torch.zeros(self.num_envs, 1, device=self.device)
+        
+        self.front_height_error_l2 = torch.zeros(self.num_envs, 1, device=self.device)
+        self.back_height_error_l2 = torch.zeros(self.num_envs, 1, device=self.device)
         self.stand_height_error_l2 = torch.zeros(self.num_envs, 1, device=self.device)
         
-        self.rew_jump_lin_vel = torch.zeros(self.num_envs, 1, device=self.device)
+        self.target_jump_lin_vel = torch.zeros(self.num_envs, 1, device=self.device)
         self.rew_jump_inertia = torch.zeros(self.num_envs, 1, device=self.device)
         self.rew_stand_lin_vel = torch.zeros(self.num_envs, 1, device=self.device)
         self.rew_stand_height = torch.zeros(self.num_envs, 1, device=self.device)
@@ -101,12 +104,13 @@ class SiriusCommandManager(Command):
         
         self._command = SiriusCommand.zero(self.num_envs, self.device)
         with torch.device(self.device):
-            self.transition = torch.eye(3) # normal, flip, stand
-            self.transition[0] = torch.tensor([.2, 0., .8]) # normal to others
-            self.transition[1] = torch.tensor([1., 0., 0.]) # flip to others
-            self.transition[2] = torch.tensor([1., 0., 0.]) # stand to others
+            self.transition = torch.eye(4) 
+            self.transition[self.CMD_WALK]  = torch.tensor([1., 0., 0., 0.]) # normal to others
+            self.transition[self.CMD_STAND] = torch.tensor([1., 0., 0., 0.]) # stand to others
+            self.transition[self.CMD_JUMP]  = torch.tensor([1., 0., 0., 0.]) # jump to others
+            self.transition[self.CMD_FLIP]  = torch.tensor([1., 0., 0., 0.]) # flip to others
 
-        if self.env.sim.has_gui():
+        if self.env.sim.has_gui() and self.env.backend == "isaac":
             from isaaclab.markers import RED_ARROW_X_MARKER_CFG, VisualizationMarkers
             self.frame_marker = VisualizationMarkers(
                 RED_ARROW_X_MARKER_CFG.replace(
@@ -115,18 +119,22 @@ class SiriusCommandManager(Command):
             )
             self.frame_marker.set_visibility(True)
     
-    # @reward
-    # def jump_lin_vel(self):
-    #     is_active = (self._command.mode==self.CMD_FLIP).unsqueeze(1)
-    #     return self.rew_jump_lin_vel, is_active
+    @reward
+    def jump_lin_vel(self):
+        is_active = (self._command.mode==self.CMD_JUMP).unsqueeze(1)
+        front_lin_vel = self.asset.data.body_lin_vel_w[:, [self.front_body_id, self.back_body_id], 2:3]
+        rew = front_lin_vel.clamp_max(self.target_jump_lin_vel.unsqueeze(1))
+        rew = (rew + rew.square()).mean(1) * (self._command.phase < 0.5)
+        return rew, is_active
     
     @reward
     def jump_height(self):
-        is_active = (self._command.mode==self.CMD_FLIP).unsqueeze(1)
-        return -self.base_height_error_l2, is_active
+        is_active = (self._command.mode==self.CMD_JUMP).unsqueeze(1)
+        rew = torch.exp(-self.front_height_error_l2 / 0.1) + torch.exp(-self.back_height_error_l2 / 0.1)
+        return rew, is_active
 
     @reward
-    def jump_ang_vel(self):
+    def flip_ang_vel(self):
         is_active = (self._command.mode==self.CMD_FLIP).unsqueeze(1)
         cmd_ang_vel_roll = self._command.cmd_ang_vel[:, 0:1]
         ang_vel_roll = self.asset.data.root_ang_vel_b[:, 0:1]
@@ -138,20 +146,20 @@ class SiriusCommandManager(Command):
         return rew_jump_ang_vel, is_active
     
     @reward
-    def jump_roll(self):
+    def flip_roll(self):
         is_active = (self._command.mode==self.CMD_FLIP).unsqueeze(1)
         return torch.exp( -self.roll_error_l2 / 0.25), is_active
     
     @reward
     def walk_angvel_xy_l2(self):
         rew = -self.asset.data.root_ang_vel_b[:, :2].square().sum(1, True)
-        is_active = (self._command.mode==self.CMD_NORMAL).unsqueeze(1)
+        is_active = (self._command.mode==self.CMD_WALK).unsqueeze(1)
         return rew, is_active
 
     @reward
     def walk_linvel_z_l2(self):
         rew = -self.asset.data.root_lin_vel_b[:, 2:3].square()
-        is_active = (self._command.mode==self.CMD_NORMAL).unsqueeze(1)
+        is_active = (self._command.mode==self.CMD_WALK).unsqueeze(1)
         return rew, is_active
 
     @reward
@@ -181,9 +189,14 @@ class SiriusCommandManager(Command):
         return (self._command.mode == self.CMD_STAND).unsqueeze(1) & (self.stand_height_error_l2 > 0.2)
     
     @termination
-    def jump_error_exceeds(self):
+    def flip_error_exceeds(self):
         return (self._command.mode == self.CMD_FLIP).unsqueeze(1) & (self.roll_error_l2 > 0.5)
 
+    @termination
+    def jump_error_exceeds(self):
+        error = (self.front_height_error_l2 > 0.12) | (self.back_height_error_l2 > 0.12)
+        return (self._command.mode == self.CMD_JUMP).unsqueeze(1) & error
+    
     @property
     def command(self):
         return self._command.get_command()
@@ -203,10 +216,10 @@ class SiriusCommandManager(Command):
         
         self.lin_vel_error_l2 = torch.square(
             self._command.cmd_lin_vel_xy - root_lin_vel_b[:, :2] ).sum(1, keepdim=True)
-        self.lin_vel_error_l2 *= (self._command.mode == self.CMD_NORMAL).unsqueeze(1)
+        self.lin_vel_error_l2 *= (self._command.mode == self.CMD_WALK).unsqueeze(1)
         
         self.ang_vel_z_error_l2 = torch.square(self._command.cmd_ang_vel[:, 2:3] - self.asset.data.root_ang_vel_w[:, 2:3])
-        self.ang_vel_z_error_l2 *= (self._command.mode == self.CMD_NORMAL).unsqueeze(1) # only apply to normal mode
+        self.ang_vel_z_error_l2 *= (self._command.mode == self.CMD_WALK).unsqueeze(1) # only apply to normal mode
 
         self.roll_error_l2 = (
             self.asset.data.projected_gravity_b[:, 0:1].square()
@@ -216,24 +229,17 @@ class SiriusCommandManager(Command):
         # print(self.roll_error_l2.squeeze(1))
 
         jump_height = torch.clamp_min(0.5 - .5*9.81*(self._command.time - self._command.duration/2)**2, 0.)
-        target_base_height = 0.4 + jump_height
-
-        self.jump_vel_z = (target_base_height - self.target_base_height) / self.env.step_dt
+        target_base_height = 0.5 + jump_height
         
-        body_pos_b = quat_rotate_inverse(
-            self.asset.data.root_quat_w.unsqueeze(1),
-            self.asset.data.body_pos_w - self.asset.data.root_pos_w.unsqueeze(1)
-        )
-        
-        inertia_x = (body_pos_b[:, :, 2].square() * self.default_mass).sum(1, True)
-        in_air = (self._command.phase > 0.25) & (self._command.phase < 0.75)
-        self.rew_jump_inertia = (1. - inertia_x.square()) * in_air
-
+        self.target_jump_lin_vel = (target_base_height - self.target_base_height) / self.env.step_dt
         self.target_base_height = target_base_height
-        self.base_height_error_l2 = (self.target_base_height - self.asset.data.root_pos_w[:, 2:3]).square()
+        # print(self.base_height_error_l2.squeeze(1))
 
         self.front_height = self.asset.data.body_pos_w[:, self.front_body_id, 2:3]
         self.back_height = self.asset.data.body_pos_w[:, self.back_body_id, 2:3]
+
+        self.front_height_error_l2 = (self.front_height - self.target_base_height).square()
+        self.back_height_error_l2 = (self.back_height - self.target_base_height).square()
         
         self._stand_height = self.asset.data.root_pos_w[:, 2:3] # base height
         self.stand_fore_legs = self._command.cmd_pitch > +0.3*torch.pi
@@ -256,7 +262,7 @@ class SiriusCommandManager(Command):
         self.rew_stand_lin_vel = torch.exp(- stand_lin_vel_error_l2 )
         self.rew_stand_height = torch.exp(- self.stand_height_error_l2 / 0.25)
         
-        cmd_yaw_diff = (self._command.mode == self.CMD_NORMAL) \
+        cmd_yaw_diff = (self._command.mode == self.CMD_WALK) \
             .mul(wrap_to_pi(self._command.des_rpy[:, 2] - self.asset.data.heading_w)) \
             .unsqueeze(1)
 
@@ -273,11 +279,13 @@ class SiriusCommandManager(Command):
         next_mode = next_mode_prob.multinomial(1, replacement=True).squeeze(-1)
 
         self._command: SiriusCommand = self.sample_command_normal(self.num_envs) \
-            .where(sample & (next_mode==self.CMD_NORMAL), self._command)
+            .where(sample & (next_mode==self.CMD_WALK), self._command)
         self._command: SiriusCommand = self.sample_command_flip(self.num_envs) \
             .where(sample & (next_mode==self.CMD_FLIP), self._command)
         self._command: SiriusCommand = self.sample_command_stand(self.num_envs) \
             .where(sample & (next_mode==self.CMD_STAND), self._command)
+        self._command: SiriusCommand = self.sample_command_jump(self.num_envs) \
+            .where(sample & (next_mode==self.CMD_JUMP), self._command)
 
     def step(self, substep):
         self.asset._external_torque_b[:, 0]
@@ -289,8 +297,8 @@ class SiriusCommandManager(Command):
         command.cmd_lin_vel_xy[:, 1].uniform_(-0.8, 0.8)
         command.yaw_stiffness.uniform_(0.8, 1.2)
         command.des_rpy[:, 2].uniform_(-torch.pi, torch.pi)
-        # command.des_rpy[:, 1].uniform_(-0.2 * torch.pi, 0.2 * torch.pi)
-        command.mode[:] = self.CMD_NORMAL
+        command.des_rpy[:, 1].uniform_(-0.2 * torch.pi, 0.2 * torch.pi)
+        command.mode[:] = self.CMD_WALK
         return command
 
     def sample_command_stand(self, size):
@@ -311,6 +319,14 @@ class SiriusCommandManager(Command):
         command.cmd_ang_vel[:, 0].mul_(-1.)
         # command.cmd_ang_vel[:, 0].mul_(torch.randn(size, device=self.device).sign())
         command.mode[:] = self.CMD_FLIP
+        return command
+    
+    def sample_command_jump(self, size):
+        command = SiriusCommand.zero(size, self.device)
+        command.cmd_lin_vel_xy[:, 0] = self._command.cmd_lin_vel_xy[:, 0] * 0.8
+        command.des_rpy[:, 2] = self.asset.data.heading_w
+        command.duration.uniform_(0.6, 1.0)
+        command.mode[:] = self.CMD_JUMP
         return command
 
     def debug_draw(self):

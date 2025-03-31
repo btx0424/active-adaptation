@@ -1,0 +1,371 @@
+import torch
+import numpy as np
+import mujoco
+import mujoco.viewer
+from typing import Sequence, Union, Any, Dict
+from dataclasses import dataclass, replace
+
+from isaaclab.utils import string as string_utils
+from scipy.spatial.transform import Rotation as sRot
+
+from active_adaptation.envs.base import _Env
+from active_adaptation.utils.math import quat_rotate_inverse, quat_rotate
+
+
+ArrayType = Union[np.ndarray, torch.Tensor]
+
+
+@dataclass
+class MJArticulationCfg:
+    mjcf_path: str
+    init_state: Any
+    actuators: Dict
+    body_names_isaac: Sequence[str]
+    joint_names_isaac: Sequence[str]
+
+
+@dataclass
+class MJArticulationData:
+    default_joint_pos: ArrayType
+    default_joint_vel: ArrayType
+    default_root_state: ArrayType
+    default_mass: ArrayType
+    default_inertia: ArrayType
+    
+    joint_stiffness: ArrayType = None
+    joint_damping: ArrayType = None
+
+    body_pos_w: ArrayType = None
+    body_quat_w: ArrayType = None
+    
+    joint_pos: ArrayType = None
+    joint_pos_target: ArrayType = None
+    
+    joint_vel: ArrayType = None
+    joint_vel_target: ArrayType = None
+
+    applied_torque: ArrayType = None
+    projected_gravity_b: ArrayType = None
+    
+    body_lin_vel_w: ArrayType = None
+    body_ang_vel_w: ArrayType = None
+    root_lin_vel_w: ArrayType = None
+    root_ang_vel_w: ArrayType = None
+    root_ang_vel_b: ArrayType = None
+    root_lin_vel_b: ArrayType = None
+    heading_w: ArrayType = None
+    timestamp: float = 0.
+
+    # @property
+    # def body_lin_vel_w(self):
+    #     return self.body_vel_w[..., :3]
+    
+    # @property
+    # def body_ang_vel_w(self):
+    #     return self.body_vel_w[..., 3:]
+
+    @property
+    def root_pos_w(self):
+        return self.body_pos_w[..., 0, :]
+    
+    @property
+    def root_quat_w(self):
+        return self.body_quat_w[..., 0, :]
+    
+    # @property
+    # def root_lin_vel_w(self):
+    #     return self.body_vel_w[..., 0, :3]
+    
+    # @property
+    # def root_ang_vel_w(self):
+    #     return self.body_vel_w[..., 0, 3:]
+    
+    @property
+    def root_state_w(self):
+        return torch.cat([self.body_pos_w[..., 0], self.body_quat_w[..., 0]], dim=-1)
+
+
+class MJPhysicsView:
+    pass
+
+
+class MJArticulation:
+    
+    num_instances = 1
+    is_fixed_base = False
+
+    def __init__(self, cfg: MJArticulationCfg):
+        self.cfg = cfg
+        self.mj_model = mujoco.MjModel.from_xml_path(cfg.mjcf_path)
+        self.mj_data = mujoco.MjData(self.mj_model)
+        
+        self.body_names_isaac = list(cfg.body_names_isaac)
+        self.body_names_mjc = []
+        body_adrs = []
+        for i in range(1, self.mj_model.nbody): # skip the world body
+            body = self.mj_model.body(i)
+            self.body_names_mjc.append(body.name)
+            body_adrs.append(i)
+        if not set(self.body_names_isaac) == set(self.body_names_mjc):
+            raise ValueError(f"Isaac body names {self.body_names_isaac} do not match mujoco body names {self.body_names_mjc}")
+
+        # find only the actuated joints
+        self.joint_names_isaac = list(cfg.joint_names_isaac)
+        self.joint_names_mjc = []
+
+        joint_qposadr = []
+        joint_qveladr = []
+        for i in range(self.mj_model.nu):
+            actuator = self.mj_model.actuator(i)
+            if actuator.trntype == mujoco.mjtTrn.mjTRN_JOINT:
+                joint_id = actuator.trnid[0]
+                joint = self.mj_model.joint(actuator.trnid[0])
+                self.joint_names_mjc.append(joint.name)
+                joint_qposadr.append(self.mj_model.jnt_qposadr[joint_id])
+                joint_qveladr.append(self.mj_model.jnt_dofadr[joint_id])
+        if not set(self.joint_names_isaac) == set(self.joint_names_mjc):
+            raise ValueError(f"Isaac joint names {self.joint_names_isaac} do not match mujoco joint names {self.joint_names_mjc}")
+
+        self._jnt_isaac2mjc = [self.joint_names_isaac.index(joint_name) for joint_name in self.joint_names_mjc]
+        self._jnt_mjc2isaac = [self.joint_names_mjc.index(joint_name) for joint_name in self.joint_names_isaac]
+        self._body_isaac2mjc = [self.body_names_isaac.index(body_name) for body_name in self.body_names_mjc]
+        self._body_mjc2isaac = [self.body_names_mjc.index(body_name) for body_name in self.body_names_isaac]
+        
+        self.body_adrs = np.array(body_adrs)
+        self.joint_qposadr = np.array(joint_qposadr)
+        self.joint_qveladr = np.array(joint_qveladr)
+        
+        # read/write mujoco data in isaac order
+        self.body_adrs_read = self.body_adrs[self._body_mjc2isaac]
+        self.body_adrs_write = self.body_adrs[self._body_isaac2mjc]
+        self.joint_qposadr_read = self.joint_qposadr[self._jnt_mjc2isaac]
+        self.joint_qveladr_read = self.joint_qveladr[self._jnt_mjc2isaac]
+        self.joint_qposadr_write = self.joint_qposadr[self._jnt_isaac2mjc]
+        self.joint_qveladr_write = self.joint_qveladr[self._jnt_isaac2mjc]
+
+        joint_ids, joint_names, default_joint_pos = string_utils.resolve_matching_names_values(self.cfg.init_state["joint_pos"], self.joint_names_isaac)
+        if not set(joint_names) == set(self.joint_names_isaac):
+            raise ValueError()
+        
+        joint_stiffness = torch.zeros(1, len(joint_ids))
+        joint_damping = torch.zeros(1, len(joint_ids))
+        
+        for actuator_name, actuator_cfg in self.cfg.actuators.items():
+            ids, _, values = string_utils.resolve_matching_names_values(actuator_cfg["stiffness"], self.joint_names_isaac)
+            joint_stiffness[0, ids] = torch.as_tensor(values)
+            ids, _, values = string_utils.resolve_matching_names_values(actuator_cfg["damping"], self.joint_names_isaac)
+            joint_damping[0, ids] = torch.as_tensor(values)
+
+        self._data = MJArticulationData(
+            default_joint_pos=torch.tensor(default_joint_pos)[None, :],
+            default_joint_vel=torch.zeros((1, len(joint_ids))),
+            default_root_state=torch.tensor([[*cfg.init_state["pos"], 1., 0., 0., 0.]]),
+            default_mass=torch.as_tensor(self.mj_model.body_mass[self.body_adrs])[None],
+            default_inertia=torch.as_tensor(self.mj_model.body_inertia[self.body_adrs])[None],
+            joint_stiffness=joint_stiffness,
+            joint_damping=joint_damping,
+        )
+        self._data.joint_pos_target = self._data.default_joint_pos.clone()
+        self._data.joint_vel_target = self._data.default_joint_vel.clone()
+        
+        self._external_force_b = torch.zeros(1, self.num_bodies, 3)
+        self._external_torque_b = torch.zeros(1, self.num_bodies, 3)
+        self.has_external_wrench = False
+        
+        self.timestamp = 0.
+        
+        mujoco.mj_step(self.mj_model, self.mj_data)
+        self.update(0.0)
+    
+    @property
+    def joint_names(self):
+        return self.joint_names_isaac
+        raise RuntimeError(
+            "When using Mujoco backend, please use `joint_names_isaac` or `joint_names_mjc` "
+            "instead to avoid ambiguity."
+        )
+
+    @property
+    def num_joints(self):
+        return len(self.joint_names_mjc)
+    
+    @property
+    def num_bodies(self):
+        return len(self.body_names_mjc)
+    
+    @property
+    def data(self):
+        return self._data
+
+    def find_bodies(self, name_keys: str | Sequence[str], preserve_order: bool = False) -> tuple[list[int], list[str]]:
+        """Find bodies in the articulation based on the name keys.
+
+        Please check the :meth:`omni.isaac.lab.utils.string_utils.resolve_matching_names` function for more
+        information on the name matching.
+
+        Args:
+            name_keys: A regular expression or a list of regular expressions to match the body names.
+            preserve_order: Whether to preserve the order of the name keys in the output. Defaults to False.
+
+        Returns:
+            A tuple of lists containing the body indices and names.
+        """
+        return string_utils.resolve_matching_names(name_keys, self.body_names_isaac, preserve_order)
+
+    def find_joints(
+        self, name_keys: str | Sequence[str], joint_subset: list[str] | None = None, preserve_order: bool = False
+    ) -> tuple[list[int], list[str]]:
+        """Find joints in the articulation based on the name keys.
+
+        Please see the :func:`omni.isaac.lab.utils.string.resolve_matching_names` function for more information
+        on the name matching.
+
+        Args:
+            name_keys: A regular expression or a list of regular expressions to match the joint names.
+            joint_subset: A subset of joints to search for. Defaults to None, which means all joints
+                in the articulation are searched.
+            preserve_order: Whether to preserve the order of the name keys in the output. Defaults to False.
+
+        Returns:
+            A tuple of lists containing the joint indices and names.
+        """
+        if joint_subset is None:
+            joint_subset = self.joint_names_isaac
+        # find joints
+        return string_utils.resolve_matching_names(name_keys, joint_subset, preserve_order)
+
+    def update(self, dt: float):
+        jpos = self.mj_data.qpos[self.joint_qposadr_read]
+        jvel = self.mj_data.qvel[self.joint_qveladr_read]
+        body_pos_w = self.mj_data.xpos[self.body_adrs_read]
+        body_ang_vel_w = self.mj_data.cvel[self.body_adrs_read, :3]
+        body_lin_vel_w = self.mj_data.cvel[self.body_adrs_read, 3:]
+        body_quat_w = self.mj_data.xquat[self.body_adrs_read] # wxyz
+        
+        rot = sRot.from_quat(body_quat_w[0], scalar_first=True)
+        projected_gravity_b = rot \
+            .inv() \
+            .apply(np.array([0., 0., -1.]))
+        heading_w = rot.as_euler('xyz', degrees=False)[2]
+
+        self._data = replace(
+            self._data,
+            body_pos_w=torch.as_tensor(body_pos_w, dtype=torch.float32)[None],
+            body_quat_w=torch.as_tensor(body_quat_w, dtype=torch.float32)[None],
+            body_lin_vel_w=torch.as_tensor(body_lin_vel_w, dtype=torch.float32)[None],
+            body_ang_vel_w=torch.as_tensor(body_ang_vel_w, dtype=torch.float32)[None],
+            joint_pos=torch.as_tensor(jpos, dtype=torch.float32)[None],
+            joint_vel=torch.as_tensor(jvel, dtype=torch.float32)[None],
+            projected_gravity_b=torch.as_tensor(projected_gravity_b, dtype=torch.float32)[None],
+            heading_w=torch.as_tensor(heading_w, dtype=torch.float32)[None],
+            # root_lin_vel_w=torch.as_tensor(self.mj_data.qvel[:3], dtype=torch.float32)[None],
+            # root_ang_vel_w=torch.as_tensor(self.mj_data.qvel[3:6], dtype=torch.float32)[None],
+        )
+        self._data.root_lin_vel_w = self._data.body_lin_vel_w[:, 0]
+        self._data.root_ang_vel_w = self._data.body_ang_vel_w[:, 0]
+        self._data.root_ang_vel_b = quat_rotate_inverse(self._data.root_quat_w, self._data.root_ang_vel_w)
+        self._data.root_lin_vel_b = quat_rotate_inverse(self._data.root_quat_w, self._data.root_lin_vel_w)
+
+    def write_root_state_to_sim(self, root_state: ArrayType, env_ids: ArrayType=None):
+        # self.mj_data.xpos[self.body_adrs[0]] = [0., 0., 1.0]
+        # self.mj_data.xquat[self.body_adrs[0]] = root_state[0, 3:]
+        self.mj_data.qpos[:7] = [0., 0., 0.6, 1., 0., 0., 0.]
+        self.mj_data.qpos[self.joint_qposadr_write] = self._data.default_joint_pos
+        self.mj_data.qvel[self.joint_qveladr_write] = self._data.default_joint_vel
+        self.mj_data.qvel[:6] = 0.
+        mujoco.mj_forward(self.mj_model, self.mj_data)
+    
+    def set_joint_position_target(self, target: ArrayType, joint_ids: ArrayType):
+        self._data.joint_pos_target[0, joint_ids] = target
+    
+    def set_joint_velocity_target(self, target: ArrayType, joint_ids: ArrayType):
+        self._data.joint_vel_target[0, joint_ids] = target
+    
+    def write_data_to_sim(self):
+        pos_error = self._data.joint_pos_target - self._data.joint_pos
+        vel_error = self._data.joint_vel_target - self._data.joint_vel
+        torque = (self._data.joint_stiffness * pos_error + self._data.joint_damping * vel_error)
+        self._data.applied_torque = torque
+        self.mj_data.ctrl[self._jnt_isaac2mjc] = torque[0]
+
+        if self.has_external_wrench:
+            self.mj_data.xfrc_applied[self.body_adrs_write, :3] = quat_rotate(self._data.root_quat_w, self._external_force_b)[0]
+            self.mj_data.xfrc_applied[self.body_adrs_write, 3:] = quat_rotate(self._data.root_quat_w, self._external_torque_b)[0]
+
+    def write_joint_state_to_sim(self, joint_pos: ArrayType, joint_vel: ArrayType, joint_ids: ArrayType, env_ids: ArrayType=None):
+        qposadrs = self.joint_qposadr_write[joint_ids]
+        qveladrs = self.joint_qveladr_write[joint_ids]
+        self.mj_data.qpos[qposadrs] = joint_pos[0]
+        self.mj_data.qvel[qveladrs] = joint_vel[0]
+
+
+@dataclass
+class MjContactData:
+    pass
+
+
+class MjContactSensor:
+    def __init__(self):
+        pass
+
+
+class MJScene:
+    num_envs = 1
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.articulations = {}
+        
+        for asset_name, asset_cfg in self.cfg.__dict__.items():
+            if isinstance(asset_cfg, MJArticulationCfg):
+                self.articulations[asset_name] = MJArticulation(asset_cfg)
+            else:
+                pass
+
+        self.viewer = mujoco.viewer.launch_passive(self.articulations["robot"].mj_model, self.articulations["robot"].mj_data)
+        self.viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+        self.viewer.cam.trackbodyid = 1
+
+        self.mj_model = self.articulations["robot"].mj_model
+        self.mj_data = self.articulations["robot"].mj_data
+        self.env_origins = torch.zeros(1, 3)
+
+    def reset(self, env_ids: torch.Tensor):
+        for articulation in self.articulations.values():
+            continue
+            articulation.reset(env_ids)
+
+    def update(self, dt: float):
+        for articulation in self.articulations.values():
+            articulation.update(dt)
+    
+    def write_data_to_sim(self):
+        for articulation in self.articulations.values():
+            articulation.write_data_to_sim()
+
+    def __getitem__(self, key: str):
+        return self.articulations.get(key)
+
+
+class MJSim:
+    
+    device = "cpu"
+
+    def __init__(self, scene: MJScene):
+        self.scene = scene
+        self.mj_model = scene.mj_model
+        self.mj_data = scene.mj_data
+    
+    def render(self):
+        self.scene.viewer.sync()
+
+    def get_physics_dt(self):
+        return self.mj_model.opt.timestep
+
+    def has_gui(self):
+        return True
+
+    def step(self, render: bool=False):
+        mujoco.mj_step(self.mj_model, self.mj_data)
+
+

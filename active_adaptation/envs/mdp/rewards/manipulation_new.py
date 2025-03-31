@@ -1,7 +1,11 @@
 import torch
 from .locomotion import Reward
-from isaaclab.assets import Articulation
 from ..commands import EEImpedance, EEPosition
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from isaaclab.assets import Articulation
 
 
 class impedance_ee_pos(Reward):

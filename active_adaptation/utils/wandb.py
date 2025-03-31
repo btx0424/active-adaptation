@@ -87,17 +87,45 @@ def init_wandb(cfg):
     return run
 
 
-def parse_path(path: Union[str, None]):
+def parse_checkpoint_path(path: str=None):
+    """
+    Parse a checkpoint path from local or wandb.
+    If `path` is of the form `run:<wandb_run_id>`, it will be downloaded from wandb.
+
+    Args:
+        path (str or None): Path to a checkpoint. 
+
+    Returns:
+        str: Path to the checkpoint.
+    """
     if path is None:
         return None
-    elif isinstance(path, str):
-        if path.startswith("artifact:"):
-            import wandb
-            import os
-            api = wandb.Api()
-            artifact = api.artifact(path[9:])
-            dir_path = artifact.download()
-            checkpoint_path = os.path.join(dir_path, "checkpoint_final.pt")
-            return checkpoint_path
-        return path
+
+    if path.startswith("run:"):
+        api = wandb.Api()
+        run = api.run(path[4:])
+        root = os.path.join(os.path.dirname(__file__), "wandb", run.name)
+        os.makedirs(root, exist_ok=True)
+
+        checkpoints = []
+        for file in run.files():
+            print(file.name)
+            if "checkpoint" in file.name:
+                checkpoints.append(file)
+            elif file.name == "files/cfg.yaml":
+                file.download(root, replace=True)
+
+        def sort_by_time(file):
+            number_str = file.name[:-3].split("_")[-1]
+            if number_str == "final":
+                return 100000
+            else:
+                return int(number_str)
+
+        checkpoints.sort(key=sort_by_time)
+        checkpoint = checkpoints[-1]
+        path = os.path.join(root, checkpoint.name)
+        print(f"Downloading checkpoint to {path}")
+        checkpoint.download(root, replace=True)
+    return path
 

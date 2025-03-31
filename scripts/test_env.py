@@ -130,7 +130,7 @@ def main(cfg: DictConfig):
         policy=rollout_policy,
         frames_per_batch=frames_per_batch,
         total_frames=total_frames,
-        device=cfg.sim.device,
+        device=env.device,
         return_same_td=True,
     )
     

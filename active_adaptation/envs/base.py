@@ -10,15 +10,17 @@ from torchrl.data import (
     Binary,
     UnboundedContinuous,
 )
-import builtins
 from collections import OrderedDict
 
 from abc import abstractmethod
 from typing import NamedTuple, Dict
 import time
 
+import active_adaptation
 import active_adaptation.envs.mdp as mdp
 
+if active_adaptation.get_backend() == "isaac":
+    import isaaclab.sim as sim_utils
 
 class ObsGroup:
     
@@ -26,7 +28,7 @@ class ObsGroup:
         self,
         name: str,
         funcs: Dict[str, mdp.Observation],
-        max_delay: int,
+        max_delay: int = 0,
         use_flip: bool = False,
     ):
         self.name = name
@@ -36,7 +38,6 @@ class ObsGroup:
         self.raw_obs_t = OrderedDict()
         self.raw_obs_tm1: OrderedDict = None
         self.buf_obs = OrderedDict()
-        self.buf_mask = OrderedDict()
         self.timestamp = -1
 
     @property
@@ -49,7 +50,6 @@ class ObsGroup:
             foo = self.compute({}, 0)
             spec = {}
             spec[self.name] = UnboundedContinuous(foo[self.name].shape, dtype=foo[self.name].dtype)
-            spec[self.name + "_mask_"] = Binary(len(self.keys), foo[self.name + "_mask_"].shape, dtype=bool)
             if self.use_flip:
                 spec[self.name + "_flipped"] = spec[self.name]
             self._spec = Composite(spec, shape=[foo[self.name].shape[0]]).to(foo[self.name].device)
@@ -64,7 +64,6 @@ class ObsGroup:
                 tensor, mask = func()
                 self.raw_obs_tm1[obs_key] = self.raw_obs_t.get(obs_key, tensor)
                 self.raw_obs_t[obs_key] = tensor
-                self.buf_mask[obs_key] = mask
                 if self.max_delay > 0:
                     shape = tensor.shape[0:1] + (1,) * (tensor.ndim - 1)
                     delay = torch.rand(shape, device=tensor.device) * self.max_delay
@@ -74,14 +73,12 @@ class ObsGroup:
         self.timestamp = timestamp
         
         tensors = torch.cat([self.buf_obs[key] for key in self.funcs.keys()], dim=-1)
-        masks = torch.stack([self.buf_mask[key] for key in self.funcs.keys()], dim=-1)
         tensordict[self.name] = tensors
-        tensordict[self.name + "_mask_"] = masks
 
         if self.use_flip:
             tensors = torch.cat([func.fliplr(self.buf_obs[key]) for key, func in self.funcs.items()], dim=-1)
             tensordict[self.name + "_flipped"] = tensors
-        
+
         return tensordict
 
 
@@ -95,17 +92,17 @@ class _Env(EnvBase):
 
     """
     def __init__(self, cfg):
-        # store inputs to class
         self.cfg = cfg
-        # initialize internal variables
-        self.enable_render = False
-
-        self.max_episode_length = self.cfg.max_episode_length
-        self.decimation = self.cfg.decimation
-        self.physics_dt = self.cfg.sim.dt
-        self.step_dt = self.physics_dt * self.decimation
+        self.backend = active_adaptation.get_backend()
 
         self.setup_scene()
+        
+        self.max_episode_length = self.cfg.max_episode_length
+        self.step_dt = self.cfg.sim.step_dt
+        self.physics_dt = self.sim.get_physics_dt()
+        self.decimation = int(self.step_dt / self.physics_dt)
+        
+        print(f"Step dt: {self.step_dt}, physics dt: {self.physics_dt}, decimation: {self.decimation}")
 
         super().__init__(
             device=self.sim.device,
@@ -190,12 +187,9 @@ class _Env(EnvBase):
 
         for group_key, params in self.cfg.observation.items():
             max_delay = params.pop("_max_delay_", 0)
-            use_flip = params.pop("_use_flip_", False)
-            if max_delay > self.cfg.decimation:
-                raise ValueError("Max delay cannot be greater than decimation.")
-            max_delay = max_delay / self.cfg.decimation
-            funcs = OrderedDict()
-            
+            if max_delay > 1e-6:
+                raise NotImplementedError
+            funcs = OrderedDict()            
             for key, kwargs in params.items():
                 obs = OBS_FUNCS[key](self, **(kwargs if kwargs is not None else {}))
                 funcs[key] = obs
@@ -206,7 +200,7 @@ class _Env(EnvBase):
                 self._debug_draw_callbacks.append(obs.debug_draw)
                 self._post_step_callbacks.append(obs.post_step)
             
-            self.observation_funcs[group_key] = ObsGroup(group_key, funcs, max_delay=max_delay, use_flip=use_flip)
+            self.observation_funcs[group_key] = ObsGroup(group_key, funcs)
         
         for callback in self._startup_callbacks:
             callback()        
@@ -240,7 +234,6 @@ class _Env(EnvBase):
 
             self.reward_groups[group_name] = RewardGroup(self, group_name, funcs)
             reward_spec["stats", group_name, "return"] = UnboundedContinuous(1, device=self.device)
-            reward_spec["stats", group_name, "reward_clip_ratio"] = UnboundedContinuous(1, device=self.device)
 
         reward_spec["reward"] = UnboundedContinuous(max(1, len(self.reward_groups)), device=self.device)
         reward_spec["discount"] = UnboundedContinuous(1, device=self.device)
@@ -343,12 +336,7 @@ class _Env(EnvBase):
             rewards.append(reward)
             self.stats[group, "return"].add_(reward)
 
-            neg_rewar = reward < 0.
-            self.stats[group, "reward_clip_ratio"].add_(neg_rewar.float())
-
         rewards = torch.cat(rewards, 1)
-        if self.clip_rewards:
-            rewards = rewards.clamp(min=0.)
 
         self.stats["episode_len"][:] = self.episode_length_buf.unsqueeze(1)
         self.stats["success"][:] = (self.episode_length_buf >= self.max_episode_length * 0.9).unsqueeze(1).float()
@@ -376,7 +364,7 @@ class _Env(EnvBase):
 
     def _step(self, tensordict: TensorDictBase) -> TensorDictBase:
         # start = time.perf_counter()
-        for substep in range(self.cfg.decimation):
+        for substep in range(self.decimation):
             for asset in self.scene.articulations.values():
                 if asset.has_external_wrench:
                     asset._external_force_b.zero_()
@@ -421,12 +409,6 @@ class _Env(EnvBase):
         torch.manual_seed(seed)
 
     def render(self, mode: str = "human"):
-        if mode == "rgb_array":
-            robot_pos = self.robot.data.root_pos_w[self.lookat_env_i].cpu()
-            eye = torch.tensor(self.cfg.viewer.eye) + robot_pos
-            lookat = torch.tensor(self.cfg.viewer.lookat) + robot_pos
-            self.sim.set_camera_view(eye, lookat)
-
         self.sim.render()
         if mode == "human":
             return None
@@ -454,59 +436,6 @@ class _Env(EnvBase):
     def get_extra_state(self) -> dict:
         return dict(self.extra)
 
-
-class Env(_Env):
-    
-    def setup_scene(self):
-        from isaaclab.scene import InteractiveScene
-        from isaaclab.sim import SimulationContext
-        from isaaclab.utils.timer import Timer
-
-        # create a simulation context to control the simulator
-        if SimulationContext.instance() is None:
-            self.sim = SimulationContext(self.cfg.sim)
-        else:
-            raise RuntimeError("Simulation context already exists. Cannot create a new one.")
-        # set camera view for "/OmniverseKit_Persp" camera
-        self.sim.set_camera_view(eye=self.cfg.viewer.eye, target=self.cfg.viewer.lookat)
-        try:
-            import omni.replicator.core as rep
-            # create render product
-            self._render_product = rep.create.render_product(
-                "/OmniverseKit_Persp", tuple(self.cfg.viewer.resolution)
-            )
-            # create rgb annotator -- used to read data from the render product
-            self._rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cpu")
-            self._rgb_annotator.attach([self._render_product])
-        except ModuleNotFoundError as e:
-            print(e)
-            print("Set enable_cameras=true to use cameras.")
-
-        # print useful information
-        print("[INFO]: Base environment:")
-        print(f"\tEnvironment device    : {self.device}")
-        print(f"\tPhysics step-size     : {self.physics_dt}")
-
-        # generate scene
-        with Timer("[INFO]: Time taken for scene creation"):
-            self.scene = InteractiveScene(self.cfg.scene)
-
-        print("[INFO]: Scene manager: ", self.scene)
-
-        if builtins.ISAAC_LAUNCHED_FROM_TERMINAL is False:
-            print("[INFO]: Starting the simulation. This may take a few seconds. Please wait...")
-            with Timer("[INFO]: Time taken for simulation start"):
-                self.sim.reset()
-        for _ in range(4):
-            self.sim.step(render=True)
-        
-        try:
-            from active_adaptation.utils.debug import DebugDraw
-            self.debug_draw = DebugDraw()
-            print("[INFO] Debug Draw API enabled.")
-        except ModuleNotFoundError:
-            pass
-
     def close(self):
         if not self.is_closed:
             # destructor is order-sensitive
@@ -516,16 +445,6 @@ class Env(_Env):
             self.sim.clear_instance()
             # update closing status
             super().close()
-
-
-def generate_mask(size: int, split: torch.Tensor, device: str):
-    if isinstance(size, int):
-        size = (size,)
-    repeats = torch.as_tensor(split, device=device)
-    masks = torch.zeros(*size, len(split), dtype=torch.bool, device=device)
-    masks = masks.scatter(-1, torch.randint(len(split), (*size, 1), device=device), 1)
-    masks = torch.repeat_interleave(masks, repeats, -1)
-    return masks
 
 
 class RewardGroup:

@@ -1,8 +1,12 @@
 import torch
 import abc
 
-from isaaclab.assets import Articulation
-from isaaclab.sensors import ContactSensor
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from isaaclab.assets import Articulation
+    from isaaclab.sensors import ContactSensor
+
 
 class Termination:
     def __init__(self, env):

@@ -8,8 +8,7 @@ ASSET_PATH = os.path.dirname(__file__)
 
 SIRIUS_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        # usd_path=f"{ASSET_PATH}/sirius_mid_wheel/sirius_mid_wheel.usd",
-        usd_path="/home/btx0424/lab/active-adaptation/active_adaptation/assets/sirius_mid_wheel.usd",
+        usd_path=f"{ASSET_PATH}/sirius_mid_wheel/sirius_mid_wheel.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -34,6 +33,7 @@ SIRIUS_CFG = ArticulationCfg(
             "[L,R]H_HFE": -0.4,
             "[L,R]F_KFE": -1.2,
             "[L,R]H_KFE":  1.2,
+            "wheel_.*": 0.
         },
         joint_vel={".*": 0.}
     ),

@@ -2,19 +2,6 @@ import os
 import copy
 import torch
 
-from isaaclab_assets import (
-    ArticulationCfg,
-    UNITREE_A1_CFG,
-    UNITREE_GO1_CFG,
-    UNITREE_GO2_CFG,
-    ANYMAL_C_CFG,
-)
-
-import isaaclab.sim as sim_utils
-from isaaclab.sim.spawners.from_files.from_files import _spawn_from_usd_file, spawn_from_usd
-from isaaclab.actuators import ImplicitActuatorCfg, DCMotorCfg
-
-from .spawn import clone
 from .quadruped import *
 from .humanoid import *
 from .scene import *
@@ -26,7 +13,6 @@ ASSET_PATH = os.path.dirname(__file__)
 
 ROBOTS = {
     "a1": UNITREE_A1_CFG,
-    "go1": UNITREE_GO1_CFG,
     "go1m": UNITREE_GO1M_CFG,
     "go2": UNITREE_GO2_CFG,
     "go2m": UNITREE_GO2M_CFG,
@@ -40,6 +26,21 @@ ROBOTS = {
     "cyberdog": CYBERDOG_CFG,
     "abp": ABP_CFG,
     "a1-arm": A1_CFG,
-    "sirius": SIRIUS_CFG
+    "sirius": SIRIUS_CFG,
+    "g1": G1_CFG,
 }
+
+
+def get_asset_meta(asset: Articulation):
+    if not asset.is_initialized:
+        raise RuntimeError("Articulation is not initialized. Please wait until `sim.reset` is called.")
+    meta = {
+        "init_state": asset.cfg.init_state.to_dict(),
+        "body_names_isaac": asset.body_names,
+        "joint_names_isaac": asset.joint_names,
+        "actuators": {}
+    }
+    for actuator_name, actuator in asset.actuators.items():
+        meta["actuators"][actuator_name] = actuator.cfg.to_dict()
+    return meta
 

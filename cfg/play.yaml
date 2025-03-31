@@ -6,9 +6,6 @@ app:
   headless: ${..headless}
   enable_cameras: false
 
-sim: ${task.sim}
-# env: ${task.env}
-
 total_frames: -1
 max_iters: -1
 eval_interval: -1

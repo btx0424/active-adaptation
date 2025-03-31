@@ -2,7 +2,7 @@ import os
 import copy
 import isaaclab.sim as sim_utils
 import torch
-from isaaclab_assets import ArticulationCfg, H1_CFG
+from isaaclab_assets import ArticulationCfg, H1_CFG, G1_CFG
 from isaaclab.actuators import DCMotorCfg, ImplicitActuatorCfg, IdealPDActuatorCfg
 from isaaclab.assets import Articulation
 from active_adaptation.envs.actuator import HybridActuatorCfg

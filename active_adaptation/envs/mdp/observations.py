@@ -4,20 +4,23 @@ import abc
 import einops
 from typing import Tuple, TYPE_CHECKING, Callable
 
-import isaaclab.sim as sim_utils
-from isaaclab.terrains.trimesh.utils import make_plane
-from isaaclab.utils.math import convert_quat, quat_apply, quat_apply_yaw, yaw_quat, quat_mul, quat_inv
-from isaaclab.utils.warp import convert_to_warp_mesh, raycast_mesh
+from isaaclab.utils.math import quat_apply_yaw, quat_mul, quat_inv
 from isaaclab.utils.string import resolve_matching_names
-from pxr import UsdGeom, UsdPhysics
+import active_adaptation
+from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse, yaw_quat
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation
-    from isaaclab.sensors import ContactSensor, RayCaster, patterns, RayCasterData, Imu
+    from isaaclab.sensors import ContactSensor, RayCaster, Imu
     from isaaclab.sensors import Camera, TiledCamera
     from active_adaptation.envs.base import Env
 
-from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
+
+if active_adaptation.get_backend() == "isaac":
+    import isaaclab.sim as sim_utils
+    from isaaclab.terrains.trimesh.utils import make_plane
+    from isaaclab.utils.warp import convert_to_warp_mesh, raycast_mesh
+    from pxr import UsdGeom, UsdPhysics
 
 
 class Observation:

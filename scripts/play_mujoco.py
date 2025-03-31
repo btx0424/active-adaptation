@@ -7,24 +7,24 @@ import os
 import datetime
 from omegaconf import OmegaConf
 
-from isaaclab.app import AppLauncher
-
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from tensordict.nn import TensorDictSequential
 
-from active_adaptation.learning import ALGOS
+import active_adaptation
 from active_adaptation.utils.export import export_onnx
 
+active_adaptation.set_backend("mujoco")
 
 @hydra.main(config_path="../cfg", config_name="play", version_base=None)
 def main(cfg):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
-    
-    app_launcher = AppLauncher(cfg.app)
-    simulation_app = app_launcher.app
 
     from scripts.helpers import EpisodeStats, make_env_policy, ObsNorm
+    # TODO: maybe implement these
+    cfg.task.randomization = {}
+    cfg.task.termination = {}
+    cfg.task.reward = {}
     env, policy, vecnorm = make_env_policy(cfg)
     
     if cfg.export_policy:
@@ -61,7 +61,7 @@ def main(cfg):
         meta["damping"] = dict(cfg.task.robot.damping)
         meta["effort_limit"] = dict(cfg.task.robot.effort_limit)
         export_onnx(_policy, fake_input, path.replace(".pt", ".onnx"), meta)
-
+    
     stats_keys = [
         k for k in env.reward_spec.keys(True, True) 
         if isinstance(k, tuple) and k[0]=="stats"
@@ -84,7 +84,6 @@ def main(cfg):
                     print(k, torch.mean(v).item())
     
     env.close()
-    simulation_app.close()
 
 
 if __name__ == "__main__":

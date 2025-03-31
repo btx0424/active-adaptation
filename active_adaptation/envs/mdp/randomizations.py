@@ -2,6 +2,8 @@ import torch
 import numpy as np
 import logging
 from typing import Union, TYPE_CHECKING, Dict, Tuple
+
+import active_adaptation
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 
 import isaaclab.utils.string as string_utils
@@ -10,14 +12,17 @@ import isaaclab.utils.string as string_utils
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation
     from isaaclab.sensors import RayCaster
+    from active_adaptation.envs.base import _Env
+
+
+if active_adaptation.get_backend() == "isaac":
     from isaaclab.actuators import DCMotor, ImplicitActuator
-    from active_adaptation.envs.base import Env
     from active_adaptation.envs.actuator import HybridActuator
 
 
 class Randomization:
     def __init__(self, env):
-        self.env: Env = env
+        self.env: _Env = env
 
     @property
     def num_envs(self):
@@ -113,7 +118,9 @@ class motor_params(Randomization):
         self.armature_range     = parse(armature_range, torch.zeros(self.num_joints, device=self.device))
         
     def reset(self, env_ids: torch.Tensor=slice(None)):
-
+        if not self.env.backend == "isaac":
+            return
+        
         scale_factor = torch.ones(len(env_ids), self.num_joints, device=self.device)
         for key, (ids, names, value, default) in self.scale_factor_range.items():
             r = (value[1] - value[0]) * torch.rand(len(env_ids), 1, device=self.device) + value[0]
@@ -140,7 +147,6 @@ class motor_params(Randomization):
         # apply randomization
         if isinstance(self.actuator, DCMotor):
             pass
-            # self.actuator._saturation_effort[env_ids] = strength
         elif isinstance(self.actuator, HybridActuator):
             implicit = self.actuator.implicit[env_ids]
             self.asset.write_joint_stiffness_to_sim(stiffness * implicit, self.actuator.joint_indices, env_ids)
