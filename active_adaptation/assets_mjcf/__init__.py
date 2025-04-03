@@ -6,7 +6,12 @@ ROBOTS = {}
 
 PATH = os.path.dirname(__file__)
 
-ROBOTS["sirius"] = MJArticulationCfg(
+ROBOTS["sirius_wheel"] = MJArticulationCfg(
     mjcf_path=os.path.join(PATH, "sirius_mid_wheel", "sirius_mid_wheel.xml"),
     **json.load(open(os.path.join(PATH, "sirius_mid_wheel", "sirius_mid_wheel.json")))
+)
+
+ROBOTS["g1_23dof"] = MJArticulationCfg(
+    mjcf_path=os.path.join(PATH, "g1_23dof", "g1_23dof.xml"),
+    **json.load(open(os.path.join(PATH, "g1_23dof", "g1_23dof.json")))
 )

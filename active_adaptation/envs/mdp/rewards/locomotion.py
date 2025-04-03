@@ -11,7 +11,7 @@ from ..commands import *
 if TYPE_CHECKING:
     from isaaclab.sensors import ContactSensor
     from isaaclab.assets import Articulation
-    from active_adaptation.envs.base import Env
+    from active_adaptation.envs.base import _Env
 
 
 class Reward:
@@ -21,7 +21,7 @@ class Reward:
         weight: float,
         enabled: bool = True,
     ):
-        self.env: Env = env
+        self.env: _Env = env
         self.weight = weight
         self.enabled = enabled
 

@@ -2,13 +2,13 @@ import os
 import isaaclab.sim as sim_utils
 
 from isaaclab_assets import ArticulationCfg
-from isaaclab.actuators import ImplicitActuatorCfg
+from isaaclab.actuators import ImplicitActuatorCfg, DCMotorCfg
 
 ASSET_PATH = os.path.dirname(__file__)
 
-SIRIUS_CFG = ArticulationCfg(
+SIRIUS_WHEEL_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ASSET_PATH}/sirius_mid_wheel/sirius_mid_wheel.usd",
+        usd_path=f"{ASSET_PATH}/sirius_wheel_mid/sirius_wheel_mid.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -42,7 +42,9 @@ SIRIUS_CFG = ArticulationCfg(
         "base_legs": ImplicitActuatorCfg(
             joint_names_expr=".*",
             effort_limit_sim=100.0,
+            velocity_limit=40.,
             velocity_limit_sim=40.,
+            # saturation_effort=100.0,
             stiffness={
                 ".*_HAA": 40.,
                 ".*_HFE": 40.,
@@ -53,8 +55,9 @@ SIRIUS_CFG = ArticulationCfg(
                 ".*_HAA": 1.,
                 ".*_HFE": 1.,
                 ".*_HFE": 1.,
-                "wheel_.*": 10.
+                "wheel_.*": 20.
             }
         )
     }
 )
+

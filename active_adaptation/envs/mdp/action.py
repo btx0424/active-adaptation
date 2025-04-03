@@ -16,7 +16,7 @@ from active_adaptation.utils.math import (
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation
-    from active_adaptation.envs.base import Env
+    from active_adaptation.envs.base import _Env
 
 
 class ActionManager:
@@ -24,7 +24,7 @@ class ActionManager:
     action_dim: int
 
     def __init__(self, env):
-        self.env: Env = env
+        self.env: _Env = env
         self.asset: Articulation = self.env.scene["robot"]
 
     def reset(self, env_ids: torch.Tensor):
@@ -539,7 +539,6 @@ class JointPosition(ActionManager):
     def __init__(
         self,
         env,
-        joint_names: str = ".*",
         action_scaling: Dict[str, float] = 0.5,
         left_joints=None,
         right_joints=None,
@@ -581,7 +580,7 @@ class JointPosition(ActionManager):
 
         self.action_scaling = torch.tensor(self.action_scaling, device=self.device)
         self.max_delay = max_delay if max_delay is not None else self.env.cfg.decimation
-        self.max_delay = min(self.max_delay, self.env.cfg.decimation)
+        self.max_delay = min(self.max_delay, self.env.decimation)
         self.fixed_delay = fixed_delay
 
         self.action_dim = len(self.joint_ids)
@@ -610,7 +609,7 @@ class JointPosition(ActionManager):
 
         self.default_joint_pos = self.asset.data.default_joint_pos.clone()
         self.offset = torch.zeros_like(self.default_joint_pos)
-        self.joint_limits = self.asset.data.joint_limits.clone().unbind(-1)
+        # self.joint_limits = self.asset.data.joint_limits.clone().unbind(-1)
         self.decimation = int(self.env.step_dt / self.env.physics_dt)
         self.count = 0
 

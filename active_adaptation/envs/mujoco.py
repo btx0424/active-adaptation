@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import mujoco
 import mujoco.viewer
+import time
 from typing import Sequence, Union, Any, Dict
 from dataclasses import dataclass, replace
 
@@ -140,30 +141,34 @@ class MJArticulation:
         self.body_adrs_write = self.body_adrs[self._body_isaac2mjc]
         self.joint_qposadr_read = self.joint_qposadr[self._jnt_mjc2isaac]
         self.joint_qveladr_read = self.joint_qveladr[self._jnt_mjc2isaac]
-        self.joint_qposadr_write = self.joint_qposadr[self._jnt_isaac2mjc]
-        self.joint_qveladr_write = self.joint_qveladr[self._jnt_isaac2mjc]
+        # self.joint_qposadr_write = self.joint_qposadr[self._jnt_isaac2mjc]
+        # self.joint_qveladr_write = self.joint_qveladr[self._jnt_isaac2mjc]
 
-        joint_ids, joint_names, default_joint_pos = string_utils.resolve_matching_names_values(self.cfg.init_state["joint_pos"], self.joint_names_isaac)
-        if not set(joint_names) == set(self.joint_names_isaac):
-            raise ValueError()
-        
-        joint_stiffness = torch.zeros(1, len(joint_ids))
-        joint_damping = torch.zeros(1, len(joint_ids))
+        joint_ids, joint_names, joint_pos = string_utils.resolve_matching_names_values(self.cfg.init_state["joint_pos"], self.joint_names_isaac)
+        if len(joint_names) < len(self.joint_names_isaac):
+            print(f"Missing joint names: {set(self.joint_names_isaac) - set(joint_names)}")
+        default_joint_pos = torch.zeros(self.num_joints)
+        default_joint_pos[joint_ids] = torch.as_tensor(joint_pos)
+        print(default_joint_pos)
+        default_joint_vel = torch.zeros(self.num_joints)
+
+        joint_stiffness = torch.zeros(self.num_joints)
+        joint_damping = torch.zeros(self.num_joints)
         
         for actuator_name, actuator_cfg in self.cfg.actuators.items():
             ids, _, values = string_utils.resolve_matching_names_values(actuator_cfg["stiffness"], self.joint_names_isaac)
-            joint_stiffness[0, ids] = torch.as_tensor(values)
+            joint_stiffness[ids] = torch.as_tensor(values)
             ids, _, values = string_utils.resolve_matching_names_values(actuator_cfg["damping"], self.joint_names_isaac)
-            joint_damping[0, ids] = torch.as_tensor(values)
+            joint_damping[ids] = torch.as_tensor(values)
 
         self._data = MJArticulationData(
-            default_joint_pos=torch.tensor(default_joint_pos)[None, :],
-            default_joint_vel=torch.zeros((1, len(joint_ids))),
+            default_joint_pos=default_joint_pos[None],
+            default_joint_vel=default_joint_vel[None],
             default_root_state=torch.tensor([[*cfg.init_state["pos"], 1., 0., 0., 0.]]),
             default_mass=torch.as_tensor(self.mj_model.body_mass[self.body_adrs])[None],
             default_inertia=torch.as_tensor(self.mj_model.body_inertia[self.body_adrs])[None],
-            joint_stiffness=joint_stiffness,
-            joint_damping=joint_damping,
+            joint_stiffness=joint_stiffness[None],
+            joint_damping=joint_damping[None],
         )
         self._data.joint_pos_target = self._data.default_joint_pos.clone()
         self._data.joint_vel_target = self._data.default_joint_vel.clone()
@@ -258,9 +263,9 @@ class MJArticulation:
             joint_vel=torch.as_tensor(jvel, dtype=torch.float32)[None],
             projected_gravity_b=torch.as_tensor(projected_gravity_b, dtype=torch.float32)[None],
             heading_w=torch.as_tensor(heading_w, dtype=torch.float32)[None],
-            # root_lin_vel_w=torch.as_tensor(self.mj_data.qvel[:3], dtype=torch.float32)[None],
-            # root_ang_vel_w=torch.as_tensor(self.mj_data.qvel[3:6], dtype=torch.float32)[None],
         )
+        # self._data.root_lin_vel_w = torch.as_tensor(self.mj_data.qvel[:3], dtype=torch.float32)[None]
+        # self._data.root_ang_vel_w = torch.as_tensor(self.mj_data.qvel[3:6], dtype=torch.float32)[None]
         self._data.root_lin_vel_w = self._data.body_lin_vel_w[:, 0]
         self._data.root_ang_vel_w = self._data.body_ang_vel_w[:, 0]
         self._data.root_ang_vel_b = quat_rotate_inverse(self._data.root_quat_w, self._data.root_ang_vel_w)
@@ -270,33 +275,47 @@ class MJArticulation:
         # self.mj_data.xpos[self.body_adrs[0]] = [0., 0., 1.0]
         # self.mj_data.xquat[self.body_adrs[0]] = root_state[0, 3:]
         self.mj_data.qpos[:7] = [0., 0., 0.6, 1., 0., 0., 0.]
-        self.mj_data.qpos[self.joint_qposadr_write] = self._data.default_joint_pos
-        self.mj_data.qvel[self.joint_qveladr_write] = self._data.default_joint_vel
+        # self.mj_data.qpos[self.joint_qposadr_write] = self._data.default_joint_pos
+        # self.mj_data.qvel[self.joint_qveladr_write] = self._data.default_joint_vel
         self.mj_data.qvel[:6] = 0.
+        # self.mj_data.qpos[self.joint_qposadr] = self._data.default_joint_pos[0, self._jnt_isaac2mjc]
+        # self.mj_data.qvel[self.joint_qveladr] = self._data.default_joint_vel[0, self._jnt_isaac2mjc]
+        # self.mj_data.qpos[self.joint_qposadr_write] = self._data.default_joint_pos[0]
+        # self.mj_data.qvel[self.joint_qveladr_write] = self._data.default_joint_vel[0]
         mujoco.mj_forward(self.mj_model, self.mj_data)
     
-    def set_joint_position_target(self, target: ArrayType, joint_ids: ArrayType):
-        self._data.joint_pos_target[0, joint_ids] = target
+    def set_joint_position_target(self, target: ArrayType, joint_ids: ArrayType=None):
+        if joint_ids is None:
+            self._data.joint_pos_target[0] = target
+        else:
+            self._data.joint_pos_target[0, joint_ids] = target
     
-    def set_joint_velocity_target(self, target: ArrayType, joint_ids: ArrayType):
-        self._data.joint_vel_target[0, joint_ids] = target
+    def set_joint_velocity_target(self, target: ArrayType, joint_ids: ArrayType=None):
+        if joint_ids is None:
+            self._data.joint_vel_target[0] = target
+        else:
+            self._data.joint_vel_target[0, joint_ids] = target
     
     def write_data_to_sim(self):
         pos_error = self._data.joint_pos_target - self._data.joint_pos
         vel_error = self._data.joint_vel_target - self._data.joint_vel
         torque = (self._data.joint_stiffness * pos_error + self._data.joint_damping * vel_error)
         self._data.applied_torque = torque
-        self.mj_data.ctrl[self._jnt_isaac2mjc] = torque[0]
+        self.mj_data.ctrl[:] = torque[0, self._jnt_isaac2mjc]
 
         if self.has_external_wrench:
             self.mj_data.xfrc_applied[self.body_adrs_write, :3] = quat_rotate(self._data.root_quat_w, self._external_force_b)[0]
             self.mj_data.xfrc_applied[self.body_adrs_write, 3:] = quat_rotate(self._data.root_quat_w, self._external_torque_b)[0]
 
     def write_joint_state_to_sim(self, joint_pos: ArrayType, joint_vel: ArrayType, joint_ids: ArrayType, env_ids: ArrayType=None):
-        qposadrs = self.joint_qposadr_write[joint_ids]
-        qveladrs = self.joint_qveladr_write[joint_ids]
-        self.mj_data.qpos[qposadrs] = joint_pos[0]
-        self.mj_data.qvel[qveladrs] = joint_vel[0]
+        if joint_pos is not None:
+            joint_pos_all = self._data.joint_pos[0].clone()
+            joint_pos_all[joint_ids] = joint_pos[0]
+            self.mj_data.qpos[self.joint_qposadr] = joint_pos[0]
+        if joint_vel is not None:
+            joint_vel_all = self._data.joint_vel[0].clone()
+            joint_vel_all[joint_ids] = joint_vel[0]
+            self.mj_data.qvel[self.joint_qveladr] = joint_vel[0]
 
 
 @dataclass
@@ -367,5 +386,6 @@ class MJSim:
 
     def step(self, render: bool=False):
         mujoco.mj_step(self.mj_model, self.mj_data)
+        # time.sleep(self.get_physics_dt())
 
 

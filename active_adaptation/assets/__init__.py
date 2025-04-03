@@ -26,8 +26,8 @@ ROBOTS = {
     "cyberdog": CYBERDOG_CFG,
     "abp": ABP_CFG,
     "a1-arm": A1_CFG,
-    "sirius": SIRIUS_CFG,
-    "g1": G1_CFG,
+    "sirius_wheel": SIRIUS_WHEEL_CFG,
+    "g1_23dof": G1_CFG,
 }
 
 
@@ -38,7 +38,8 @@ def get_asset_meta(asset: Articulation):
         "init_state": asset.cfg.init_state.to_dict(),
         "body_names_isaac": asset.body_names,
         "joint_names_isaac": asset.joint_names,
-        "actuators": {}
+        "actuators": {},
+        "default_joint_pos": asset.data.default_joint_pos[0].tolist(),
     }
     for actuator_name, actuator in asset.actuators.items():
         meta["actuators"][actuator_name] = actuator.cfg.to_dict()

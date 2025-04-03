@@ -839,6 +839,18 @@ class applied_torques(JointObs):
         return applied_efforts[:, self.joint_indices]
 
 
+class applied_torque(Observation):
+    def __init__(self, env, joint_names: str=".*"):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joint_names = joint_names
+        self.joint_indices = self.asset.find_joints(joint_names)
+    
+    def compute(self) -> torch.Tensor:
+        applied_efforts = self.asset.data.applied_torque
+        return applied_efforts[:, self.joint_indices]
+
+
 class contact_indicator(Observation):
     def __init__(self, env, body_names: str, timing: bool=True):
         super().__init__(env)

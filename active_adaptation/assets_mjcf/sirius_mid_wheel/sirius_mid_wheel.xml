@@ -1,9 +1,9 @@
 <mujoco model="MuJoCo Model">
-  <option iterations="50" timestep="0.002" solver="PGS" gravity="0 0 -9.81" />
+  <option iterations="50" timestep="0.001" solver="PGS" gravity="0 0 -9.81" />
   <compiler angle="radian" meshdir="meshes/"/>
 
   <default>
-    <joint damping="0.01" armature="0.01" frictionloss="0.01" />
+    <joint damping="0.1" armature="0.01" frictionloss="0.01" />
   </default>
 
   <asset>
@@ -37,7 +37,7 @@
     <body name="base" pos="0 0 1">
       <joint name="root" type="free"/>
 
-      <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="base_visuals_mesh_0"/>
+      <geom type="mesh" friction="1 .1 .1" contype="0" conaffinity="0" group="1" density="0" mesh="base_visuals_mesh_0"/>
       <geom size="0.0075 0.0075 0.002" type="box" contype="0" conaffinity="0" group="1" density="0"/>
       <geom size="0.241 0.106 0.056" type="box"/>
       <inertial pos="0.0446334 0.0002693 -0.0071156" mass="12.149" diaginertia="0.048576 0.75312 0.75287"/>
@@ -69,7 +69,7 @@
               <inertial pos="0 0 0" quat="0.707107 0 0 0.707107" mass="1.5" diaginertia="0.0028937 0.0015556 0.0015556"/>
               <joint name="wheel_1" pos="0 0 0" axis="0 1 0"/>
               <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="LF_FOOT_WHEEL_visuals"/>
-              <geom size="0.0825 0.0235" quat="0.707388 0.706825 0 0" type="cylinder"/>
+              <geom size="0.0825 0.0235" quat="0.707388 0.706825 0 0" type="cylinder" friction="1. .5 .1"/>
             </body>
           </body>
         </body>
@@ -94,7 +94,7 @@
               <inertial pos="0 0 0" quat="0.707107 0 0 0.707107" mass="1.5" diaginertia="0.0028937 0.0015556 0.0015556"/>
               <joint name="wheel_2" pos="0 0 0" axis="0 1 0"/>
               <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="LH_FOOT_WHEEL_visuals"/>
-              <geom size="0.0825 0.0235" quat="0.707388 0.706825 0 0" type="cylinder"/>
+              <geom size="0.0825 0.0235" quat="0.707388 0.706825 0 0" type="cylinder" friction="1. .5 .1"/>
             </body>
           </body>
         </body>
@@ -119,7 +119,7 @@
               <inertial pos="0 0 0" quat="0.707107 0 0 0.707107" mass="1.5" diaginertia="0.0028937 0.0015556 0.0015556"/>
               <joint name="wheel_3" pos="0 0 0" axis="0 1 0"/>
               <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="RF_FOOT_WHEEL_visuals"/>
-              <geom size="0.0825 0.0235" quat="0.707388 0.706825 0 0" type="cylinder"/>
+              <geom size="0.0825 0.0235" quat="0.707388 0.706825 0 0" type="cylinder" friction="1. .5 .1"/>
             </body>
           </body>
         </body>
@@ -144,7 +144,7 @@
               <inertial pos="0 0 0" quat="0.707107 0 0 0.707107" mass="1.5" diaginertia="0.0028937 0.0015556 0.0015556"/>
               <joint name="wheel_4" pos="0 0 0" axis="0 1 0"/>
               <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" mesh="RH_FOOT_WHEEL_visuals"/>
-              <geom size="0.0825 0.0235" quat="0.707388 0.706825 0 0" type="cylinder"/>
+              <geom size="0.0825 0.0235" quat="0.707388 0.706825 0 0" type="cylinder" friction="1. .5 .1"/>
             </body>
           </body>
         </body>

@@ -89,7 +89,7 @@
             "damping": {
                 ".*_HAA": 1.0,
                 ".*_HFE": 1.0,
-                "wheel_.*": 10.0
+                "wheel_.*": 20.0
             },
             "armature": null,
             "friction": null

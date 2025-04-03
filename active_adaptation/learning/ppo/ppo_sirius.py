@@ -135,12 +135,13 @@ class PPOPolicy(ModBase):
         else:
             actor_in_keys = ["command_", OBS_KEY, "priv_estimate"]
         
-        actor_mlp = make_mlp([512, 256, 256])
+        actor_mlp = make_mlp([512, 256])
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=TensorDictSequential(
                 CatTensors(actor_in_keys, "policy_estimate", del_keys=False),
                 Mod(actor_mlp, ["policy_estimate"], ["actor_input"]),
-                Mod(Actor(self.action_dim), ["actor_input"], ["loc", "scale"]),
+                # Mod(nn.Sequential(make_mlp([256]), nn.LazyLinear(1)), ["actor_input"], ["actor_value"]),
+                Mod(nn.Sequential(make_mlp([256]), Actor(self.action_dim)), ["actor_input"], ["loc", "scale"]),
             ),
             in_keys=["loc", "scale"],
             out_keys=[ACTION_KEY],
@@ -171,6 +172,8 @@ class PPOPolicy(ModBase):
             ],
             lr=cfg.lr
         )
+
+        self.opt_aux = torch.optim.Adam(self.actor.parameters(), lr=cfg.lr)
         
         def init_(module):
             if isinstance(module, nn.Linear):
@@ -199,6 +202,7 @@ class PPOPolicy(ModBase):
 
     # @torch.compile
     def train_op(self, tensordict: TensorDict):
+        tensordict = tensordict.copy()
         infos = []
         self._compute_advantage(tensordict, self.critic, "adv", "ret")
         adv = tensordict["adv"]
@@ -217,13 +221,13 @@ class PPOPolicy(ModBase):
             for minibatch in batch:
                 infos.append(TensorDict(self._update(minibatch), []))
         
-        infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
+        infos = {k: v.mean().item() for k, v in torch.stack(infos).items()}
         infos["critic/value_mode_0"] = tensordict["ret"][mode_0].mean().item()
         infos["critic/value_mode_1"] = tensordict["ret"][mode_1].mean().item()
         infos["critic/value_mode_2"] = tensordict["ret"][mode_2].mean().item()
         self.num_frames += tensordict.numel()
         self.num_updates += 1
-        return infos
+        return dict(sorted(infos.items()))
 
     @torch.no_grad()
     def _compute_advantage(
@@ -246,7 +250,7 @@ class PPOPolicy(ModBase):
         # cmd_terminated = cmd_truncated & (tensordict["next", "command_mode_"] == 1)
         next_values = torch.where(cmd_truncated, values, next_values)
 
-        rewards = tensordict[REWARD_KEY].sum(-1, keepdim=True)
+        rewards = tensordict[REWARD_KEY].sum(-1, keepdim=True).clamp_min(0.)
         terms = tensordict[TERM_KEY] # | terminated
         dones = tensordict[DONE_KEY] | cmd_truncated
         values = self.value_norm.denormalize(values)
@@ -270,6 +274,9 @@ class PPOPolicy(ModBase):
         )
 
         tensordict = tensordict.detach()
+        
+        for key in self.actor.in_keys:
+            tensordict[key].requires_grad_(True)
         dist = self.actor.get_dist(tensordict)
         log_probs = dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy().mean()
@@ -280,6 +287,19 @@ class PPOPolicy(ModBase):
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
         losses["actor/policy_loss"] = - torch.mean(torch.min(surr1, surr2))
         losses["actor/entropy_loss"] = - self.entropy_coef * entropy
+
+        # with torch.no_grad():
+        grad = torch.autograd.grad(
+            outputs=log_probs,
+            inputs=[tensordict[k] for k in self.actor.in_keys],
+            grad_outputs=torch.ones_like(log_probs),
+            retain_graph=True,
+            create_graph=True,
+        )
+        grad = torch.cat(grad, dim=-1)
+        grad_norm = grad.norm(dim=-1)
+        losses["actor/logp_grad_pen"] = 0.002 * grad_norm.square().mean()
+        # losses["actor/aux"] = F.mse_loss(tensordict["actor_value"], tensordict["ret"])
 
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["state_value"]
@@ -297,7 +317,19 @@ class PPOPolicy(ModBase):
         losses["critic/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
         losses["actor/noise_std"] = tensordict["scale"].mean()
         losses["actor/entropy"] = entropy
+        losses["actor/logp_grad_norm"] = grad_norm.mean()
         return losses
+
+    def _update_aux(self, tensordict: TensorDict):
+        dist_old = self.actor.build_dist_from_params(tensordict)
+        dist_new = self.actor.get_dist(tensordict)
+        loss_aux = F.mse_loss(tensordict["actor_value"], tensordict["ret"]) 
+        loss_kl = F.mse_loss(dist_new.mean, dist_old.mean)
+        self.opt_aux.zero_grad()
+        (loss_aux + 1.0 * loss_kl).backward()
+        grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.actor.parameters(), 2.)
+        self.opt_aux.step()
+        return {"aux/loss": loss_aux, "aux/kl": loss_kl, "aux/grad_norm": grad_norm}
 
     def state_dict(self):
         state_dict = super().state_dict()
