@@ -1,17 +1,15 @@
-from math import inf
 import torch
 
-from isaaclab.assets import Articulation
+from typing import TYPE_CHECKING
 from isaaclab.utils.math import yaw_quat
-from isaaclab.sensors import ContactSensor
-from active_adaptation.assets import Humanoid
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
-from active_adaptation.utils.helpers import batchify
+
+if TYPE_CHECKING:
+    from isaaclab.assets import Articulation
+    from isaaclab.sensors import ContactSensor
+    from active_adaptation.assets import Humanoid
 
 from .locomotion import Reward, normalize, Command2
-
-quat_rotate = batchify(quat_rotate)
-quat_rotate_inverse = batchify(quat_rotate_inverse)
 
 def dot(a: torch.Tensor, b: torch.Tensor):
     return (a * b).sum(-1, True)
@@ -228,6 +226,20 @@ class body_orientation(Reward):
     #         self.asset.data.body_pos_w[:, self.body_id],
     #         self.body_heading_vec
     #     )
+
+
+class body_upright(Reward):
+    def __init__(self, env, body_name: str, weight, enabled = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_id, body_name = self.asset.find_bodies(body_name)
+        self.body_id = self.body_id[0]
+    
+    def compute(self) -> torch.Tensor:
+        down = torch.tensor([[0., 0., -1.]], device=self.device)
+        g = quat_rotate_inverse(self.asset.data.body_quat_w[:, self.body_id], down)
+        r = dot(g, down)
+        return r.reshape(self.num_envs, 1)
 
 
 class arm_swing(Reward):
