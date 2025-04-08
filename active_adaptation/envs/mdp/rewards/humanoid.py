@@ -445,7 +445,7 @@ class oscillator_humanoid(Reward):
         self.phi[:, 0] = torch.pi
         self.phi[:, 1] = 0.
         self.phi_dot: torch.Tensor = self.asset.phi_dot
-        self.grf_substep = torch.zeros(self.num_envs, self.env.cfg.decimation, len(self.feet_ids), device=self.device)
+        self.grf_substep = torch.zeros(self.num_envs, self.env.decimation, len(self.feet_ids), device=self.device)
         
         self.omega = torch.zeros(self.num_envs, 1, device=self.device)
         self.omega.uniform_(2., 3.).mul_(torch.pi)

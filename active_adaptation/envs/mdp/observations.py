@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation
     from isaaclab.sensors import ContactSensor, RayCaster, Imu
     from isaaclab.sensors import Camera, TiledCamera
-    from active_adaptation.envs.base import Env
+    from active_adaptation.envs.base import _Env
 
 
 if active_adaptation.get_backend() == "isaac":
@@ -30,7 +30,7 @@ class Observation:
         Note that `True` means the observation is masked.
 
         """
-        self.env: Env = env
+        self.env: _Env = env
         self.mask_ratio = mask_ratio
         self.mask = torch.zeros(self.num_envs, device=self.device, dtype=bool)
 
@@ -137,7 +137,7 @@ class root_linacc_substep(Observation):
         self.flatten = flatten
         self.asset: Articulation = self.env.scene["robot"]
         if steps is None:
-            steps = self.env.cfg.decimation
+            steps = self.env.decimation
         shape = (self.num_envs, steps, 3)
         self.lin_acc_substep = torch.zeros(shape, device=self.env.device)
 
@@ -161,8 +161,8 @@ class root_linacc_debug(Observation):
         self.asset: Articulation = self.env.scene["robot"]
         self.lin_vel_w = self.asset.data.root_lin_vel_w.clone()
         self.lin_acc_w = torch.zeros(self.num_envs, 3, device=self.env.device)
-        self.root_vel_w_substep = torch.zeros(self.num_envs, self.env.cfg.decimation, 3, device=self.env.device)
-        self.body_acc_w_substep = torch.zeros(self.num_envs, self.env.cfg.decimation, 3, device=self.env.device)
+        self.root_vel_w_substep = torch.zeros(self.num_envs, self.env.decimation, 3, device=self.env.device)
+        self.body_acc_w_substep = torch.zeros(self.num_envs, self.env.decimation, 3, device=self.env.device)
 
     def post_step(self, substep):
         self.root_vel_w_substep[:, substep] = self.asset.data.root_lin_vel_w
@@ -407,7 +407,7 @@ class root_gyro_substep(Observation):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         if steps is None:
-            steps = self.env.cfg.decimation
+            steps = self.env.decimation
         shape = (self.num_envs, steps, 3)
         self.gyro = torch.zeros(shape, device=self.device)
         self.flatten = flatten
@@ -481,7 +481,7 @@ class gravity_substep(Observation):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         if steps is None:
-            steps = self.env.cfg.decimation
+            steps = self.env.decimation
         shape = (self.num_envs, steps, 3)
         self.gravity = torch.zeros(shape, device=self.device)
         self.flatten = flatten
@@ -615,7 +615,7 @@ class joint_pos_substep(Observation):
     def __init__(self, env, mask_ratio = 0):
         super().__init__(env, mask_ratio)
         self.asset: Articulation = self.env.scene["robot"]
-        shape = (self.num_envs, self.env.cfg.decimation, self.asset.num_joints)
+        shape = (self.num_envs, self.env.decimation, self.asset.num_joints)
         self.joint_pos = torch.zeros(shape, device=self.device)
     
     def post_step(self, substep):
@@ -723,7 +723,7 @@ class joint_vel_substep(Observation):
     def __init__(self, env, mask_ratio = 0):
         super().__init__(env, mask_ratio)
         self.asset: Articulation = self.env.scene["robot"]
-        shape = (self.num_envs, self.env.cfg.decimation, self.asset.num_joints)
+        shape = (self.num_envs, self.env.decimation, self.asset.num_joints)
         self.joint_vel = torch.zeros(shape, device=self.device)
 
     def post_step(self, substep):
@@ -737,7 +737,7 @@ class joint_pos_des_substep(Observation):
     def __init__(self, env, mask_ratio = 0):
         super().__init__(env, mask_ratio)
         self.asset: Articulation = self.env.scene["robot"]
-        shape = (self.num_envs, self.env.cfg.decimation, self.asset.num_joints)
+        shape = (self.num_envs, self.env.decimation, self.asset.num_joints)
         self.joint_pos_des = torch.zeros(shape, device=self.device)
     
     def post_step(self, substep):
@@ -763,7 +763,7 @@ class joint_vel(JointObs):
         self.from_pos = from_pos
 
         if self.from_pos:
-            shape = (self.num_envs, self.env.cfg.decimation, self.asset.num_joints)
+            shape = (self.num_envs, self.env.decimation, self.asset.num_joints)
             self.joint_pos_substep = torch.zeros(shape, device=self.device)
         else:
             shape = (self.num_envs, 2, self.asset.num_joints)
@@ -863,7 +863,7 @@ class contact_indicator(Observation):
         
         self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum()
         self.giravity = self.default_mass_total.to(self.env.device) * 9.81
-        self.force_substep = torch.zeros(self.num_envs, self.env.cfg.decimation, len(self.body_ids), 3, device=self.device)
+        self.force_substep = torch.zeros(self.num_envs, self.env.decimation, len(self.body_ids), 3, device=self.device)
 
     def post_step(self, substep):
         force = self.contact_sensor.data.net_forces_w[:, self.body_ids]
@@ -1706,7 +1706,7 @@ class feet_contact_multistep(Observation):
         self.contact_sensor: ContactSensor = self.env.scene["contact_sensor"]
         self.feet_id = self.asset.find_bodies(".*_foot")[0]
         self.contact = torch.zeros(self.num_envs, steps, device=self.device, dtype=bool)
-        self.grf_substep = torch.zeros(self.num_envs, self.env.cfg.decimation, device=self.device)
+        self.grf_substep = torch.zeros(self.num_envs, self.env.decimation, device=self.device)
     
     def post_step(self, substep):
         contact_forces = self.contact_sensor.data.net_forces_w[:, self.feet_id]

@@ -9,7 +9,7 @@ from collections import defaultdict
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation
-    from active_adaptation.envs.base import Env
+    from active_adaptation.envs.base import _Env
 
 
 def sample_quat_yaw(size, yaw_range=(0, torch.pi * 2), device: torch.device = "cpu"):
@@ -28,7 +28,7 @@ def sample_quat_yaw(size, yaw_range=(0, torch.pi * 2), device: torch.device = "c
 
 class Command:
     def __init__(self, env, teleop: bool=False) -> None:
-        self.env: Env = env
+        self.env: _Env = env
         self.asset: Articulation = env.scene["robot"]
         self.init_root_state = self.asset.data.default_root_state.clone()
         self.init_root_state[:, 3:7] = self.asset.data.root_state_w[:, 3:7]

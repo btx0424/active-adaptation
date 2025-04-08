@@ -28,6 +28,7 @@ ROBOTS = {
     "a1-arm": A1_CFG,
     "sirius_wheel": SIRIUS_WHEEL_CFG,
     "g1_23dof": G1_CFG,
+    "h2": H2_CFG,
 }
 
 

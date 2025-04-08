@@ -1513,7 +1513,7 @@ class oscillator(Reward):
         self.asset.phi[:, 3] = torch.pi
         self.grf_substep = torch.zeros(
             self.num_envs,
-            self.env.cfg.decimation,
+            self.env.decimation,
             len(self.feet_ids),
             device=self.device,
         )
@@ -1607,7 +1607,7 @@ class quad_leg_swing(Reward):
         self.feet_ids = self.asset.find_bodies(feet_names)[0]
         self.feet_ids_ = self.contact_sensor.find_bodies(feet_names)[0]
         self.grf_substep = torch.zeros(
-            self.num_envs, self.env.cfg.decimation, 4, device=self.device
+            self.num_envs, self.env.decimation, 4, device=self.device
         )
         self.command_manager: Command2 = self.env.command_manager
 

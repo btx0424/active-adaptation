@@ -548,7 +548,7 @@ class JointPosition(ActionManager):
         alpha: Union[
             float, Tuple[float, float], Dict[str, float], Dict[str, Tuple[float, float]]
         ] = (0.5, 1.0),
-        cumstom_command: Dict[str, float] = None,
+        custom_command: Dict[str, float] = None,
         clip_joint_targets: float = None,
     ):
         super().__init__(env)
@@ -579,7 +579,7 @@ class JointPosition(ActionManager):
             self.signs[self.asym_joint_ids] = -1
 
         self.action_scaling = torch.tensor(self.action_scaling, device=self.device)
-        self.max_delay = max_delay if max_delay is not None else self.env.cfg.decimation
+        self.max_delay = max_delay if max_delay is not None else self.env.decimation
         self.max_delay = min(self.max_delay, self.env.decimation)
         self.fixed_delay = fixed_delay
 
@@ -594,16 +594,18 @@ class JointPosition(ActionManager):
         else:
             raise ValueError(f"Invalid alpha type: {type(alpha)}")
 
-        if cumstom_command is not None:
-            cumstom_command = dict(cumstom_command)
-            self.cumstom_command_joint_ids, _, self.cumstom_command = (
+        if custom_command is not None:
+            custom_command = dict(custom_command)
+            self.custom_command_joint_ids, self.custom_command_joint_names, self.custom_command = (
                 string_utils.resolve_matching_names_values(
-                    cumstom_command, self.asset.joint_names
+                    custom_command, self.asset.joint_names
                 )
             )
-            self.cumstom_command = torch.tensor(
-                self.cumstom_command, device=self.device
+            self.custom_command = torch.tensor(
+                self.custom_command, device=self.device
             )
+            if len(self.joint_ids) + len(self.custom_command_joint_ids) != self.asset.num_joints:
+                raise ValueError(f"{set(self.asset.joint_names) - set(self.joint_names) - set(self.custom_command_joint_names)}")
         if clip_joint_targets is not None:
             self.clip_joint_targets = clip_joint_targets
 
@@ -676,8 +678,8 @@ class JointPosition(ActionManager):
 
             pos_target = self.default_joint_pos.clone()
             pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
-            if hasattr(self, "cumstom_command"):
-                pos_target[:, self.cumstom_command_joint_ids] = self.cumstom_command
+            if hasattr(self, "custom_command"):
+                pos_target[:, self.custom_command_joint_ids] = self.custom_command
             if hasattr(self, "clip_joint_targets"):
                 pos_target = self.asset.data.joint_pos + (
                     pos_target - self.asset.data.joint_pos

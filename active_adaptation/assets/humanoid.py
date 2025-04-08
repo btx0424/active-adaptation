@@ -2,7 +2,7 @@ import os
 import copy
 import isaaclab.sim as sim_utils
 import torch
-from isaaclab_assets import ArticulationCfg, H1_CFG, G1_CFG
+from isaaclab_assets import ArticulationCfg, H1_CFG
 from isaaclab.actuators import DCMotorCfg, ImplicitActuatorCfg, IdealPDActuatorCfg
 from isaaclab.assets import Articulation
 from active_adaptation.envs.actuator import HybridActuatorCfg
@@ -152,3 +152,161 @@ CY1_CFG = ArticulationCfg(
     },
 )
 
+
+G1_CFG = ArticulationCfg(
+    spawn=sim_utils.UsdFileCfg(
+        # usd_path="/home/btx0424/lab45/g1_no_hand.usd",
+        usd_path="/home/btx0424/lab45/unitree_ros/robots/g1_description/g1_23dof/g1_23dof.usd",
+        activate_contact_sensors=True,
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            disable_gravity=False,
+            retain_accelerations=False,
+            linear_damping=0.0,
+            angular_damping=0.0,
+            max_linear_velocity=1000.0,
+            max_angular_velocity=1000.0,
+            max_depenetration_velocity=1.0,
+        ),
+        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+            enabled_self_collisions=False, 
+            solver_position_iteration_count=4,
+            solver_velocity_iteration_count=1
+        ),
+    ),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, 0.74),
+        joint_pos={
+            ".*_hip_pitch_joint": -0.20,
+            ".*_knee_joint": 0.42,
+            ".*_ankle_pitch_joint": -0.23,
+            # ".*_elbow_pitch_joint": 0.87,
+            ".*_elbow_joint": 0.87,
+            "left_shoulder_roll_joint": 0.16,
+            "left_shoulder_pitch_joint": 0.35,
+            "right_shoulder_roll_joint": -0.16,
+            "right_shoulder_pitch_joint": 0.35,
+        },
+        joint_vel={".*": 0.0},
+    ),
+    soft_joint_pos_limit_factor=0.9,
+    actuators={
+        "base_legs": ImplicitActuatorCfg(
+            joint_names_expr=".*",
+            effort_limit=300,
+            velocity_limit=100.0,
+            stiffness={
+                ".*_hip_yaw_joint": 150.0,
+                ".*_hip_roll_joint": 150.0,
+                ".*_hip_pitch_joint": 200.0,
+                ".*_knee_joint": 200.0,
+                # "torso_joint": 200.0,
+                "waist_yaw_joint": 200.0, # unitree_ros
+                ".*ankle_pitch_joint": 20.0,
+                ".*ankle_roll_joint": 20.0,
+                ".*_shoulder_.*": 40.0,
+                ".*_elbow_joint": 40.0,
+            },
+            damping={
+                # "torso_joint": 5.0,
+                "waist_yaw_joint": 5.0, # unitree_ros
+                ".*_shoulder_.*": 10.0,
+                ".*_elbow_joint": 10.0,
+                ".*_hip_yaw_joint": 5.0,
+                ".*_hip_roll_joint": 5.0,
+                ".*_hip_pitch_joint": 5.0,
+                ".*_knee_joint": 5.0,
+                ".*ankle_pitch_joint": 2.0,
+                ".*ankle_roll_joint": 2.0,
+            },
+            armature={
+                # "torso_joint": 0.01,
+                "waist_yaw_joint": 0.01, # unitree_ros
+                ".*_shoulder_.*": 0.01,
+                ".*_elbow_joint": 0.01,
+                ".*_hip_.*": 0.01,
+                ".*_knee_joint": 0.01,
+                ".*_ankle_pitch_joint": 0.01,
+                ".*_ankle_roll_joint": 0.01,
+            },
+        ),
+    },
+)
+
+
+H2_CFG = ArticulationCfg(
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_PATH}/h1_2_handless/h2_handless.usd",
+        activate_contact_sensors=True,
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            disable_gravity=False,
+            retain_accelerations=False,
+            linear_damping=0.01,
+            angular_damping=0.01,
+            max_linear_velocity=1000.0,
+            max_angular_velocity=1000.0,
+            max_depenetration_velocity=0.5,
+        ),
+        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+            enabled_self_collisions=False,
+            solver_position_iteration_count=8,
+            solver_velocity_iteration_count=2
+        ),
+    ),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, 1.05),
+        joint_pos={
+            ".*_hip_yaw_joint": 0.0,
+            ".*_hip_roll_joint": 0.0,
+            ".*_hip_pitch_joint": -0.15,  # -16 degrees
+            ".*_knee_joint": 0.5,  # 45 degrees
+            ".*_ankle_pitch_joint": -0.35,  # -30 degrees
+            ".*_ankle_roll_joint": 0.0,
+            "torso_joint": 0.0,
+            ".*_shoulder_pitch_joint": 0.28,
+            ".*_shoulder_roll_joint": 0.0,
+            ".*_shoulder_yaw_joint": 0.0,
+            ".*_elbow_joint": 0.52,
+            ".*_wrist_.*_joint": 0.0
+        },
+        joint_vel={".*": 0.0},
+    ),
+    soft_joint_pos_limit_factor=0.9,
+    actuators={
+        "base_legs": ImplicitActuatorCfg(
+            joint_names_expr=".*",
+            effort_limit_sim={
+                ".*_hip_.*": 300.0,
+                ".*_knee_joint": 200.0,
+                "torso_joint": 200.,
+                ".*_ankle_.*": 100.0,
+                ".*_shoulder_.*": 300.,
+                ".*_elbow_joint": 300.0,
+            },
+            velocity_limit_sim=100.0,
+            stiffness={
+                ".*_hip_yaw_joint": 200.0,
+                ".*_hip_roll_joint": 200.0,
+                ".*_hip_pitch_joint": 200.0,
+                ".*_knee_joint": 300.0,
+                "torso_joint": 150.0,
+                ".*_shoulder_.*": 40.,
+                ".*_elbow_joint": 40.0,
+                ".*_ankle_.*": 20.0,
+                ".*_wrist_.*_joint": 20.,
+            },
+            damping={
+                ".*_hip_yaw_joint": 5.0,
+                ".*_hip_roll_joint": 5.0,
+                ".*_hip_pitch_joint": 5.0,
+                ".*_knee_joint": 5.0,
+                "torso_joint": 5.0,
+                ".*_ankle_.*": 2.0,
+                ".*_shoulder_.*": 2.0,
+                ".*_elbow_joint": 2.0,
+                ".*_wrist_.*_joint": 2.0,
+            },
+            armature=0.01,
+            friction=0.01,
+        ),
+    },
+)

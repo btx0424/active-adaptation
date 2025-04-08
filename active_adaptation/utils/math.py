@@ -3,7 +3,15 @@
 
 import torch
 import torch.distributions as D
-from isaaclab.utils.math import yaw_quat, wrap_to_pi, euler_xyz_from_quat, quat_from_euler_xyz
+from isaaclab.utils.math import (
+    yaw_quat,
+    wrap_to_pi,
+    euler_xyz_from_quat,
+    quat_from_euler_xyz,
+    quat_mul,
+    quat_conjugate,
+    axis_angle_from_quat
+)
 
 from .helpers import batchify
 
