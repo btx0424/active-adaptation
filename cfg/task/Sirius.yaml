@@ -79,6 +79,7 @@ reward:
     action_rate2_l2:    {weight: 0.002, enabled: true}
     # feet_air_time:      {weight: 0.2, enabled: true, body_names: .*_WHEEL, thres: 0.4}
     undesired_contact:  {body_names: ["base", "thigh_.*", "shank_.*"], weight: 0.25, enabled: true}
+    joint_deviation_l2: {weight: 0.1, enabled: true, joint_names: .*_(HAA|HFE)}
   debug:
     feet_slip:          {weight: 1.0, enabled: false, body_names: .*_WHEEL}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_WHEEL}

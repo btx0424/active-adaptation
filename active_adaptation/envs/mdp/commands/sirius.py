@@ -9,20 +9,8 @@ from active_adaptation.utils.math import (
     quat_rotate_inverse,
     yaw_quat
 )
+from active_adaptation.envs.mdp import reward, termination, observation
 from .base import Command
-
-
-def reward(func):
-    func.is_reward = True
-    return func
-
-def observation(func):
-    func.is_observation = True
-    return func
-
-def termination(func):
-    func.is_termination = True
-    return func
 
 
 class SiriusCommand(TensorClass):
