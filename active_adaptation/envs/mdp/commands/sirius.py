@@ -65,8 +65,18 @@ class SiriusCommandManager(Command):
     CMD_JUMP = 2
     CMD_FLIP = 3
 
-    def __init__(self, env):
+    def __init__(
+        self,
+        env,
+        lin_vel_x_range,
+        lin_vel_y_range,
+    ):
         super().__init__(env)
+        self.lin_vel_x_range = lin_vel_x_range
+        self.lin_vel_y_range = lin_vel_y_range
+        self.wheel_joint_ids = self.asset.find_joints("wheel.*")[0]
+        self.WHEEL_RADIUS = 0.0825
+
         self.front_body_id = self.asset.find_bodies("front")[0][0]
         self.back_body_id = self.asset.find_bodies("back")[0][0]
         
@@ -171,6 +181,13 @@ class SiriusCommandManager(Command):
     @observation
     def command_end(self):
         return self._command.time == 0.
+    
+    @observation
+    def wheel_trans_vel(self):
+        """
+        Computes the translational velocity of the wheels.
+        """
+        return self.asset.data.joint_vel[:, self.wheel_joint_ids] * self.WHEEL_RADIUS
     
     @termination
     def stand_error_exceeds(self):
@@ -281,8 +298,8 @@ class SiriusCommandManager(Command):
 
     def sample_command_normal(self, size):
         command = SiriusCommand.zero(size, self.device)
-        command.cmd_lin_vel_xy[:, 0].uniform_(-1.0, 1.2)
-        command.cmd_lin_vel_xy[:, 1].uniform_(-0.8, 0.8)
+        command.cmd_lin_vel_xy[:, 0].uniform_(*self.lin_vel_x_range).mul_(torch.randn(size, device=self.device).sign())
+        command.cmd_lin_vel_xy[:, 1].uniform_(*self.lin_vel_y_range).mul_(torch.randn(size, device=self.device).sign())
         command.yaw_stiffness.uniform_(0.8, 1.2)
         command.des_rpy[:, 2].uniform_(-torch.pi, torch.pi)
         command.des_rpy[:, 1].uniform_(-0.2 * torch.pi, 0.2 * torch.pi)

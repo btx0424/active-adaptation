@@ -26,6 +26,8 @@ action:
 
 command:
   _target_: active_adaptation.envs.mdp.commands.sirius.SiriusCommandManager
+  lin_vel_x_range: [0.1, 2.0]
+  lin_vel_y_range: [0.1, 0.8]
 
 observation:
   command_mode_: # won't be normalized
@@ -41,6 +43,7 @@ observation:
     joint_pos_multistep: {steps: 4, noise_std: 0.05, joint_names: .*_(HAA|HFE|KFE)}
     joint_vel_multistep: {steps: 4, noise_std: 0.2, joint_names: .*}
     prev_actions: {steps: 3}
+    wheel_trans_vel:    {}
   priv:
     applied_action:
     root_linvel_b:    {yaw_only: true}
@@ -79,7 +82,7 @@ reward:
     action_rate2_l2:    {weight: 0.002, enabled: true}
     # feet_air_time:      {weight: 0.2, enabled: true, body_names: .*_WHEEL, thres: 0.4}
     undesired_contact:  {body_names: ["base", "thigh_.*", "shank_.*"], weight: 0.25, enabled: true}
-    joint_deviation_l2: {weight: 0.1, enabled: true, joint_names: .*_(HAA|HFE)}
+    joint_deviation_l2: {weight: 0.2, enabled: true, joint_names: .*_(HAA|HFE)}
   debug:
     feet_slip:          {weight: 1.0, enabled: false, body_names: .*_WHEEL}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_WHEEL}
