@@ -136,12 +136,13 @@ class PPOPolicy(ModBase):
             actor_in_keys = ["command_", OBS_KEY, "priv_estimate"]
         
         actor_mlp = make_mlp([512, 256])
+        self._actor = Actor(self.action_dim)
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=TensorDictSequential(
                 CatTensors(actor_in_keys, "policy_estimate", del_keys=False),
                 Mod(actor_mlp, ["policy_estimate"], ["actor_input"]),
                 # Mod(nn.Sequential(make_mlp([256]), nn.LazyLinear(1)), ["actor_input"], ["actor_value"]),
-                Mod(nn.Sequential(make_mlp([256]), Actor(self.action_dim)), ["actor_input"], ["loc", "scale"]),
+                Mod(nn.Sequential(make_mlp([256]), self._actor), ["actor_input"], ["loc", "scale"]),
             ),
             in_keys=["loc", "scale"],
             out_keys=[ACTION_KEY],
@@ -338,7 +339,9 @@ class PPOPolicy(ModBase):
     
     def load_state_dict(self, state_dict, strict=False):
         self.num_frames = state_dict.pop("num_frames", 0)
-        return super().load_state_dict(state_dict, strict=strict)
+        _ = super().load_state_dict(state_dict, strict=strict)
+        print(self._actor.actor_std.data)
+        return _
 
 def normalize(x: torch.Tensor, subtract_mean: bool=False):
     if subtract_mean:

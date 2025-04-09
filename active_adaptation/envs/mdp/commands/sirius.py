@@ -225,10 +225,9 @@ class SiriusCommandManager(Command):
         self._cmd_lin_vel_w = quat_rotate(quat_yaw, self._command.cmd_lin_vel)
         self.lin_vel_error_l2 = torch.square(
             self._cmd_lin_vel_w[:, :2] - self.asset.data.root_lin_vel_w[:, :2] ).sum(1, keepdim=True)
-        self.lin_vel_error_l2 *= (self._command.mode == self.CMD_WALK).unsqueeze(1)
         
-        self.ang_vel_z_error_l2 = torch.square(self._command.cmd_ang_vel[:, 2:3] - self.asset.data.root_ang_vel_w[:, 2:3])
-        self.ang_vel_z_error_l2 *= (self._command.mode == self.CMD_WALK).unsqueeze(1) # only apply to normal mode
+        self.ang_vel_z_error_l2 = torch.square(
+            self._command.cmd_ang_vel[:, 2:3] - self.asset.data.root_ang_vel_w[:, 2:3])
 
         self.roll_error_l2 = (
             self.asset.data.projected_gravity_b[:, 0:1].square()
