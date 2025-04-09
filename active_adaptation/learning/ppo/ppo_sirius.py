@@ -291,7 +291,7 @@ class PPOPolicy(ModBase):
 
         # with torch.no_grad():
         grad = torch.autograd.grad(
-            outputs=log_probs,
+            outputs=dist.__class__(dist.mean, dist.scale.detach()).log_prob(tensordict[ACTION_KEY]),
             inputs=[tensordict[k] for k in self.actor.in_keys],
             grad_outputs=torch.ones_like(log_probs),
             retain_graph=True,

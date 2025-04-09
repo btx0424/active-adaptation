@@ -1,4 +1,5 @@
 import torch
+import math
 
 from tensordict import TensorClass
 from active_adaptation.utils.math import (
@@ -79,6 +80,11 @@ class SiriusCommandManager(Command):
         super().__init__(env)
         self.lin_vel_x_range = lin_vel_x_range
         self.lin_vel_y_range = lin_vel_y_range
+        
+        # virtual spring model for standing
+        self.stand_kp = 12.
+        self.stand_kd = 2.0 * math.sqrt(self.stand_kp) * 0.8
+
         self.wheel_joint_ids = self.asset.find_joints("wheel.*")[0]
         self.leg_joint_ids = self.asset.find_joints(".*(HAA|HFE)")[0]
 
@@ -288,8 +294,9 @@ class SiriusCommandManager(Command):
         self._command.cmd_roll = self._command.cmd_ang_vel[:, 0:1] * (self._command.time-self.jump_prep).clamp_min(0.)
         self._command.cmd_ang_vel[:, 2:3] = (self._command.yaw_stiffness * cmd_yaw_diff).clamp(-2., 2.)
         self._command.cmd_pitch.lerp_(self._command.des_rpy[:, 1:2], 0.4)
-        # self._command.des_stand_vel.add_(self.env.step_dt * 6 * (1.3 - self._command.des_stand_hei))
-        self._command.des_stand_vel = 4. * (1.3 - self._command.des_stand_hei)
+        # self._command.des_stand_vel = 4. * (1.3 - self._command.des_stand_hei)
+        des_stand_acc = self.stand_kp * (1.3 - self._command.des_stand_hei) - self.stand_kd * self._command.des_stand_vel
+        self._command.des_stand_vel.add_(self.env.step_dt * des_stand_acc)
         self._command.des_stand_hei.add_(self.env.step_dt * self._command.des_stand_vel)
 
         sample = (self.env.episode_length_buf-20) % 175 == 0
