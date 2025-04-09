@@ -64,7 +64,7 @@ class PPOConfig:
     se_arch: str = "rnn"
     hack: bool = False # debug option, which gives actor access to the privileged information
     checkpoint_path: Union[str, None] = None
-    in_keys: List[str] = field(default_factory=lambda: ["command_mode_", "command_end_", "command_", OBS_KEY, OBS_PRIV_KEY, "ext"])
+    in_keys: List[str] = field(default_factory=lambda: ["command_mode_", "command_end_", CMD_KEY, OBS_KEY, OBS_PRIV_KEY, "ext"])
 
 cs = ConfigStore.instance()
 cs.store("ppo_sirius", node=PPOConfig, group="algo")
@@ -131,9 +131,9 @@ class PPOPolicy(ModBase):
         ).to(self.device)
 
         if self.cfg.hack:
-            actor_in_keys = ["command_", OBS_KEY, OBS_PRIV_KEY]
+            actor_in_keys = [CMD_KEY, OBS_KEY, OBS_PRIV_KEY]
         else:
-            actor_in_keys = ["command_", OBS_KEY, "priv_estimate"]
+            actor_in_keys = [CMD_KEY, OBS_KEY, "priv_estimate"]
         
         actor_mlp = make_mlp([512, 256])
         self._actor = Actor(self.action_dim)
@@ -152,7 +152,7 @@ class PPOPolicy(ModBase):
         
         critic_module = nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1))
         self.critic = TensorDictSequential(
-            CatTensors(["command_", OBS_KEY, OBS_PRIV_KEY], "policy_priv", del_keys=False),
+            CatTensors([CMD_KEY, OBS_KEY, OBS_PRIV_KEY], "policy_priv", del_keys=False),
             Mod(critic_module, ["policy_priv"], ["state_value"])
         ).to(self.device)
 

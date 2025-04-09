@@ -54,7 +54,8 @@ class SiriusCommand(TensorClass):
             self.cmd_ang_vel,
             self.cmd_roll,
             self.cmd_pitch,
-            self.phase
+            self.phase,
+            torch.nn.functional.one_hot(self.mode, num_classes=4)
         ], dim=-1)
 
 
@@ -66,6 +67,8 @@ class SiriusCommandManager(Command):
     CMD_STAND = 1
     CMD_JUMP = 2
     CMD_FLIP = 3
+    
+    WHEEL_RADIUS = 0.0825
 
     def __init__(
         self,
@@ -77,7 +80,7 @@ class SiriusCommandManager(Command):
         self.lin_vel_x_range = lin_vel_x_range
         self.lin_vel_y_range = lin_vel_y_range
         self.wheel_joint_ids = self.asset.find_joints("wheel.*")[0]
-        self.WHEEL_RADIUS = 0.0825
+        self.leg_joint_ids = self.asset.find_joints(".*(HAA|HFE)")[0]
 
         self.front_body_id = self.asset.find_bodies("front")[0][0]
         self.back_body_id = self.asset.find_bodies("back")[0][0]
@@ -120,7 +123,8 @@ class SiriusCommandManager(Command):
             )
             self.frame_marker.set_visibility(True)
         elif self.env.sim.has_gui() and self.env.backend == "mujoco":
-            self.arrow_marker = self.env.scene.create_arrow_marker(radius=0.05, rgba=[1, 0, 0, 1])
+            self.arrow_marker_0 = self.env.scene.create_arrow_marker(radius=0.02, rgba=[1, 0, 0, 0.8])
+            self.arrow_marker_1 = self.env.scene.create_arrow_marker(radius=0.02, rgba=[0, 0, 1, 0.8])
     @reward
     def jump_lin_vel(self):
         is_active = (self._command.mode==self.CMD_JUMP).unsqueeze(1)
@@ -161,6 +165,13 @@ class SiriusCommandManager(Command):
     @reward
     def walk_linvel_z_l2(self):
         rew = -self.asset.data.root_lin_vel_b[:, 2:3].square()
+        is_active = (self._command.mode==self.CMD_WALK).unsqueeze(1)
+        return rew, is_active
+    
+    @reward
+    def walk_joint_devi_l2(self):
+        diff = self.asset.data.joint_pos - self.asset.data.default_joint_pos
+        rew = - (diff[:, self.leg_joint_ids]).square().sum(1, True)
         is_active = (self._command.mode==self.CMD_WALK).unsqueeze(1)
         return rew, is_active
 
@@ -312,7 +323,8 @@ class SiriusCommandManager(Command):
 
     def sample_command_stand(self, size):
         command = SiriusCommand.zero(size, self.device)
-        command.cmd_lin_vel[:, 0].uniform_(-0.4, 0.4)
+        # command.cmd_lin_vel[:, 0].uniform_(-0.4, 0.4)
+        command.cmd_lin_vel[:, 0] = torch.randint(-2, 4, (size,), device=self.device) * 0.5
         command.des_rpy[:, 1].uniform_(0.4 * torch.pi, 0.45 * torch.pi)
         command.des_rpy[:, 1].mul_(torch.randn(size, device=self.device).sign())
         command.des_rpy[:, 2] = self.asset.data.heading_w
@@ -380,6 +392,6 @@ class SiriusCommandManager(Command):
 
         elif self.env.sim.has_gui() and self.env.backend == "mujoco":
             from_ = self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2])
-            to = from_ + self._cmd_lin_vel_w
-            self.arrow_marker.from_to(from_, to)
+            self.arrow_marker_0.from_to(from_, from_ + self._cmd_lin_vel_w)
+            self.arrow_marker_1.from_to(from_, from_ + self.asset.data.root_lin_vel_w)
 
