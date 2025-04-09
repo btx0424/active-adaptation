@@ -73,16 +73,19 @@ def main(cfg):
     
     with torch.inference_mode(), set_exploration_type(ExplorationType.MODE):
         for i in itertools.count():
-            td_ = policy(td_)
-            td, td_ = env.step_and_maybe_reset(td_)
-            # td_.update(td["next"])
-            episode_stats.add(td)
+            try:
+                td_ = policy(td_)
+                td, td_ = env.step_and_maybe_reset(td_)
+                episode_stats.add(td)
 
-            if len(episode_stats) >= env.num_envs:
-                print("Step", i)
-                for k, v in sorted(episode_stats.pop().items(True, True)):
-                    print(k, torch.mean(v).item())
+                if len(episode_stats) >= env.num_envs:
+                    print("Step", i)
+                    for k, v in sorted(episode_stats.pop().items(True, True)):
+                        print(k, torch.mean(v).item())
+            except KeyboardInterrupt:
+                break
     
+    env.dump()    
     env.close()
 
 

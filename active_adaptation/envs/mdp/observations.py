@@ -538,15 +538,16 @@ class root_linvel_b(Observation):
         return obs * torch.tensor([1., -1., 1.], device=self.device)
 
     def debug_draw(self):
-        if self.body_ids is None:
-            linvel = self.asset.data.root_lin_vel_w
-        else:
-            linvel = (self.asset.data.body_lin_vel_w[:, self.body_ids] * self.body_masses).mean(1)
-        self.env.debug_draw.vector(
-            self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
-            linvel,
-            color=(0.8, 0.1, 0.1, 1.)
-        )
+        if self.env.sim.has_gui() and self.env.backend == "isaac":
+            if self.body_ids is None:
+                linvel = self.asset.data.root_lin_vel_w
+            else:
+                linvel = (self.asset.data.body_lin_vel_w[:, self.body_ids] * self.body_masses).mean(1)
+            self.env.debug_draw.vector(
+                self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
+                linvel,
+                color=(0.8, 0.1, 0.1, 1.)
+            )
     
 class JointObs(Observation):
     def __init__(
@@ -883,11 +884,12 @@ class contact_indicator(Observation):
         return obs.reshape(self.num_envs, -1)
 
     def debug_draw(self):
-        self.env.debug_draw.vector(
-            self.asset.data.body_pos_w[:, self.artc_ids],
-            self.force_substep.mean(1) / self.giravity,
-            color=(1., 1., 1., 1.)
-        )
+        if self.env.sim.has_gui() and self.env.backend == "isaac":
+            self.env.debug_draw.vector(
+                self.asset.data.body_pos_w[:, self.artc_ids],
+                self.force_substep.mean(1) / self.giravity,
+                color=(1., 1., 1., 1.)
+            )
 
 
 class motor_params(Observation):
@@ -1148,10 +1150,11 @@ class feet_height_map(Observation):
         return obs.reshape(self.num_envs, -1)
     
     def debug_draw(self):
-        x = self.ray_hits_w.clone()
-        x[..., 2] = self.feet_pos_w.unsqueeze(-2)[..., 2]
-        d = self.ray_hits_w - x
-        self.env.debug_draw.vector(x, d)
+        if self.env.sim.has_gui() and self.env.backend == "isaac":
+            x = self.ray_hits_w.clone()
+            x[..., 2] = self.feet_pos_w.unsqueeze(-2)[..., 2]
+            d = self.ray_hits_w - x
+            self.env.debug_draw.vector(x, d)
 
 
 class head_height(Observation):
@@ -1247,18 +1250,19 @@ class path_integrator(Observation):
         return torch.zeros(self.num_envs, 1, device=self.device)
     
     def debug_draw(self):
-        mix = self.pos_w_hist.lerp(self.target_pos_w_hist, 0.5)
-        for x in self.target_pos_w_hist.unbind(0):
-            self.env.debug_draw.plot(
-                x.T,
-                color=(0., 1., 1., 1.)
-            )
-        for x in mix.unbind(0):
-            # use purple
-            self.env.debug_draw.plot(
-                x.T,
-                color=(1., 0., 1., 1.)
-            )
+        if self.env.sim.has_gui() and self.env.backend == "isaac":
+            mix = self.pos_w_hist.lerp(self.target_pos_w_hist, 0.5)
+            for x in self.target_pos_w_hist.unbind(0):
+                self.env.debug_draw.plot(
+                    x.T,
+                    color=(0., 1., 1., 1.)
+                )
+            for x in mix.unbind(0):
+                # use purple
+                self.env.debug_draw.plot(
+                    x.T,
+                    color=(1., 0., 1., 1.)
+                )
 
 
 class height_scan(Observation):
@@ -1350,10 +1354,11 @@ class last_contact(Observation):
         return (distance * self.has_contact).reshape(self.num_envs, -1)
 
     def debug_draw(self):
-        self.env.debug_draw.vector(
-            self.body_pos_w,
-            torch.where(self.has_contact, self.last_contact_pos_w, self.body_pos_w) - self.body_pos_w
-        )
+        if self.env.sim.has_gui() and self.env.backend == "isaac":
+            self.env.debug_draw.vector(
+                self.body_pos_w,
+                torch.where(self.has_contact, self.last_contact_pos_w, self.body_pos_w) - self.body_pos_w
+            )
 
 
 class body_scale(Observation):
@@ -1401,13 +1406,14 @@ class incoming_wrench(Observation):
         return (self.forces / self.default_mass_total).reshape(self.num_envs, -1)
 
     def debug_draw(self):
-        self.env.debug_draw.vector(
-            # self.asset.data.body_pos_w[:, self.child_ids],
-            self.asset.data.root_pos_w,
-            self.child_forces.sum(1),
-            color=(0., 0., 1., 1.),
-            size=10.
-        )
+        if self.env.sim.has_gui() and self.env.backend == "isaac":
+            self.env.debug_draw.vector(
+                # self.asset.data.body_pos_w[:, self.child_ids],
+                self.asset.data.root_pos_w,
+                self.child_forces.sum(1),
+                color=(0., 0., 1., 1.),
+                size=10.
+            )
 
 class applied_action(JointObs):
 

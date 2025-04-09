@@ -14,14 +14,15 @@ from .base import Command
 
 
 class SiriusCommand(TensorClass):
-    cmd_lin_vel_xy: torch.Tensor
+    cmd_lin_vel: torch.Tensor # body frame
     cmd_ang_vel: torch.Tensor
     cmd_roll: torch.Tensor
     cmd_pitch: torch.Tensor
     yaw_stiffness: torch.Tensor
 
     des_rpy: torch.Tensor
-    des_height: torch.Tensor
+    des_stand_vel: torch.Tensor
+    des_stand_hei: torch.Tensor
     
     time: torch.Tensor
     duration: torch.Tensor
@@ -34,11 +35,12 @@ class SiriusCommand(TensorClass):
     @classmethod
     def zero(cls, size: int, device: str):
         return cls(
-            cmd_lin_vel_xy=torch.zeros(size, 2, device=device),
+            cmd_lin_vel=torch.zeros(size, 3, device=device),
             cmd_ang_vel=torch.zeros(size, 3, device=device),
             cmd_roll=torch.zeros(size, 1, device=device),
             des_rpy=torch.zeros(size, 3, device=device),
-            des_height=torch.zeros(size, 1, device=device),
+            des_stand_vel=torch.zeros(size, 1, device=device),
+            des_stand_hei=torch.zeros(size, 1, device=device),
             yaw_stiffness=torch.zeros(size, 1, device=device),
             cmd_pitch=torch.zeros(size, 1, device=device),
             time=torch.zeros(size, 1, device=device),
@@ -48,7 +50,7 @@ class SiriusCommand(TensorClass):
     
     def get_command(self):
         return torch.cat([
-            self.cmd_lin_vel_xy,
+            self.cmd_lin_vel[:, :2],
             self.cmd_ang_vel,
             self.cmd_roll,
             self.cmd_pitch,
@@ -103,11 +105,12 @@ class SiriusCommandManager(Command):
         self._command = SiriusCommand.zero(self.num_envs, self.device)
         with torch.device(self.device):
             self.transition = torch.eye(4) 
-            self.transition[self.CMD_WALK]  = torch.tensor([1., 0., 0., 0.]) # normal to others
+            self.transition[self.CMD_WALK]  = torch.tensor([.2, .8, 0., 0.]) # normal to others
             self.transition[self.CMD_STAND] = torch.tensor([1., 0., 0., 0.]) # stand to others
             self.transition[self.CMD_JUMP]  = torch.tensor([1., 0., 0., 0.]) # jump to others
             self.transition[self.CMD_FLIP]  = torch.tensor([1., 0., 0., 0.]) # flip to others
-
+            self.transition /= self.transition.sum(1, keepdim=True)
+            
         if self.env.sim.has_gui() and self.env.backend == "isaac":
             from isaaclab.markers import RED_ARROW_X_MARKER_CFG, VisualizationMarkers
             self.frame_marker = VisualizationMarkers(
@@ -116,7 +119,8 @@ class SiriusCommandManager(Command):
                 )
             )
             self.frame_marker.set_visibility(True)
-    
+        elif self.env.sim.has_gui() and self.env.backend == "mujoco":
+            self.arrow_marker = self.env.scene.create_arrow_marker(radius=0.05, rgba=[1, 0, 0, 1])
     @reward
     def jump_lin_vel(self):
         is_active = (self._command.mode==self.CMD_JUMP).unsqueeze(1)
@@ -217,10 +221,10 @@ class SiriusCommandManager(Command):
         self.pitch_error_l2 = torch.square( wrap_to_pi(self._command.cmd_pitch - p.unsqueeze(1)) )
 
         quat_yaw = yaw_quat(self.asset.data.root_quat_w)
-        root_lin_vel_b = quat_rotate_inverse(quat_yaw, self.asset.data.root_lin_vel_w)
         
+        self._cmd_lin_vel_w = quat_rotate(quat_yaw, self._command.cmd_lin_vel)
         self.lin_vel_error_l2 = torch.square(
-            self._command.cmd_lin_vel_xy - root_lin_vel_b[:, :2] ).sum(1, keepdim=True)
+            self._cmd_lin_vel_w[:, :2] - self.asset.data.root_lin_vel_w[:, :2] ).sum(1, keepdim=True)
         self.lin_vel_error_l2 *= (self._command.mode == self.CMD_WALK).unsqueeze(1)
         
         self.ang_vel_z_error_l2 = torch.square(self._command.cmd_ang_vel[:, 2:3] - self.asset.data.root_ang_vel_w[:, 2:3])
@@ -257,14 +261,13 @@ class SiriusCommandManager(Command):
         stand_lin_vel_back = self.asset.data.body_lin_vel_w[:, self.back_body_id, 2:3]
         stand_lin_vel = torch.where(self.stand_fore_legs, stand_lin_vel_back, stand_lin_vel)
         stand_lin_vel = torch.where(self.stand_hind_legs, stand_lin_vel_front, stand_lin_vel)
-
-        target_stand_lin_vel = 4. * (1.3 - self._stand_height)
         
         self.stand_height_error_l2 = (self._command.mode == self.CMD_STAND).unsqueeze(1) \
-            * (self._command.des_height - self._stand_height).square()
-        stand_lin_vel_error_l2 = (target_stand_lin_vel - stand_lin_vel).square()
+            * (self._command.des_stand_hei - self._stand_height).square()
+        self.stand_linvel_error_l2 = (self._command.mode == self.CMD_STAND).unsqueeze(1) \
+            * (self._command.des_stand_vel - stand_lin_vel).square()
 
-        self.rew_stand_lin_vel = torch.exp(- stand_lin_vel_error_l2 )
+        self.rew_stand_lin_vel = torch.exp(- self.stand_linvel_error_l2 )
         self.rew_stand_height = torch.exp(- self.stand_height_error_l2 / 0.25)
         
         cmd_yaw_diff = (self._command.mode == self.CMD_WALK) \
@@ -275,7 +278,9 @@ class SiriusCommandManager(Command):
         self._command.cmd_roll = self._command.cmd_ang_vel[:, 0:1] * (self._command.time-self.jump_prep).clamp_min(0.)
         self._command.cmd_ang_vel[:, 2:3] = (self._command.yaw_stiffness * cmd_yaw_diff).clamp(-2., 2.)
         self._command.cmd_pitch.lerp_(self._command.des_rpy[:, 1:2], 0.4)
-        self._command.des_height.add_(self.env.step_dt * 4. * (1.3 - self._command.des_height))
+        # self._command.des_stand_vel.add_(self.env.step_dt * 6 * (1.3 - self._command.des_stand_hei))
+        self._command.des_stand_vel = 4. * (1.3 - self._command.des_stand_hei)
+        self._command.des_stand_hei.add_(self.env.step_dt * self._command.des_stand_vel)
 
         sample = (self.env.episode_length_buf-20) % 175 == 0
         sample |= self._command.phase.squeeze(1) > 1.0
@@ -298,8 +303,8 @@ class SiriusCommandManager(Command):
 
     def sample_command_normal(self, size):
         command = SiriusCommand.zero(size, self.device)
-        command.cmd_lin_vel_xy[:, 0].uniform_(*self.lin_vel_x_range).mul_(torch.randn(size, device=self.device).sign())
-        command.cmd_lin_vel_xy[:, 1].uniform_(*self.lin_vel_y_range).mul_(torch.randn(size, device=self.device).sign())
+        command.cmd_lin_vel[:, 0].uniform_(*self.lin_vel_x_range).mul_(torch.randn(size, device=self.device).sign())
+        command.cmd_lin_vel[:, 1].uniform_(*self.lin_vel_y_range).mul_(torch.randn(size, device=self.device).sign())
         command.yaw_stiffness.uniform_(0.8, 1.2)
         command.des_rpy[:, 2].uniform_(-torch.pi, torch.pi)
         command.des_rpy[:, 1].uniform_(-0.2 * torch.pi, 0.2 * torch.pi)
@@ -308,11 +313,11 @@ class SiriusCommandManager(Command):
 
     def sample_command_stand(self, size):
         command = SiriusCommand.zero(size, self.device)
-        command.cmd_lin_vel_xy[:, 0].uniform_(-0.4, 0.4)
+        command.cmd_lin_vel[:, 0].uniform_(-0.4, 0.4)
         command.des_rpy[:, 1].uniform_(0.4 * torch.pi, 0.45 * torch.pi)
         command.des_rpy[:, 1].mul_(torch.randn(size, device=self.device).sign())
         command.des_rpy[:, 2] = self.asset.data.heading_w
-        command.des_height[:] = 0.4
+        command.des_stand_hei[:] = 0.4
         command.mode[:] = self.CMD_STAND
         return command
     
@@ -328,14 +333,14 @@ class SiriusCommandManager(Command):
     
     def sample_command_jump(self, size):
         command = SiriusCommand.zero(size, self.device)
-        command.cmd_lin_vel_xy[:, 0] = self._command.cmd_lin_vel_xy[:, 0] * 0.8
+        command.cmd_lin_vel[:, 0] = self._command.cmd_lin_vel[:, 0] * 0.8
         command.des_rpy[:, 2] = self.asset.data.heading_w
         command.duration.uniform_(0.6, 1.0)
         command.mode[:] = self.CMD_JUMP
         return command
 
     def debug_draw(self):
-        if self.env.sim.has_gui():
+        if self.env.sim.has_gui() and self.env.backend == "isaac":
             # r, p, y = euler_xyz_from_quat(self.asset.data.root_quat_w)
             quat = quat_from_euler_xyz(
                 self._command.cmd_roll.squeeze(1),
@@ -357,11 +362,11 @@ class SiriusCommandManager(Command):
             self.env.debug_draw.point(point)
 
             point = self.asset.data.body_pos_w[self.stand_fore_legs.squeeze(1), self.back_body_id]
-            point[:, 2] = self._command.des_height[self.stand_fore_legs.squeeze(1)].squeeze(1)
+            point[:, 2] = self._command.des_stand_hei[self.stand_fore_legs.squeeze(1)].squeeze(1)
             self.env.debug_draw.point(point, color=(0, 0, 1, 1))
 
             point = self.asset.data.body_pos_w[self.stand_hind_legs.squeeze(1), self.front_body_id]
-            point[:, 2] = self._command.des_height[self.stand_hind_legs.squeeze(1)].squeeze(1)
+            point[:, 2] = self._command.des_stand_hei[self.stand_hind_legs.squeeze(1)].squeeze(1)
             self.env.debug_draw.point(point, color=(0, 1, 0, 1))
 
             # start = self.asset.data.body_pos_w[self.stand_fore_legs.squeeze(1)][:, self.back_body_id]
@@ -373,4 +378,9 @@ class SiriusCommandManager(Command):
             # vector = torch.zeros(self.stand_hind_legs.sum().item(), 3, device=self.device)
             # vector[:, 2:3] = - self._stand_height[self.stand_hind_legs.squeeze(1)]
             # self.env.debug_draw.vector(start, vector, color=(0.1, 1.0, 0.1, 1.0))
+
+        elif self.env.sim.has_gui() and self.env.backend == "mujoco":
+            from_ = self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2])
+            to = from_ + self._cmd_lin_vel_w
+            self.arrow_marker.from_to(from_, to)
 

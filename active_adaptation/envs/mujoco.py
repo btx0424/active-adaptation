@@ -3,6 +3,7 @@ import numpy as np
 import mujoco
 import mujoco.viewer
 import time
+from pathlib import Path
 from typing import Sequence, Union, Any, Dict
 from dataclasses import dataclass, replace
 
@@ -11,6 +12,7 @@ from scipy.spatial.transform import Rotation as sRot
 
 from active_adaptation.envs.base import _Env
 from active_adaptation.utils.math import quat_rotate_inverse, quat_rotate
+from tensordict import TensorClass
 
 
 ArrayType = Union[np.ndarray, torch.Tensor]
@@ -25,8 +27,8 @@ class MJArticulationCfg:
     joint_names_isaac: Sequence[str]
 
 
-@dataclass
-class MJArticulationData:
+# @dataclass
+class MJArticulationData(TensorClass):
     default_joint_pos: ArrayType
     default_joint_vel: ArrayType
     default_root_state: ArrayType
@@ -55,7 +57,6 @@ class MJArticulationData:
     root_ang_vel_b: ArrayType = None
     root_lin_vel_b: ArrayType = None
     heading_w: ArrayType = None
-    timestamp: float = 0.
 
     # @property
     # def body_lin_vel_w(self):
@@ -83,7 +84,7 @@ class MJArticulationData:
     
     @property
     def root_state_w(self):
-        return torch.cat([self.body_pos_w[..., 0], self.body_quat_w[..., 0]], dim=-1)
+        return torch.cat([self.body_pos_w[:, 0, :], self.body_quat_w[:, 0, :]], dim=-1)
 
 
 class MJPhysicsView:
@@ -169,6 +170,7 @@ class MJArticulation:
             default_inertia=torch.as_tensor(self.mj_model.body_inertia[self.body_adrs])[None],
             joint_stiffness=joint_stiffness[None],
             joint_damping=joint_damping[None],
+            batch_size=[1]
         )
         self._data.joint_pos_target = self._data.default_joint_pos.clone()
         self._data.joint_vel_target = self._data.default_joint_vel.clone()
@@ -179,7 +181,7 @@ class MJArticulation:
         
         self.timestamp = 0.
         
-        mujoco.mj_step(self.mj_model, self.mj_data)
+        mujoco.mj_forward(self.mj_model, self.mj_data)
         self.update(0.0)
     
     @property
@@ -247,7 +249,8 @@ class MJArticulation:
         body_lin_vel_w = self.mj_data.cvel[self.body_adrs_read, 3:]
         body_quat_w = self.mj_data.xquat[self.body_adrs_read] # wxyz
         
-        rot = sRot.from_quat(body_quat_w[0], scalar_first=True)
+        # rot = sRot.from_quat(body_quat_w[0], scalar_first=True)
+        rot = sRot.from_quat(self.mj_data.qpos[3:7], scalar_first=True)
         projected_gravity_b = rot \
             .inv() \
             .apply(np.array([0., 0., -1.]))
@@ -260,7 +263,9 @@ class MJArticulation:
             body_lin_vel_w=torch.as_tensor(body_lin_vel_w, dtype=torch.float32)[None],
             body_ang_vel_w=torch.as_tensor(body_ang_vel_w, dtype=torch.float32)[None],
             joint_pos=torch.as_tensor(jpos, dtype=torch.float32)[None],
+            joint_pos_target=self._data.joint_pos_target.clone(),
             joint_vel=torch.as_tensor(jvel, dtype=torch.float32)[None],
+            joint_vel_target=self._data.joint_vel_target.clone(),
             projected_gravity_b=torch.as_tensor(projected_gravity_b, dtype=torch.float32)[None],
             heading_w=torch.as_tensor(heading_w, dtype=torch.float32)[None],
         )
@@ -270,18 +275,14 @@ class MJArticulation:
         self._data.root_ang_vel_w = self._data.body_ang_vel_w[:, 0]
         self._data.root_ang_vel_b = quat_rotate_inverse(self._data.root_quat_w, self._data.root_ang_vel_w)
         self._data.root_lin_vel_b = quat_rotate_inverse(self._data.root_quat_w, self._data.root_lin_vel_w)
+        
+        if hasattr(self, "_log_path"):
+            self._log_states.append(self._data)
 
     def write_root_state_to_sim(self, root_state: ArrayType, env_ids: ArrayType=None):
-        # self.mj_data.xpos[self.body_adrs[0]] = [0., 0., 1.0]
-        # self.mj_data.xquat[self.body_adrs[0]] = root_state[0, 3:]
-        self.mj_data.qpos[:7] = [0., 0., 0.6, 1., 0., 0., 0.]
-        # self.mj_data.qpos[self.joint_qposadr_write] = self._data.default_joint_pos
-        # self.mj_data.qvel[self.joint_qveladr_write] = self._data.default_joint_vel
+        self.mj_data.qpos[:3] = root_state[0, :3]
+        self.mj_data.qpos[3:7] = root_state[0, 3:7]
         self.mj_data.qvel[:6] = 0.
-        # self.mj_data.qpos[self.joint_qposadr] = self._data.default_joint_pos[0, self._jnt_isaac2mjc]
-        # self.mj_data.qvel[self.joint_qveladr] = self._data.default_joint_vel[0, self._jnt_isaac2mjc]
-        # self.mj_data.qpos[self.joint_qposadr_write] = self._data.default_joint_pos[0]
-        # self.mj_data.qvel[self.joint_qveladr_write] = self._data.default_joint_vel[0]
         mujoco.mj_forward(self.mj_model, self.mj_data)
     
     def set_joint_position_target(self, target: ArrayType, joint_ids: ArrayType=None):
@@ -297,8 +298,9 @@ class MJArticulation:
             self._data.joint_vel_target[0, joint_ids] = target
     
     def write_data_to_sim(self):
-        pos_error = self._data.joint_pos_target - self._data.joint_pos
-        vel_error = self._data.joint_vel_target - self._data.joint_vel
+        pos_error = self._data.joint_pos_target - self.mj_data.qpos[None, self.joint_qposadr_read]
+        vel_error = self._data.joint_vel_target - self.mj_data.qvel[None, self.joint_qveladr_read]
+        
         torque = (self._data.joint_stiffness * pos_error + self._data.joint_damping * vel_error)
         self._data.applied_torque = torque
         self.mj_data.ctrl[:] = torque[0, self._jnt_isaac2mjc]
@@ -316,6 +318,10 @@ class MJArticulation:
             joint_vel_all = self._data.joint_vel[0].clone()
             joint_vel_all[joint_ids] = joint_vel[0]
             self.mj_data.qvel[self.joint_qveladr] = joint_vel[0]
+
+    def setup_logger(self, name: str):
+        self._log_path = Path.cwd() / f"{name}.pt"
+        self._log_states = []
 
 
 @dataclass
@@ -337,7 +343,9 @@ class MJScene:
         
         for asset_name, asset_cfg in self.cfg.__dict__.items():
             if isinstance(asset_cfg, MJArticulationCfg):
-                self.articulations[asset_name] = MJArticulation(asset_cfg)
+                articulation = MJArticulation(asset_cfg)
+                articulation.setup_logger(asset_name)
+                self.articulations[asset_name] = articulation
             else:
                 pass
 
@@ -365,6 +373,25 @@ class MJScene:
     def __getitem__(self, key: str):
         return self.articulations.get(key)
 
+    def create_arrow_marker(self, radius: float, rgba):
+        scene = self.viewer.user_scn
+        scene.ngeom += 1
+        mujoco.mjv_initGeom(
+            scene.geoms[scene.ngeom - 1],
+            mujoco.mjtGeom.mjGEOM_ARROW,
+            size=np.array([radius, radius, 1.0], dtype=np.float64),
+            pos=np.zeros(3),
+            mat=sRot.random().as_matrix().reshape(-1),
+            rgba=np.array(rgba, dtype=np.float64),
+        )
+        return MjvGeom(scene.geoms[scene.ngeom - 1])
+
+    def close(self):
+        for articulation in self.articulations.values():
+            path = articulation._log_path
+            states = torch.stack(articulation._log_states)
+            torch.save(states.__dict__, path)
+
 
 class MJSim:
     
@@ -389,3 +416,15 @@ class MJSim:
         # time.sleep(self.get_physics_dt())
 
 
+class MjvGeom:
+    def __init__(self, geom):
+        self.geom: mujoco.MjvGeom = geom
+
+    def from_to(self, from_, to):
+        mujoco.mjv_connector(
+            self.geom,
+            self.geom.type,
+            width=0.05,
+            from_=np.array(from_.reshape(3)).astype(np.float64),
+            to=np.array(to.reshape(3)).astype(np.float64),
+        )

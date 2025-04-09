@@ -395,8 +395,9 @@ class _Env(EnvBase):
         tensordict.set("discount", self.discount.clone())
         tensordict["stats"] = self.stats.clone()
 
-        if self.sim.has_gui() and hasattr(self, "debug_draw"):
-            self.debug_draw.clear()
+        if self.sim.has_gui():
+            if hasattr(self, "debug_draw"): # isaac only
+                self.debug_draw.clear()
             for callback in self._debug_draw_callbacks:
                 callback()
             self.debug_vis()
@@ -438,13 +439,18 @@ class _Env(EnvBase):
 
     def close(self):
         if not self.is_closed:
-            # destructor is order-sensitive
-            del self.scene
-            # clear callbacks and instance
-            self.sim.clear_all_callbacks()
-            self.sim.clear_instance()
-            # update closing status
+            if self.backend == "isaac":
+                # destructor is order-sensitive
+                del self.scene
+                # clear callbacks and instance
+                self.sim.clear_all_callbacks()
+                self.sim.clear_instance()
+                # update closing status
             super().close()
+
+    def dump(self):
+        if self.backend == "mujoco":
+            self.scene.close()
 
 
 class RewardGroup:

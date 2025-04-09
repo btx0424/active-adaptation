@@ -1,9 +1,10 @@
 <mujoco model="MuJoCo Model">
   <option iterations="50" timestep="0.001" solver="PGS" gravity="0 0 -9.81" />
+  <!-- <option iterations="50" timestep="0.001" solver="Newton" gravity="0 0 -9.81" /> -->
   <compiler angle="radian" meshdir="meshes/"/>
 
   <default>
-    <joint damping="0.1" armature="0.01" frictionloss="0.01" />
+    <joint damping="0.2" armature="0.01" frictionloss="0.01" />
   </default>
 
   <asset>
@@ -156,19 +157,19 @@
     <motor name="LF_HAA" joint="LF_HAA" ctrllimited="true" ctrlrange="-40 40" gear="1" />
     <motor name="LF_HFE" joint="LF_HFE" ctrllimited="true" ctrlrange="-40 40" gear="1" />
     <motor name="LF_KFE" joint="LF_KFE" ctrllimited="true" ctrlrange="-80 80" gear="1" />
-    <motor name="wheel_1" joint="wheel_1" ctrllimited="true" ctrlrange="-10 10" gear="1" />
+    <motor name="wheel_1" joint="wheel_1" ctrllimited="true" ctrlrange="-100 100" gear="1" />
     <motor name="LH_HAA" joint="LH_HAA" ctrllimited="true" ctrlrange="-40 40" gear="1" />
     <motor name="LH_HFE" joint="LH_HFE" ctrllimited="true" ctrlrange="-40 40" gear="1" />
     <motor name="LH_KFE" joint="LH_KFE" ctrllimited="true" ctrlrange="-80 80" gear="1" />
-    <motor name="wheel_2" joint="wheel_2" ctrllimited="true" ctrlrange="-10 10" gear="1" />
+    <motor name="wheel_2" joint="wheel_2" ctrllimited="true" ctrlrange="-100 100" gear="1" />
     <motor name="RF_HAA" joint="RF_HAA" ctrllimited="true" ctrlrange="-40 40" gear="1" />
     <motor name="RF_HFE" joint="RF_HFE" ctrllimited="true" ctrlrange="-40 40" gear="1" />
     <motor name="RF_KFE" joint="RF_KFE" ctrllimited="true" ctrlrange="-80 80" gear="1" />
-    <motor name="wheel_3" joint="wheel_3" ctrllimited="true" ctrlrange="-10 10" gear="1" />
+    <motor name="wheel_3" joint="wheel_3" ctrllimited="true" ctrlrange="-100 100" gear="1" />
     <motor name="RH_HAA" joint="RH_HAA" ctrllimited="true" ctrlrange="-40 40" gear="1" />
     <motor name="RH_HFE" joint="RH_HFE" ctrllimited="true" ctrlrange="-40 40" gear="1" />
     <motor name="RH_KFE" joint="RH_KFE" ctrllimited="true" ctrlrange="-80 80" gear="1" />
-    <motor name="wheel_4" joint="wheel_4" ctrllimited="true" ctrlrange="-10 10" gear="1" />
+    <motor name="wheel_4" joint="wheel_4" ctrllimited="true" ctrlrange="-100 100" gear="1" />
   </actuator>
 
   <sensor>
