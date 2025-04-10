@@ -48,16 +48,7 @@ class SiriusCommand(TensorClass):
             duration=torch.full((size, 1), torch.inf, device=device),
             mode=torch.zeros(size, dtype=int, device=device),
         )
-    
-    def get_command(self):
-        return torch.cat([
-            self.cmd_lin_vel[:, :2],
-            self.cmd_ang_vel,
-            self.cmd_roll,
-            self.cmd_pitch,
-            self.phase,
-            torch.nn.functional.one_hot(self.mode, num_classes=4)
-        ], dim=-1)
+        
 
 
 class SiriusCommandManager(Command):
@@ -225,7 +216,15 @@ class SiriusCommandManager(Command):
     
     @property
     def command(self):
-        return self._command.get_command()
+        return torch.cat([
+            self._command.cmd_lin_vel[:, :2],
+            self._command.cmd_ang_vel,
+            self._command.cmd_roll,
+            self._command.cmd_pitch,
+            self._command.des_stand_hei - self._stand_height,
+            self._command.phase,
+            torch.nn.functional.one_hot(self._command.mode, num_classes=4)
+        ], dim=-1)
     
     def reset(self, env_ids):
         command = self.sample_command_normal(len(env_ids))
@@ -284,7 +283,7 @@ class SiriusCommandManager(Command):
             * (self._command.des_stand_vel - stand_lin_vel).square()
 
         self.rew_stand_lin_vel = torch.exp(- self.stand_linvel_error_l2 )
-        self.rew_stand_height = torch.exp(- self.stand_height_error_l2 / 0.25)
+        self.rew_stand_height = torch.exp(- self.stand_height_error_l2 / 0.2)
         
         cmd_yaw_diff = (self._command.mode == self.CMD_WALK) \
             .mul(wrap_to_pi(self._command.des_rpy[:, 2] - self.asset.data.heading_w)) \
@@ -325,6 +324,7 @@ class SiriusCommandManager(Command):
         command.yaw_stiffness.uniform_(0.8, 1.2)
         command.des_rpy[:, 2].uniform_(-torch.pi, torch.pi)
         command.des_rpy[:, 1].uniform_(-0.2 * torch.pi, 0.2 * torch.pi)
+        command.des_stand_hei[:] = 0.4
         command.mode[:] = self.CMD_WALK
         return command
 

@@ -119,8 +119,8 @@ randomization:
       .*_HAA: [0.9, 1.1]
       .*_HFE: [0.9, 1.1]
       .*_KFE: [0.9, 1.1]
-    # armature_range:
-    #   .*: [0.0, 0.02]
+    armature_range:
+      .*: [0.0, 0.02]
   reset_joint_states_scale:
     pos_scales:
       .*: [0.8, 1.2]
