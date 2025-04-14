@@ -537,7 +537,7 @@ class PPODICPolicy(TensorDictModuleBase):
         values = tensordict["state_value"]
         next_values = tensordict["next", "state_value"]
 
-        rewards = tensordict[REWARD_KEY].sum(-1, keepdim=True)
+        rewards = tensordict[REWARD_KEY].sum(-1, keepdim=True).clamp_min(0.)
         # dones = tensordict["next", "done"]
         # rewards = torch.where(dones, rewards + values * self.gae.gamma, rewards)
         terms = tensordict[TERM_KEY]
@@ -612,6 +612,7 @@ class PPODICPolicy(TensorDictModuleBase):
             "actor/grad_norm": actor_grad_norm,
             'actor/approx_kl': ((ratio - 1) - log_ratio).mean(),
             "actor/gradient_penalty": gradient_penalty,
+            "actor/clamp_ratio": (~torch.isclose(surr1, surr2)).float().mean(),
             "adapt/flag_loss": flag_loss,
             # "actor/smth1_loss": smth1_loss,
             # "actor/smth2_loss": smth2_loss,

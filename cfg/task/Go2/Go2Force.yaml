@@ -8,7 +8,6 @@ viewer:
 
 robot:
   name: go2
-# terrain: slopes_boxes
 terrain: plane
 
 # common
@@ -37,7 +36,6 @@ command:
   force_offset_scale: [0.2, 0.1, 0.1]
   linear_kp_range: [4.0, 24.0]
   angular_kp_range: [4.0, 24.0]
-  teleop: false
   max_acc_xy: [8.0, 8.0]
   max_vel_xy: [1.5, 0.9]
 
@@ -73,10 +71,6 @@ observation:
   ext_:
     external_forces:  {body_names: ["base"], divide_by_mass: false}
     external_torques: {body_names: ["base"], divide_by_mass: false, scale: 0.2}
-  action_buf_:
-    prev_actions:     {steps: 3, flatten: false}
-  symmetry:
-    symmetry_quad:    {}
   state_:
     joint_pos:
     joint_vel:
