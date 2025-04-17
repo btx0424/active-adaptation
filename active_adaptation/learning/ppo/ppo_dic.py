@@ -66,7 +66,7 @@ class PPOConfig:
     entropy_coef_end: float = 0.000
 
     reg_lambda: float = 0.0
-    rec_weight: float = 0.1
+    rec_weight: float = 0.0
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
@@ -76,7 +76,7 @@ class PPOConfig:
     short_history: int = 0
     vecnorm: Union[str, None] = None
     checkpoint_path: Union[str, None] = None
-    in_keys: List[str] = field(default_factory=lambda: ["command_", OBS_KEY, OBS_PRIV_KEY, "ext", "ext_", "action_buf_", "symmetry"])
+    in_keys: List[str] = field(default_factory=lambda: ["command", OBS_KEY, OBS_PRIV_KEY, "ext", "ext_", "action_buf_", "symmetry"])
 
 cs = ConfigStore.instance()
 cs.store("ppo_dic_train", node=PPOConfig(phase="train", vecnorm="train"), group="algo")
@@ -270,7 +270,7 @@ class PPODICPolicy(TensorDictModuleBase):
             ["priv_pred", "ext_pred", ("info", "ext_rec"), ("next", "adapt_hx")]
         ).to(self.device)
         
-        in_keys = ["command_", OBS_KEY, "priv_feature", "ext_feature"]
+        in_keys = ["command", OBS_KEY, "priv_feature", "ext_feature"]
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=Seq(
                 CatTensors(in_keys, "_actor_inp", del_keys=False, sort=False),
@@ -296,7 +296,7 @@ class PPODICPolicy(TensorDictModuleBase):
             Mod(nn.LazyLinear(4), ["retro_feat"], [("info", "retro_pred")])
         ).to(self.device)
 
-        in_keys = ["command_", OBS_KEY, "priv_pred", "ext_pred"]
+        in_keys = ["command", OBS_KEY, "priv_pred", "ext_pred"]
         self.actor_adapt: ProbabilisticActor = ProbabilisticActor(
             module=Seq(
                 CatTensors(in_keys, "_actor_inp", del_keys=False, sort=False),
@@ -312,7 +312,7 @@ class PPODICPolicy(TensorDictModuleBase):
         
         _critic = nn.Sequential(make_mlp([512, 256, 128]), nn.LazyLinear(1))
         self.critic = Seq(
-            CatTensors(["command_", OBS_KEY, OBS_PRIV_KEY, "ext"], "_critic_input", del_keys=False),
+            CatTensors(["command", OBS_KEY, OBS_PRIV_KEY, "ext"], "_critic_input", del_keys=False),
             Mod(_critic, ["_critic_input"], ["state_value"])
         ).to(self.device)
 
@@ -572,7 +572,7 @@ class PPODICPolicy(TensorDictModuleBase):
         
         # self.retro(tensordict)
         # retro_pred = tensordict["info", "retro_pred"]
-        # retro_loss = F.l1_loss(retro_pred, tensordict["command_"][:, :retro_pred.shape[-1]])
+        # retro_loss = F.l1_loss(retro_pred, tensordict["command"][:, :retro_pred.shape[-1]])
         # retro_loss = (retro_loss * (~tensordict["is_init"])).mean()
         
         # self.dynamics(tensordict)

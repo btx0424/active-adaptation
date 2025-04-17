@@ -27,7 +27,7 @@ class Impedance(Command):
     def __init__(
         self,
         env,
-        virtual_mass_range=(0.5, 1.0),
+        virtual_mass_range=None, # always set to 1 if `None`
         linear_kp_range=(2.0, 12.0),
         angular_kp_range=(2.0, 12.0),
         impulse_force_momentum_scale=(5.0, 5.0, 1.0),
@@ -59,7 +59,10 @@ class Impedance(Command):
         # self.surr_steps = [-1]
 
         with torch.device(self.device):
-            self.command = torch.zeros(self.num_envs, 10)
+            if self.virtual_mass_range is not None:
+                self.command = torch.zeros(self.num_envs, 10 + 5)
+            else:
+                self.command = torch.zeros(self.num_envs, 10)
             self.command_hidden = torch.zeros(self.num_envs, len(self.surr_steps) * 8)
             
             self.surrogate_pos_target = torch.zeros(self.num_envs, len(self.surr_steps), 3)
@@ -278,7 +281,9 @@ class Impedance(Command):
         self.command[:, 5:8] = (self.lin_kd)
         self.command[:, 8:9] = self.ang_kp * yaw_diff.unsqueeze(1)
         self.command[:, 9:10] = self.virtual_mass
-
+        if self.virtual_mass_range is not None:
+            self.command[:, 10:15] = self.command[:, 3:8] / self.virtual_mass
+        
         self.surrogate_pos_target = self.desired_pos_w[:, self.surr_steps]
         self.surrogate_yaw_target = self.desired_yaw_w[:, self.surr_steps]
         self.surrogate_lin_vel_target = self.desired_lin_vel_w[:, self.surr_steps] 
@@ -399,7 +404,10 @@ class Impedance(Command):
         target_yaw = self.asset.data.heading_w[env_ids, None] + scalar.uniform_(-torch.pi/2, torch.pi/2)
         self.command_setrpy_w[env_ids, 2:3] = math_utils.wrap_to_pi(target_yaw)
 
-        virtual_mass = torch.randint(1, 4, (len(env_ids), 1), device=self.device).float()
+        if self.virtual_mass_range is not None:
+            virtual_mass = torch.randint(1, 4, (len(env_ids), 1), device=self.device).float()
+        else:
+            virtual_mass = 1.
         self.virtual_mass[env_ids] = virtual_mass
         self.virtual_inertia[env_ids] = self.default_inertia        
         self.force_factor[env_ids] = torch.randint(0, 5, (len(env_ids), 1), device=self.device) / 4 # [0., 0.25, 0.5, 0.75, 1.]

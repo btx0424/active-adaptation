@@ -27,7 +27,7 @@ action:
 
 command:
   _target_: active_adaptation.envs.mdp.commands.impedance.Impedance
-  virtual_mass_range: [1.0, 5.0]
+  virtual_mass_range: null # [1.0, 5.0]
   constant_force_scale: [40., 40., 15.]
   constant_force_duration_range: [1, 3]
   impulse_force_momentum_scale: [5.0, 5.0, 1.0]
@@ -40,7 +40,7 @@ command:
   max_vel_xy: [1.5, 0.9]
 
 observation:
-  command_:
+  command:
     command:
     oscillator: {history: false}
   policy:
