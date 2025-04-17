@@ -66,6 +66,7 @@ class PPOConfig:
     entropy_coef_end: float = 0.000
 
     reg_lambda: float = 0.0
+    rec_weight: float = 0.1
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
@@ -242,7 +243,6 @@ class PPODICPolicy(TensorDictModuleBase):
         self.ext_dim = observation_spec["ext_"].shape[-1]
         self.gae = GAE(0.99, 0.95)
         self.reg_lambda = 0.0
-        self.ext_rec_lambda = 0.1
         # self.symmetry_coef = 0.
         self.rec_rew = 0.
         
@@ -502,13 +502,13 @@ class PPODICPolicy(TensorDictModuleBase):
                 priv_loss = (priv_loss * (~minibatch["is_init"])).mean()
                 ext_loss = self.adapt_loss_fn(minibatch["ext_pred"], minibatch["ext_feature"])
                 ext_loss = (ext_loss * (~minibatch["is_init"])).mean()
-                if self.ext_rec_lambda > 0:
+                if self.cfg.rec_weight > 0:
                     ext_rec_error = self.rec_loss(minibatch["info", "ext_rec"], minibatch["ext_"])
                     ext_rec_error = (ext_rec_error * (~minibatch["is_init"])).mean()
                 else:
                     ext_rec_error = 0.
                 self.opt_adapt.zero_grad()
-                (priv_loss + ext_loss + self.ext_rec_lambda * ext_rec_error).backward()
+                (priv_loss + ext_loss + self.cfg.rec_weight * ext_rec_error).backward()
                 self.opt_adapt.step()
                 infos.append(TensorDict({
                     "adapt/priv_loss": priv_loss,

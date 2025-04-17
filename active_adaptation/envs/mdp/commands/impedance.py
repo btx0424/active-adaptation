@@ -191,7 +191,7 @@ class Impedance(Command):
         desired_acc_w = (
             self.lin_kp.reshape(self.num_envs, 1, 1) * (setpos_w - self.desired_pos_w)
             + self.lin_kd.reshape(self.num_envs, 1, 1) * (0.0 - self.desired_lin_vel_w)
-            + (self.force_factor * saturate(self.force_ext_w, 60.)).reshape(self.num_envs, 1, 1)
+            + (self.force_factor * saturate(self.force_ext_w, 60.)).reshape(self.num_envs, 1, 3)
         ) / self.virtual_mass.unsqueeze(1) # [n, t, 3]
 
         x_b = torch.cat([self.desired_yaw_w.cos(), self.desired_yaw_w.sin(), torch.zeros_like(self.desired_yaw_w)], dim=-1)
@@ -356,6 +356,8 @@ class Impedance(Command):
         if command_mode is None:
             command_mode_prob =  self.command_transition[self.command_mode[env_ids].squeeze(1)]
             command_mode = torch.multinomial(command_mode_prob, 1, replacement=True)
+        else:
+            command_mode = torch.full((len(env_ids), 1), command_mode, dtype=int, device=self.device)
         self.command_mode[env_ids] = command_mode
         self.command_time[env_ids] = 0
         
@@ -397,7 +399,7 @@ class Impedance(Command):
         target_yaw = self.asset.data.heading_w[env_ids, None] + scalar.uniform_(-torch.pi/2, torch.pi/2)
         self.command_setrpy_w[env_ids, 2:3] = math_utils.wrap_to_pi(target_yaw)
 
-        virtual_mass = torch.randint(1, 4, (len(env_ids), 1), device=self.device)
+        virtual_mass = torch.randint(1, 4, (len(env_ids), 1), device=self.device).float()
         self.virtual_mass[env_ids] = virtual_mass
         self.virtual_inertia[env_ids] = self.default_inertia        
         self.force_factor[env_ids] = torch.randint(0, 5, (len(env_ids), 1), device=self.device) / 4 # [0., 0.25, 0.5, 0.75, 1.]
