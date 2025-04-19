@@ -13,7 +13,6 @@ ASSET_PATH = os.path.dirname(__file__)
 
 ROBOTS = {
     "a1": UNITREE_A1_CFG,
-    "go1m": UNITREE_GO1M_CFG,
     "go2": UNITREE_GO2_CFG,
     "go2m": UNITREE_GO2M_CFG,
     "go2abp": UNITREE_GO2ABP_CFG,
@@ -23,7 +22,6 @@ ROBOTS = {
     "aliengo-a1-fix": UNITREE_ALIENGO_A1_FIX_CFG,
     "h1": H1_CFG,
     "cy1": CY1_CFG,
-    "cyberdog": CYBERDOG_CFG,
     "abp": ABP_CFG,
     "a1-arm": A1_CFG,
     "sirius_wheel": SIRIUS_WHEEL_CFG,

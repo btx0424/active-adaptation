@@ -170,6 +170,7 @@ class MJArticulation:
             default_inertia=torch.as_tensor(self.mj_model.body_inertia[self.body_adrs])[None],
             joint_stiffness=joint_stiffness[None],
             joint_damping=joint_damping[None],
+            applied_torque=torch.zeros(1, self.num_joints),
             batch_size=[1]
         )
         self._data.joint_pos_target = self._data.default_joint_pos.clone()
@@ -187,10 +188,10 @@ class MJArticulation:
     @property
     def joint_names(self):
         return self.joint_names_isaac
-        raise RuntimeError(
-            "When using Mujoco backend, please use `joint_names_isaac` or `joint_names_mjc` "
-            "instead to avoid ambiguity."
-        )
+    
+    @property
+    def body_names(self):
+        return self.body_names_isaac
 
     @property
     def num_joints(self):
@@ -302,7 +303,7 @@ class MJArticulation:
         vel_error = self._data.joint_vel_target - self.mj_data.qvel[None, self.joint_qveladr_read]
         
         torque = (self._data.joint_stiffness * pos_error + self._data.joint_damping * vel_error)
-        self._data.applied_torque = torque
+        self._data.applied_torque = torque.float()
         self.mj_data.ctrl[:] = torque[0, self._jnt_isaac2mjc]
 
         if self.has_external_wrench:

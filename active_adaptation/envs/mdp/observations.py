@@ -845,7 +845,7 @@ class applied_torque(Observation):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.joint_names = joint_names
-        self.joint_indices = self.asset.find_joints(joint_names)
+        self.joint_indices = self.asset.find_joints(joint_names)[0]
     
     def compute(self) -> torch.Tensor:
         applied_efforts = self.asset.data.applied_torque

@@ -60,7 +60,7 @@ observation:
     root_linvel_b:    {}
     feet_pos_b:       {feet_names: .*ankle_roll_link}
     feet_vel_b:       {feet_names: .*ankle_roll_link}
-    applied_torques:  {actuator_name: base_legs}
+    applied_torque:   {}
     cum_error:        {}
 
 reward:
