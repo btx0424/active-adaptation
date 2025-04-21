@@ -8,30 +8,6 @@ from isaaclab.assets import Articulation
 from active_adaptation.envs.actuator import HybridActuatorCfg
 
 
-class Humanoid(Articulation):
-    def _create_buffers(self):
-        super()._create_buffers()
-
-        # oscillators
-        self.phi = torch.zeros(self.num_instances, 2, device=self.device)
-        self.phi_dot = torch.zeros(self.num_instances, 2, device=self.device)
-
-        if hasattr(self.cfg, "hand_body_name"):
-            self.hand_body_ids = self.find_bodies(self.cfg.hand_body_name)[0]
-            self.hand_pos_w = self.data.body_pos_w[:, self.hand_body_ids]
-
-        if hasattr(self.cfg, "foot_body_name"):
-            self.foot_body_ids = self.find_bodies(self.cfg.foot_body_name)[0]
-            self.foot_pos_w = self.data.body_pos_w[:, self.foot_body_ids]
-    
-    def update(self, dt: float):
-        super().update(dt)
-    
-        if hasattr(self.cfg, "hand_body_name"):
-            self.hand_pos_w[:] = self.data.body_pos_w[:, self.hand_body_ids]
-        if hasattr(self.cfg, "foot_body_name"):
-            self.foot_pos_w[:] = self.data.body_pos_w[:, self.foot_body_ids]
-
 
 ASSET_PATH = os.path.dirname(__file__)
 
@@ -64,7 +40,6 @@ H1_CFG.actuators = {
 }
 
 CY1_CFG = ArticulationCfg(
-    class_type=Humanoid,
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{ASSET_PATH}/ORCA/orca_stable_mesh.usd",
         activate_contact_sensors=True,
@@ -155,8 +130,7 @@ CY1_CFG = ArticulationCfg(
 
 G1_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        # usd_path="/home/btx0424/lab45/g1_no_hand.usd",
-        usd_path="/home/btx0424/lab45/unitree_ros/robots/g1_description/g1_23dof/g1_23dof.usd",
+        usd_path=f"{ASSET_PATH}/G1/g1_27dof_fakehand/g1_27dof_fakehand.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -168,16 +142,16 @@ G1_CFG = ArticulationCfg(
             max_depenetration_velocity=1.0,
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=False, 
-            solver_position_iteration_count=4,
+            enabled_self_collisions=True, 
+            solver_position_iteration_count=6,
             solver_velocity_iteration_count=1
         ),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 0.74),
         joint_pos={
-            ".*_hip_pitch_joint": -0.20,
-            ".*_knee_joint": 0.42,
+            ".*_hip_pitch_joint": -0.28,
+            ".*_knee_joint": 0.5,
             ".*_ankle_pitch_joint": -0.23,
             # ".*_elbow_pitch_joint": 0.87,
             ".*_elbow_joint": 0.87,
@@ -185,6 +159,9 @@ G1_CFG = ArticulationCfg(
             "left_shoulder_pitch_joint": 0.35,
             "right_shoulder_roll_joint": -0.16,
             "right_shoulder_pitch_joint": 0.35,
+            ".*wrist_roll_joint": 0.0,
+            ".*wrist_pitch_joint": 0.0,
+            ".*wrist_yaw_joint": 0.0,
         },
         joint_vel={".*": 0.0},
     ),
@@ -199,35 +176,45 @@ G1_CFG = ArticulationCfg(
                 ".*_hip_roll_joint": 150.0,
                 ".*_hip_pitch_joint": 200.0,
                 ".*_knee_joint": 200.0,
-                # "torso_joint": 200.0,
-                "waist_yaw_joint": 200.0, # unitree_ros
+                "waist_yaw_joint": 150.0, # unitree_ros
+                # "waist_roll_joint": 150.0, # unitree_ros
                 ".*ankle_pitch_joint": 20.0,
                 ".*ankle_roll_joint": 20.0,
                 ".*_shoulder_.*": 40.0,
                 ".*_elbow_joint": 40.0,
+                ".*wrist_roll_joint": 20.0,
+                ".*wrist_pitch_joint": 20.0,
+                ".*wrist_yaw_joint": 20.0,
             },
             damping={
-                # "torso_joint": 5.0,
                 "waist_yaw_joint": 5.0, # unitree_ros
-                ".*_shoulder_.*": 10.0,
-                ".*_elbow_joint": 10.0,
-                ".*_hip_yaw_joint": 5.0,
-                ".*_hip_roll_joint": 5.0,
-                ".*_hip_pitch_joint": 5.0,
-                ".*_knee_joint": 5.0,
-                ".*ankle_pitch_joint": 2.0,
-                ".*ankle_roll_joint": 2.0,
+                # "waist_roll_joint": 5.0, # unitree_ros
+                ".*_shoulder_.*": 5.0,
+                ".*_elbow_joint": 5.0,
+                ".*_hip_yaw_joint": 6.0,
+                ".*_hip_roll_joint": 6.0,
+                ".*_hip_pitch_joint": 6.0,
+                ".*_knee_joint": 6.0,
+                ".*ankle_pitch_joint": 1.0,
+                ".*ankle_roll_joint": 1.0,
+                ".*wrist_roll_joint": 1.0,
+                ".*wrist_pitch_joint": 1.0,
+                ".*wrist_yaw_joint": 1.0,
             },
             armature={
-                # "torso_joint": 0.01,
                 "waist_yaw_joint": 0.01, # unitree_ros
+                # "waist_roll_joint": 0.01, # unitree_ros
                 ".*_shoulder_.*": 0.01,
                 ".*_elbow_joint": 0.01,
                 ".*_hip_.*": 0.01,
                 ".*_knee_joint": 0.01,
                 ".*_ankle_pitch_joint": 0.01,
                 ".*_ankle_roll_joint": 0.01,
+                ".*wrist_roll_joint": 0.01,
+                ".*wrist_pitch_joint": 0.01,
+                ".*wrist_yaw_joint": 0.01,
             },
+            friction=0.02,
         ),
     },
 )

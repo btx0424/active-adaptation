@@ -6,7 +6,6 @@ import torch.distributions as D
 from isaaclab.utils.math import (
     yaw_quat,
     wrap_to_pi,
-    euler_xyz_from_quat,
     quat_from_euler_xyz,
     quat_mul,
     quat_conjugate,
@@ -50,17 +49,20 @@ def clamp_along(x: torch.Tensor, axis: torch.Tensor, min: float, max: float):
     return x - projection * axis + projection.clamp(min, max) * axis
 
 
-@batchify
 def yaw_rotate(yaw: torch.Tensor, vec: torch.Tensor):
-    yaw_cos = torch.cos(yaw).squeeze(-1)
-    yaw_sin = torch.sin(yaw).squeeze(-1)
+    """
+    Rotate a vector by a yaw angle (in radians).
+    """
+    yaw_cos = torch.cos(yaw)
+    yaw_sin = torch.sin(yaw)
+    vec = vec.expand(*yaw.shape, 3)
     return torch.stack(
         [
-            yaw_cos * vec[:, 0] - yaw_sin * vec[:, 1],
-            yaw_sin * vec[:, 0] + yaw_cos * vec[:, 1],
-            vec[:, 2],
+            yaw_cos * vec[..., 0] - yaw_sin * vec[..., 1],
+            yaw_sin * vec[..., 0] + yaw_cos * vec[..., 1],
+            vec[..., 2],
         ],
-        1,
+        dim=-1,
     )
 
 
@@ -74,6 +76,27 @@ def quat_from_yaw(yaw: torch.Tensor):
         ],
         dim=-1,
     )
+
+
+def euler_from_quat(quat: torch.Tensor):
+    w, x, y, z = quat.unbind(-1)
+    # Convert quaternion to roll, pitch, yaw Euler angles
+    sin_roll = 2.0 * (w * x + y * z)
+    cos_roll = 1.0 - 2.0 * (x * x + y * y)
+    roll = torch.atan2(sin_roll, cos_roll)
+
+    sin_pitch = 2.0 * (w * y - z * x)
+    pitch = torch.where(
+        torch.abs(sin_pitch) >= 1,
+        torch.full_like(sin_pitch, torch.pi / 2.0) * torch.sign(sin_pitch),
+        torch.asin(sin_pitch)
+    )
+
+    sin_yaw = 2.0 * (w * z + x * y) 
+    cos_yaw = 1.0 - 2.0 * (y * y + z * z)
+    yaw = torch.atan2(sin_yaw, cos_yaw)
+
+    return torch.stack([roll, pitch, yaw], dim=-1)
 
 
 class MultiUniform(D.Distribution):

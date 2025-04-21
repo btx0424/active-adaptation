@@ -4,7 +4,6 @@ from typing import Dict, Literal, Tuple, Union, TYPE_CHECKING
 from tensordict import TensorDictBase
 import isaaclab.utils.string as string_utils
 from active_adaptation.utils.math import (
-    euler_xyz_from_quat,
     # quat_mul,
     # quat_conjugate,
     # axis_angle_from_quat,
