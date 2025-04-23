@@ -1253,37 +1253,6 @@ class joint_vel_l2(Reward):
         return -joint_vel.square().sum(1, True)
 
 
-class impedance_pos(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True):
-        super().__init__(env, weight, enabled)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: Impedance = self.env.command_manager
-
-    def compute(self) -> torch.Tensor:
-        diff = self.command_manager.surrogate_pos_target - self.asset.data.root_pos_w.unsqueeze(1)
-        error_l2 = diff[:, :, :2].square().sum(dim=-1, keepdim=True)
-        r = torch.exp(- error_l2 / 0.25).mean(1)
-        return r
-
-
-# from ..commands.impedance import rpy_from_quat, ImpedanceBase
-
-
-class impedance_vel(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True):
-        super().__init__(env, weight, enabled)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: Impedance = self.env.command_manager
-        self.dim_weights = torch.tensor([1., 1., 0.5], device=self.device)
-
-    def compute(self) -> torch.Tensor:
-        lin_vel_w = self.asset.data.root_lin_vel_w
-        lin_vel_w_target = self.command_manager.surrogate_lin_vel_target
-        diff = (lin_vel_w_target - lin_vel_w.unsqueeze(1))
-        error_l2 = (diff * self.dim_weights).square().sum(dim=-1, keepdim=True)
-        p = ((- error_l2 / 0.25).exp() - 0.5 * error_l2).mean(1)
-        return p
-
 
 class impedance_acc(Reward):
     def __init__(self, env, weight: float, enabled: bool = True):
@@ -1293,7 +1262,7 @@ class impedance_acc(Reward):
 
     def compute(self) -> torch.Tensor:
         lin_acc_w = self.asset.data.body_acc_w[:, 0, :2]
-        error_l2 = (self.command_manager.desired_lin_acc_w[:, 0, :2] - lin_acc_w).square().sum(1, True)
+        error_l2 = (self.command_manager.ref_lin_acc_w[:, 0, :2] - lin_acc_w).square().sum(1, True)
         return torch.exp(- error_l2 / 2.0)
 
 
@@ -1305,7 +1274,7 @@ class impedance_acc_error(Reward):
 
     def compute(self) -> torch.Tensor:
         lin_acc_w = self.asset.data.body_acc_w[:, 0, :2]
-        error_l2 = (self.command_manager.desired_lin_acc_w[:, 0, :2] - lin_acc_w).square().sum(1, True)
+        error_l2 = (self.command_manager.ref_lin_acc_w[:, 0, :2] - lin_acc_w).square().sum(1, True)
         return error_l2
 
 
@@ -1320,7 +1289,7 @@ class impedance_pos_error(Reward):
         self.command_manager: Impedance = self.env.command_manager
 
     def compute(self) -> torch.Tensor:
-        desired_pos_w = self.command_manager.desired_pos_w[:, -1]
+        desired_pos_w = self.command_manager.ref_pos_w[:, -1]
         error_l2 = (desired_pos_w - self.asset.data.root_pos_w)[:, :2].square().sum(1, True)
         return error_l2
 
@@ -1339,19 +1308,6 @@ class impedance_yaw_pos(Reward):
         r = torch.exp(-error_l2 / 0.25).mean(1)
         return r
 
-
-class impedance_yaw_vel(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True):
-        super().__init__(env, weight, enabled)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: Impedance = self.env.command_manager
-
-    def compute(self) -> torch.Tensor:
-        target_angvel = self.command_manager.surrogate_yaw_vel_target
-        diff = target_angvel - self.asset.data.root_ang_vel_w[:, 2:3].unsqueeze(1)
-        error_l2 = diff.square()
-        r = ((-error_l2 / 0.25).exp() - 0.5 * error_l2).mean(1)
-        return r
 
 
 class feet_swing_height(Reward):
@@ -1732,6 +1688,21 @@ class ang_vel_z_exp(Reward):
     def compute(self):
         error = self.env.command_manager.ang_vel_z_error_l2
         return torch.exp( -error / 0.25) - 0.5 * error
+
+
+class oscillator_biped(Reward):
+    def __init__(self, env, weight, enabled=True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.gravity = self.asset.data.default_mass[0].sum().item() * 9.81
+        self.contact_forces: ContactSensor = self.env.scene["contact_forces"]
+        self.feet_ids = self.contact_forces.find_bodies(".*_ankle_roll_link")[0]
+
+    def compute(self):
+        self.sin_phase = self.asset.phi.sin()
+        grf = self.contact_forces.data.net_forces_w[:, self.feet_ids].norm(dim=-1)
+        r = (-grf/self.gravity * self.sin_phase).clamp_max(0.8).sum(1, True)
+        return r
 
 
 @reward_func

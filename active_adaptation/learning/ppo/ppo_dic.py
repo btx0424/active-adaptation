@@ -484,6 +484,7 @@ class PPODICPolicy(TensorDictModuleBase):
         else:
             infos["actor/feature_std"] = tensordict["priv_pred"].std(dim=(0, 1)).mean().item()
         infos["critic/value_mean"] = tensordict["ret"].mean().item()
+        infos["critic/neg_rew_ratio"] = (tensordict[REWARD_KEY].sum(-1) <= 0.).float().mean().item()
         # infos["actor/diff_ext"] = F.l1_loss(both, wo_ext).item()
         # infos["actor/diff_priv"] = F.l1_loss(both, wo_priv).item()
         return infos

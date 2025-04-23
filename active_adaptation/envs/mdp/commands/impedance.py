@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+import einops
 
 from active_adaptation.envs.mdp.commands.base import Command
 from active_adaptation.envs.mdp.commands.locomotion import Command2
@@ -8,8 +9,10 @@ from active_adaptation.utils.math import (
     yaw_rotate, clamp_along, clamp_norm,
     quat_rotate, quat_rotate_inverse,
     quat_from_euler_xyz,
-    yaw_quat
+    yaw_quat,
+    EMA
 )
+from active_adaptation.envs.mdp import reward
 from active_adaptation.envs.mdp.utils.forces import ConstantForce, ImpulseForce, SpringForce
 
 def saturate(x: torch.Tensor, a: float):
@@ -27,6 +30,7 @@ class Impedance(Command):
     def __init__(
         self,
         env,
+        body_names: str="base",
         virtual_mass_range=None, # always set to 1 if `None`
         linear_kp_range=(2.0, 12.0),
         angular_kp_range=(2.0, 12.0),
@@ -34,17 +38,21 @@ class Impedance(Command):
         impulse_force_duration_range=(0.1, 0.5),
         
         constant_force_scale=(50, 50, 10),
-        constant_force_duration_range=(1, 4),
-        force_offset_scale=(0.0, 0.0, 0.0),
+        constant_force_offset_scale=(0.0, 0.0, 0.0),
 
-        temporal_smoothing: int = 5,
+        temporal_smoothing: int = 32,
         max_acc_xy: float = (8.0, 4.0),
         max_vel_xy: float = (1.6, 1.0),
         teleop: bool = False,
     ) -> None:
         super().__init__(env, teleop)
 
+        self.body_ids = self.asset.find_bodies(body_names)[0]
         self.virtual_mass_range = virtual_mass_range
+        
+        self.constant_force_scale = constant_force_scale
+        self.constant_force_offset_scale = constant_force_offset_scale
+
         self.resample_prob = 0.01
         self.linear_kp_range = linear_kp_range
         self.angular_kp_range = angular_kp_range
@@ -75,13 +83,13 @@ class Impedance(Command):
 
             # integration
             bshape = (self.num_envs, self.temporal_smoothing + 1)
-            self.desired_lin_acc_w = torch.zeros(*bshape, 3)
-            self.desired_lin_vel_w = torch.zeros(*bshape, 3)
-            self.desired_pos_w = torch.zeros(*bshape, 3)
+            self.ref_lin_acc_w = torch.zeros(*bshape, 3)
+            self.ref_lin_vel_w = torch.zeros(*bshape, 3)
+            self.ref_pos_w = torch.zeros(*bshape, 3)
 
-            self.desired_yaw_acc_w = torch.zeros(*bshape, 1)
-            self.desired_yaw_vel_w = torch.zeros(*bshape, 1)
-            self.desired_yaw_w = torch.zeros(*bshape, 1)
+            self.ref_yaw_acc_w = torch.zeros(*bshape, 1)
+            self.ref_yaw_vel_w = torch.zeros(*bshape, 1)
+            self.ref_yaw_w = torch.zeros(*bshape, 1)
 
             self.command_setpos_w = torch.zeros(self.num_envs, 3)
             self.command_setrpy_w = torch.zeros(self.num_envs, 3)
@@ -159,6 +167,39 @@ class Impedance(Command):
                     prim_path="/Visuals/Command/target_yaw"
                 ))
             self.vis_arrow.set_visibility(True)
+        
+        self.lin_vel_ema = EMA(self.asset.data.root_lin_vel_w, [0.0, 0.5, 0.8])
+        self.ang_vel_ema = EMA(self.asset.data.root_ang_vel_w, [0.0, 0.5, 0.8])
+        self.dim_weights = torch.tensor([1.0, 1.0, 0.5], device=self.device)
+
+    def get_pos_w(self): # currently only used for smoothing the rewards
+        return self.asset.data.body_pos_w[:, self.body_ids].mean(1)
+    
+    def get_lin_vel_w(self): # currently only used for smoothing the rewards
+        return self.asset.data.body_lin_vel_w[:, self.body_ids].mean(1)
+
+    @reward
+    def impedance_pos(self):
+        diff = self.surrogate_pos_target - self.get_pos_w().unsqueeze(1)
+        error_l2 = diff[:, :, :2].square().sum(dim=-1, keepdim=True)
+        r = (- error_l2 / 0.25).exp().mean(1)
+        return r
+    
+    @reward
+    def impedance_vel(self):
+        diff = einops.rearrange(self.surrogate_lin_vel_target, "n t1 d -> n t1 1 d") \
+            - einops.rearrange(self.lin_vel_ema.ema, "n t2 d-> n 1 t2 d")
+        error_l2 = (diff * self.dim_weights).square().sum(dim=-1, keepdim=True)
+        r = ((- error_l2 / 0.25).exp() - 0.25 * error_l2).mean(1)
+        return r.max(dim=1).values
+    
+    @reward
+    def impedance_yaw_vel(self):
+        diff = einops.rearrange(self.surrogate_yaw_vel_target, "n t1 d -> n t1 1 d") \
+            - einops.rearrange(self.ang_vel_ema.ema[:, :, 2:3], "n t2 d-> n 1 t2 d")
+        error_l2 = diff.square().sum(dim=-1, keepdim=True)
+        r = ((- error_l2 / 0.25).exp() - 0.25 * error_l2).mean(1)
+        return r.max(dim=1).values
 
     def reset(self, env_ids: torch.Tensor):
         self._sample_command(env_ids, command_mode=self.CMD_POSITION)
@@ -168,16 +209,19 @@ class Impedance(Command):
         self.distance_covered[env_ids] = 0.0
         self.distance_commanded[env_ids] = 0.0
 
-        self.desired_pos_w[env_ids] = self.asset.data.root_pos_w[env_ids].unsqueeze(1)
-        self.desired_lin_vel_w[env_ids] = 0.0
-        self.desired_yaw_w[env_ids] = self.asset.data.heading_w[env_ids, None, None]
-        self.desired_yaw_vel_w[env_ids] = 0.0
+        self.ref_pos_w[env_ids] = self.asset.data.root_pos_w[env_ids].unsqueeze(1)
+        self.ref_lin_vel_w[env_ids] = 0.0
+        self.ref_yaw_w[env_ids] = self.asset.data.heading_w[env_ids, None, None]
+        self.ref_yaw_vel_w[env_ids] = 0.0
 
         self.spring_force.duration[env_ids] = 0.
         self.constant_force.duration[env_ids] = 0.
         self.impulse_force.duration[env_ids] = 0.
 
     def step(self, substep: int):
+        self.lin_vel_ema.update(self.get_lin_vel_w())
+        self.ang_vel_ema.update(self.asset.data.root_ang_vel_w)
+
         forces_b = self.asset._external_force_b
         forces_b[:, 0] += quat_rotate_inverse(self.asset.data.root_quat_w, self.force_ext_w)
         torques_b = self.asset._external_torque_b
@@ -188,76 +232,72 @@ class Impedance(Command):
     def _integrate(self, dt: float):
         setpos_w = torch.where(
             (self.command_mode == self.CMD_LINVEL).reshape(self.num_envs, 1, 1),
-            self.desired_pos_w + (self.lin_kd / self.lin_kp * self.set_linvel).unsqueeze(1),
+            self.ref_pos_w + (self.lin_kd / self.lin_kp * self.set_linvel).unsqueeze(1),
             self.command_setpos_w.unsqueeze(1)
         )
-        desired_acc_w = (
-            self.lin_kp.reshape(self.num_envs, 1, 1) * (setpos_w - self.desired_pos_w)
-            + self.lin_kd.reshape(self.num_envs, 1, 1) * (0.0 - self.desired_lin_vel_w)
-            + (self.force_factor * saturate(self.force_ext_w, 60.)).reshape(self.num_envs, 1, 3)
+        ref_acc_w = (
+            self.lin_kp.reshape(self.num_envs, 1, 1) * (setpos_w - self.ref_pos_w)
+            + self.lin_kd.reshape(self.num_envs, 1, 1) * (0.0 - self.ref_lin_vel_w)
+            + (self.force_factor * saturate(self.force_ext_w, 80.)).reshape(self.num_envs, 1, 3)
         ) / self.virtual_mass.unsqueeze(1) # [n, t, 3]
 
-        x_b = torch.cat([self.desired_yaw_w.cos(), self.desired_yaw_w.sin(), torch.zeros_like(self.desired_yaw_w)], dim=-1)
-        y_b = torch.cat([-self.desired_yaw_w.sin(), self.desired_yaw_w.cos(), torch.zeros_like(self.desired_yaw_w)], dim=-1)
-        desired_acc_w[..., 2] = 0.
-        desired_acc_w = clamp_norm(desired_acc_w, 0., 20.)
-        # desired_acc_w = clamp_along(desired_acc_w, x_b, -self.max_acc_xyz[0], self.max_acc_xyz[0])
-        # desired_acc_w = clamp_along(desired_acc_w, y_b, -self.max_acc_xyz[1], self.max_acc_xyz[1])
+        # x_b = torch.cat([self.ref_yaw_w.cos(), self.ref_yaw_w.sin(), torch.zeros_like(self.ref_yaw_w)], dim=-1)
+        # y_b = torch.cat([-self.ref_yaw_w.sin(), self.ref_yaw_w.cos(), torch.zeros_like(self.ref_yaw_w)], dim=-1)
+        ref_acc_w[..., 2] = 0.
+        ref_acc_w = clamp_norm(ref_acc_w, 0., 20.)
+        # ref_acc_w = clamp_along(ref_acc_w, x_b, -self.max_acc_xyz[0], self.max_acc_xyz[0])
+        # ref_acc_w = clamp_along(ref_acc_w, y_b, -self.max_acc_xyz[1], self.max_acc_xyz[1])
 
-        acc_low_mask = torch.norm(desired_acc_w, dim=-1) < 0.5
-        desired_acc_w[acc_low_mask] = 0.0
+        acc_low_mask = torch.norm(ref_acc_w, dim=-1) < 0.5
+        ref_acc_w[acc_low_mask] = 0.0
 
-        self.desired_lin_acc_w = desired_acc_w
-        # if self.force_ext_w.any():
-        #     print(self.desired_lin_acc_w[0, :4])
-        #     print(self.desired_lin_vel_w[0, :4])
-        #     breakpoint()
-        desired_vel_w = self.desired_lin_vel_w + self.desired_lin_acc_w * dt
-        # desired_vel_w = clamp_along(desired_vel_w, x_b, -self.max_vel_xyz[0], self.max_vel_xyz[0])
-        # desired_vel_w = clamp_along(desired_vel_w, y_b, -self.max_vel_xyz[1], self.max_vel_xyz[1])  
-        desired_vel_w[..., 2] = 0.
-        desired_vel_w = clamp_norm(desired_vel_w, 0., 2.4)
+        self.ref_lin_acc_w = ref_acc_w
+        ref_vel_w = self.ref_lin_vel_w + self.ref_lin_acc_w * dt
+        # ref_vel_w = clamp_along(ref_vel_w, x_b, -self.max_vel_xyz[0], self.max_vel_xyz[0])
+        # ref_vel_w = clamp_along(ref_vel_w, y_b, -self.max_vel_xyz[1], self.max_vel_xyz[1])  
+        ref_vel_w[..., 2] = 0.
+        ref_vel_w = clamp_norm(ref_vel_w, 0., 2.4)
         ## Do not do this here. Small values may integrate to large values.
         ## Instead, zero-out small values when computing the command.
-        # vel_low_mask = (torch.norm(desired_vel_w, dim=-1) < 0.8) & acc_low_mask
-        # desired_vel_w[vel_low_mask] = 0.0
+        # vel_low_mask = (torch.norm(ref_vel_w, dim=-1) < 0.8) & acc_low_mask
+        # ref_vel_w[vel_low_mask] = 0.0
         
-        self.desired_lin_vel_w = desired_vel_w
-        self.desired_pos_w.add_(self.desired_lin_vel_w * dt)
+        self.ref_lin_vel_w = ref_vel_w
+        self.ref_pos_w.add_(self.ref_lin_vel_w * dt)
 
         torque = torch.cross(
-            yaw_rotate(self.desired_yaw_w,self.constant_force.offset.unsqueeze(1)),
+            yaw_rotate(self.ref_yaw_w.squeeze(-1), self.constant_force.offset.unsqueeze(1)),
             self.constant_force.get_force().unsqueeze(1),
             dim=-1
         )
-        yaw_diff = self.command_setrpy_w[:, 2:3].unsqueeze(1) - self.desired_yaw_w
-        desired_yaw_acc_w = (
+        yaw_diff = self.command_setrpy_w[:, 2:3].unsqueeze(1) - self.ref_yaw_w
+        ref_yaw_acc_w = (
             self.ang_kp.unsqueeze(1) * math_utils.wrap_to_pi(yaw_diff)
-            + self.ang_kd.unsqueeze(1) * (0.0 - self.desired_yaw_vel_w)
+            + self.ang_kd.unsqueeze(1) * (0.0 - self.ref_yaw_vel_w)
             + torque[:, :, 2:3]
         ) / self.virtual_inertia[:, 2:3].unsqueeze(1)
 
-        self.desired_yaw_acc_w[:] = desired_yaw_acc_w
-        self.desired_yaw_vel_w.add_(self.desired_yaw_acc_w * dt)
-        self.desired_yaw_w.add_(self.desired_yaw_vel_w * dt)
+        self.ref_yaw_acc_w[:] = ref_yaw_acc_w
+        self.ref_yaw_vel_w.add_(self.ref_yaw_acc_w * dt)
+        self.ref_yaw_w.add_(self.ref_yaw_vel_w * dt)
 
     def update(self):
         # compute cumulative errors
         # might be used for early termination
         yaw = self.asset.data.heading_w
 
-        self.distance_commanded.add_(self.desired_lin_vel_w[:, -1].norm(dim=-1, keepdim=True))
+        self.distance_commanded.add_(self.ref_lin_vel_w[:, -1].norm(dim=-1, keepdim=True))
         self.distance_covered.add_(self.asset.data.root_lin_vel_w.norm(dim=-1, keepdim=True))
 
-        self.desired_lin_vel_w[:, :-1] = self.desired_lin_vel_w[:, :-1].roll(1, dims=1)
-        self.desired_pos_w[:, :-1] = self.desired_pos_w[:, :-1].roll(1, dims=1)
-        self.desired_yaw_vel_w[:, :-1] = self.desired_yaw_vel_w[:, :-1].roll(1, dims=1)
-        self.desired_yaw_w[:, :-1] = self.desired_yaw_w[:, :-1].roll(1, dims=1)
+        self.ref_lin_vel_w[:, :-1] = self.ref_lin_vel_w[:, :-1].roll(1, dims=1)
+        self.ref_pos_w[:, :-1] = self.ref_pos_w[:, :-1].roll(1, dims=1)
+        self.ref_yaw_vel_w[:, :-1] = self.ref_yaw_vel_w[:, :-1].roll(1, dims=1)
+        self.ref_yaw_w[:, :-1] = self.ref_yaw_w[:, :-1].roll(1, dims=1)
 
-        self.desired_lin_vel_w[:, 0] = self.asset.data.root_lin_vel_w
-        self.desired_pos_w[:, 0] = self.asset.data.root_pos_w
-        self.desired_yaw_vel_w[:, 0] = self.asset.data.root_ang_vel_w[:, 2:3]
-        self.desired_yaw_w[:, 0] = self.asset.data.heading_w.unsqueeze(1)
+        self.ref_lin_vel_w[:, 0] = self.asset.data.root_lin_vel_w
+        self.ref_pos_w[:, 0] = self.asset.data.root_pos_w
+        self.ref_yaw_vel_w[:, 0] = self.asset.data.root_ang_vel_w[:, 2:3]
+        self.ref_yaw_w[:, 0] = self.asset.data.heading_w.unsqueeze(1)
 
         self._integrate(self.env.step_dt)
 
@@ -284,10 +324,10 @@ class Impedance(Command):
         if self.virtual_mass_range is not None:
             self.command[:, 10:15] = self.command[:, 3:8] / self.virtual_mass
         
-        self.surrogate_pos_target = self.desired_pos_w[:, self.surr_steps]
-        self.surrogate_yaw_target = self.desired_yaw_w[:, self.surr_steps]
-        self.surrogate_lin_vel_target = self.desired_lin_vel_w[:, self.surr_steps] 
-        self.surrogate_yaw_vel_target = self.desired_yaw_vel_w[:, self.surr_steps]
+        self.surrogate_pos_target = self.ref_pos_w[:, self.surr_steps]
+        self.surrogate_yaw_target = self.ref_yaw_w[:, self.surr_steps]
+        self.surrogate_lin_vel_target = self.ref_lin_vel_w[:, self.surr_steps] 
+        self.surrogate_yaw_vel_target = self.ref_yaw_vel_w[:, self.surr_steps]
 
         self.command_hidden = torch.cat([
             quat_rotate_inverse(
@@ -330,7 +370,12 @@ class Impedance(Command):
         expire = self.constant_force.time > self.constant_force.duration - 1e-4
         r = (torch.rand(self.num_envs, 1, device=self.device) < self.resample_prob)
         sample = r & expire & (self.command_mode != self.CMD_LARGE_FORCE).reshape(self.num_envs, 1)
-        constant_force = ConstantForce.sample(self.num_envs, device=self.device)
+        constant_force = ConstantForce.sample(
+            self.num_envs,
+            self.constant_force_scale,
+            self.constant_force_offset_scale,
+            device=self.device,
+        )
         self.constant_force.time.add_(self.env.step_dt)
         self.constant_force: ConstantForce = constant_force.where(sample, self.constant_force)
 
@@ -388,8 +433,8 @@ class Impedance(Command):
 
         root_pos_w = self.asset.data.root_pos_w[env_ids]
         offset = torch.zeros(len(env_ids), 3, device=self.device)
-        offset[:, 0].uniform_(0.5, 1.4)
-        offset[:, 1].uniform_(0.5, 1.4)
+        offset[:, 0].uniform_(0.6, 1.2)
+        offset[:, 1].uniform_(0.6, 1.2)
 
         command_setpoint_w = torch.where(
             (command_mode == self.CMD_POSITION).reshape(len(env_ids), 1),
@@ -418,7 +463,7 @@ class Impedance(Command):
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w
             + torch.tensor([0.0, 0.0, 0.2], device=self.device),
-            self.desired_lin_vel_w[:, -2],
+            self.ref_lin_vel_w[:, -2],
             color=(0.0, 1.0, 0.0, 1.0),
         )
         # draw vector to setpoint pos (red)
@@ -434,7 +479,7 @@ class Impedance(Command):
             color=(1.0, 0.0, 1.0, 1.0),
             size=4.0
         )
-        self.env.debug_draw.plot(self.desired_pos_w[0, :-1])
+        self.env.debug_draw.plot(self.ref_pos_w[0, :-1])
         # draw setpoint pos (red)
         self.env.debug_draw.point(
             self.command_setpos_w, color=(1.0, 0.0, 0.0, 1.0), size=40.0
@@ -471,12 +516,12 @@ class Impedance(Command):
         #     color=(1.0, 0.5, 0.0, 1.0),
         #     size=5.0,
         # )
-        # self.env.debug_draw.vector(
-        #     self.asset.data.root_pos_w,
-        #     self.impulse_force.get_force() / (self.virtual_mass * 9.81),
-        #     color=(1.0, 0.6, 0.0, 1.0),
-        #     size=5.0,
-        # )
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            self.impulse_force.get_force() / (self.virtual_mass * 9.81),
+            color=(1.0, 0.6, 0.0, 1.0),
+            size=5.0,
+        )
         ext_pred = self.env.input_tensordict.get("ext_rec", None)
         if ext_pred is not None:
             force_pred_w = quat_rotate(self.asset.data.root_quat_w, ext_pred[:, 0:3])
@@ -493,6 +538,21 @@ class Impedance(Command):
             quat_from_euler_xyz(*self.command_setrpy_w.unbind(-1)),
             scales=torch.tensor([[4., 1., 0.1]]).expand(self.num_envs, 3),
         )
+
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            self.asset.data.root_lin_vel_w,
+            color=(1.0, 0.0, 0.0, 1.0),
+            size=4.0,
+        )
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            self.lin_vel_ema.ema[:, 2],
+            # self.asset.data.body_lin_vel_w[:, [0, self.torso_id]].mean(1),
+            color=(1.0, 1.0, 0.0, 1.0),
+            size=4.0,
+        )
+
 
 
 class ImpedanceImpulse(Impedance):
@@ -517,7 +577,7 @@ class ImpedanceImpulse(Impedance):
         self.ep_id[env_ids] = self.ep_id[env_ids] + 1
         return init_root_state
     
-    def _sample_command(self, env_ids):
+    def _sample_command(self, env_ids, command_mode=None):
         scalar = torch.empty(len(env_ids), 1, device=self.device)
         lin_kp = scalar.uniform_(24., 32.).clone()
         lin_kd = 2. * lin_kp.sqrt()
@@ -539,10 +599,11 @@ class ImpedanceImpulse(Impedance):
         self.virtual_inertia[env_ids] = self.default_inertia 
 
     def update_command(self):
-        sample_command = (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
-        sample_command = sample_command.nonzero().squeeze(-1)
-        if len(sample_command) > 0:
-            self._sample_command(sample_command)
+        # sample_command = (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
+        # sample_command = sample_command.nonzero().squeeze(-1)
+        # if len(sample_command) > 0:
+        #     print("resample")
+        #     self._sample_command(sample_command)
         self.command_setpos_w[:] = torch.where(
             (self.command_mode == self.CMD_LINVEL).reshape(self.num_envs, 1),
             self.lin_kd / self.lin_kp * self.set_linvel + self.asset.data.root_pos_w,
@@ -564,8 +625,8 @@ class ImpedanceImpulse(Impedance):
         constant_force = ConstantForce.sample(self.num_envs, device=self.device)
         constant_force.offset.zero_()
         constant_force.force.zero_()
-        constant_force.force[:, 1] = 160.
-        constant_force.duration[:] = 3.
+        constant_force.force[:, 1] = 80.
+        constant_force.duration[:] = 4.
         self.constant_force.time.add_(self.env.step_dt)
         self.constant_force: ConstantForce = constant_force.where(sample, self.constant_force)
 
@@ -573,13 +634,13 @@ class ImpedanceImpulse(Impedance):
         sample = at_time & (self.command_mode != self.CMD_LARGE_FORCE).reshape(self.num_envs, 1)
         impulse_force = ImpulseForce.sample(self.num_envs, self.device)
         impulse_force.peak.zero_()
-        impulse_force.peak[:, 1] = 400.
+        impulse_force.peak[:, 1] = 200.
         self.impulse_force.time.add_(self.env.step_dt)
         self.impulse_force: ImpulseForce = impulse_force.where(sample, self.impulse_force)
 
         self.force_ext_w[:] = (
-            # self.constant_force.get_force() \
-            + self.impulse_force.get_force()
+            self.constant_force.get_force() \
+            # + self.impulse_force.get_force()
         )
     
     def update(self):
@@ -598,7 +659,7 @@ class ImpedanceImpulse(Impedance):
                 "pos": torch.stack(self.trajs, dim=0).cpu(),
                 "success": (self.ep_id < 2).cpu(),
             }
-            torch.save(data, "trajs_dic_400.pt")
+            # torch.save(data, "trajs_dic_400.pt")
             exit(0)
 
 
@@ -620,7 +681,7 @@ class ImpedanceCollision(Impedance):
         # self.ep_id[env_ids] = self.ep_id[env_ids] + 1
         return init_root_state
     
-    def _sample_command(self, env_ids):
+    def _sample_command(self, env_ids, command_mode):
         scalar = torch.empty(len(env_ids), 1, device=self.device)
         lin_kp = scalar.uniform_(32., 32.).clone()
         lin_kd = 2. * lin_kp.sqrt()

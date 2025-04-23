@@ -38,6 +38,7 @@ action:
 
 command:
   _target_: active_adaptation.envs.mdp.commands.impedance.Impedance
+  body_names: [pelvis, torso_link]
   virtual_mass_range: null # [1.0, 5.0]
   constant_force_scale: [40., 40., 15.]
   constant_force_offset_scale: [0., 0., 0.]
@@ -98,7 +99,10 @@ reward:
     feet_air_time:      {weight: 1.0, enabled: true, body_names: .*ankle_roll_link, thres: 0.4}
     feet_slip:          {weight: 0.5, enabled: false, body_names: .*ankle_roll_link}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*ankle_roll_link}
-    joint_deviation_l2: {weight: 0.1, enabled: true, joint_names: [.*shoulder.*, .*hip_roll_joint]}
+    joint_deviation_l2: {weight: 0.1, enabled: true, joint_names: [.*shoulder.*, .*hip_roll_joint, .*elbow_joint]}
+  metrics:
+    impedance_acc_error: {weight: 1.0, enabled: false}
+    impedance_pos_error: {weight: 1.0, enabled: false}
 
 randomization:
   perturb_body_mass:

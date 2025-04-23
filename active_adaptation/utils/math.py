@@ -121,3 +121,35 @@ class MultiUniform(D.Distribution):
         i = torch.searchsorted(self.starts, uniform) - 1
         return self.ranges[i, 0] + uniform - self.starts[i]
 
+
+
+class EMA:
+    """
+    Exponential Moving Average.
+    
+    Args:
+        x: The tensor to compute the EMA of.
+        gammas: The decay rates. Can be a single float or a list of floats.
+    
+    Example:
+        >>> ema = EMA(x, gammas=[0.9, 0.99])
+        >>> ema.update(x)
+        >>> ema.ema
+    """
+    def __init__(self, x: torch.Tensor, gammas):
+        self.gammas = torch.tensor(gammas, device=x.device)
+        shape = (x.shape[0], len(self.gammas), *x.shape[1:])
+        self.sum = torch.zeros(shape, device=x.device)
+        shape = (x.shape[0], len(self.gammas), 1)
+        self.cnt = torch.zeros(shape, device=x.device)
+
+    def reset(self, env_ids: torch.Tensor):
+        self.sum[env_ids] = 0.0
+        self.cnt[env_ids] = 0.0
+        
+    def update(self, x: torch.Tensor):
+        self.sum.mul_(self.gammas.unsqueeze(-1)).add_(x.unsqueeze(1))
+        self.cnt.mul_(self.gammas.unsqueeze(-1)).add_(1.0)
+        self.ema = self.sum / self.cnt
+        return self.ema
+

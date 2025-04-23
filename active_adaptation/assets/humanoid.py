@@ -189,8 +189,8 @@ G1_CFG = ArticulationCfg(
             damping={
                 "waist_yaw_joint": 5.0, # unitree_ros
                 # "waist_roll_joint": 5.0, # unitree_ros
-                ".*_shoulder_.*": 5.0,
-                ".*_elbow_joint": 5.0,
+                ".*_shoulder_.*": 2.0,
+                ".*_elbow_joint": 2.0,
                 ".*_hip_yaw_joint": 6.0,
                 ".*_hip_roll_joint": 6.0,
                 ".*_hip_pitch_joint": 6.0,

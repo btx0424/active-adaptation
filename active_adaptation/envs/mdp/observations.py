@@ -537,17 +537,17 @@ class root_linvel_b(Observation):
     def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
         return obs * torch.tensor([1., -1., 1.], device=self.device)
 
-    def debug_draw(self):
-        if self.env.sim.has_gui() and self.env.backend == "isaac":
-            if self.body_ids is None:
-                linvel = self.asset.data.root_lin_vel_w
-            else:
-                linvel = (self.asset.data.body_lin_vel_w[:, self.body_ids] * self.body_masses).mean(1)
-            self.env.debug_draw.vector(
-                self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
-                linvel,
-                color=(0.8, 0.1, 0.1, 1.)
-            )
+    # def debug_draw(self):
+    #     if self.env.sim.has_gui() and self.env.backend == "isaac":
+    #         if self.body_ids is None:
+    #             linvel = self.asset.data.root_lin_vel_w
+    #         else:
+    #             linvel = (self.asset.data.body_lin_vel_w[:, self.body_ids] * self.body_masses).mean(1)
+    #         self.env.debug_draw.vector(
+    #             self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
+    #             linvel,
+    #             color=(0.8, 0.1, 0.1, 1.)
+    #         )
     
 class JointObs(Observation):
     def __init__(
@@ -1691,6 +1691,24 @@ class oscillator(Observation):
             phi_cos = self.asset.phi.cos()
         obs = torch.concat([phi_sin, phi_cos, self.asset.phi_dot], dim=-1)
         return obs.reshape(self.num_envs, -1)
+
+
+class oscillator_biped(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.asset.phi = torch.zeros(self.num_envs, 2, device=self.device)
+        self.omega = 3 * torch.pi
+
+    def reset(self, env_ids: torch.Tensor):
+        self.asset.phi[env_ids, 0] = 0.
+        self.asset.phi[env_ids, 1] = torch.pi
+
+    def update(self):
+        self.asset.phi = (self.asset.phi + self.omega * self.env.step_dt) % (2 * torch.pi)
+
+    def compute(self):
+        return torch.cat([self.asset.phi.sin(), self.asset.phi.cos()], dim=-1)
 
 
 class is_standing(Observation):
