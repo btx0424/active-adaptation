@@ -32,8 +32,9 @@ class Impedance(Command):
         env,
         body_names: str="base",
         virtual_mass_range=None, # always set to 1 if `None`
-        linear_kp_range=(2.0, 12.0),
-        angular_kp_range=(2.0, 12.0),
+        force_saturate=80.0,
+        linear_kp_range=(4.0, 24.0),
+        angular_kp_range=(4.0, 24.0),
         impulse_force_momentum_scale=(5.0, 5.0, 1.0),
         impulse_force_duration_range=(0.1, 0.5),
         
@@ -44,12 +45,14 @@ class Impedance(Command):
         max_acc_xy: float = (8.0, 4.0),
         max_vel_xy: float = (1.6, 1.0),
         teleop: bool = False,
+        **kwargs
     ) -> None:
         super().__init__(env, teleop)
 
         self.body_ids = self.asset.find_bodies(body_names)[0]
         self.virtual_mass_range = virtual_mass_range
-        
+        self.force_saturate = force_saturate
+
         self.constant_force_scale = constant_force_scale
         self.constant_force_offset_scale = constant_force_offset_scale
 
@@ -193,6 +196,25 @@ class Impedance(Command):
         r = ((- error_l2 / 0.25).exp() - 0.25 * error_l2).mean(1)
         return r.max(dim=1).values
     
+    # evaluation metrics
+    @reward
+    def impedance_pos_error(self):
+        diff = self.ref_pos_w[:, -1] - self.get_pos_w()
+        error_l2 = diff[:, :2].square().sum(dim=-1, keepdim=True)
+        return error_l2
+    
+    @reward
+    def impedance_vel_error(self):
+        diff = self.ref_lin_vel_w[:, -1] - self.get_lin_vel_w()
+        error_l2 = diff[:, :2].square().sum(dim=-1, keepdim=True)
+        return error_l2
+    
+    @reward
+    def impedance_acc_error(self):
+        diff = self.ref_lin_acc_w[:, 0] - self.asset.data.body_acc_w[:, 0, :3]
+        error_l2 = diff[:, :2].square().sum(dim=-1, keepdim=True)
+        return error_l2
+
     @reward
     def impedance_yaw_vel(self):
         diff = einops.rearrange(self.surrogate_yaw_vel_target, "n t1 d -> n t1 1 d") \
@@ -238,7 +260,7 @@ class Impedance(Command):
         ref_acc_w = (
             self.lin_kp.reshape(self.num_envs, 1, 1) * (setpos_w - self.ref_pos_w)
             + self.lin_kd.reshape(self.num_envs, 1, 1) * (0.0 - self.ref_lin_vel_w)
-            + (self.force_factor * saturate(self.force_ext_w, 80.)).reshape(self.num_envs, 1, 3)
+            + (self.force_factor * saturate(self.force_ext_w, self.force_saturate)).reshape(self.num_envs, 1, 3)
         ) / self.virtual_mass.unsqueeze(1) # [n, t, 3]
 
         # x_b = torch.cat([self.ref_yaw_w.cos(), self.ref_yaw_w.sin(), torch.zeros_like(self.ref_yaw_w)], dim=-1)

@@ -1,7 +1,7 @@
 import torch
 from tensordict import TensorClass
 from active_adaptation.utils.math import clamp_norm
-
+from typing import Tuple
 
 class SpringForce(TensorClass):
     duration: torch.Tensor
@@ -17,24 +17,25 @@ class SpringForce(TensorClass):
     def sample(cls, size: int, device: str):
         scalar = torch.empty(size, 1, device=device)
         offset = torch.zeros(size, 3, device=device)
-        offset[:, 0] = -0.5
-        offset[:, 2].uniform_(-0.15, 0.15)
+        offset[:, 0] = -0.2
         return cls(
             duration=scalar.uniform_(2., 4.).clone(),
             time=torch.zeros(size, 1, device=device),
             setpoint=offset,
             setpoint_mass=400.*torch.ones(size, 1, device=device),
             setpoint_vel=torch.zeros(size, 3, device=device),
-            kp=scalar.uniform_(80., 120.).clone(),
+            kp=scalar.uniform_(60., 80.).clone(),
             kd=scalar.uniform_(10., 20.).clone(),
         )
     
+    def is_valid(self):
+        return self.time < self.duration
+
     def get_force(self, pos: torch.Tensor, vel: torch.Tensor):
         """Return the world-frame force."""
         force = self.kp * (self.setpoint - pos) - self.kd * vel
-        force = clamp_norm(force, 100.)
-        force *= (self.time < self.duration)
-        return force
+        force = clamp_norm(force, 0., 100.)
+        return force * self.is_valid()
 
 
 class ConstantForce(TensorClass):
@@ -44,13 +45,19 @@ class ConstantForce(TensorClass):
     force: torch.Tensor
     
     @classmethod
-    def sample(cls, size: int, device: str):
+    def sample(
+        cls,
+        size: int,
+        force_scales: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+        force_offsets: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+        device: str = "cpu",
+    ):
         duration = torch.zeros(size, 1, device=device)
         duration.uniform_(1.0, 4.0)
         offset = torch.rand(size, 3, device=device) * 2. - 1.
-        offset *= torch.tensor([0.2, 0.1, 0.1], device=device)
+        offset *= torch.tensor(force_offsets, device=device)
         force = torch.rand(size, 3, device=device) * 2. - 1.
-        force *= torch.tensor([40., 40., 15.], device=device)
+        force *= torch.tensor(force_scales, device=device)
         return cls(
             duration=duration,
             time=torch.zeros(size, 1, device=device),
