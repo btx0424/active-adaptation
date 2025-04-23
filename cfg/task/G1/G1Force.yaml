@@ -39,12 +39,12 @@ action:
 command:
   _target_: active_adaptation.envs.mdp.commands.impedance.Impedance
   body_names: [pelvis, torso_link]
-  virtual_mass_range: null # [1.0, 5.0]
+  virtual_mass_range: [2.0, 4.0]
   constant_force_scale: [40., 40., 15.]
   constant_force_offset_scale: [0., 0., 0.]
   temporal_smoothing: 32
-  linear_kp_range: [4.0, 24.0]
-  angular_kp_range: [4.0, 24.0]
+  linear_kp_range: [4.0, 32.0]
+  angular_kp_range: [4.0, 32.0]
   max_acc_xy: [8.0, 8.0]
   max_vel_xy: [1.5, 0.9]
 
