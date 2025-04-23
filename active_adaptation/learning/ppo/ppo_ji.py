@@ -39,7 +39,7 @@ from tensordict.nn import (
 
 from hydra.core.config_store import ConfigStore
 from dataclasses import dataclass, field
-from typing import Union, List
+from typing import Union, Tuple
 
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
 from ..modules.distributions import IndependentNormal
@@ -64,7 +64,7 @@ class PPOConfig:
     se_arch: str = "rnn"
     hack: bool = False # debug option, which gives actor access to the privileged information
     checkpoint_path: Union[str, None] = None
-    in_keys: List[str] = field(default_factory=lambda: ["command_", OBS_KEY, OBS_PRIV_KEY, "ext"])
+    in_keys: Tuple[str] = ("command", OBS_KEY, OBS_PRIV_KEY, "ext")
 
 cs = ConfigStore.instance()
 cs.store("ppo_ji", node=PPOConfig, group="algo")
@@ -138,9 +138,9 @@ class PPOPolicy(ModBase):
             ).to(self.device)
 
         if self.cfg.hack:
-            actor_in_keys = ["command_", OBS_KEY, OBS_PRIV_KEY]
+            actor_in_keys = ["command", OBS_KEY, OBS_PRIV_KEY]
         else:
-            actor_in_keys = ["command_", OBS_KEY, "priv_estimate"]
+            actor_in_keys = ["command", OBS_KEY, "priv_estimate"]
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=TensorDictSequential(
                 CatTensors(actor_in_keys, "policy_estimate", del_keys=False),
@@ -155,7 +155,7 @@ class PPOPolicy(ModBase):
         
         critic_module = nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1))
         self.critic = TensorDictSequential(
-            CatTensors(["command_", OBS_KEY, OBS_PRIV_KEY], "policy_priv", del_keys=False),
+            CatTensors(["command", OBS_KEY, OBS_PRIV_KEY], "policy_priv", del_keys=False),
             Mod(critic_module, ["policy_priv"], ["state_value"])
         ).to(self.device)
 
