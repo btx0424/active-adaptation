@@ -9,6 +9,7 @@ from active_adaptation.utils.math import (
     yaw_rotate, clamp_along, clamp_norm,
     quat_rotate, quat_rotate_inverse,
     quat_from_euler_xyz,
+    quat_from_view,
     yaw_quat,
     EMA
 )
@@ -51,6 +52,9 @@ class Impedance(Command):
 
         self.body_ids = self.asset.find_bodies(body_names)[0]
         self.virtual_mass_range = virtual_mass_range
+        if self.virtual_mass_range is not None:
+            self.virtual_mass_range = torch.tensor(self.virtual_mass_range, device=self.device).float().reshape(-1, 1)
+
         self.force_saturate = force_saturate
 
         self.constant_force_scale = constant_force_scale
@@ -161,8 +165,12 @@ class Impedance(Command):
         
         self.vis_arrow = None
         if self.env.sim.has_gui():
-            from isaaclab.markers.config import BLUE_ARROW_X_MARKER_CFG
-            from isaaclab.markers import VisualizationMarkers
+            from isaaclab.markers.config import (
+                BLUE_ARROW_X_MARKER_CFG,
+                RED_ARROW_X_MARKER_CFG,
+                sim_utils
+            )
+            from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
             print(BLUE_ARROW_X_MARKER_CFG.markers["arrow"].scale)
 
             self.vis_arrow = VisualizationMarkers(
@@ -170,7 +178,23 @@ class Impedance(Command):
                     prim_path="/Visuals/Command/target_yaw"
                 ))
             self.vis_arrow.set_visibility(True)
-        
+            self.force_vis_arrow = VisualizationMarkers(
+                RED_ARROW_X_MARKER_CFG.replace(
+                    prim_path="/Visuals/Command/force"
+                ))
+            self.force_vis_arrow.set_visibility(True)
+            self.setpoint_vis = VisualizationMarkers(
+                VisualizationMarkersCfg(
+                    prim_path="/Visuals/Command/setpoint",
+                    markers={
+                        "setpoint": sim_utils.SphereCfg(
+                            radius=0.04,
+                            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
+                        )
+                    }
+                )
+            )
+            self.setpoint_vis.set_visibility(True)
         self.lin_vel_ema = EMA(self.asset.data.root_lin_vel_w, [0.0, 0.5, 0.8])
         self.ang_vel_ema = EMA(self.asset.data.root_ang_vel_w, [0.0, 0.5, 0.8])
         self.dim_weights = torch.tensor([1.0, 1.0, 0.5], device=self.device)
@@ -260,18 +284,15 @@ class Impedance(Command):
         ref_acc_w = (
             self.lin_kp.reshape(self.num_envs, 1, 1) * (setpos_w - self.ref_pos_w)
             + self.lin_kd.reshape(self.num_envs, 1, 1) * (0.0 - self.ref_lin_vel_w)
-            + (self.force_factor * saturate(self.force_ext_w, self.force_saturate)).reshape(self.num_envs, 1, 3)
+            + saturate(self.force_ext_w, self.force_saturate).reshape(self.num_envs, 1, 3)
         ) / self.virtual_mass.unsqueeze(1) # [n, t, 3]
 
         # x_b = torch.cat([self.ref_yaw_w.cos(), self.ref_yaw_w.sin(), torch.zeros_like(self.ref_yaw_w)], dim=-1)
         # y_b = torch.cat([-self.ref_yaw_w.sin(), self.ref_yaw_w.cos(), torch.zeros_like(self.ref_yaw_w)], dim=-1)
         ref_acc_w[..., 2] = 0.
-        ref_acc_w = clamp_norm(ref_acc_w, 0., 20.)
+        ref_acc_w = clamp_norm(ref_acc_w, 0., 80.)
         # ref_acc_w = clamp_along(ref_acc_w, x_b, -self.max_acc_xyz[0], self.max_acc_xyz[0])
         # ref_acc_w = clamp_along(ref_acc_w, y_b, -self.max_acc_xyz[1], self.max_acc_xyz[1])
-
-        acc_low_mask = torch.norm(ref_acc_w, dim=-1) < 0.5
-        ref_acc_w[acc_low_mask] = 0.0
 
         self.ref_lin_acc_w = ref_acc_w
         ref_vel_w = self.ref_lin_vel_w + self.ref_lin_acc_w * dt
@@ -317,6 +338,7 @@ class Impedance(Command):
         self.ref_yaw_w[:, :-1] = self.ref_yaw_w[:, :-1].roll(1, dims=1)
 
         self.ref_lin_vel_w[:, 0] = self.asset.data.root_lin_vel_w
+        self.ref_lin_vel_w[:, 0] = self.get_lin_vel_w()
         self.ref_pos_w[:, 0] = self.asset.data.root_pos_w
         self.ref_yaw_vel_w[:, 0] = self.asset.data.root_ang_vel_w[:, 2:3]
         self.ref_yaw_w[:, 0] = self.asset.data.heading_w.unsqueeze(1)
@@ -423,6 +445,15 @@ class Impedance(Command):
             + self._spring_force
         )
 
+    def _sample_virtual_mass(self, env_ids: torch.Tensor):
+        if self.virtual_mass_range is not None:
+            i = torch.randint(0, self.virtual_mass_range.shape[0], (len(env_ids),), device=self.device)
+            virtual_mass = self.virtual_mass_range[i]
+        else:
+            virtual_mass = 1.
+        self.virtual_mass[env_ids] = virtual_mass
+        self.virtual_inertia[env_ids] = self.default_inertia
+
     def _sample_command(self, env_ids: torch.Tensor, command_mode: int=None):
         scalar = torch.empty(len(env_ids), 1, device=self.device)
         if command_mode is None:
@@ -471,13 +502,8 @@ class Impedance(Command):
         target_yaw = self.asset.data.heading_w[env_ids, None] + scalar.uniform_(-torch.pi/2, torch.pi/2)
         self.command_setrpy_w[env_ids, 2:3] = math_utils.wrap_to_pi(target_yaw)
 
-        if self.virtual_mass_range is not None:
-            virtual_mass = torch.randint(1, 4, (len(env_ids), 1), device=self.device).float()
-        else:
-            virtual_mass = 1.
-        self.virtual_mass[env_ids] = virtual_mass
-        self.virtual_inertia[env_ids] = self.default_inertia        
-        self.force_factor[env_ids] = torch.randint(0, 5, (len(env_ids), 1), device=self.device) / 4 # [0., 0.25, 0.5, 0.75, 1.]
+        self._sample_virtual_mass(env_ids)    
+        self.force_factor[env_ids] = 1.0
 
 
     def debug_draw(self):
@@ -494,18 +520,19 @@ class Impedance(Command):
             self.command_setpos_w - self.asset.data.root_pos_w,
             color=(1.0, 0.0, 0.0, 1.0),
         )
-        self.env.debug_draw.vector(
-            self.asset.data.root_pos_w + torch.tensor([0.0, 0.0, 0.3], device=self.device),
-            # self.spring_force_setpoint - self.asset.data.root_pos_w,
-            self.set_linvel * (self.command_mode == self.CMD_LINVEL).reshape(self.num_envs, 1),
-            color=(1.0, 0.0, 1.0, 1.0),
-            size=4.0
-        )
+        self.setpoint_vis.visualize(self.command_setpos_w)
+        # self.env.debug_draw.vector(
+        #     self.asset.data.root_pos_w + torch.tensor([0.0, 0.0, 0.3], device=self.device),
+        #     # self.spring_force_setpoint - self.asset.data.root_pos_w,
+        #     self.set_linvel * (self.command_mode == self.CMD_LINVEL).reshape(self.num_envs, 1),
+        #     color=(1.0, 0.0, 1.0, 1.0),
+        #     size=4.0
+        # )
         self.env.debug_draw.plot(self.ref_pos_w[0, :-1])
         # draw setpoint pos (red)
-        self.env.debug_draw.point(
-            self.command_setpos_w, color=(1.0, 0.0, 0.0, 1.0), size=40.0
-        )
+        # self.env.debug_draw.point(
+        #     self.command_setpos_w, color=(1.0, 0.0, 0.0, 1.0), size=40.0
+        # )
 
         # draw external forces (orange)
         # self.env.debug_draw.vector(
@@ -560,13 +587,18 @@ class Impedance(Command):
             quat_from_euler_xyz(*self.command_setrpy_w.unbind(-1)),
             scales=torch.tensor([[4., 1., 0.1]]).expand(self.num_envs, 3),
         )
+        # self.force_vis_arrow.visualize(
+        #     self.asset.data.root_pos_w + torch.tensor([0.0, 0.0, 0.2], device=self.device),
+        #     quat_from_view(self.asset.data.root_pos_w, self.asset.data.root_pos_w + self.force_ext_w/10),
+        #     scales=torch.tensor([[4., 1., 0.1]]).expand(self.num_envs, 3),
+        # )
 
-        self.env.debug_draw.vector(
-            self.asset.data.root_pos_w,
-            self.asset.data.root_lin_vel_w,
-            color=(1.0, 0.0, 0.0, 1.0),
-            size=4.0,
-        )
+        # self.env.debug_draw.vector(
+        #     self.asset.data.root_pos_w,
+        #     self.asset.data.root_lin_vel_w,
+        #     color=(1.0, 0.0, 0.0, 1.0),
+        #     size=4.0,
+        # )
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w,
             self.lin_vel_ema.ema[:, 2],
@@ -581,8 +613,8 @@ class ImpedanceImpulse(Impedance):
     
     X_VEL = 1.5
 
-    def __init__(self, env, virtual_mass_range=(0.5, 1), linear_kp_range=(2, 12), angular_kp_range=(2, 12), impulse_force_momentum_scale=(5, 5, 1), impulse_force_duration_range=(0.1, 0.5), constant_force_scale=(50, 50, 10), constant_force_duration_range=(1, 4), force_offset_scale=(0, 0, 0), temporal_smoothing = 5, max_acc_xy = (8, 4), max_vel_xy = (1.6, 1), teleop = False):
-        super().__init__(env, virtual_mass_range, linear_kp_range, angular_kp_range, impulse_force_momentum_scale, impulse_force_duration_range, constant_force_scale, constant_force_duration_range, force_offset_scale, temporal_smoothing, max_acc_xy, max_vel_xy, teleop)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.trajs = []
         self.done = torch.zeros(self.num_envs, 1, device=self.device, dtype=bool)
         self.ep_id = torch.zeros(self.num_envs, 1, device=self.device, dtype=int)
@@ -602,7 +634,7 @@ class ImpedanceImpulse(Impedance):
     def _sample_command(self, env_ids, command_mode=None):
         scalar = torch.empty(len(env_ids), 1, device=self.device)
         lin_kp = scalar.uniform_(24., 32.).clone()
-        lin_kd = 2. * lin_kp.sqrt()
+        lin_kd = 1.8 * lin_kp.sqrt()
         ang_kp = lin_kp.clone()
         ang_kd = lin_kd.clone()
 
@@ -647,22 +679,24 @@ class ImpedanceImpulse(Impedance):
         constant_force = ConstantForce.sample(self.num_envs, device=self.device)
         constant_force.offset.zero_()
         constant_force.force.zero_()
-        constant_force.force[:, 1] = 80.
+        constant_force.force[:, 0] = 80.   
+        constant_force.force[:, 1] = 0.
         constant_force.duration[:] = 4.
         self.constant_force.time.add_(self.env.step_dt)
         self.constant_force: ConstantForce = constant_force.where(sample, self.constant_force)
 
-        at_time = (self.env.episode_length_buf == 100).reshape(self.num_envs, 1)
+        at_time = ((self.env.episode_length_buf+1) % 150 == 0).reshape(self.num_envs, 1)
         sample = at_time & (self.command_mode != self.CMD_LARGE_FORCE).reshape(self.num_envs, 1)
         impulse_force = ImpulseForce.sample(self.num_envs, self.device)
         impulse_force.peak.zero_()
-        impulse_force.peak[:, 1] = 200.
+        # impulse_force.peak[:, 0] = -100.
+        impulse_force.peak[:, 1] = 100 * (self.env.episode_length_buf / 150)
         self.impulse_force.time.add_(self.env.step_dt)
         self.impulse_force: ImpulseForce = impulse_force.where(sample, self.impulse_force)
 
         self.force_ext_w[:] = (
-            self.constant_force.get_force() \
-            # + self.impulse_force.get_force()
+            # self.constant_force.get_force() \
+            + self.impulse_force.get_force()
         )
     
     def update(self):
@@ -672,17 +706,17 @@ class ImpedanceImpulse(Impedance):
             root_pos = torch.where(self.ep_id==1, root_pos, self.trajs[-1])
         self.trajs.append(root_pos)
         self.step_cnt += 1
-        if self.step_cnt == 900:
-            success_rate = (self.ep_id < 2).float().mean().item()
-            print(f"success rate: {success_rate}")
-            success_rate = (self.env.episode_length_buf >= 899).float().mean().item()
-            print(f"success rate: {success_rate}")
-            data = {
-                "pos": torch.stack(self.trajs, dim=0).cpu(),
-                "success": (self.ep_id < 2).cpu(),
-            }
-            # torch.save(data, "trajs_dic_400.pt")
-            exit(0)
+        # if self.step_cnt == 900:
+        #     success_rate = (self.ep_id < 2).float().mean().item()
+        #     print(f"success rate: {success_rate}")
+        #     success_rate = (self.env.episode_length_buf >= 899).float().mean().item()
+        #     print(f"success rate: {success_rate}")
+        #     data = {
+        #         "pos": torch.stack(self.trajs, dim=0).cpu(),
+        #         "success": (self.ep_id < 2).cpu(),
+        #     }
+        #     # torch.save(data, "trajs_dic_400.pt")
+        #     exit(0)
 
 
 class ImpedanceCollision(Impedance):
@@ -814,10 +848,11 @@ class VelocityImpulse(Command2):
             yaw_quat(self.asset.data.root_quat_w),
             torch.tensor([[self.X_VEL, 0., 0.]], device=self.device)
         )
-        sample = (self.env.episode_length_buf == 100)
+        sample = ((self.env.episode_length_buf+1) % 150 == 0).reshape(self.num_envs, 1)
         impulse_force = ImpulseForce.sample(self.num_envs, self.device)
         impulse_force.peak.zero_()
-        impulse_force.peak[:, 1] = 400.
+        impulse_force.peak[:, 0] = -200.
+        impulse_force.peak[:, 1] = 100 * (self.env.episode_length_buf / 150)
         self.impulse_force.time.add_(self.env.step_dt)
         self.impulse_force: ImpulseForce = impulse_force.where(sample, self.impulse_force)
 
@@ -834,17 +869,17 @@ class VelocityImpulse(Command2):
             root_pos = torch.where(self.ep_id==1, root_pos, self.trajs[-1])
         self.trajs.append(root_pos)
         self.step_cnt += 1
-        if self.step_cnt == 900:
-            success_rate = (self.ep_id < 2).float().mean().item()
-            print(f"success rate: {success_rate}")
-            success_rate = (self.env.episode_length_buf >= 899).float().mean().item()
-            print(f"success rate: {success_rate}")
-            data = {
-                "pos": torch.stack(self.trajs, dim=0).cpu(),
-                "success": (self.ep_id < 2).cpu(),
-            }
-            torch.save(data, "trajs_vel1_400.pt")
-            exit(0)
+        # if self.step_cnt == 900:
+        #     success_rate = (self.ep_id < 2).float().mean().item()
+        #     print(f"success rate: {success_rate}")
+        #     success_rate = (self.env.episode_length_buf >= 899).float().mean().item()
+        #     print(f"success rate: {success_rate}")
+        #     data = {
+        #         "pos": torch.stack(self.trajs, dim=0).cpu(),
+        #         "success": (self.ep_id < 2).cpu(),
+        #     }
+        #     # torch.save(data, "trajs_vel1_400.pt")
+        #     exit(0)
 
     def debug_draw(self):
         super().debug_draw()

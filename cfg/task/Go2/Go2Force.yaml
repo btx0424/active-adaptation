@@ -28,16 +28,15 @@ action:
 command:
   _target_: active_adaptation.envs.mdp.commands.impedance.Impedance
   body_names: base
-  virtual_mass_range: null # [1.0, 5.0]
+  virtual_mass_range: [1., 2., 4.] # base mass: 6.921
+  force_saturate: 120.0
   constant_force_scale: [40., 40., 15.]
   constant_force_offset_scale: [0.1, 0.1, 0.1]
   # impulse_force_momentum_scale: [5.0, 5.0, 1.0]
   # impulse_force_duration_range: [0.1, 0.4]
   temporal_smoothing: 32
-  linear_kp_range: [4.0, 24.0]
+  linear_kp_range: [4.0, 32.0]
   angular_kp_range: [4.0, 24.0]
-  max_acc_xy: [8.0, 8.0]
-  max_vel_xy: [1.5, 0.9]
 
 observation:
   command:
@@ -114,6 +113,7 @@ reward:
     undesired_contact:  {body_names: [Head.*, .*_calf, .*thigh], weight: 2.0, enabled: true}
   metrics:
     impedance_acc_error: {weight: 1.0, enabled: false}
+    impedance_vel_error: {weight: 1.0, enabled: false}
     impedance_pos_error: {weight: 1.0, enabled: false}
 
 termination:

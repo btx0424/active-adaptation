@@ -7,9 +7,12 @@ from isaaclab.utils.math import (
     yaw_quat,
     wrap_to_pi,
     quat_from_euler_xyz,
+    quat_from_matrix,
     quat_mul,
     quat_conjugate,
-    axis_angle_from_quat
+    axis_angle_from_quat,
+    create_rotation_matrix_from_view,
+    convert_camera_frame_orientation_convention
 )
 
 from .helpers import batchify
@@ -97,6 +100,13 @@ def euler_from_quat(quat: torch.Tensor):
     yaw = torch.atan2(sin_yaw, cos_yaw)
 
     return torch.stack([roll, pitch, yaw], dim=-1)
+
+
+def quat_from_view(eyes: torch.Tensor, lookat: torch.Tensor):
+    matrix = create_rotation_matrix_from_view(eyes, lookat, up_axis="Z", device=eyes.device)
+    quat = quat_from_matrix(matrix)
+    quat = convert_camera_frame_orientation_convention(quat, "opengl", "world")
+    return quat
 
 
 class MultiUniform(D.Distribution):

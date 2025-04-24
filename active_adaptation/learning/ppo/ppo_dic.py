@@ -259,9 +259,9 @@ class PPODICPolicy(TensorDictModuleBase):
             Mod(nn.Sequential(make_mlp([32]), nn.LazyLinear(32)), ["ext"], ["ext_feature"]),
         ).to(self.device)
 
-        if self.cfg.short_history > 0:
-            global OBS_KEY 
-            OBS_KEY = OBS_KEY + "_h"
+        if observation_spec.get("command_", None) is not None:
+            global CMD_KEY
+            CMD_KEY = "command_"
 
         ext_shape = observation_spec["ext_"].shape[-1]
         self.adapt_module =  Mod(
@@ -270,7 +270,7 @@ class PPODICPolicy(TensorDictModuleBase):
             ["priv_pred", "ext_pred", ("info", "ext_rec"), ("next", "adapt_hx")]
         ).to(self.device)
         
-        in_keys = ["command", OBS_KEY, "priv_feature", "ext_feature"]
+        in_keys = [CMD_KEY, OBS_KEY, "priv_feature", "ext_feature"]
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=Seq(
                 CatTensors(in_keys, "_actor_inp", del_keys=False, sort=False),
@@ -296,7 +296,7 @@ class PPODICPolicy(TensorDictModuleBase):
             Mod(nn.LazyLinear(4), ["retro_feat"], [("info", "retro_pred")])
         ).to(self.device)
 
-        in_keys = ["command", OBS_KEY, "priv_pred", "ext_pred"]
+        in_keys = [CMD_KEY, OBS_KEY, "priv_pred", "ext_pred"]
         self.actor_adapt: ProbabilisticActor = ProbabilisticActor(
             module=Seq(
                 CatTensors(in_keys, "_actor_inp", del_keys=False, sort=False),
@@ -312,7 +312,7 @@ class PPODICPolicy(TensorDictModuleBase):
         
         _critic = nn.Sequential(make_mlp([512, 256, 128]), nn.LazyLinear(1))
         self.critic = Seq(
-            CatTensors(["command", OBS_KEY, OBS_PRIV_KEY, "ext"], "_critic_input", del_keys=False),
+            CatTensors([CMD_KEY, OBS_KEY, OBS_PRIV_KEY, "ext"], "_critic_input", del_keys=False),
             Mod(_critic, ["_critic_input"], ["state_value"])
         ).to(self.device)
 
@@ -573,7 +573,7 @@ class PPODICPolicy(TensorDictModuleBase):
         
         # self.retro(tensordict)
         # retro_pred = tensordict["info", "retro_pred"]
-        # retro_loss = F.l1_loss(retro_pred, tensordict["command"][:, :retro_pred.shape[-1]])
+        # retro_loss = F.l1_loss(retro_pred, tensordict[CMD_KEY][:, :retro_pred.shape[-1]])
         # retro_loss = (retro_loss * (~tensordict["is_init"])).mean()
         
         # self.dynamics(tensordict)
