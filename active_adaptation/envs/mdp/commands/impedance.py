@@ -43,6 +43,7 @@ class Impedance(Command):
         constant_force_offset_scale=(0.0, 0.0, 0.0),
 
         temporal_smoothing: int = 32,
+        surr_steps: list[int] = [16, 24, 32],
         max_acc_xy: float = (8.0, 4.0),
         max_vel_xy: float = (1.6, 1.0),
         teleop: bool = False,
@@ -69,9 +70,7 @@ class Impedance(Command):
         self.max_vel_xyz = max_vel_xy + (0.,)
 
         assert self.temporal_smoothing >= 32
-        self.surr_steps = [16, 24, 32]
-        # self.surr_steps = [1]
-        # self.surr_steps = [-1]
+        self.surr_steps = surr_steps
 
         with torch.device(self.device):
             if self.virtual_mass_range is not None:
