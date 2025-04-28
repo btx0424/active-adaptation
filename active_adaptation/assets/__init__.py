@@ -28,6 +28,7 @@ ROBOTS = {
     "g1_27dof": G1_27DOF_CFG,
     "g1_23dof": G1_23DOF_CFG,
     "h2": H2_CFG,
+    "b1z1": UNITREE_B1Z1_CFG,
 }
 
 

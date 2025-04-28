@@ -183,7 +183,7 @@ UNITREE_GO2ARX_CFG.actuators["arm"] = DCMotorCfg(
 # UNITREE_GO2ABP_CFG.init_state.joint_pos["joint3"] = 0.3
 UNITREE_ALIENGO_CFG = copy.deepcopy(UNITREE_GO2_CFG)
 UNITREE_ALIENGO_CFG.spawn.usd_path = f"{ASSET_PATH}/Aliengo/aliengo.usd"
-UNITREE_ALIENGO_CFG.init_state.pos = (0.0, 0.0, 0.30)
+UNITREE_ALIENGO_CFG.init_state.pos = (0.0, 0.0, 0.40)
 UNITREE_ALIENGO_CFG.init_state.joint_pos = {
     ".*L_hip_joint": 0.3,
     ".*R_hip_joint": -0.3,
@@ -209,12 +209,12 @@ UNITREE_ALIENGO_CFG.actuators["base_legs"] = ImplicitActuatorCfg(
 
 UNITREE_ALIENGO_A1_CFG = copy.deepcopy(UNITREE_ALIENGO_CFG)
 UNITREE_ALIENGO_A1_CFG.init_state.joint_pos = {
-    ".*L_hip_joint": 0.3,
-    ".*R_hip_joint": -0.3,
-    "F.*_thigh_joint": 1.0,
-    "R.*_thigh_joint": 1.1,
-    "F.*_calf_joint": -2.0,
-    "R.*_calf_joint": -2.1,
+    ".*L_hip_joint": 0.1,
+    ".*R_hip_joint": -0.1,
+    "F.*_thigh_joint": 0.6,
+    "R.*_thigh_joint": 0.6,
+    "F.*_calf_joint": -1.2,
+    "R.*_calf_joint": -1.2,
     "arm_joint1": 0.0,
     "arm_joint2": 0.6,
     "arm_joint3": -0.6,
@@ -223,7 +223,7 @@ UNITREE_ALIENGO_A1_CFG.init_state.joint_pos = {
     "arm_joint6": 0.0,
 }
 
-UNITREE_ALIENGO_A1_CFG.class_type = QuadrupedManipulator
+UNITREE_ALIENGO_A1_CFG.class_type = Quadruped
 UNITREE_ALIENGO_A1_CFG.ee_body_name = "arm_link6"
 UNITREE_ALIENGO_A1_CFG.spawn.usd_path = f"{ASSET_PATH}/Aliengo/aliengo_a1.usd"
 UNITREE_ALIENGO_A1_CFG.actuators.pop("base_legs")
@@ -248,7 +248,7 @@ UNITREE_ALIENGO_A1_CFG.actuators["base_arm"] = ImplicitActuatorCfg(
         "arm_joint3": 42.0,
         "arm_joint[4-6]": 18.0,
 
-        ".*_(hip|thigh|calf)_joint": 80.0,
+        ".*_(hip|thigh|calf)_joint": 60.0,
     },
     damping={
         # "arm_joint[1-3]": 2.0,
@@ -273,30 +273,66 @@ UNITREE_ALIENGO_A1_CFG.actuators["gripper"] = ImplicitActuatorCfg(
 UNITREE_ALIENGO_A1_FIX_CFG = copy.deepcopy(UNITREE_ALIENGO_A1_CFG)
 UNITREE_ALIENGO_A1_FIX_CFG.spawn.articulation_props.fix_root_link = True
 
-CYBERDOG_CFG = copy.deepcopy(UNITREE_A1_CFG)
-CYBERDOG_CFG.spawn.usd_path = f"{ASSET_PATH}/cyberdog2_v3.usd"
-CYBERDOG_CFG.actuators["base_legs"].stiffness = 20.0
-CYBERDOG_CFG.actuators["base_legs"].damping = 0.5
-CYBERDOG_CFG.actuators["base_legs"].effort_limit = 12.0
-CYBERDOG_CFG.actuators["base_legs"].saturation_effort = 12.0
-CYBERDOG_CFG.actuators["base_legs"].friction = 0.02
-CYBERDOG_CFG.init_state.pos = (0.0, 0.0, 0.33)
-CYBERDOG_CFG.init_state.joint_pos = {
-    ".*_hip_joint": 0.0,
-    ".*thigh_joint": 0.78,
-    ".*calf_joint": -1.22,
-}
-CYBERDOG_CFG.spawn.collision_props = sim_utils.CollisionPropertiesCfg(
-    contact_offset=0.05,
-    rest_offset=0.0,
-)
 
-UNITREE_GO1M_CFG: ArticulationCfg = UNITREE_A1_CFG.replace()
-UNITREE_GO1M_CFG.spawn.usd_path = f"{ASSET_PATH}/widowGo1.usd"
-UNITREE_GO1M_CFG.actuators["arm"] = DCMotorCfg(
-    joint_names_expr=[".*widow_(waist|shoulder|elbow)"],
-    stiffness=30.0,
-    velocity_limit=2.0,
-    damping=1.0,
-    saturation_effort=200,
+UNITREE_B1Z1_CFG = ArticulationCfg(
+    class_type=Quadruped,
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_PATH}/b1/b1_plus_z1.usd",
+        activate_contact_sensors=True,
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            disable_gravity=False,
+            retain_accelerations=False,
+            linear_damping=0.0,
+            angular_damping=0.0,
+            max_linear_velocity=1000.0,
+            max_angular_velocity=1000.0,
+            max_depenetration_velocity=1.0,
+        ),
+        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+            enabled_self_collisions=False,
+            solver_position_iteration_count=4,
+            solver_velocity_iteration_count=1,
+        ),
+    ),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, 0.6),
+        joint_pos={
+            ".*L_hip_joint": 0.2,
+            ".*R_hip_joint": -0.2,
+            "F[L,R]_thigh_joint": 0.6,
+            "R[L,R]_thigh_joint": 1.0,
+            ".*_calf_joint": -1.3,
+            'arm_joint1': 0.0,
+            'arm_joint2': 1.0, # 1.5
+            'arm_joint3': -1.8, # -1.5
+            'arm_joint4': -0.1, # -0.54
+            'arm_joint5': 0.0,
+            'arm_joint6': 0.0,
+            'jointGripper': 0.0,
+        },
+        joint_vel={".*": 0.0},
+    ),
+    soft_joint_pos_limit_factor=0.9,
+    actuators={
+        "base_legs": ImplicitActuatorCfg(
+            joint_names_expr=".*",
+            effort_limit_sim=200.0,
+            # saturation_effort=35.5,
+            velocity_limit_sim=40.0,
+            stiffness={
+                ".*hip_joint": 100.0,
+                ".*thigh_joint": 100.0,
+                ".*calf_joint": 100.0,
+                "arm_joint.*": 40.0,
+            },
+            damping={
+                ".*hip_joint": 2.0,
+                ".*thigh_joint": 2.0,
+                ".*calf_joint": 2.0,
+                "arm_joint.*": 1.0,
+            },
+            friction=0.01,
+            armature=0.01,
+        ),
+    },
 )

@@ -26,6 +26,7 @@ class SpringForce(TensorClass):
             setpoint_vel=torch.zeros(size, 3, device=device),
             kp=scalar.uniform_(60., 80.).clone(),
             kd=scalar.uniform_(10., 20.).clone(),
+            batch_size=size,
         )
     
     def is_valid(self):
@@ -34,8 +35,13 @@ class SpringForce(TensorClass):
     def get_force(self, pos: torch.Tensor, vel: torch.Tensor):
         """Return the world-frame force."""
         force = self.kp * (self.setpoint - pos) - self.kd * vel
-        force = clamp_norm(force, 0., 100.)
-        return force * self.is_valid()
+        force = clamp_norm(force, 0., 100.) * self.is_valid()
+        return force
+    
+    def step(self, pos: torch.Tensor, vel: torch.Tensor, dt: float):
+        self.time.add_(dt)
+        self.setpoint_vel.add_(-self.get_force(pos, vel) / self.setpoint_mass * dt)
+        self.setpoint.add_(self.setpoint_vel * dt)
 
 
 class ConstantForce(TensorClass):
@@ -63,6 +69,7 @@ class ConstantForce(TensorClass):
             time=torch.zeros(size, 1, device=device),
             offset=offset,
             force=force,
+            batch_size=size,
         )
 
     def get_force(self):
@@ -88,6 +95,7 @@ class ImpulseForce(TensorClass):
             duration=duration,
             time=torch.zeros(size, 1, device=device),
             peak=peak,
+            batch_size=size,
         )
 
     def get_force(self):

@@ -222,15 +222,15 @@ class Impedance(Command):
     # evaluation metrics
     @reward
     def impedance_pos_error(self):
-        diff = self.ref_pos_w[:, -1] - self.get_pos_w()
-        error_l2 = diff[:, :2].square().sum(dim=-1, keepdim=True)
-        return error_l2
+        diff = self.ref_pos_w[:, [*self.surr_steps, -1]] - self.get_pos_w().unsqueeze(1)
+        error_l2 = diff[:, :, :2].square().sum(dim=-1, keepdim=True)
+        return error_l2.mean(1)
     
     @reward
     def impedance_vel_error(self):
-        diff = self.ref_lin_vel_w[:, -1] - self.get_lin_vel_w()
-        error_l2 = diff[:, :2].square().sum(dim=-1, keepdim=True)
-        return error_l2
+        diff = self.ref_lin_vel_w[:, [*self.surr_steps, -1]] - self.get_lin_vel_w().unsqueeze(1)
+        error_l2 = diff[:, :, :2].square().sum(dim=-1, keepdim=True)
+        return error_l2.mean(1)
     
     @reward
     def impedance_acc_error(self):
