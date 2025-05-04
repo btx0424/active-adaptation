@@ -54,9 +54,9 @@ observation:
     oscillator_biped: {}
   policy:
     root_angvel_b:  {noise_std: 0.05}
-    projected_gravity_b: {noise_std: 0.05}
-    joint_pos: {noise_std: 0.05}
-    joint_vel: {noise_std: 0.2}
+    gravity_multistep:  {steps: 3, noise_std: 0.05}
+    joint_pos_multistep: {steps: 3, noise_std: 0.05}
+    joint_vel_multistep: {steps: 3, noise_std: 0.2}
     prev_actions:   {steps: 4}
   priv:
     command_hidden:
@@ -101,8 +101,9 @@ reward:
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*ankle_roll_link}
     joint_deviation_l2: {weight: 0.1, enabled: true, joint_names: [.*shoulder.*, .*hip_roll_joint, .*elbow_joint]}
   metrics:
-    impedance_acc_error: {weight: 1.0, enabled: false}
     impedance_pos_error: {weight: 1.0, enabled: false}
+    impedance_vel_error: {weight: 1.0, enabled: false}
+    impedance_acc_error: {weight: 1.0, enabled: false}
 
 randomization:
   perturb_body_mass:

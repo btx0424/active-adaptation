@@ -35,12 +35,12 @@ class SpringForce(TensorClass):
     def get_force(self, pos: torch.Tensor, vel: torch.Tensor):
         """Return the world-frame force."""
         force = self.kp * (self.setpoint - pos) - self.kd * vel
-        force = clamp_norm(force, 0., 100.) * self.is_valid()
+        force = clamp_norm(force, 0., 200.) * self.is_valid()
         return force
     
     def step(self, pos: torch.Tensor, vel: torch.Tensor, dt: float):
         self.time.add_(dt)
-        self.setpoint_vel.add_(-self.get_force(pos, vel) / self.setpoint_mass * dt)
+        self.setpoint_vel.mul_(0.95).add_(-self.get_force(pos, vel) / self.setpoint_mass * dt)
         self.setpoint.add_(self.setpoint_vel * dt)
 
 

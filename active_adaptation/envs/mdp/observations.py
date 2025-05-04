@@ -7,7 +7,7 @@ from typing import Tuple, TYPE_CHECKING, Callable
 from isaaclab.utils.math import quat_apply_yaw, quat_mul, quat_inv
 from isaaclab.utils.string import resolve_matching_names
 import active_adaptation
-from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse, yaw_quat
+from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse, yaw_quat, EMA
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation
@@ -258,19 +258,18 @@ class body_vel(CartesianObs):
     ):
         super().__init__(env, body_names, left_bodies, right_bodies)
         self.yaw_only = yaw_only
-        print(f"Track body vel for {self.body_names}")
-        self.body_vel_b = torch.zeros(self.num_envs, len(self.body_indices), 3, device=self.env.device)
-
-    def update(self):
+        
+    def compute(self):
+        body_lin_vel_w = self.asset.data.body_lin_vel_w[:, self.body_indices]
+        body_ang_vel_w = self.asset.data.body_ang_vel_w[:, self.body_indices]
         if self.yaw_only:
             quat = yaw_quat(self.asset.data.root_quat_w).unsqueeze(1)
         else:
             quat = self.asset.data.root_quat_w.unsqueeze(1)
-        body_vel_w = self.asset.data.body_lin_vel_w[:, self.body_indices]
-        self.body_vel_b[:] = quat_rotate_inverse(quat, body_vel_w)
-        
-    def compute(self):
-        return self.body_vel_b.reshape(self.num_envs, -1)
+        body_lin_vel_b = quat_rotate_inverse(quat, body_lin_vel_w)
+        body_ang_vel_b = quat_rotate_inverse(quat, body_ang_vel_w)
+        # body_vel_b = torch.cat([body_lin_vel_b, body_ang_vel_b], dim=-1)
+        return body_lin_vel_b.reshape(self.num_envs, -1)
 
 
 class body_acc(Observation):
@@ -497,42 +496,26 @@ class gravity_substep(Observation):
 
 
 class root_linvel_b(Observation):
-    def __init__(self, env, body_names: str=None, yaw_only: bool=False, mask_ratio: float=0):
+    def __init__(self, env, gammas=(0.,), yaw_only: bool=False, mask_ratio: float=0):
         super().__init__(env, mask_ratio=mask_ratio)
         self.asset: Articulation = self.env.scene["robot"]
         self.yaw_only = yaw_only
-        if body_names is not None:
-            self.body_ids, self.body_names = self.asset.find_bodies(body_names)
-            self.body_masses = self.asset.root_physx_view.get_masses()[0, self.body_ids]
-            self.body_masses = (self.body_masses / self.body_masses.sum()).unsqueeze(-1).to(self.device)
-            self.body_ids = torch.tensor(self.body_ids, device=self.device)
-        else:
-            self.body_ids = None
-        self.linvel = torch.zeros(self.num_envs, 3, device=self.device)
+        self.ema = EMA(self.asset.data.root_lin_vel_w, gammas=gammas)
+        self.ema.update(self.asset.data.root_lin_vel_w)
     
-    def update(self):
-        if self.body_ids is None:
-            if self.yaw_only:
-                root_quat = yaw_quat(self.asset.data.root_quat_w)
-                linvel = quat_rotate_inverse(
-                    root_quat,
-                    self.asset.data.root_lin_vel_w
-                )
-            else:
-                linvel = self.asset.data.root_lin_vel_b
-        else:
-            if self.yaw_only:
-                root_quat = yaw_quat(self.asset.data.root_quat_w)
-            else:
-                root_quat = self.asset.data.root_quat_w
-            linvel = quat_rotate_inverse(
-                root_quat,
-                (self.asset.data.body_lin_vel_w[:, self.body_ids] * self.body_masses).sum(1)
-            )
-        self.linvel[:] = linvel
+    def reset(self, env_ids: torch.Tensor):
+        self.ema.reset(env_ids)
+    
+    def post_step(self, substep):
+        self.ema.update(self.asset.data.root_lin_vel_w)
     
     def compute(self) -> torch.Tensor:
-        return self.linvel
+        linvel = self.ema.ema
+        if self.yaw_only:
+            linvel = quat_rotate_inverse(yaw_quat(self.asset.data.root_quat_w).unsqueeze(1), linvel)
+        else:
+            linvel = quat_rotate_inverse(self.asset.data.root_quat_w.unsqueeze(1), linvel)
+        return linvel.reshape(self.num_envs, -1)
     
     def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
         return obs * torch.tensor([1., -1., 1.], device=self.device)
@@ -883,13 +866,13 @@ class contact_indicator(Observation):
             obs = obs.reshape(self.num_envs, len(self.body_ids), 2)[:, [1, 0, 3, 2]] * torch.tensor([1., 1.], device=obs.device)
         return obs.reshape(self.num_envs, -1)
 
-    def debug_draw(self):
-        if self.env.sim.has_gui() and self.env.backend == "isaac":
-            self.env.debug_draw.vector(
-                self.asset.data.body_pos_w[:, self.artc_ids],
-                self.force_substep.mean(1) / self.giravity,
-                color=(1., 1., 1., 1.)
-            )
+    # def debug_draw(self):
+    #     if self.env.sim.has_gui() and self.env.backend == "isaac":
+    #         self.env.debug_draw.vector(
+    #             self.asset.data.body_pos_w[:, self.artc_ids],
+    #             self.force_substep.mean(1) / self.giravity,
+    #             color=(1., 1., 1., 1.)
+    #         )
 
 
 class motor_params(Observation):
@@ -1149,12 +1132,12 @@ class feet_height_map(Observation):
         obs = obs[:, :, [0, 2, 1, 4, 3]]
         return obs.reshape(self.num_envs, -1)
     
-    def debug_draw(self):
-        if self.env.sim.has_gui() and self.env.backend == "isaac":
-            x = self.ray_hits_w.clone()
-            x[..., 2] = self.feet_pos_w.unsqueeze(-2)[..., 2]
-            d = self.ray_hits_w - x
-            self.env.debug_draw.vector(x, d)
+    # def debug_draw(self):
+    #     if self.env.sim.has_gui() and self.env.backend == "isaac":
+    #         x = self.ray_hits_w.clone()
+    #         x[..., 2] = self.feet_pos_w.unsqueeze(-2)[..., 2]
+    #         d = self.ray_hits_w - x
+    #         self.env.debug_draw.vector(x, d)
 
 
 class head_height(Observation):
@@ -1694,15 +1677,19 @@ class oscillator(Observation):
 
 
 class oscillator_biped(Observation):
-    def __init__(self, env):
+    def __init__(self, env, omega_range=(2.0, 3.0)):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.asset.phi = torch.zeros(self.num_envs, 2, device=self.device)
-        self.omega = 3 * torch.pi
+        self.omega_range = omega_range
+        self.omega = torch.zeros(self.num_envs, 1, device=self.device)
 
     def reset(self, env_ids: torch.Tensor):
         self.asset.phi[env_ids, 0] = 0.
         self.asset.phi[env_ids, 1] = torch.pi
+        omega = torch.zeros(len(env_ids), 1, device=self.device)
+        omega.uniform_(self.omega_range[0], self.omega_range[1])
+        self.omega[env_ids] = omega
 
     def update(self):
         self.asset.phi = (self.asset.phi + self.omega * self.env.step_dt) % (2 * torch.pi)
