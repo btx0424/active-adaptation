@@ -1420,6 +1420,7 @@ class oscillator(Reward):
         self,
         env,
         feet_names: str = ".*_foot",
+        omega_range=(2., 2.),
         margin: float = 0.0,
         weight=1.0,
         enabled=True,
@@ -1445,9 +1446,9 @@ class oscillator(Reward):
             len(self.feet_ids),
             device=self.device,
         )
-
+        self.omega_range = omega_range
         self.omega = torch.zeros(self.num_envs, 1, device=self.device)
-        self.omega.uniform_(4.0, 5.0).mul_(torch.pi)
+        self.omega.uniform_(*self.omega_range).mul_(torch.pi)
 
         self.rest_target = torch.pi * 3 / 2
         self.keep_steping = torch.zeros(
