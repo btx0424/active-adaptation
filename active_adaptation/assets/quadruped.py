@@ -14,20 +14,6 @@ if TYPE_CHECKING:
     from active_adaptation.envs.base import EnvBase
 
 
-class Quadruped(Articulation):
-
-    _env: "EnvBase"
-
-    def _create_buffers(self):
-        super()._create_buffers()
-        self.feet_ids, self.feet_names = self.find_bodies(".*_foot")
-        self.feet_ids = torch.tensor(self.feet_ids, device=self.device)
-
-        # oscillators
-        self.phi = torch.zeros(self.num_instances, 4, device=self.device)
-        self.phi_dot = torch.zeros(self.num_instances, 4, device=self.device)
-
-
 class QuadrupedManipulator(Articulation):
     def _create_buffers(self):
         super()._create_buffers()
@@ -62,7 +48,6 @@ ASSET_PATH = os.path.dirname(__file__)
 # UNITREE_GO2_CFG = UNITREE_GO2_CFG
 # UNITREE_GO2_CFG.class_type = Quadruped
 UNITREE_GO2_CFG = ArticulationCfg(
-    class_type=Quadruped,
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{ASSET_PATH}/Go2/go2.usd",
         activate_contact_sensors=True,
@@ -223,7 +208,6 @@ UNITREE_ALIENGO_A1_CFG.init_state.joint_pos = {
     "arm_joint6": 0.0,
 }
 
-UNITREE_ALIENGO_A1_CFG.class_type = Quadruped
 UNITREE_ALIENGO_A1_CFG.ee_body_name = "arm_link6"
 UNITREE_ALIENGO_A1_CFG.spawn.usd_path = f"{ASSET_PATH}/Aliengo/aliengo_a1.usd"
 UNITREE_ALIENGO_A1_CFG.actuators.pop("base_legs")
@@ -275,7 +259,6 @@ UNITREE_ALIENGO_A1_FIX_CFG.spawn.articulation_props.fix_root_link = True
 
 
 UNITREE_B1Z1_CFG = ArticulationCfg(
-    class_type=Quadruped,
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{ASSET_PATH}/b1/b1_plus_z1.usd",
         activate_contact_sensors=True,

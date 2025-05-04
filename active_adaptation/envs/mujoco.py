@@ -27,8 +27,8 @@ class MJArticulationCfg:
     joint_names_isaac: Sequence[str]
 
 
-# @dataclass
-class MJArticulationData(TensorClass):
+@dataclass
+class MJArticulationData:
     default_joint_pos: ArrayType
     default_joint_vel: ArrayType
     default_root_state: ArrayType
@@ -88,7 +88,8 @@ class MJArticulationData(TensorClass):
 
 
 class MJPhysicsView:
-    pass
+    def __init__(self, articulation: "MJArticulation"):
+        self.articulation = articulation
 
 
 class MJArticulation:
@@ -162,16 +163,17 @@ class MJArticulation:
             ids, _, values = string_utils.resolve_matching_names_values(actuator_cfg["damping"], self.joint_names_isaac)
             joint_damping[ids] = torch.as_tensor(values)
 
+        diag_inertia = torch.as_tensor(self.mj_model.body_inertia[self.body_adrs])
         self._data = MJArticulationData(
             default_joint_pos=default_joint_pos[None],
             default_joint_vel=default_joint_vel[None],
             default_root_state=torch.tensor([[*cfg.init_state["pos"], 1., 0., 0., 0.]]),
             default_mass=torch.as_tensor(self.mj_model.body_mass[self.body_adrs])[None],
-            default_inertia=torch.as_tensor(self.mj_model.body_inertia[self.body_adrs])[None],
+            default_inertia=diag_inertia.diag_embed().flatten(1)[None],
             joint_stiffness=joint_stiffness[None],
             joint_damping=joint_damping[None],
             applied_torque=torch.zeros(1, self.num_joints),
-            batch_size=[1]
+            # batch_size=[1]
         )
         self._data.joint_pos_target = self._data.default_joint_pos.clone()
         self._data.joint_vel_target = self._data.default_joint_vel.clone()
@@ -327,12 +329,28 @@ class MJArticulation:
 
 @dataclass
 class MjContactData:
-    pass
+    net_forces_w: ArrayType = None
 
 
 class MjContactSensor:
-    def __init__(self):
-        pass
+    def __init__(self, articulation: MJArticulation):
+        self.articulation = articulation
+        self.body_names = self.articulation.body_names
+        self.body_adrs_read = self.articulation.body_adrs_read
+        self._data = MjContactData(
+            net_forces_w=torch.zeros(1, self.articulation.num_bodies, 3)
+        )
+    
+    def find_bodies(self, name_keys: str | Sequence[str], preserve_order: bool = False):
+        return self.articulation.find_bodies(name_keys, preserve_order)
+
+    def update(self):
+        cfrc_ext = self.articulation.mj_data.cfrc_ext[self.body_adrs_read]
+        self._data.net_forces_w = torch.as_tensor(cfrc_ext, dtype=torch.float32)[None]
+
+    @property
+    def data(self):
+        return self._data
 
 
 class MJScene:
@@ -341,14 +359,17 @@ class MJScene:
     def __init__(self, cfg):
         self.cfg = cfg
         self.articulations = {}
+        self.sensors = {}
         
         for asset_name, asset_cfg in self.cfg.__dict__.items():
+            print(asset_name, asset_cfg)
             if isinstance(asset_cfg, MJArticulationCfg):
                 articulation = MJArticulation(asset_cfg)
                 articulation.setup_logger(asset_name)
                 self.articulations[asset_name] = articulation
-            else:
-                pass
+            elif isinstance(asset_cfg, str):
+                sensor = MjContactSensor(self.articulations[asset_cfg])
+                self.sensors[asset_name] = sensor
 
         self.viewer = mujoco.viewer.launch_passive(self.articulations["robot"].mj_model, self.articulations["robot"].mj_data)
         self.viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
@@ -372,7 +393,9 @@ class MJScene:
             articulation.write_data_to_sim()
 
     def __getitem__(self, key: str):
-        return self.articulations.get(key)
+        result = self.articulations.get(key)
+        result = result or self.sensors.get(key)
+        return result
 
     def create_arrow_marker(self, radius: float, rgba):
         scene = self.viewer.user_scn
@@ -386,6 +409,20 @@ class MJScene:
             rgba=np.array(rgba, dtype=np.float64),
         )
         return MjvGeom(scene.geoms[scene.ngeom - 1])
+    
+    def create_sphere_marker(self, radius: float, rgba):
+        scene = self.viewer.user_scn
+        scene.ngeom += 1
+        mujoco.mjv_initGeom(
+            scene.geoms[scene.ngeom - 1],
+            mujoco.mjtGeom.mjGEOM_SPHERE,
+            size=np.array([radius, radius, radius], dtype=np.float64),
+            pos=np.zeros(3),
+            mat=sRot.random().as_matrix().reshape(-1),
+            rgba=np.array(rgba, dtype=np.float64),
+        )
+        return MjvGeom(scene.geoms[scene.ngeom - 1])
+
 
     def close(self):
         for articulation in self.articulations.values():
