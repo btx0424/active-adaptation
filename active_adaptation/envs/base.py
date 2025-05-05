@@ -116,7 +116,7 @@ class _Env(EnvBase):
             done=Binary(1, [self.num_envs, 1], dtype=bool, device=self.device),
             terminated=Binary(1, [self.num_envs, 1], dtype=bool, device=self.device),
             truncated=Binary(1, [self.num_envs, 1], dtype=bool, device=self.device),
-            shape=[self.num_envs, 1],
+            shape=[self.num_envs],
             device=self.device
         )
 

@@ -110,7 +110,11 @@ class MJArticulation:
             self.body_names_mjc.append(body.name)
             body_adrs.append(i)
         if not set(self.body_names_isaac) == set(self.body_names_mjc):
-            raise ValueError(f"Isaac body names {self.body_names_isaac} do not match mujoco body names {self.body_names_mjc}")
+            diff = set(self.body_names_isaac) - set(self.body_names_mjc)
+            raise ValueError(
+                f"Isaac body names {self.body_names_isaac} do not match mujoco body names {self.body_names_mjc}\n"
+                f"Diff: {diff}"
+            )
 
         # find only the actuated joints
         self.joint_names_isaac = list(cfg.joint_names_isaac)
@@ -163,12 +167,12 @@ class MJArticulation:
             ids, _, values = string_utils.resolve_matching_names_values(actuator_cfg["damping"], self.joint_names_isaac)
             joint_damping[ids] = torch.as_tensor(values)
 
-        diag_inertia = torch.as_tensor(self.mj_model.body_inertia[self.body_adrs])
+        diag_inertia = torch.as_tensor(self.mj_model.body_inertia[self.body_adrs], dtype=torch.float32)
         self._data = MJArticulationData(
             default_joint_pos=default_joint_pos[None],
             default_joint_vel=default_joint_vel[None],
             default_root_state=torch.tensor([[*cfg.init_state["pos"], 1., 0., 0., 0.]]),
-            default_mass=torch.as_tensor(self.mj_model.body_mass[self.body_adrs])[None],
+            default_mass=torch.as_tensor(self.mj_model.body_mass[self.body_adrs], dtype=torch.float32)[None],
             default_inertia=diag_inertia.diag_embed().flatten(1)[None],
             joint_stiffness=joint_stiffness[None],
             joint_damping=joint_damping[None],
