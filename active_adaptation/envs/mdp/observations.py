@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from isaaclab.sensors import ContactSensor, RayCaster, Imu
     from isaaclab.sensors import Camera, TiledCamera
     from active_adaptation.envs.base import _Env
+    import active_adaptation.utils.symmetry as symmetry_utils
 
 
 if active_adaptation.get_backend() == "isaac":
@@ -395,10 +396,11 @@ class root_angvel_b(Observation):
             return ang_vel_b[:, 2].reshape(self.num_envs, 1)
         else:
             return ang_vel_b
-
-    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
-        # assume the robot is symmetric left-right
-        return obs * torch.tensor([-1., 1., -1.], device=self.device)
+    
+    def symmetry_transforms(self):
+        # left-right symmetry: flip only roll and yaw
+        transform = symmetry_utils.SymmetryTransform(perm=None, signs=[-1., 1., -1.])
+        return transform, transform
 
 
 class root_gyro_substep(Observation):
@@ -463,7 +465,8 @@ class gravity_multistep(Observation):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.noise_std = noise_std
-        self.gravity_multistep = torch.zeros((self.num_envs, steps, 3), device=self.device)
+        self.steps = steps
+        self.gravity_multistep = torch.zeros((self.num_envs, self.steps, 3), device=self.device)
     
     def update(self):
         gravity = random_noise(self.asset.data.projected_gravity_b, self.noise_std)
@@ -473,6 +476,10 @@ class gravity_multistep(Observation):
     
     def compute(self):
         return self.gravity_multistep.reshape(self.num_envs, -1)
+    
+    def symmetry_transforms(self):
+        transform = symmetry_utils.SymmetryTransform(perm=None, signs=[1, -1, 1])
+        return transform.repeat(self.steps), transform.repeat(self.steps)
 
 
 class gravity_substep(Observation):
@@ -517,8 +524,9 @@ class root_linvel_b(Observation):
             linvel = quat_rotate_inverse(self.asset.data.root_quat_w.unsqueeze(1), linvel)
         return linvel.reshape(self.num_envs, -1)
     
-    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
-        return obs * torch.tensor([1., -1., 1.], device=self.device)
+    def symmetry_transforms(self):
+        transform = symmetry_utils.SymmetryTransform(perm=None, signs=[1, -1, 1])
+        return transform, transform
 
     # def debug_draw(self):
     #     if self.env.sim.has_gui() and self.env.backend == "isaac":
@@ -630,7 +638,7 @@ class joint_pos_multistep(Observation):
         self.steps = steps
         self.noise_std = max(noise_std, 0.)
         self.asset: Articulation = self.env.scene["robot"]
-        self.joint_ids = self.asset.find_joints(joint_names)[0]
+        self.joint_ids, self.joint_names = self.asset.find_joints(joint_names)
         self.num_joints = len(self.joint_ids)
 
         shape = (self.num_envs, steps, self.num_joints)
@@ -650,6 +658,10 @@ class joint_pos_multistep(Observation):
     def compute(self):
         joint_pos = self.joint_pos_multistep.clone()
         return joint_pos.reshape(self.num_envs, -1)
+    
+    def symmetry_transforms(self):
+        transform, transform_inv = symmetry_utils.joint_space_symmetry(self.asset, self.joint_names)
+        return transform.repeat(self.steps), transform_inv.repeat(self.steps)
 
 
 class joint_vel_multistep(Observation):
@@ -665,7 +677,7 @@ class joint_vel_multistep(Observation):
         self.noise_std_max = max(noise_std, 0.)
         self.from_pos = True
         self.asset: Articulation = self.env.scene["robot"]
-        self.joint_ids = self.asset.find_joints(joint_names)[0]
+        self.joint_ids, self.joint_names = self.asset.find_joints(joint_names)
         self.num_joints = len(self.joint_ids)
 
         shape = (self.num_envs, steps, self.num_joints)
@@ -701,6 +713,10 @@ class joint_vel_multistep(Observation):
     def compute(self):
         joint_vel = self.joint_vel_multistep.clone()
         return joint_vel.reshape(self.num_envs, -1)
+
+    def symmetry_transforms(self):
+        transform, transform_inv = symmetry_utils.joint_space_symmetry(self.asset, self.joint_names)
+        return transform.repeat(self.steps), transform_inv.repeat(self.steps)
 
 
 class joint_vel_substep(Observation):
@@ -796,43 +812,19 @@ class joint_acc(Observation):
         return joint_acc
 
 
-class applied_torques(JointObs):
-    def __init__(
-        self, 
-        env,
-        actuator_name: str,
-        left_joints: str = None,
-        right_joints: str = None,
-        asym_joints: str = None
-    ):
-        self.asset: Articulation = env.scene["robot"]
-        self.actuator = self.asset.actuators[actuator_name]
-        super().__init__(
-            env, 
-            joint_names=self.actuator.joint_names,
-            left_joints=left_joints,
-            right_joints=right_joints,
-            asym_joints=asym_joints
-        )
-        
-        self.joint_indices = self.actuator.joint_indices
-        self.effort_limit = self.actuator.effort_limit.clamp_min(1e-6)
-    
-    def compute(self) -> torch.Tensor:
-        applied_efforts = self.asset.data.applied_torque
-        return applied_efforts[:, self.joint_indices]
-
-
 class applied_torque(Observation):
     def __init__(self, env, joint_names: str=".*"):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
-        self.joint_names = joint_names
-        self.joint_indices = self.asset.find_joints(joint_names)[0]
+        self.joint_ids, self.joint_names = self.asset.find_joints(joint_names)
     
     def compute(self) -> torch.Tensor:
         applied_efforts = self.asset.data.applied_torque
-        return applied_efforts[:, self.joint_indices]
+        return applied_efforts[:, self.joint_ids]
+    
+    def symmetry_transforms(self):
+        transform, transform_inv = symmetry_utils.joint_space_symmetry(self.asset, self.joint_names)
+        return transform, transform_inv
 
 
 class contact_indicator(Observation):
@@ -845,7 +837,7 @@ class contact_indicator(Observation):
         self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names, preserve_order=True)
         self.timing = timing
         
-        self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum()
+        self.default_mass_total = self.asset.data.default_mass[0].sum()
         self.giravity = self.default_mass_total.to(self.env.device) * 9.81
         self.force_substep = torch.zeros(self.num_envs, self.env.decimation, len(self.body_ids), 3, device=self.device)
 
@@ -946,7 +938,7 @@ class external_torques(Observation):
         self.asset: Articulation = self.env.scene["robot"]
         self.body_indices, self.body_names = self.asset.find_bodies(body_names)
         self.torques_b = torch.zeros(self.env.num_envs, len(self.body_indices) * 3, device=self.device)
-        default_inertia = self.asset.root_physx_view.get_inertias()[0, 0, [0, 4, 8]].to(self.device)
+        default_inertia = self.asset.data.default_inertia[0, 0, [0, 4, 8]].to(self.device)
         self.denom = default_inertia if divide_by_mass else torch.tensor(scale, device=self.device)
     
     def update(self):
@@ -1071,14 +1063,6 @@ class feet_height_map(Observation):
         self.body_ids, self.body_names = self.asset.find_bodies(feet_names)
         self.num_feet = len(self.body_ids)
         
-        self._init_raycaster(resolution, size)
-    
-    def _init_raycaster(self, resolution, size):
-        self.mesh = _initialize_warp_meshes("/World/ground", "cuda")
-
-        # pattern_cfg = patterns.GridPatternCfg(resolution=resolution, size=size)
-        # self.ray_starts, self.ray_directions = pattern_cfg.func(pattern_cfg, self.device)
-        # self.ray_starts[:, 2] += 10.
         self.ray_starts = torch.tensor(
             [
                 [0., 0., 10.], 
@@ -1093,36 +1077,46 @@ class feet_height_map(Observation):
             ],
             device=self.device
         )
-        self.ray_directions = torch.tensor([0., 0., -1.], device=self.device)
         self.num_rays = len(self.ray_starts)
 
         shape = (self.num_envs, self.num_feet, self.num_rays)
-
-        # fill the data buffer
-        # self._data.pos_w = torch.zeros(*shape, 3, device=self.device)
-        # self._data.quat_w = torch.zeros(*shape, 4, device=self.device)
         self.ray_hits_w = torch.zeros(*shape, 3, device=self.device)
         self.feet_height_map = torch.zeros(shape, device=self.device)
         self.asset.data.feet_height = self.feet_height_map[:, :, 0]
         self.asset.data.feet_height_map = self.feet_height_map
+        if active_adaptation.get_backend() == "isaac":
+            self._init_raycaster(resolution, size)
+        else:
+            self.mesh = None
+    
+    def _init_raycaster(self, resolution, size):
+        self.mesh = _initialize_warp_meshes("/World/ground", "cuda")
+
+        # pattern_cfg = patterns.GridPatternCfg(resolution=resolution, size=size)
+        # self.ray_starts, self.ray_directions = pattern_cfg.func(pattern_cfg, self.device)
+        # self.ray_starts[:, 2] += 10.
+        self.ray_directions = torch.tensor([0., 0., -1.], device=self.device)
     
     def update(self):
         self.feet_pos_w = self.asset.data.body_pos_w[:, self.body_ids]
         self.feet_quat_w = self.asset.data.body_quat_w[:, self.body_ids]
-        shape = (self.num_envs, self.num_feet, self.num_rays, -1)
-        ray_starts_w = quat_apply_yaw(
-            self.feet_quat_w.unsqueeze(-2).expand(shape),
-            self.ray_starts.reshape(1, 1, -1, 3).expand(shape),
-        )
-        ray_starts_w += self.feet_pos_w.unsqueeze(-2)
-        self.ray_hits_w[:] = raycast_mesh(
-            ray_starts_w,
-            self.ray_directions.expand_as(ray_starts_w).clone(),
-            max_dist=100.,
-            mesh=self.mesh,
-        )[0]
+        if self.mesh is not None:
+            shape = (self.num_envs, self.num_feet, self.num_rays, -1)
+            ray_starts_w = quat_apply_yaw(
+                self.feet_quat_w.unsqueeze(-2).expand(shape),
+                self.ray_starts.reshape(1, 1, -1, 3).expand(shape),
+            )
+            ray_starts_w += self.feet_pos_w.unsqueeze(-2)
+            self.ray_hits_w[:] = raycast_mesh(
+                ray_starts_w,
+                self.ray_directions.expand_as(ray_starts_w).clone(),
+                max_dist=100.,
+                mesh=self.mesh,
+            )[0]
 
-        self.feet_height_map[:] = (self.feet_pos_w.unsqueeze(-2)[..., 2] - self.ray_hits_w[..., 2]).nan_to_num(nan=0., posinf=0., neginf=0.)
+            self.feet_height_map[:] = (self.feet_pos_w.unsqueeze(-2)[..., 2] - self.ray_hits_w[..., 2]).nan_to_num(nan=0., posinf=0., neginf=0.)
+        else:
+            self.feet_height_map[:] = self.feet_pos_w.unsqueeze(-2)[..., 2]
 
     def compute(self):
         return self.feet_height_map.reshape(self.num_envs, -1) / self.nominal_height
@@ -1298,8 +1292,9 @@ class prev_actions(Observation):
         else:
             return action_buf
 
-    def fliplr(self, obs: torch.Tensor):
-        return self.action_manager.fliplr(obs)
+    def symmetry_transforms(self):
+        transform, transform_inv = self.action_manager.symmetry_transforms()
+        return transform.repeat(self.steps), transform_inv.repeat(self.steps)
 
 
 class last_contact(Observation):
@@ -1403,8 +1398,9 @@ class applied_action(JointObs):
     def compute(self) -> torch.Tensor:
         return self.env.action_manager.applied_action
 
-    def fliplr(self, obs: torch.Tensor):
-        return self.env.action_manager.fliplr(obs)
+    def symmetry_transforms(self):
+        transform, transform_inv = self.action_manager.symmetry_transforms()
+        return transform.repeat(self.steps), transform_inv.repeat(self.steps)
 
 class joint_forces(JointObs):
 
@@ -1657,13 +1653,20 @@ class oscillator(Observation):
     def __init__(self, env, history: bool=False,mask_ratio = 0):
         super().__init__(env, mask_ratio)
         self.history = history
-        self.asset: Articulation = self.env.scene["robot"]        
+        self.asset: Articulation = self.env.scene["robot"]
+        self.asset.phi = torch.zeros(self.num_envs, 4, device=self.device)
+        self.asset.phi_dot = torch.zeros(self.num_envs, 4, device=self.device)
+        self.asset.phi[:, 0] = torch.pi
+        self.asset.phi[:, 3] = torch.pi
+        self.asset.phi_dot[:] = torch.pi * 4
         self.phi_history = torch.zeros(self.num_envs, 4, 4, device=self.device)
 
     def update(self):
         if self.history:
             self.phi_history = self.phi_history.roll(1, dims=1)
             self.phi_history[:, 0] = self.asset.phi
+        
+        self.asset.phi += self.asset.phi_dot * self.env.step_dt
 
     def compute(self):
         if self.history:
@@ -1688,8 +1691,8 @@ class oscillator_biped(Observation):
         self.asset.phi[env_ids, 0] = 0.
         self.asset.phi[env_ids, 1] = torch.pi
         omega = torch.zeros(len(env_ids), 1, device=self.device)
-        omega.uniform_(self.omega_range[0], self.omega_range[1])
-        self.omega[env_ids] = omega
+        omega.uniform_(self.omega_range[0], self.omega_range[1])# .mul_(torch.pi)
+        self.omega[env_ids] = torch.pi * 3 # omega
 
     def update(self):
         self.asset.phi = (self.asset.phi + self.omega * self.env.step_dt) % (2 * torch.pi)
