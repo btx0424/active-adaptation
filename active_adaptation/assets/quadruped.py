@@ -3,7 +3,7 @@ import copy
 import torch
 
 import isaaclab.sim as sim_utils
-from isaaclab_assets import UNITREE_GO2_CFG, UNITREE_A1_CFG, ArticulationCfg
+from isaaclab_assets import ArticulationCfg
 from isaaclab.actuators import DCMotorCfg, ImplicitActuatorCfg, ImplicitActuator
 from isaaclab.assets import Articulation
 from isaaclab.utils.math import quat_rotate_inverse
@@ -45,8 +45,6 @@ class QuadrupedManipulator(Articulation):
 
 ASSET_PATH = os.path.dirname(__file__)
 
-# UNITREE_GO2_CFG = UNITREE_GO2_CFG
-# UNITREE_GO2_CFG.class_type = Quadruped
 UNITREE_GO2_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{ASSET_PATH}/Go2/go2.usd",
@@ -61,7 +59,7 @@ UNITREE_GO2_CFG = ArticulationCfg(
             max_depenetration_velocity=1.0,
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=False,
+            enabled_self_collisions=True,
             solver_position_iteration_count=8,
             solver_velocity_iteration_count=0,
         ),
@@ -93,6 +91,21 @@ UNITREE_GO2_CFG = ArticulationCfg(
         ),
     },
 )
+UNITREE_GO2_CFG.symmetry_mapping = { 
+    "FL_hip_joint": [-1, "FR_hip_joint"],
+    "FR_hip_joint": [-1, "FL_hip_joint"],
+    "RL_hip_joint": [-1, "RR_hip_joint"],
+    "RR_hip_joint": [-1, "RL_hip_joint"],
+    "FL_thigh_joint": [1, "FR_thigh_joint"],
+    "FR_thigh_joint": [1, "FL_thigh_joint"],
+    "RL_thigh_joint": [1, "RR_thigh_joint"],
+    "RR_thigh_joint": [1, "RL_thigh_joint"],
+    "FL_calf_joint": [1, "FR_calf_joint"],
+    "FR_calf_joint": [1, "FL_calf_joint"],
+    "RL_calf_joint": [1, "RR_calf_joint"],
+    "RR_calf_joint": [1, "RL_calf_joint"]
+}
+
 
 UNITREE_GO2M_CFG = copy.deepcopy(UNITREE_GO2_CFG)
 UNITREE_GO2M_CFG.spawn.usd_path = f"{ASSET_PATH}/go2m.usd"

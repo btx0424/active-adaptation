@@ -22,6 +22,6 @@ ROBOTS["h2"] = MJArticulationCfg(
 )
 
 ROBOTS["go2"] = MJArticulationCfg(
-    mjcf_path=os.path.join(PATH, "go2", "go2_description.xml"),
+    mjcf_path=os.path.join(PATH, "go2", "go2.xml"),
     **json.load(open(os.path.join(PATH, "go2", "go2.json")))
 )

@@ -61,9 +61,9 @@ class ConstantForce(TensorClass):
         duration = torch.zeros(size, 1, device=device)
         duration.uniform_(1.0, 4.0)
         offset = torch.rand(size, 3, device=device) * 2. - 1.
-        offset *= torch.tensor(force_offsets, device=device)
+        offset *= torch.as_tensor(force_offsets, device=device)
         force = torch.rand(size, 3, device=device) * 2. - 1.
-        force *= torch.tensor(force_scales, device=device)
+        force *= torch.as_tensor(force_scales, device=device)
         return cls(
             duration=duration,
             time=torch.zeros(size, 1, device=device),

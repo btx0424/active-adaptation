@@ -12,7 +12,6 @@ from .sirius import *
 ASSET_PATH = os.path.dirname(__file__)
 
 ROBOTS = {
-    "a1": UNITREE_A1_CFG,
     "go2": UNITREE_GO2_CFG,
     "go2m": UNITREE_GO2M_CFG,
     "go2abp": UNITREE_GO2ABP_CFG,
