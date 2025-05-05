@@ -1438,6 +1438,9 @@ class oscillator(Reward):
         self.mass = self.asset.data.default_mass[0].sum().to(self.device)
         self.gravity = self.mass * 9.81
 
+        if not hasattr(self.asset, "phi"):
+            self.asset.phi = torch.zeros(self.num_envs, 4, device=self.device)
+            self.asset.phi_dot = torch.zeros(self.num_envs, 4, device=self.device)
         self.asset.phi[:, 0] = torch.pi
         self.asset.phi[:, 3] = torch.pi
         self.grf_substep = torch.zeros(

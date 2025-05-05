@@ -61,7 +61,7 @@ observation:
     root_linacc_b:
     feet_pos_b:       {feet_names: .*foot}
     feet_height_map:  {feet_names: .*foot }
-    applied_torques:  {actuator_name: base_legs}
+    applied_torque:   {}
     contact_indicator: {body_names: [".*_foot"], timing: false}
   flag_:
     is_standing:      {}
@@ -95,7 +95,7 @@ reward:
     impedance_vel:      {weight: 1.5, enabled: true}
     impedance_acc:      {weight: 1.0, enabled: true}
     # impedance_acc:      {weight: 2.5, enabled: false}
-    oscillator:         {weight: 1.0, enabled: true}
+    oscillator:         {weight: 1.0, enabled: true, omega_range: [4., 5.]}
 
     angvel_xy_l2:       {weight: 0.02, enabled: true}
     linvel_z_l2:        {weight: 2.0, enabled: true}
@@ -126,12 +126,10 @@ randomization:
     (?!(payload|base|Head.*)).*: [0.8, 1.2]
     base: [0.8, 1.2]
     # Head.*: [10, 250.]
-  perturb_body_materials:
-    body_names: ".*_foot"
-    static_friction_range:  [0.5, 4.0]
-    dynamic_friction_range: [0.5, 4.0]
-    restitution_range:      [0.0, 0.5]
-    # homogeneous: true # ${task.homogeneous}
+  rand_body_materials:
+    static_friction_range:  {".*_foot": [0.5, 4.0]}
+    dynamic_friction_range: {".*_foot": [0.5, 4.0]}
+    restitution_range:      {".*_foot": [0.0, 0.5]}
   motor_params:
     actuator_name: base_legs
     stiffness_range:  

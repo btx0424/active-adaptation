@@ -155,7 +155,7 @@ def main(cfg: DictConfig):
         logging.info(f"Saved checkpoint to {str(ckpt_path)}")
 
     pbar = tqdm(collector, total=total_iters)
-    
+    assert env.training
     for i, data in enumerate(pbar):
         start = time.perf_counter()
         

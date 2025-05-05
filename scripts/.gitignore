@@ -1,3 +1,5 @@
 *.png
 *.jpeg
 *.mp4
+*.pdf
+*.onnx
