@@ -1681,6 +1681,29 @@ class oscillator_biped(Reward):
         return r
 
 
+class quadruped_stand(Reward):
+    def __init__(self, env, feet_names: str, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.feet_ids = self.asset.find_bodies(feet_names)[0]
+        if not hasattr(self.env.command_manager, "is_standing_env"):
+            raise ValueError("is_standing_env is not defined in command_manager")
+        self.command_manager = self.env.command_manager
+
+    def compute(self):
+        jpos_errors = (self.asset.data.joint_pos - self.asset.data.default_joint_pos).abs()
+        feet_pos_w = self.asset.data.body_pos_w[:, self.feet_ids]
+        feet_pos_b = quat_rotate_inverse(
+            self.asset.data.root_quat_w.unsqueeze(1),
+            feet_pos_w - self.asset.data.root_pos_w.unsqueeze(1)
+        )
+        front_symmetry = feet_pos_b[:, [0, 1], 1].sum(dim=1, keepdim=True).abs()
+        back_symmetry = feet_pos_b[:, [2, 3], 1].sum(dim=1, keepdim=True).abs()
+        cost = - (jpos_errors.sum(dim=1, keepdim=True) + front_symmetry + back_symmetry)
+
+        return cost * self.command_manager.is_standing_env.reshape(self.num_envs, 1)
+
+
 @reward_func
 def action_rate_l2(self):
     action_diff = self.action_buf[:, :, 0] - self.action_buf[:, :, 1]
