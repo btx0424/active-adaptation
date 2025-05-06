@@ -1299,9 +1299,13 @@ class feet_swing_height(Reward):
             self.asset.data.root_quat_w.unsqueeze(1),
             self.asset.data.body_lin_vel_w[:, self.feet_ids],
         )
+        if not hasattr(self.asset, "feet_height"):
+            self.feet_height = self.asset.data.body_pos_w[:, self.feet_ids, 2]
+        else:
+            self.feet_height = self.asset.data.feet_height
 
     def compute(self) -> torch.Tensor:
-        hight_error = (self.asset.data.feet_height - self.target_height).abs()
+        hight_error = (self.feet_height - self.target_height).abs()
         lateral_speed = (
             self.feet_vel_b[:, :, :2].square().sum(-1)
             + self.asset.data.body_ang_vel_w[:, self.feet_ids, 2].square()

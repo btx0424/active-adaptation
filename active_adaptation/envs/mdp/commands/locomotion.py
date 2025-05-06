@@ -14,12 +14,13 @@ from active_adaptation.utils.math import (
     wrap_to_pi,
     MultiUniform
 )
+import active_adaptation.utils.symmetry as symmetry_utils
 
 from .base import Command
 # from ..observations import _initialize_warp_meshes, raycast_mesh
 
 if TYPE_CHECKING:
-    from active_adaptation.envs.base import Env
+    from active_adaptation.envs.base import _Env
     from isaaclab.assets import Articulation
 
 
@@ -373,32 +374,6 @@ class Command2(Command):
         self._count.add_(self.num_envs).mul_(self._decay)
         self._avg_error.copy_(self._sum_error / self._count)
 
-        if self.adaptive:
-            self.ray_start_w = self.robot.data.root_pos_w + torch.tensor(
-                [0.0, 0.0, -0.2], device=self.device
-            )
-            ray_direction = quat_rotate(
-                self.asset.data.root_quat_w, self._target_direction
-            )
-            ray_direction[:, 2] = 0.0
-            self.ray_hit_w = raycast_mesh(
-                self.ray_start_w, ray_direction, max_dist=2, mesh=self.ground_mesh
-            )[0]
-            distance_to_obstacle = (
-                (self.ray_hit_w - self.ray_start_w)
-                .norm(dim=-1, keepdim=True)
-                .nan_to_num(2.0)
-            )
-            self.close_to_obstacle = distance_to_obstacle < 0.75
-            fast = self.command_speed > 1.4
-            target_linvel = torch.where(
-                (self.close_to_obstacle & fast),
-                self._target_linvel / 2,
-                self._target_linvel,
-            )
-        else:
-            target_linvel = self._target_linvel
-
         self._cum_linvel_error.mul_(0.98).add_(linvel_error * self.env.step_dt)
         self._cum_angvel_error.mul_(0.98).add_(angvel_error * self.env.step_dt)
 
@@ -469,30 +444,23 @@ class Command2(Command):
             color=(0.2, 0.2, 1.0, 1.0),
         )
         zeros = torch.zeros(self.num_envs, 1, device=self.device)
-        self.env.debug_draw.vector(
-            self.robot.data.root_pos_w
-            + torch.tensor([0.0, 0.0, 0.2], device=self.device),
-            torch.stack([zeros, zeros, self._cum_linvel_error], 1),
-            color=(0.2, 1.0, 0.2, 1.0),
-        )
-        self.env.debug_draw.vector(
-            self.robot.data.root_pos_w
-            + torch.tensor([0.0, 0.0, 0.2], device=self.device),
-            torch.stack([zeros, zeros, self._cum_angvel_error], 1),
-            color=(1.0, 0.2, 0.2, 2.0),
-        )
-        if self.adaptive:
-            self.env.debug_draw.vector(
-                self.ray_start_w[self.close_to_obstacle.squeeze(1)],
-                (self.ray_hit_w - self.ray_start_w)[self.close_to_obstacle.squeeze(1)],
-                # self._target_direction,
-                color=(1.0, 1.0, 0.0, 1.0),
-            )
-
-    def fliplr(self, command: torch.Tensor) -> torch.Tensor:
-        # flip y and yaw velocity
-        return command * torch.tensor([1.0, -1.0, -1.0, 1.0], device=self.device)
-
+        # self.env.debug_draw.vector(
+        #     self.robot.data.root_pos_w
+        #     + torch.tensor([0.0, 0.0, 0.2], device=self.device),
+        #     torch.stack([zeros, zeros, self._cum_linvel_error], 1),
+        #     color=(0.2, 1.0, 0.2, 1.0),
+        # )
+        # self.env.debug_draw.vector(
+        #     self.robot.data.root_pos_w
+        #     + torch.tensor([0.0, 0.0, 0.2], device=self.device),
+        #     torch.stack([zeros, zeros, self._cum_angvel_error], 1),
+        #     color=(1.0, 0.2, 0.2, 2.0),
+        # )
+    
+    def symmetry_transforms(self):
+        # left-right symmetry: flip y velocity and yaw velocity
+        transform = symmetry_utils.SymmetryTransform(perm=torch.arange(4), signs=[1, -1, -1, 1])
+        return transform
 
 
 def sample_uniform(size, low: float, high: float, device: torch.device = "cpu"):

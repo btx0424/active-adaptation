@@ -3,7 +3,7 @@ import copy
 import torch
 
 import isaaclab.sim as sim_utils
-from isaaclab_assets import ArticulationCfg
+
 from isaaclab.actuators import DCMotorCfg, ImplicitActuatorCfg, ImplicitActuator
 from isaaclab.assets import Articulation
 from isaaclab.utils.math import quat_rotate_inverse
@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from active_adaptation.envs.base import EnvBase
 
+from .base import ArticulationCfg
 
 class QuadrupedManipulator(Articulation):
     def _create_buffers(self):
@@ -90,21 +91,42 @@ UNITREE_GO2_CFG = ArticulationCfg(
             damping=0.5,
         ),
     },
+    joint_symmetry_mapping = { 
+        "FL_hip_joint": [-1, "FR_hip_joint"],
+        "FR_hip_joint": [-1, "FL_hip_joint"],
+        "RL_hip_joint": [-1, "RR_hip_joint"],
+        "RR_hip_joint": [-1, "RL_hip_joint"],
+        "FL_thigh_joint": [1, "FR_thigh_joint"],
+        "FR_thigh_joint": [1, "FL_thigh_joint"],
+        "RL_thigh_joint": [1, "RR_thigh_joint"],
+        "RR_thigh_joint": [1, "RL_thigh_joint"],
+        "FL_calf_joint": [1, "FR_calf_joint"],
+        "FR_calf_joint": [1, "FL_calf_joint"],
+        "RL_calf_joint": [1, "RR_calf_joint"],
+        "RR_calf_joint": [1, "RL_calf_joint"]
+    },
+    spatial_symmetry_mapping = {
+        "FL_hip": "FR_hip",
+        "FR_hip": "FL_hip",
+        "RL_hip": "RR_hip",
+        "RR_hip": "RL_hip",
+        "FL_thigh": "FR_thigh",
+        "FR_thigh": "FL_thigh",
+        "RL_thigh": "RR_thigh",
+        "RR_thigh": "RL_thigh",
+        "FL_calf": "FR_calf",
+        "FR_calf": "FL_calf",
+        "RL_calf": "RR_calf",
+        "RR_calf": "RL_calf",
+        "FL_foot": "FR_foot",
+        "FR_foot": "FL_foot",
+        "RL_foot": "RR_foot",
+        "RR_foot": "RL_foot",
+        "base": "base",
+        "Head_upper": "Head_upper",
+        "Head_lower": "Head_lower",
+    }
 )
-UNITREE_GO2_CFG.symmetry_mapping = { 
-    "FL_hip_joint": [-1, "FR_hip_joint"],
-    "FR_hip_joint": [-1, "FL_hip_joint"],
-    "RL_hip_joint": [-1, "RR_hip_joint"],
-    "RR_hip_joint": [-1, "RL_hip_joint"],
-    "FL_thigh_joint": [1, "FR_thigh_joint"],
-    "FR_thigh_joint": [1, "FL_thigh_joint"],
-    "RL_thigh_joint": [1, "RR_thigh_joint"],
-    "RR_thigh_joint": [1, "RL_thigh_joint"],
-    "FL_calf_joint": [1, "FR_calf_joint"],
-    "FR_calf_joint": [1, "FL_calf_joint"],
-    "RL_calf_joint": [1, "RR_calf_joint"],
-    "RR_calf_joint": [1, "RL_calf_joint"]
-}
 
 
 UNITREE_GO2M_CFG = copy.deepcopy(UNITREE_GO2_CFG)

@@ -21,6 +21,7 @@ import active_adaptation.envs.mdp as mdp
 
 if active_adaptation.get_backend() == "isaac":
     import isaaclab.sim as sim_utils
+    import active_adaptation.utils.symmetry as symmetry_utils
 
 class ObsGroup:
     
@@ -75,11 +76,15 @@ class ObsGroup:
         tensors = torch.cat([self.buf_obs[key] for key in self.funcs.keys()], dim=-1)
         tensordict[self.name] = tensors
 
-        if self.use_flip:
-            tensors = torch.cat([func.fliplr(self.buf_obs[key]) for key, func in self.funcs.items()], dim=-1)
-            tensordict[self.name + "_flipped"] = tensors
-
         return tensordict
+    
+    def symmetry_transforms(self):
+        transforms = []
+        for obs_key, func in self.funcs.items():
+            transform = func.symmetry_transforms()
+            transforms.append(transform)
+        transform = symmetry_utils.SymmetryTransform.cat(transforms)
+        return transform
 
 
 class _Env(EnvBase):
@@ -208,7 +213,6 @@ class _Env(EnvBase):
         reward_spec = Composite({})
 
         # parse rewards
-        self.clip_rewards = self.cfg.reward.pop("_clip_", True)
         self.mult_dt = self.cfg.reward.pop("_mult_dt_", True)
 
         self._stats_ema = {}
@@ -242,7 +246,11 @@ class _Env(EnvBase):
 
         observation_spec = {}
         for group_key, group in self.observation_funcs.items():
-            observation_spec.update(group.spec)
+            try:
+                observation_spec.update(group.spec)
+            except Exception as e:
+                print(f"Error in computing observation spec for {group_key}: {e}")
+                raise e
 
         self.observation_spec = Composite(
             observation_spec, 
@@ -263,8 +271,6 @@ class _Env(EnvBase):
         self.stats = self.reward_spec["stats"].zero()
     
         self.input_tensordict = None
-        self.lookat_env_i = 0
-
         self.extra = {}
         self.observation_prev = TensorDict({}, [self.num_envs])
 
@@ -316,12 +322,10 @@ class _Env(EnvBase):
 
     def _compute_observation(self, tensordict: TensorDictBase):
         observation_this = TensorDict({}, [self.num_envs])
-        try:
-            for group_key, obs_group in self.observation_funcs.items():
-                obs_group.compute(tensordict, self.timestamp)
-        except Exception as e:
-            print(f"Error in computing observation for {group_key}: {e}")
-            raise e
+    
+        for group_key, obs_group in self.observation_funcs.items():
+            obs_group.compute(tensordict, self.timestamp)
+        
         self.observation_prev = observation_this.clone()
     
     def _compute_reward(self) -> TensorDictBase:
