@@ -832,7 +832,7 @@ class spring_grf(Randomization):
         self.env.debug_draw.vector(feet_pos, self.forces / 9.81, color=(0.8, 0.6, 0.6, 1.))
 
 
-from active_adaptation.envs.mdp.utils.forces import ImpulseForce
+from active_adaptation.envs.mdp.utils.forces import ImpulseForce, ConstantForce
 class impulse(Randomization):
     def __init__(self, env):
         super().__init__(env)
@@ -860,7 +860,46 @@ class impulse(Randomization):
             color=(1.0, 0.6, 0.0, 1.0),
             size=3.0,
         )
+
+
+class constant_force(Randomization):
+    def __init__(self, env, force_range, offset_range):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.force = ConstantForce.sample(self.num_envs, device=self.device)
+        self.force.duration.zero_()
+
+        self.resample_interval = 50
+        self.resample_prob = 0.2
+
+        self.force_range = torch.tensor(force_range, device=self.device)
+        self.offset_range = torch.tensor(offset_range, device=self.device)
+        
+    def step(self, substep):
+        forces_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.force.get_force())
+        self.asset._external_force_b[:, 0] += forces_b
+        self.asset._external_torque_b[:, 0] += self.force.offset.cross(forces_b, dim=-1)
+        self.asset.has_external_wrench = True
     
+    def reset(self, env_ids: torch.Tensor):
+        self.force.duration.data[env_ids] = 0.
+        
+    def update(self):
+        resample = (self.env.episode_length_buf % self.resample_interval == 0)
+        expired = self.force.time > self.force.duration
+        resample = resample & expired.squeeze(-1) & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
+        force = ConstantForce.sample(self.num_envs, self.force_range, self.offset_range, self.device)
+        self.force = force.where(resample, self.force)
+        self.force.time.add_(self.env.step_dt)
+    
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            self.force.get_force() /  9.81,
+            color=(1.0, 0.6, 0.0, 1.0),
+            size=3.0,
+        )
+        
 
 def clamp_norm(x: torch.Tensor, min: float = 0.0, max: float = torch.inf):
     x_norm = x.norm(dim=-1, keepdim=True).clamp(1e-6)

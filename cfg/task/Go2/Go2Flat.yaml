@@ -67,11 +67,12 @@ observation:
     oscillator: {history: false}
   policy:
     # root_angvel_b: {noise_std: 0.05}
-    projected_gravity_b: {noise_std: 0.05}
+    # projected_gravity_b: {noise_std: 0.05}
     # joint_pos:    {noise_std: 0.05, joint_names: .*_joint}
     # joint_vel:    {noise_std: 0.3, joint_names: .*_joint}
-    joint_pos_multistep: {steps: 3, noise_std: 0.05, diff: false}
-    joint_vel_multistep: {steps: 3, noise_std: 0.2, diff: false}
+    gravity_multistep: {steps: 3, noise_std: 0.05}
+    joint_pos_multistep: {steps: 3, noise_std: 0.05}
+    joint_vel_multistep: {steps: 3, noise_std: 0.2}
     prev_actions: {steps: 3}
   priv:
     applied_action:
@@ -82,6 +83,8 @@ observation:
     feet_height_map:  {feet_names: .*foot }
     applied_torque:   {}
     contact_indicator:  {body_names: [".*_foot", ".*_calf"]}
+  flag_:
+    is_standing:      {}
   ext:
     external_forces:  {body_names: ["base"]}
     external_torques: {body_names: ["base"]}
@@ -94,7 +97,6 @@ observation:
     # rewards: {}
 
 reward:
-  _clip_: true
   loco:
     linvel_exp:         {weight: 1.5, enabled: true, dim: 3, yaw_only: true}
     angvel_z_exp:       {weight: 0.8, enabled: true}
@@ -164,3 +166,6 @@ randomization:
     R[L,R]_thigh_joint: [-0.05, 0.05]
     .*calf_joint: [-0.05, 0.05]
   # impulse: {}
+  constant_force:
+    force_range: [50, 50, 15]
+    offset_range: [0.1, 0.1, 0.1]

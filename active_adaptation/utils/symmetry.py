@@ -37,6 +37,22 @@ class SymmetryTransform(nn.Module):
         return SymmetryTransform(torch.cat(perm), torch.cat(signs))
 
 
+def mirrored(symmetry_mapping: dict):
+    """
+    Return a dictionary of mirrored joint names.
+    """
+    mirrored = {}
+    for k, v in symmetry_mapping.items():
+        if isinstance(v, tuple): # joint space symmetry
+            mirrored[v[1]] = (v[0], k)
+        elif isinstance(v, str): # cartesian space symmetry
+            mirrored[v] = k
+        else:
+            raise ValueError(f"Invalid symmetry mapping: ({k}, {v})")
+    symmetry_mapping.update(mirrored)
+    return symmetry_mapping
+
+
 def joint_space_symmetry(asset: "Articulation", joint_names: Sequence[str]):
     """
     Return a permutation that transforms a vector of joint positions into its 
