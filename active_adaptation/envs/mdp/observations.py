@@ -1663,9 +1663,9 @@ class oscillator(Observation):
         self.asset: Articulation = self.env.scene["robot"]
         self.asset.phi = torch.zeros(self.num_envs, 4, device=self.device)
         self.asset.phi_dot = torch.zeros(self.num_envs, 4, device=self.device)
-        self.asset.phi[:, 0] = torch.pi
-        self.asset.phi[:, 3] = torch.pi
-        self.asset.phi_dot[:] = torch.pi * 4
+        # self.asset.phi[:, 0] = torch.pi
+        # self.asset.phi[:, 3] = torch.pi
+        # self.asset.phi_dot[:] = torch.pi * 4
         self.phi_history = torch.zeros(self.num_envs, 4, 4, device=self.device)
 
     def update(self):
@@ -1673,7 +1673,7 @@ class oscillator(Observation):
             self.phi_history = self.phi_history.roll(1, dims=1)
             self.phi_history[:, 0] = self.asset.phi
         
-        self.asset.phi += self.asset.phi_dot * self.env.step_dt
+        # self.asset.phi += self.asset.phi_dot * self.env.step_dt
 
     def compute(self):
         if self.history:
