@@ -8,7 +8,7 @@ from isaaclab.utils.math import quat_apply_yaw, quat_mul, quat_inv
 from isaaclab.utils.string import resolve_matching_names
 import active_adaptation
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse, yaw_quat, EMA
-import active_adaptation.utils.symmetry as symmetry_utils
+import active_adaptation.utils.symmetry as sym_utils
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation
@@ -85,34 +85,6 @@ def observation_wrapper(func: Callable[[], torch.Tensor]):
             return func()
     return ObservationWrapper
 
-
-class CartesianObs(Observation):
-
-    def __init__(
-        self,
-        env,
-        body_names: str,
-        left_bodies: str=None,
-        right_bodies: str=None,
-        mask_ratio: float=0.
-    ):
-        super().__init__(env, mask_ratio)
-        self.asset: Articulation = self.env.scene["robot"]
-
-        self.body_indices, self.body_names = self.asset.find_bodies(body_names)
-
-        if left_bodies is not None and left_bodies is not False:
-            self.left_ids, self.left_names = resolve_matching_names(left_bodies, self.body_names)
-            self.right_ids, self.right_names = resolve_matching_names(right_bodies, self.body_names)
-        
-    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
-        obs_flipped = obs.reshape(self.num_envs, -1, 3).clone()
-        left = obs_flipped[:, self.left_ids]
-        right = obs_flipped[:, self.right_ids]
-        fliplr = torch.tensor([1., -1., 1.], device=self.device)
-        obs_flipped[:, self.left_ids] = right * fliplr
-        obs_flipped[:, self.right_ids] = left * fliplr
-        return obs_flipped.reshape(self.num_envs, -1)
 
 
 class root_linacc_b(Observation):
@@ -197,80 +169,52 @@ class root_linacc_debug(Observation):
 #         self.rpy_w = rpy_w
 
 
-class body_pos(CartesianObs):
-    def __init__(
-        self,
-        env,
-        body_names: str,
-        left_bodies: str=None,
-        right_bodies: str=None,
-        yaw_only: bool=False
-    ):
-        super().__init__(env, body_names, left_bodies, right_bodies)
+class body_pos_b(Observation):
+    def __init__(self, env, body_names: str, yaw_only: bool=False):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
         self.yaw_only = yaw_only
-        print(f"Track body pos for {self.body_names}")
-        self.body_pos_b = torch.zeros(self.env.num_envs, len(self.body_indices), 3, device=self.env.device)
+        self.body_indices, self.body_names = self.asset.find_bodies(body_names)
+        self.update()
 
     def update(self):
         if self.yaw_only:
-            quat = yaw_quat(self.asset.data.root_quat_w).unsqueeze(1)
+            self.root_quat_w = yaw_quat(self.asset.data.root_quat_w).unsqueeze(1)
         else:
-            quat = self.asset.data.root_quat_w.unsqueeze(1)
-        body_pos = self.asset.data.body_pos_w[:, self.body_indices]
-        body_pos = body_pos - self.asset.data.root_pos_w.unsqueeze(1)
-        self.body_pos_b[:] = quat_rotate_inverse(quat, body_pos)
+            self.root_quat_w = self.asset.data.root_quat_w.unsqueeze(1)
+        self.root_pos_w = self.asset.data.root_pos_w.unsqueeze(1)
+        self.body_pos_w = self.asset.data.body_pos_w[:, self.body_indices]
         
     def compute(self):
-        return self.body_pos_b.reshape(self.num_envs, -1)
+        body_pos_b = quat_rotate_inverse(self.root_quat_w, self.body_pos_w - self.root_pos_w)
+        return body_pos_b.reshape(self.num_envs, -1)
+    
+    def symmetry_transforms(self):
+        return sym_utils.cartesian_space_symmetry(self.asset, self.body_names)
 
-class body_quat(CartesianObs):
-    def __init__(
-        self,
-        env,
-        body_names: str,
-        left_bodies: str=None,
-        right_bodies: str=None,
-        yaw_only: bool=False
-    ):
-        super().__init__(env, body_names, left_bodies, right_bodies)
+
+class body_vel_b(Observation):
+    def __init__(self, env, body_names: str, yaw_only: bool=False):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
         self.yaw_only = yaw_only
-        print(f"Track body quat for {self.body_names}")
-        self.body_quat_b = torch.zeros(self.env.num_envs, len(self.body_indices), 4, device=self.env.device)
-
+        self.body_indices, self.body_names = self.asset.find_bodies(body_names)
+        self.update()
+    
     def update(self):
         if self.yaw_only:
-            quat = yaw_quat(self.asset.data.root_quat_w).unsqueeze(1)
+            self.root_quat_w = yaw_quat(self.asset.data.root_quat_w).unsqueeze(1)
         else:
-            quat = self.asset.data.root_quat_w.unsqueeze(1)
-        body_quat_w = self.asset.data.body_pos_w[:, self.body_indices]
-        self.body_quat_b[:] = quat_mul(quat_inv(quat), body_quat_w)
+            self.root_quat_w = self.asset.data.root_quat_w.unsqueeze(1)
+        self.body_vel_w = self.asset.data.body_vel_w[:, self.body_indices]
         
     def compute(self):
-        return self.body_quat_b.reshape(self.num_envs, -1)
-
-class body_vel(CartesianObs):
-    def __init__(
-        self,
-        env,
-        body_names: str,
-        left_bodies: str=None,
-        right_bodies: str=None,
-        yaw_only: bool=False
-    ):
-        super().__init__(env, body_names, left_bodies, right_bodies)
-        self.yaw_only = yaw_only
-        
-    def compute(self):
-        body_lin_vel_w = self.asset.data.body_lin_vel_w[:, self.body_indices]
-        body_ang_vel_w = self.asset.data.body_ang_vel_w[:, self.body_indices]
-        if self.yaw_only:
-            quat = yaw_quat(self.asset.data.root_quat_w).unsqueeze(1)
-        else:
-            quat = self.asset.data.root_quat_w.unsqueeze(1)
-        body_lin_vel_b = quat_rotate_inverse(quat, body_lin_vel_w)
-        body_ang_vel_b = quat_rotate_inverse(quat, body_ang_vel_w)
-        # body_vel_b = torch.cat([body_lin_vel_b, body_ang_vel_b], dim=-1)
+        body_lin_vel_b = quat_rotate_inverse(self.root_quat_w, self.body_vel_w[:, :, :3])
+        body_ang_vel_b = quat_rotate_inverse(self.root_quat_w, self.body_vel_w[:, :, 3:])
         return body_lin_vel_b.reshape(self.num_envs, -1)
+    
+    def symmetry_transforms(self):
+        return sym_utils.cartesian_space_symmetry(self.asset, self.body_names)
 
 
 class body_acc(Observation):
@@ -368,6 +312,18 @@ class command_hidden(Observation):
     
     def compute(self):
         return self.command_manager.command_hidden
+    
+    def symmetry_transforms(self):
+        transform = sym_utils.SymmetryTransform(
+            perm=torch.arange(3), 
+            signs=[1, -1, 1]
+        )
+        return sym_utils.SymmetryTransform.cat([
+            transform.repeat(3),
+            transform.repeat(3),
+            sym_utils.SymmetryTransform(torch.arange(3), torch.tensor([-1, -1, -1])),
+            sym_utils.SymmetryTransform(torch.arange(3), torch.tensor([-1, -1, -1])),
+        ])
 
 
 class joint_pos_target(Observation):
@@ -399,7 +355,7 @@ class root_angvel_b(Observation):
     
     def symmetry_transforms(self):
         # left-right symmetry: flip only roll and yaw
-        transform = symmetry_utils.SymmetryTransform(perm=torch.arange(3), signs=[-1., 1., -1.])
+        transform = sym_utils.SymmetryTransform(perm=torch.arange(3), signs=[-1., 1., -1.])
         return transform
 
 
@@ -478,7 +434,7 @@ class gravity_multistep(Observation):
         return self.gravity_multistep.reshape(self.num_envs, -1)
     
     def symmetry_transforms(self):
-        transform = symmetry_utils.SymmetryTransform(perm=torch.arange(3), signs=[1, -1, 1])
+        transform = sym_utils.SymmetryTransform(perm=torch.arange(3), signs=[1, -1, 1])
         return transform.repeat(self.steps)
 
 
@@ -525,7 +481,7 @@ class root_linvel_b(Observation):
         return linvel.reshape(self.num_envs, -1)
     
     def symmetry_transforms(self):
-        transform = symmetry_utils.SymmetryTransform(perm=torch.arange(3), signs=[1, -1, 1])
+        transform = sym_utils.SymmetryTransform(perm=torch.arange(3), signs=[1, -1, 1])
         return transform
 
     # def debug_draw(self):
@@ -660,7 +616,7 @@ class joint_pos_multistep(Observation):
         return joint_pos.reshape(self.num_envs, -1)
     
     def symmetry_transforms(self):
-        transform = symmetry_utils.joint_space_symmetry(self.asset, self.joint_names)
+        transform = sym_utils.joint_space_symmetry(self.asset, self.joint_names)
         return transform.repeat(self.steps)
 
 
@@ -715,7 +671,7 @@ class joint_vel_multistep(Observation):
         return joint_vel.reshape(self.num_envs, -1)
 
     def symmetry_transforms(self):
-        transform = symmetry_utils.joint_space_symmetry(self.asset, self.joint_names)
+        transform = sym_utils.joint_space_symmetry(self.asset, self.joint_names)
         return transform.repeat(self.steps)
 
 
@@ -823,7 +779,7 @@ class applied_torque(Observation):
         return applied_efforts[:, self.joint_ids]
     
     def symmetry_transforms(self):
-        transform = symmetry_utils.joint_space_symmetry(self.asset, self.joint_names)
+        transform = sym_utils.joint_space_symmetry(self.asset, self.joint_names)
         return transform
 
 
@@ -851,12 +807,10 @@ class contact_indicator(Observation):
         forces = torch.where(forces > 2., 1., forces)
         return forces.reshape(self.num_envs, -1)
 
-    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
-        if self.timing:
-            obs = obs.reshape(self.num_envs, len(self.body_ids), 5)[:, [1, 0, 3, 2]] * torch.tensor([1., 1., 1., -1., 1.], device=obs.device)
-        else:
-            obs = obs.reshape(self.num_envs, len(self.body_ids), 2)[:, [1, 0, 3, 2]] * torch.tensor([1., 1.], device=obs.device)
-        return obs.reshape(self.num_envs, -1)
+    def symmetry_transforms(self):
+        assert not self.timing
+        transform = sym_utils.cartesian_space_symmetry(self.asset, self.body_names, sign=(1,))
+        return transform
 
     # def debug_draw(self):
     #     if self.env.sim.has_gui() and self.env.backend == "isaac":
@@ -928,8 +882,8 @@ class external_forces(Observation):
     def compute(self) -> torch.Tensor:
         return self.forces_b
 
-    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
-        return obs * torch.tensor([1., -1., 1.], device=self.device)
+    def symmetry_transforms(self):
+        return sym_utils.cartesian_space_symmetry(self.asset, self.body_names)
 
 
 class external_torques(Observation):
@@ -950,8 +904,9 @@ class external_torques(Observation):
     def compute(self) -> torch.Tensor:
         return self.torques_b
 
-    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
-        return obs * torch.tensor([1., 1., -1.], device=self.device)
+    def symmetry_transforms(self):
+        return sym_utils.cartesian_space_symmetry(self.asset, self.body_names, (-1, 1, -1))
+
 
 class contact_forces(Observation):
     def __init__(self, env, body_names, divide_by_mass: bool=True):

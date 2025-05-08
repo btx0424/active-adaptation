@@ -33,31 +33,16 @@ class SimpleEnv(_Env):
             from isaaclab.scene import InteractiveSceneCfg
             from isaaclab.assets import AssetBaseCfg
             from isaaclab.sensors import ContactSensorCfg
+            from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
             from active_adaptation.assets import ROBOTS, get_asset_meta
             from active_adaptation.envs.terrain import TERRAINS
             
             scene_cfg = InteractiveSceneCfg(num_envs=self.cfg.num_envs, env_spacing=2.5)
-            scene_cfg.light_0 = AssetBaseCfg(
-                prim_path="/World/light_0",
-                spawn=sim_utils.DistantLightCfg(
-                    color=(0.4, 0.7, 0.9),
-                    intensity=3000.0,
-                    angle=10,
-                    exposure=0.2,
-                ),
-                init_state=AssetBaseCfg.InitialStateCfg(
-                    rot=(0.9330127, 0.25, 0.25, -0.0669873)
-                ),
-            )
-            scene_cfg.light_1 = AssetBaseCfg(
-                prim_path="/World/light_1",
-                spawn=sim_utils.DistantLightCfg(
-                    color=(0.8, 0.5, 0.5),
-                    intensity=3000.0,
-                    angle=20,
-                ),
-                init_state=AssetBaseCfg.InitialStateCfg(
-                    rot=(0.78201786, 0.3512424, 0.50162613, -0.11596581)
+            scene_cfg.sky_light = AssetBaseCfg(
+                prim_path="/World/skyLight",
+                spawn=sim_utils.DomeLightCfg(
+                    intensity=750.0,
+                    texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
                 ),
             )
             scene_cfg.robot = ROBOTS[self.cfg.robot.name]
@@ -68,7 +53,15 @@ class SimpleEnv(_Env):
                 history_length=3,
                 track_air_time=True
             )
-            sim_cfg = sim_utils.SimulationCfg(dt=self.cfg.sim.isaac_physics_dt)
+            sim_cfg = sim_utils.SimulationCfg(
+                dt=self.cfg.sim.isaac_physics_dt,
+                render=sim_utils.RenderCfg(
+                    rendering_mode="quality",
+                    # antialiasing_mode="FXAA",
+                    # enable_global_illumination=True,
+                    # enable_reflections=True,
+                )
+            )
             
             # slightly reduces GPU memory usage
             # sim_cfg.physx.gpu_max_rigid_contact_count = 2**21
@@ -92,6 +85,13 @@ class SimpleEnv(_Env):
                 # create rgb annotator -- used to read data from the render product
                 self._rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cpu")
                 self._rgb_annotator.attach([self._render_product])
+                # self._seg_annotator = rep.AnnotatorRegistry.get_annotator(
+                #     "instance_id_segmentation_fast", 
+                #     device="cpu",
+                # )
+                # self._seg_annotator.attach([self._render_product])
+                # for _ in range(4):
+                #     self.sim.render()
             except ModuleNotFoundError as e:
                 print("Set enable_cameras=true to use cameras.")
             
@@ -114,6 +114,7 @@ class SimpleEnv(_Env):
             @configclass
             class SceneCfg:
                 robot = ROBOTS[self.cfg.robot.name]
+                contact_forces = "robot"
             
             self.scene = MJScene(SceneCfg())
             self.sim = MJSim(self.scene)
@@ -129,30 +130,25 @@ class SimpleEnv(_Env):
         self.stats[env_ids] = 0.
         self.scene.reset(env_ids)
 
-    def render(self, mode: str = "human"):
-        robot_pos = self.robot.data.root_pos_w[self.lookat_env_i].cpu()
-        if mode == "rgb_array":
-            eye = torch.tensor(self.cfg.viewer.eye) + robot_pos
-            lookat = torch.tensor(self.cfg.viewer.lookat) + robot_pos
-            self.sim.set_camera_view(eye, lookat)
-        return super().render(mode)
-
-
-    class feet_pos_b(mdp.body_pos):
+    # def render(self, mode: str="human"):
+    #     if self.timestamp not in [150, 160, 170, 180, 190, 200, 210, 500]:
+    #         return
+    #     self.sim.render()
+    #     if mode == "rgb_array":
+    #         rgb_data = self._rgb_annotator.get_data()
+    #         rgb_data = np.frombuffer(rgb_data, dtype=np.uint8).reshape(*rgb_data.shape)
+    #         seg_data = self._seg_annotator.get_data()
+    #         imageio.imwrite(f"images/rgb_{self.timestamp:03d}.png", rgb_data)
+    #         np.save(f"images/seg_{self.timestamp:03d}.npy", seg_data["data"])
+    #         json.dump(seg_data["info"], open(f"images/seg_info.json", "w"))
+    #     else:
+    #         raise NotImplementedError
+        
+    class feet_pos_b(mdp.body_pos_b):
         def __init__(self, env, feet_names, yaw_only: bool=False):
             super().__init__(env, feet_names, yaw_only=yaw_only)
-            self.asset.data.feet_pos_b = self.body_pos_b
-        
-        def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
-            obs = obs.reshape(self.num_envs, 4, 3)[:, [1, 0, 3, 2]] * torch.tensor([1., -1., 1.])
-            return obs.reshape(self.num_envs, -1)
     
-    class feet_vel_b(mdp.body_vel):
+    class feet_vel_b(mdp.body_vel_b):
         def __init__(self, env, feet_names, yaw_only: bool=False):
             super().__init__(env, feet_names, yaw_only=yaw_only)
-            self.asset.data.feet_vel_b = self.body_vel_b
-        
-        def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
-            obs = obs.reshape(self.num_envs, 4, 3)[:, [1, 0, 3, 2]] * torch.tensor([1., -1., 1.])
-            return obs.reshape(self.num_envs, -1)
 

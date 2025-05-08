@@ -280,11 +280,6 @@ class JointPosition(ActionManager):
             )  # at least 3 for action_rate_2_l2 reward
             self.applied_action = torch.zeros(self.num_envs, self.action_dim)
             self.alpha = torch.ones(self.num_envs, 1)
-            self.alpha_jit = torch.zeros(self.num_envs, 1, device=self.device)
-            self.alpha_jit_scale = (self.alpha_range[1] - self.alpha_range[0]) / 5
-            self.motor_fail = torch.zeros(
-                self.num_envs, 1, device=self.device, dtype=torch.bool
-            )
             self.delay = torch.zeros(self.num_envs, 1, dtype=int)
 
     def resolve(self, spec):
@@ -309,20 +304,11 @@ class JointPosition(ActionManager):
 
     def __call__(self, tensordict: TensorDictBase, substep: int):
         if substep == 0:
-            self.count += 1
-            if self.count % 5 == 0:
-                self.motor_fail[:] = (
-                    torch.rand(self.num_envs, 1, device=self.device) < 0.01
-                )
             action = tensordict["action"].clamp(-10, 10)
             self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
             self.action_buf[:, :, 0] = action
             action = self.action_buf.take_along_dim(self.delay.unsqueeze(1), dim=-1)
-            self.alpha_jit.uniform_(-self.alpha_jit_scale, self.alpha_jit_scale)
-            self.alpha.add_(self.alpha_jit).clamp_(*self.alpha_range)
-            self.applied_action.lerp_(
-                action.squeeze(-1), self.alpha * (~self.motor_fail)
-            )
+            self.applied_action.lerp_(action.squeeze(-1), self.alpha)
 
             pos_target = self.default_joint_pos.clone()
             pos_target[:, self.joint_ids] += self.applied_action * self.action_scaling
@@ -333,7 +319,6 @@ class JointPosition(ActionManager):
                     pos_target - self.asset.data.joint_pos
                 ).clamp(-self.clip_joint_targets, self.clip_joint_targets)
             self.asset.set_joint_position_target(pos_target)
-            # self.asset.write_data_to_sim()
 
 
 class QuadrupedWithArm(JointPosition):

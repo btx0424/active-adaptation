@@ -19,7 +19,7 @@ class SpringForce(TensorClass):
         offset = torch.zeros(size, 3, device=device)
         offset[:, 0] = -0.2
         return cls(
-            duration=scalar.uniform_(2., 4.).clone(),
+            duration=scalar.uniform_(3., 5.).clone(),
             time=torch.zeros(size, 1, device=device),
             setpoint=offset,
             setpoint_mass=400.*torch.ones(size, 1, device=device),

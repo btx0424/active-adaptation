@@ -15,6 +15,7 @@ from active_adaptation.utils.math import (
 )
 from active_adaptation.envs.mdp import reward
 from active_adaptation.envs.mdp.utils.forces import ConstantForce, ImpulseForce, SpringForce
+import active_adaptation.utils.symmetry as symmetry_utils
 
 def saturate(x: torch.Tensor, a: float):
     norm = x.norm(dim=-1, keepdim=True)
@@ -133,7 +134,7 @@ class Impedance(Command):
             # the three modes are exclusive
 
             self.max_output_force_range = (80., 100.)
-            self.max_output_force = torch.zeros(self.num_envs, 1)
+            self.max_output_force = 80. # torch.zeros(self.num_envs, 1)
 
             self._cum_error = torch.zeros(self.num_envs, 3)
             # debugging info
@@ -161,6 +162,8 @@ class Impedance(Command):
             self.command_transition /= self.command_transition.sum(dim=-1, keepdim=True)
         
         self.vis_arrow = None
+        if self.env.backend != "isaac":
+            self.USE_MARKERS = False
         if self.env.sim.has_gui() and self.USE_MARKERS:
             from isaaclab.markers.config import (
                 BLUE_ARROW_X_MARKER_CFG,
@@ -182,7 +185,7 @@ class Impedance(Command):
             # self.force_vis_arrow.set_visibility(True)
             self.setpoint_vis = VisualizationMarkers(
                 VisualizationMarkersCfg(
-                    prim_path="/Visuals/Command/setpoint",
+                    prim_path="/Visuals/Command/base_setpoint",
                     markers={
                         "setpoint": sim_utils.SphereCfg(
                             radius=0.04,
@@ -192,6 +195,18 @@ class Impedance(Command):
                 )
             )
             self.setpoint_vis.set_visibility(True)
+            self.spring_setpoint_vis = VisualizationMarkers(
+                VisualizationMarkersCfg(
+                    prim_path="/Visuals/Command/spring_setpoint",
+                    markers={
+                        "setpoint": sim_utils.SphereCfg(
+                            radius=0.04,
+                            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 0.8)),
+                        )
+                    }
+                )
+            )
+            self.spring_setpoint_vis.set_visibility(True)
         self.lin_vel_ema = EMA(self.asset.data.root_lin_vel_w, [0.0, 0.5, 0.8])
         self.ang_vel_ema = EMA(self.asset.data.root_ang_vel_w, [0.0, 0.5, 0.8])
         self.dim_weights = torch.tensor([1.0, 1.0, 0.5], device=self.device)
@@ -253,10 +268,12 @@ class Impedance(Command):
         return r.max(dim=1).values
 
     def reset(self, env_ids: torch.Tensor):
-        self.sample_command_world(env_ids)
+        # self.sample_command_world(env_ids)
+        self.sample_command_compliant(env_ids)
         self._cum_error[env_ids] = 0.0
         self.env.extra["stats/distance_commanded"] = self.distance_commanded.mean().item()
         self.env.extra["stats/distance_covered"] = self.distance_covered.mean().item()
+        self.env.extra["stats/force_schedule"] = self.force_schedule()
         self.distance_covered[env_ids] = 0.0
         self.distance_commanded[env_ids] = 0.0
 
@@ -392,17 +409,31 @@ class Impedance(Command):
         self.update_command()
         self.update_forces()
     
+    def symmetry_transforms(self):
+        return symmetry_utils.SymmetryTransform(
+            perm=torch.arange(15), 
+            signs=[1, -1, 
+                   -1, 
+                   1, -1,
+                   1, 1, 1,
+                   -1,
+                   1,
+                   1, -1, 1, 1, 1
+            ])
+
     def mask2id(self, mask: torch.Tensor) -> torch.Tensor:
         return mask.nonzero().squeeze(-1)
 
     def update_command(self):
-        sample_command = ((self.env.episode_length_buf+1) % 100 == 0) & (torch.rand(self.num_envs, device=self.device) < 0.5)
+        sample_command = ((self.env.episode_length_buf-10) % 500 == 0) # & (torch.rand(self.num_envs, device=self.device) < 0.5)
         if sample_command.any():
-            probs = torch.tensor([0.4, 0.4, 0.2], device=self.device)
+            # probs = torch.tensor([0.4, 0.5, 0.1, 0.0], device=self.device)
+            probs = torch.tensor([0.0, 0.1, 0.0, 0.9], device=self.device)
             mode = torch.multinomial(probs, num_samples=self.num_envs, replacement=True)
             self.sample_command_world(self.mask2id(sample_command & (mode == 0)))
             self.sample_command_setvel(self.mask2id(sample_command & (mode == 1)))
             self.sample_command_compliant(self.mask2id(sample_command & (mode == 2)))
+            self.sample_command_large(self.mask2id(sample_command & (mode == 3)))
 
         self.command_time += 1
         
@@ -419,8 +450,17 @@ class Impedance(Command):
             self.asset.data.root_pos_w + offset,
             self.command_setpos_w
         )
+        self.command_setpos_w[:] = torch.where(
+            (self.command_mode == self.CMD_COMPLIANT).reshape(self.num_envs, 1),
+            self.asset.data.root_pos_w,
+            self.command_setpos_w
+        )
 
     def update_forces(self):
+        self.constant_force.time.add_(self.env.step_dt)
+        self.impulse_force.time.add_(self.env.step_dt)
+        self.spring_force.time.add_(self.env.step_dt)
+
         # sample constant force
         expire = self.constant_force.time > self.constant_force.duration - 1e-4
         r = (torch.rand(self.num_envs, 1, device=self.device) < self.resample_prob)
@@ -432,16 +472,7 @@ class Impedance(Command):
             device=self.device,
         )
         constant_force.force.mul_(self.force_schedule())
-        self.constant_force.time.add_(self.env.step_dt)
         self.constant_force: ConstantForce = constant_force.where(sample, self.constant_force)
-
-        # sample spring force
-        expire = self.spring_force.time > self.spring_force.duration - 1e-4
-        sample = expire & (self.command_mode == self.CMD_LARGE_FORCE).reshape(self.num_envs, 1)
-        spring_force = SpringForce.sample(self.num_envs, self.device)
-        spring_force.setpoint.add_(self.asset.data.root_pos_w)
-        self.spring_force.time.add_(self.env.step_dt)
-        self.spring_force: SpringForce = spring_force.where(sample, self.spring_force)
 
         expire = self.impulse_force.time > self.impulse_force.duration - 1e-4
         r = (torch.rand(self.num_envs, 1, device=self.device) < 0.005)
@@ -451,7 +482,6 @@ class Impedance(Command):
             device=self.device
         )
         impulse_force.peak.mul_(self.force_schedule())
-        self.impulse_force.time.add_(self.env.step_dt)
         self.impulse_force: ImpulseForce = impulse_force.where(sample, self.impulse_force)
 
         self._spring_force = self.spring_force.get_force(self.asset.data.root_pos_w, self.asset.data.root_lin_vel_w) * (self.command_mode == self.CMD_LARGE_FORCE).reshape(self.num_envs, 1)
@@ -525,20 +555,44 @@ class Impedance(Command):
         self.set_linvel[env_ids] = 0.
         self.sample_virtual_mass(env_ids)
         self.command_mode[env_ids] = self.CMD_COMPLIANT
+    
+    def sample_command_large(self, env_ids: torch.Tensor):
+        if len(env_ids) == 0:
+            return
+        scalar = torch.empty(len(env_ids), 1, device=self.device)
+        lin_kp = scalar.uniform_(24., 48.)
+        lin_kd = 1.8 * lin_kp.sqrt()
+
+        self.lin_kp[env_ids] = lin_kp
+        self.lin_kd[env_ids] = lin_kd
+        self.ang_kp[env_ids] = lin_kp
+        self.ang_kd[env_ids] = lin_kd
+        self.command_setrpy_w[env_ids, 2:3] = torch.randint(0, 2, (len(env_ids), 1), device=self.device) * torch.pi
+        self.sample_virtual_mass(env_ids)
+        self.command_mode[env_ids] = self.CMD_LARGE_FORCE
+
+        # sample spring force
+        spring_force = SpringForce.sample(len(env_ids), self.device)
+        spring_force.setpoint.add_(self.asset.data.root_pos_w[env_ids])
+        self.spring_force[env_ids] = spring_force
 
     def debug_draw(self):
         if not self.env.backend == "isaac":
             return
-        # eye = self.asset.data.root_pos_w[0].cpu() + torch.tensor([3., 3., 3.])
-        # target = self.asset.data.root_pos_w[0].cpu()
-        # self.env.sim.set_camera_view(eye, target)
-        # draw command linvel (green)
-        self.env.debug_draw.vector(
-            self.asset.data.root_pos_w
-            + torch.tensor([0.0, 0.0, 0.2], device=self.device),
-            self.ref_lin_vel_w[:, -2],
-            color=(0.0, 1.0, 0.0, 1.0),
+        eye = (
+            self.asset.data.root_pos_w[0].cpu() 
+            + torch.tensor([2., 2., 2.]) 
+            # + 0.5 * torch.tensor([1., 1., 1.]) * self.env.episode_length_buf[0].item() * self.env.step_dt
         )
+        target = self.asset.data.root_pos_w[0].cpu()
+        self.env.sim.set_camera_view(eye, target)
+        # draw command linvel (green)
+        # self.env.debug_draw.vector(
+        #     self.asset.data.root_pos_w
+        #     + torch.tensor([0.0, 0.0, 0.2], device=self.device),
+        #     self.ref_lin_vel_w[:, -2],
+        #     color=(0.0, 1.0, 0.0, 1.0),
+        # )
         # return
         # draw vector to setpoint pos (red)
         self.env.debug_draw.vector(
@@ -553,7 +607,7 @@ class Impedance(Command):
         #     color=(1.0, 0.0, 1.0, 1.0),
         #     size=4.0
         # )
-        self.env.debug_draw.plot(self.ref_pos_w[0, :-1], color=(1.0, 0.3, 0.3, 1.0))
+        # self.env.debug_draw.plot(self.ref_pos_w[0, :-1], color=(1.0, 0.3, 0.3, 1.0))
         # draw setpoint pos (red)
         # self.env.debug_draw.point(
         #     self.command_setpos_w, color=(1.0, 0.0, 0.0, 1.0), size=40.0
@@ -598,24 +652,29 @@ class Impedance(Command):
         # )
         if self.USE_MARKERS:
             self.setpoint_vis.visualize(self.command_setpos_w)
+            large_force_mask = (self.command_mode == self.CMD_LARGE_FORCE).reshape(self.num_envs, 1)
+            if hasattr(self, "spring_setpoint_vis") and large_force_mask.any():
+                setpoints = self.spring_force.setpoint[large_force_mask.squeeze(-1)]
+                self.spring_setpoint_vis.visualize(setpoints)
+
             # self.vis_arrow.visualize(
             #     self.asset.data.root_pos_w + torch.tensor([0.0, 0.0, 0.2], device=self.device),
             #     quat_from_euler_xyz(*self.command_setrpy_w.unbind(-1)),
             #     scales=torch.tensor([[4., 1., 0.1]]).expand(self.num_envs, 3),
             # )
-        self.env.debug_draw.vector(
-            self.asset.data.root_pos_w,
-            self.lin_vel_ema.ema[:, 2],
-            # self.asset.data.body_lin_vel_w[:, [0, self.torso_id]].mean(1),
-            color=(1.0, 1.0, 0.0, 1.0),
-            size=4.0,
-        )
+        # self.env.debug_draw.vector(
+        #     self.asset.data.root_pos_w,
+        #     self.lin_vel_ema.ema[:, 2],
+        #     # self.asset.data.body_lin_vel_w[:, [0, self.torso_id]].mean(1),
+        #     color=(1.0, 1.0, 0.0, 1.0),
+        #     size=4.0,
+        # )
 
 
 
 class ImpedanceImpulse(Impedance):
     
-    X_VEL = 1.5
+    X_VEL = 0.0
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -630,34 +689,31 @@ class ImpedanceImpulse(Impedance):
         init_root_state[:, :3] += origins
         self.ep_id[env_ids] = self.ep_id[env_ids] + 1
         return init_root_state
-    
-    def _sample_command(self, env_ids, command_mode=None):
-        scalar = torch.empty(len(env_ids), 1, device=self.device)
-        lin_kp = scalar.uniform_(12., 24.).clone()
-        lin_kd = 1.8 * lin_kp.sqrt()
-        ang_kp = lin_kp.clone()
-        ang_kd = lin_kd.clone()
 
-        self.lin_kp[env_ids] = lin_kp
-        self.lin_kd[env_ids] = lin_kd
-        self.ang_kp[env_ids] = ang_kp
-        self.ang_kd[env_ids] = ang_kd
+    def reset(self, env_ids, reward_stats=None):
+        self.sample_command_setvel(env_ids)
+        self.set_linvel[env_ids, 0] = self.X_VEL
+        self.lin_kp[env_ids] = 12.
+        self.lin_kd[env_ids] = 1.8 * self.lin_kp[env_ids].sqrt()
+        self.ang_kp[env_ids] = self.lin_kp[env_ids]
+        self.ang_kd[env_ids] = self.lin_kd[env_ids]
+        self.command_setrpy_w[env_ids, 2:3] = 0.
+        self.virtual_mass[env_ids] = 2.0
 
-        root_pos_w = self.asset.data.root_pos_w[env_ids]
-        
-        self.command_mode[env_ids] = self.CMD_LINVEL
-        self.set_linvel[env_ids] = torch.tensor([self.X_VEL, 0., 0.], device=self.device)
-        self.command_setpos_w[env_ids] = root_pos_w + lin_kd / lin_kp * self.set_linvel[env_ids]
+        self._cum_error[env_ids] = 0.0
+        self.distance_covered[env_ids] = 0.0
+        self.distance_commanded[env_ids] = 0.0
 
-        self.virtual_mass[env_ids] = 1.0
-        self.virtual_inertia[env_ids] = self.default_inertia 
+        self.ref_pos_w[env_ids] = self.asset.data.root_pos_w[env_ids].unsqueeze(1)
+        self.ref_lin_vel_w[env_ids] = 0.0
+        self.ref_yaw_w[env_ids] = self.asset.data.heading_w[env_ids, None, None]
+        self.ref_yaw_vel_w[env_ids] = 0.0
+
+        self.spring_force.duration[env_ids] = 0.
+        self.constant_force.duration[env_ids] = 0.
+        self.impulse_force.duration[env_ids] = 0.
 
     def update_command(self):
-        # sample_command = (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
-        # sample_command = sample_command.nonzero().squeeze(-1)
-        # if len(sample_command) > 0:
-        #     print("resample")
-        #     self._sample_command(sample_command)
         self.command_setpos_w[:] = torch.where(
             (self.command_mode == self.CMD_LINVEL).reshape(self.num_envs, 1),
             self.lin_kd / self.lin_kp * self.set_linvel + self.asset.data.root_pos_w,
@@ -674,24 +730,26 @@ class ImpedanceImpulse(Impedance):
 
     def update_forces(self):
         # sample constant force
-        at_time = (self.env.episode_length_buf == 100).reshape(self.num_envs, 1)
+        # at_time = ((self.env.episode_length_buf+1) % 150 == 0).reshape(self.num_envs, 1)
+        at_time = (self.env.episode_length_buf == 2).reshape(self.num_envs, 1)
         sample = at_time & (self.command_mode != self.CMD_LARGE_FORCE).reshape(self.num_envs, 1)
         constant_force = ConstantForce.sample(self.num_envs, device=self.device)
         constant_force.offset.zero_()
         constant_force.force.zero_()
         constant_force.force[:, 0] = 0.   
-        constant_force.force[:, 1] = 160.
-        constant_force.duration[:] = 2.
+        constant_force.force[:, 1] = -30.
+        constant_force.offset[:, 2] = 0.1
+        constant_force.duration[:] = 10.
         self.constant_force.time.add_(self.env.step_dt)
         self.constant_force: ConstantForce = constant_force.where(sample, self.constant_force)
 
-        # at_time = ((self.env.episode_length_buf+1) % 150 == 0).reshape(self.num_envs, 1)
-        at_time = (self.env.episode_length_buf == 100).reshape(self.num_envs, 1)
+        at_time = ((self.env.episode_length_buf+1) % 150 == 0).reshape(self.num_envs, 1)
+        # at_time = (self.env.episode_length_buf == 100).reshape(self.num_envs, 1)
         sample = at_time & (self.command_mode != self.CMD_LARGE_FORCE).reshape(self.num_envs, 1)
         impulse_force = ImpulseForce.sample(self.num_envs, self.device)
         impulse_force.peak.zero_()
-        impulse_force.peak[:, 0] = 0.
-        impulse_force.peak[:, 1] = 800 # 100 * (self.env.episode_length_buf / 150)
+        impulse_force.peak[:, 0] = 80.
+        impulse_force.peak[:, 1] = 320 # 100 * (self.env.episode_length_buf / 150)
         self.impulse_force.time.add_(self.env.step_dt)
         self.impulse_force: ImpulseForce = impulse_force.where(sample, self.impulse_force)
 
@@ -715,23 +773,23 @@ class ImpedanceImpulse(Impedance):
         #     target=target,
         # )
 
-        # target = self.asset.data.root_pos_w[0].cpu()
-        # eye = self.asset.data.root_pos_w[0].cpu() + torch.tensor([2.0, 0.5, 1.0])
+        # target = self.asset.data.root_pos_w[2].cpu()
+        # eye = self.asset.data.root_pos_w[2].cpu() + torch.tensor([2.4, 0.6, 1.0])
         # self.env.sim.set_camera_view(
         #     eye=eye,
         #     target=target,
         # )
-        if self.step_cnt == 900:
-            success_rate = (self.ep_id < 2).float().mean().item()
-            print(f"success rate: {success_rate}")
-            success_rate = (self.env.episode_length_buf >= 899).float().mean().item()
-            print(f"success rate: {success_rate}")
-            data = {
-                "pos": torch.stack(self.trajs, dim=0).cpu(),
-                "success": (self.ep_id < 2).cpu(),
-            }
-            # torch.save(data, "trajs_dic_400.pt")
-            exit(0)
+        # if self.step_cnt == 900:
+        #     success_rate = (self.ep_id < 2).float().mean().item()
+        #     print(f"success rate: {success_rate}")
+        #     success_rate = (self.env.episode_length_buf >= 899).float().mean().item()
+        #     print(f"success rate: {success_rate}")
+        #     data = {
+        #         "pos": torch.stack(self.trajs, dim=0).cpu(),
+        #         "success": (self.ep_id < 2).cpu(),
+        #     }
+        #     # torch.save(data, "trajs_dic_400.pt")
+        #     exit(0)
 
 
 class ImpedanceCollision(Impedance):
@@ -876,7 +934,8 @@ class VelocityImpulse(Command2):
         constant_force = ConstantForce.sample(self.num_envs, device=self.device)
         constant_force.offset.zero_()
         constant_force.force.zero_()
-        constant_force.force[:, 1] = 160.
+        constant_force.force[:, 0] = -40.
+        constant_force.force[:, 1] = 120.
         constant_force.duration[:] = 2.
         self.constand_force.time.add_(self.env.step_dt)
         self.constand_force: ConstantForce = constant_force.where(sample, self.constand_force)
@@ -886,19 +945,19 @@ class VelocityImpulse(Command2):
             root_pos = torch.where(self.ep_id==1, root_pos, self.trajs[-1])
         self.trajs.append(root_pos)
         self.step_cnt += 1
-        if self.step_cnt == 900:
-            success_rate = (self.ep_id < 2).float().mean().item()
-            print(f"success rate: {success_rate}")
-            success_rate = (self.env.episode_length_buf >= 899).float().mean().item()
-            print(f"success rate: {success_rate}")
-            data = {
-                "pos": torch.stack(self.trajs, dim=0).cpu(),
-                "success": (self.ep_id < 2).cpu(),
-            }
-            # torch.save(data, "trajs_vel1_400.pt")
-            exit(0)
-        target = self.asset.data.root_pos_w[0].cpu()
-        eye = self.asset.data.root_pos_w[0].cpu() + torch.tensor([2.0, 0.5, 1.0])
+        # if self.step_cnt == 900:
+        #     success_rate = (self.ep_id < 2).float().mean().item()
+        #     print(f"success rate: {success_rate}")
+        #     success_rate = (self.env.episode_length_buf >= 899).float().mean().item()
+        #     print(f"success rate: {success_rate}")
+        #     data = {
+        #         "pos": torch.stack(self.trajs, dim=0).cpu(),
+        #         "success": (self.ep_id < 2).cpu(),
+        #     }
+        #     # torch.save(data, "trajs_vel1_400.pt")
+        #     exit(0)
+        target = self.asset.data.root_pos_w[2].cpu()
+        eye = self.asset.data.root_pos_w[2].cpu() + torch.tensor([2.4, 0.6, 1.0])
         self.env.sim.set_camera_view(
             eye=eye,
             target=target,
@@ -906,12 +965,12 @@ class VelocityImpulse(Command2):
 
     def debug_draw(self):
         super().debug_draw()
-        self.env.debug_draw.vector(
-            self.asset.data.root_pos_w,
-            self.impulse_force.get_force() /  9.81,
-            color=(1.0, 0.6, 0.0, 1.0),
-            size=3.0,
-        )
+        # self.env.debug_draw.vector(
+        #     self.asset.data.root_pos_w,
+        #     self.impulse_force.get_force() /  9.81,
+        #     color=(1.0, 0.6, 0.0, 1.0),
+        #     size=3.0,
+        # )
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w,
             self.constand_force.get_force() /  9.81,
