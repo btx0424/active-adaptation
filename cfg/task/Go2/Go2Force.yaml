@@ -19,6 +19,9 @@ sim:
   isaac_physics_dt: 0.005
   mujoco_physics_dt: 0.002
 
+addons:
+  oscillator_quadruped: {omega_range: [4., 5.]}
+
 action:
   _target_: active_adaptation.envs.mdp.action.JointPosition
   action_scaling: {.*_joint: 0.5}
@@ -30,7 +33,7 @@ command:
   body_names: base
   virtual_mass_range: [1., 2., 4.] # base mass: 6.921
   force_saturate: 120.0
-  constant_force_scale: [40., 40., 15.]
+  constant_force_scale: [60., 60., 15.]
   constant_force_offset_scale: [0.1, 0.1, 0.1]
   # impulse_force_momentum_scale: [5.0, 5.0, 1.0]
   # impulse_force_duration_range: [0.1, 0.4]
@@ -52,7 +55,7 @@ observation:
     gravity_multistep:  {steps: 3, noise_std: 0.05}
     joint_pos_multistep: {steps: 3, noise_std: 0.05}
     joint_vel_multistep: {steps: 3, noise_std: 0.2}
-    prev_actions: {steps: 3}
+    prev_actions: {steps: 1}
   priv:
     command_hidden:
     applied_action:
@@ -71,21 +74,6 @@ observation:
   ext_:
     external_forces:  {body_names: ["base"], divide_by_mass: false}
     external_torques: {body_names: ["base"], divide_by_mass: false, scale: 0.2}
-  state_:
-    joint_pos:
-    joint_vel:
-  # state_substep_:
-  #   joint_pos_substep:
-  #   joint_vel_substep:
-  #   joint_pos_des_substep:
-
-  # state_:
-  #   projected_gravity_b: {noise_std: 0.00}
-  #   joint_pos:    {noise_std: 0.00}
-  #   joint_vel:    {noise_std: 0.00}
-  #   prev_actions: {steps: 3}
-    # imu_angvel:   {smoothing_window: 6}
-    # imu_acc:      {smoothing_window: 6}
 
 reward:
   loco:
@@ -95,13 +83,13 @@ reward:
     impedance_vel:      {weight: 1.5, enabled: true}
     impedance_acc:      {weight: 1.0, enabled: true}
     # impedance_acc:      {weight: 2.5, enabled: false}
-    oscillator:         {weight: 1.0, enabled: true, omega_range: [4., 5.]}
+    oscillator:         {weight: 1.0, enabled: true}
 
     angvel_xy_l2:       {weight: 0.02, enabled: true}
     linvel_z_l2:        {weight: 2.0, enabled: true}
     base_height_l1:     {weight: 3.0, enabled: true, target_height: 0.35}
     
-    energy_l1:          {weight: 0.0002, enabled: true}
+    energy_l1:          {weight: 0.0005, enabled: true}
     joint_acc_l2:       {weight: 2.5e-7, enabled: true}
     joint_torques_l2:   {weight: 2.0e-4, enabled: true}
     # quadruped_stand:    {weight: 0.2, enabled: false}
@@ -109,27 +97,30 @@ reward:
     action_rate_l2:     {weight: 0.01, enabled: true}
     action_rate2_l2:    {weight: 0.005, enabled: false}
     feet_air_time:      {weight: 0.2, enabled: true, body_names: .*_foot, thres: 0.3}
+    undesired_contact:  {body_names: [Head.*, .*_calf, .*thigh], weight: 2.0, enabled: true}
+  debug:
     feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
-    undesired_contact:  {body_names: [Head.*, .*_calf, .*thigh], weight: 2.0, enabled: true}
   metrics:
     impedance_acc_error: {weight: 1.0, enabled: false}
     impedance_vel_error: {weight: 1.0, enabled: false}
     impedance_pos_error: {weight: 1.0, enabled: false}
 
 termination:
-  crash: {body_names_expr: [Head.*, base, .*_calf], t_thres: 0.04}
+  crash: {body_names_expr: [Head.*, base, .*_calf], t_thres: 0.1}
   fall_over: {xy_thres: 0.9}
+  soft_contact: {body_names: [Head.*, .*_calf]}
 
 randomization:
   perturb_body_mass:
     (?!(payload|base|Head.*)).*: [0.8, 1.2]
     base: [0.8, 1.2]
     # Head.*: [10, 250.]
-  rand_body_materials:
-    static_friction_range:  {".*_foot": [0.5, 4.0]}
-    dynamic_friction_range: {".*_foot": [0.5, 4.0]}
-    restitution_range:      {".*_foot": [0.0, 0.5]}
+  perturb_body_materials:
+    body_names: [.*_foot, .*_calf]
+    static_friction_range:  [0.5, 3.0]
+    dynamic_friction_range: [0.5, 3.0]
+    restitution_range:      [0.0, 0.5]
   motor_params:
     actuator_name: base_legs
     stiffness_range:  

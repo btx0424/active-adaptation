@@ -407,8 +407,9 @@ class projected_gravity_b(Observation):
         projected_gravity_b += noise
         return projected_gravity_b / projected_gravity_b.norm(dim=-1, keepdim=True)
 
-    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
-        return obs * torch.tensor([1., -1., 1.], device=self.device)
+    def symmetry_transforms(self):
+        transform = sym_utils.SymmetryTransform(perm=torch.arange(3), signs=[1, -1, 1])
+        return transform
     
     def lerp(self, obs_tm1, obs_t, t):
         gravity = torch.lerp(obs_tm1, obs_t, t)
@@ -1616,19 +1617,12 @@ class oscillator(Observation):
         super().__init__(env, mask_ratio)
         self.history = history
         self.asset: Articulation = self.env.scene["robot"]
-        self.asset.phi = torch.zeros(self.num_envs, 4, device=self.device)
-        self.asset.phi_dot = torch.zeros(self.num_envs, 4, device=self.device)
-        # self.asset.phi[:, 0] = torch.pi
-        # self.asset.phi[:, 3] = torch.pi
-        # self.asset.phi_dot[:] = torch.pi * 4
         self.phi_history = torch.zeros(self.num_envs, 4, 4, device=self.device)
 
     def update(self):
         if self.history:
             self.phi_history = self.phi_history.roll(1, dims=1)
             self.phi_history[:, 0] = self.asset.phi
-        
-        # self.asset.phi += self.asset.phi_dot * self.env.step_dt
 
     def compute(self):
         if self.history:

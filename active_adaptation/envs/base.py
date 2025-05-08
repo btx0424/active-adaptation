@@ -145,6 +145,7 @@ class _Env(EnvBase):
         REW_FUNCS = mdp.REW_FUNCS
         REW_FUNCS.update(mdp.get_obj_by_class(members, mdp.Reward))
         TERM_FUNCS = mdp.TERM_FUNCS
+        ADDONS = mdp.ADDONS
 
         for k, v in inspect.getmembers(self.command_manager):
             if getattr(v, "is_reward", False):
@@ -154,6 +155,7 @@ class _Env(EnvBase):
             elif getattr(v, "is_termination", False):
                 TERM_FUNCS[k] = mdp.termination_wrapper(v)
 
+        self.addons = OrderedDict()
         self.randomizations = OrderedDict()
         self.observation_funcs: Dict[str, ObsGroup] = OrderedDict()
         self.reward_funcs = OrderedDict()
@@ -179,8 +181,16 @@ class _Env(EnvBase):
             },
             shape=[self.num_envs]
         ).to(self.device)
-
-
+        
+        addons = self.cfg.get("addons", {})
+        print(f"Addons: {ADDONS.keys()}")
+        for key, params in addons.items():
+            addon = ADDONS[key](self, **params if params is not None else {})
+            self.addons[key] = addon
+            self._reset_callbacks.append(addon.reset)
+            self._update_callbacks.append(addon.update)
+            self._debug_draw_callbacks.append(addon.debug_draw)
+        
         for key, params in self.cfg.randomization.items():
             rand = RAND_FUNCS[key](self, **params if params is not None else {})
             self.randomizations[key] = rand
