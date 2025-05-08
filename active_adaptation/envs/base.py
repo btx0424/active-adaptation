@@ -18,10 +18,10 @@ import time
 
 import active_adaptation
 import active_adaptation.envs.mdp as mdp
+import active_adaptation.utils.symmetry as symmetry_utils
 
 if active_adaptation.get_backend() == "isaac":
     import isaaclab.sim as sim_utils
-    import active_adaptation.utils.symmetry as symmetry_utils
 
 class ObsGroup:
     

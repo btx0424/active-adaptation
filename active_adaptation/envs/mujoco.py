@@ -25,6 +25,8 @@ class MJArticulationCfg:
     actuators: Dict
     body_names_isaac: Sequence[str]
     joint_names_isaac: Sequence[str]
+    joint_symmetry_mapping: Dict=None
+    spatial_symmetry_mapping: Dict=None
 
 
 @dataclass
