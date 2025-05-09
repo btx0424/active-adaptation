@@ -111,6 +111,8 @@ class ImpedanceCommandManager(Command):
         self.temporal_smoothing = temporal_smoothing
         self.base_kp_range = (4., 40.)
         self.eef_kp_range = (4., 40.)
+        # self.base_kp_range = (24., 60.)
+        # self.eef_kp_range = (24., 60.)
         
         self.cmd = ImpedanceCommand.zero(self.num_envs, self.device)
         
@@ -156,11 +158,12 @@ class ImpedanceCommandManager(Command):
         if True: # self.env.sim.has_gui() and self.env.backend == "isaac":
             self.marker = VisualizationMarkers(BLUE_ARROW_X_MARKER_CFG.replace(prim_path="/Visuals/Command/target_yaw"))
             self.marker.set_visibility(True)
-            self.setpoint_marker = make_point_marker("setpoint", (0.0, 0.8, 0.0))
+            self.ref_pos_marker = make_point_marker("setpoint", (0.0, 0.8, 0.0))
+            self.setpoint_marker = make_point_marker("setpoint", (0.8, 0.0, 0.0))
             self.spring_marker = make_point_marker("spring", (0.0, 0.0, 0.8))
             
 
-    def _integrate(self, dt: float):
+    def _integrate(self, i, dt: float):
         base_pos_error = torch.where(
             (self.cmd.mode == 0).reshape(self.num_envs, 1, 1),
             self.cmd.setpoint[:, None, :3] - self.ref_pos_w,
@@ -371,8 +374,8 @@ class ImpedanceCommandManager(Command):
         self.eef_ref_lin_vel_w = round_robbin(self.eef_ref_lin_vel_w, self.eef_lin_vel_w)
         
         # self._integrate(self.env.step_dt)
-        for _ in range(self.env.decimation):
-            self._integrate(self.env.physics_dt)
+        for i in range(self.env.decimation):
+            self._integrate(i, self.env.physics_dt)
 
         self.surrogate_pos_target = self.ref_pos_w[:, self.ref_steps]
         self.surrogate_lin_vel_target = self.ref_lin_vel_w[:, self.ref_steps]
@@ -399,15 +402,23 @@ class ImpedanceCommandManager(Command):
             self.sample_base_mode1(self.mask2id(resample & ~r))
             self.sample_eef(self.mask2id(resample))
 
-            r = torch.randint(0, 3, (self.num_envs,), device=self.device)
-            resample_ids = self.mask2id(resample & (r == 0))
-            force = ConstantForce.sample(len(resample_ids), (25., 25., 5.), device=self.device)
-            self.eef_const_force[resample_ids] = force
+            probs = torch.tensor([0.5, 0.2, 0.3], device=self.device)
+            force_type = torch.multinomial(probs, self.num_envs, replacement=True).reshape(self.num_envs)
+            resample_ids = self.mask2id(resample & (force_type == 0))
+            if len(resample_ids) > 0:
+                force = ConstantForce.sample(len(resample_ids), (25., 25., 5.), device=self.device)
+                self.eef_const_force[resample_ids] = force
 
-            resample_ids = self.mask2id(resample & (r == 1))
-            force = SpringForce.sample(len(resample_ids), device=self.device)
-            force.setpoint += self.eef_pos_w[resample_ids]
-            self.eef_spring_force[resample_ids] = force
+            resample_ids = self.mask2id(resample & (force_type == 1))
+            if len(resample_ids) > 0:
+                force = SpringForce.sample(len(resample_ids), device=self.device)
+                force.setpoint += self.eef_pos_w[resample_ids]
+                self.eef_spring_force[resample_ids] = force
+
+                self.cmd.kp_base.data[resample_ids] = self.cmd.kp_base.data[resample_ids] * 1.5
+                self.cmd.kd_base.data[resample_ids] = 1.8 * self.cmd.kp_base.data[resample_ids].sqrt()
+                self.cmd.kp_eef.data[resample_ids] = self.cmd.kp_eef.data[resample_ids] * 1.5
+                self.cmd.kd_eef.data[resample_ids] = 1.8 * self.cmd.kp_eef.data[resample_ids].sqrt()
 
         self.eef_const_force.time.add_(self.env.step_dt)
         self.eef_spring_force.step(self.eef_pos_w, self.eef_lin_vel_w, self.env.step_dt)
@@ -471,6 +482,10 @@ class ImpedanceCommandManager(Command):
         self.cmd.setpoint_eef[:, 2] = 0.25 + 0.25 * torch.sin(t)
 
     def debug_draw(self):
+        # target = self.asset.data.root_pos_w[0].cpu()
+        # eye = self.asset.data.root_pos_w[0].cpu() + torch.tensor([1.0, 2.0, 1.5])
+        # self.env.sim.set_camera_view(eye, target)
+
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w,
             self.setpoint_w[:, :3] - self.asset.data.root_pos_w,
@@ -514,7 +529,8 @@ class ImpedanceCommandManager(Command):
             size=5.0,
         )
         eef_ref_pos = self.eef_ref_pos_w[:, self.ref_steps].reshape(-1, 3)
-        self.setpoint_marker.visualize(eef_ref_pos)
+        self.ref_pos_marker.visualize(eef_ref_pos)
+        self.setpoint_marker.visualize(torch.cat([self.setpoint_w[:, :3], self.setpoint_eef_w]))
         
         has_spring = self.eef_spring_force.is_valid().squeeze(1)
         if has_spring.any():
@@ -531,6 +547,16 @@ class ImpedanceCommandManager(Command):
 
 
 class ImpedanceCommandDemo(ImpedanceCommandManager):
+    STAGE1_START = 150
+    STAGE2_START = 300
+    STAGE3_START = 600
+    STAGE: int = None
+    
+    kps = []
+    target_forces_base = []
+    target_forces_eef = []
+    forces = []
+
     def reset(self, env_ids: torch.Tensor):
         self.ref_pos_w[env_ids] = self.asset.data.root_pos_w[env_ids].unsqueeze(1)
         self.ref_lin_vel_w[env_ids] = self.asset.data.root_lin_vel_w[env_ids].unsqueeze(1)
@@ -555,7 +581,8 @@ class ImpedanceCommandDemo(ImpedanceCommandManager):
         )
 
     def update_command_and_force(self):
-        if self.env.episode_length_buf[0] == 100:
+        if self.STAGE1_START is not None and self.env.episode_length_buf[0] == self.STAGE1_START:
+            self.STAGE = 1
             cmd = ImpedanceCommand.zero(self.num_envs, self.device)
             cmd.mode[:] = 1
             cmd.kp_base.uniform_(4., 24.)
@@ -571,7 +598,8 @@ class ImpedanceCommandDemo(ImpedanceCommandManager):
             eef_const_force.duration[:] = 3.0
             self.eef_const_force = eef_const_force
         
-        if self.env.episode_length_buf[0] == 250:
+        if self.STAGE2_START is not None and self.env.episode_length_buf[0] == self.STAGE2_START:
+            self.STAGE = 2
             cmd = ImpedanceCommand.zero(self.num_envs, self.device)
             cmd.mode[:] = 0
             cmd.kp_base.uniform_(4., 24.)
@@ -584,76 +612,117 @@ class ImpedanceCommandDemo(ImpedanceCommandManager):
             cmd.transmission.fill_(0.)
             self.cmd = cmd
 
-        if self.env.episode_length_buf[0] == 600:
+        if self.STAGE3_START is not None and self.env.episode_length_buf[0] == self.STAGE3_START:
+            self.STAGE = 3
             cmd = ImpedanceCommand.zero(self.num_envs, self.device)
             cmd.mode[:] = 0
-            cmd.kp_base.uniform_(40., 40.)
+            cmd.kp_base.uniform_(4., 4.)
             cmd.kd_base = 1.8 * cmd.kp_base.sqrt()
             cmd.setpoint[:, :3] = self.asset.data.root_pos_w[:, :3] - torch.tensor([1.5, 0.0, 0.0], device=self.device)
             cmd.setpoint[:, 5] = - torch.pi * 0.2
             cmd.setpoint_eef[:] = torch.tensor([0.4, 0.1, 0.3], device=self.device)
-            cmd.kp_eef.uniform_(40., 40.)
+            cmd.kp_eef.uniform_(90., 90.)
             cmd.kd_eef = 1.8 * cmd.kp_eef.sqrt()
             cmd.transmission.fill_(1.)
             self.cmd = cmd
 
             eef_spring_force = SpringForce.sample(self.num_envs, device=self.device)
             eef_spring_force.setpoint += self.eef_pos_w
+            eef_spring_force.setpoint_mass[:] = 1000
             self.eef_spring_force = eef_spring_force
-            self.eef_spring_force.duration[:] = 3.0
+            self.eef_spring_force.duration[:] = 20.0
+        
+        if self.STAGE == 3:
+            self.cmd.setpoint.data[:, :2] = self.eef_spring_force.setpoint[:, :2] - torch.tensor([2.5, 0.0], device=self.device)
+            if self.STAGE3_START + 50 < self.env.episode_length_buf[0] < self.STAGE3_START + 300:
+                self.cmd.kp_base.data.add_(0.4).clamp_max_(80.)
+                self.cmd.kd_base = 1.8 * self.cmd.kp_base.sqrt()
+                # self.cmd.kp_eef.data.add_(0.3).clamp_max_(100.)
+                # self.cmd.kd_eef = 1.8 * self.cmd.kp_eef.sqrt()
+            elif self.STAGE3_START + 290 + 60 < self.env.episode_length_buf[0] < self.STAGE3_START + 600:
+                self.cmd.kp_base.data.sub_(0.4).clamp_min_(4.)
+                self.cmd.kd_base = 1.8 * self.cmd.kp_base.sqrt()
+                # self.cmd.kp_eef.data.sub_(0.3).clamp_min_(4.)
+                # self.cmd.kd_eef = 1.8 * self.cmd.kp_eef.sqrt()
 
         self.eef_const_force.time.add_(self.env.step_dt)
         self.eef_spring_force.step(self.eef_pos_w, self.eef_lin_vel_w, self.env.step_dt)
         
-        if self.env.episode_length_buf[0] == 80:
-            eye = self.asset.data.root_pos_w[0].cpu()
-            eye[0] = 4.0
-            eye[2] = 0.5
-            self.env.sim.set_camera_view(
-                eye + torch.tensor([0., 6.0, 0.5]),
-                eye + torch.tensor([0., 0.0, 0.0])
-            )
-        elif self.env.episode_length_buf[0] == 600:
-            eye = self.asset.data.root_pos_w[0].cpu()
-            eye[2] = 0.5
-            self.env.sim.set_camera_view(
-                eye + torch.tensor([0., 6.0, 0.5]),
-                eye + torch.tensor([0., 0.0, 0.0])
-            )
-        has_spring = self.eef_spring_force.is_valid().squeeze(1)
-        if has_spring.any():
-            spring_setpoint = self.eef_spring_force.setpoint[has_spring]
-            self.spring_marker.visualize(spring_setpoint)
+        # if self.env.episode_length_buf[0] == 80:
+        #     eye = self.asset.data.root_pos_w[0].cpu()
+        #     eye[0] = 4.0
+        #     eye[2] = 0.5
+        #     self.env.sim.set_camera_view(
+        #         eye + torch.tensor([0., 6.0, 0.5]),
+        #         eye + torch.tensor([0., 0.0, 0.0])
+        #     )
+        # elif self.env.episode_length_buf[0] == 600:
+        #     eye = self.asset.data.root_pos_w[0].cpu()
+        #     eye[2] = 0.5
+        #     self.env.sim.set_camera_view(
+        #         eye + torch.tensor([0., 6.0, 0.5]),
+        #         eye + torch.tensor([0., 0.0, 0.0])
+        #     )
 
     def get_eef_force(self, eef_pos_w: torch.Tensor, eef_vel_w: torch.Tensor):
-        if self.env.episode_length_buf[0] < 250:
-            if eef_pos_w.ndim == 2:
-                return self.eef_const_force.get_force()
-            elif eef_pos_w.ndim == 3:
-                return self.eef_const_force.get_force().unsqueeze(1)
-        elif self.env.episode_length_buf[0] < 600:
-            radius = 0.3
-            t = (self.env.episode_length_buf-300) * self.env.step_dt
-            offset = torch.zeros(self.num_envs, 3, device=self.device)
-            offset[:, 0] = 0.5
-            offset[:, 1] = radius * torch.cos(t * torch.pi)
-            offset[:, 2] = 0.3 + radius * torch.sin(t * torch.pi)
-            target_pos = self.asset.data.root_pos_w + offset
-            target_vel = torch.zeros_like(target_pos)
-            target_vel[:, 1] = -radius * torch.pi * torch.sin(t * torch.pi)
-            target_vel[:, 2] = radius * torch.pi * torch.cos(t * torch.pi)
-            if eef_pos_w.ndim == 2:
-                pos_error = (target_pos - eef_pos_w)
-                vel_error = (target_vel - eef_vel_w)
-            elif eef_pos_w.ndim == 3:
-                pos_error = (target_pos.unsqueeze(1) - eef_pos_w)
-                vel_error = (target_vel.unsqueeze(1) - eef_vel_w)
-            return 80. * pos_error + 10. * vel_error
-        else:
-            if eef_pos_w.ndim == 2:
-                return self.eef_spring_force.get_force(eef_pos_w, eef_vel_w)
-            elif eef_pos_w.ndim == 3:
-                return self.eef_spring_force.unsqueeze(1).get_force(eef_pos_w, eef_vel_w)
+        match self.STAGE:
+            case 1:
+                if eef_pos_w.ndim == 2:
+                    force = self.eef_const_force.get_force()
+                elif eef_pos_w.ndim == 3:
+                    force = self.eef_const_force.get_force().unsqueeze(1)
+            case 2:
+                radius = 0.3
+                t = (self.env.episode_length_buf-self.STAGE2_START) * self.env.step_dt
+                offset = torch.zeros(self.num_envs, 3, device=self.device)
+                offset[:, 0] = 0.5
+                offset[:, 1] = radius * torch.cos(t * torch.pi)
+                offset[:, 2] = 0.3 + radius * torch.sin(t * torch.pi)
+                target_pos = self.asset.data.root_pos_w + offset
+                target_vel = torch.zeros_like(target_pos)
+                target_vel[:, 1] = -radius * torch.pi * torch.sin(t * torch.pi)
+                target_vel[:, 2] = radius * torch.pi * torch.cos(t * torch.pi)
+                if eef_pos_w.ndim == 2:
+                    pos_error = (target_pos - eef_pos_w)
+                    vel_error = (target_vel - eef_vel_w)
+                elif eef_pos_w.ndim == 3:
+                    pos_error = (target_pos.unsqueeze(1) - eef_pos_w)
+                    vel_error = (target_vel.unsqueeze(1) - eef_vel_w)
+                force = 80. * pos_error + 10. * vel_error
+            case 3:
+                if eef_pos_w.ndim == 2:
+                    force = self.eef_spring_force.get_force(eef_pos_w, eef_vel_w)
+                    # print(self.cmd.kp_base[0], force.norm(dim=1))
+                    target_force = (
+                        self.cmd.kp_base * (self.cmd.setpoint[:, :3] - self.asset.data.root_pos_w)
+                        + self.cmd.kd_base * (0 - self.asset.data.root_lin_vel_w)
+                    )
+                    self.target_forces_base.append(target_force[:, :2].norm(dim=-1))
+                    target_force = (
+                        self.cmd.kp_eef * (self.setpoint_eef_w - self.eef_pos_w)
+                        + self.cmd.kd_eef * (0 - self.eef_lin_vel_w)
+                    )
+                    self.target_forces_eef.append(target_force[:, :2].norm(dim=-1))
+                    self.kps.append(self.cmd.kp_base[0].clone())
+                    self.forces.append(force.norm(dim=1).clone())
+                elif eef_pos_w.ndim == 3:
+                    force = self.eef_spring_force.unsqueeze(1).get_force(eef_pos_w, eef_vel_w)
+            case _:
+                force = torch.zeros(3, device=self.device)
+        # print(self.env.episode_length_buf[0])
+        # if self.env.episode_length_buf[0] == 900:
+        #     kps = torch.cat(self.kps).cpu()
+        #     forces = torch.stack(self.forces).cpu()
+        #     target_forces_base = torch.stack(self.target_forces_base).cpu()
+        #     target_forces_eef = torch.stack(self.target_forces_eef).cpu()
+        #     torch.save({
+        #         "kps": kps,
+        #         "forces": forces,
+        #         "target_forces_eef": target_forces_eef,
+        #         "target_forces_base": target_forces_base
+        #     }, "impedance_manip_demo.pt")
+        #     exit()
+        return force
 
 
 def expand_time_as(input: torch.Tensor, other: torch.Tensor):

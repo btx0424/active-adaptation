@@ -287,6 +287,10 @@ class perturb_body_materials(Randomization):
             torch.arange(cumsum[i], cumsum[i+1]) 
             for i in self.body_ids
         ])
+        self.num_buckets = 64
+        self.static_friction_buckets = sample_uniform((self.num_buckets,), *self.static_friction_range)
+        self.dynamic_friction_buckets = sample_uniform((self.num_buckets,), *self.dynamic_friction_range)
+        self.restitution_buckets = sample_uniform((self.num_buckets,), *self.restitution_range)
 
     def startup(self):
         logging.info(f"Randomize body materials of {self.body_names} upon startup.")
@@ -296,9 +300,9 @@ class perturb_body_materials(Randomization):
             shape = (self.num_envs, 1)
         else:
             shape = (self.num_envs, len(self.shape_ids))
-        materials[:, self.shape_ids, 0] = sample_uniform(shape, *self.static_friction_range)
-        materials[:, self.shape_ids, 1] = sample_uniform(shape, *self.dynamic_friction_range)
-        materials[:, self.shape_ids, 2] = sample_uniform(shape, *self.restitution_range)
+        materials[:, self.shape_ids, 0] = self.static_friction_buckets[torch.randint(0, self.num_buckets, shape)]
+        materials[:, self.shape_ids, 1] = self.dynamic_friction_buckets[torch.randint(0, self.num_buckets, shape)]
+        materials[:, self.shape_ids, 2] = self.restitution_buckets[torch.randint(0, self.num_buckets, shape)]
 
         indices = torch.arange(self.asset.num_instances)
         self.asset.root_physx_view.set_material_properties(materials.flatten(), indices)
@@ -889,8 +893,8 @@ class constant_force(Randomization):
         expired = self.force.time > self.force.duration
         resample = resample & expired.squeeze(-1) & (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
         force = ConstantForce.sample(self.num_envs, self.force_range, self.offset_range, self.device)
-        self.force = force.where(resample, self.force)
         self.force.time.add_(self.env.step_dt)
+        self.force = force.where(resample, self.force)
     
     def debug_draw(self):
         self.env.debug_draw.vector(
