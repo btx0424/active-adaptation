@@ -32,8 +32,6 @@ class Observation:
 
         """
         self.env: _Env = env
-        self.mask_ratio = mask_ratio
-        self.mask = torch.zeros(self.num_envs, device=self.device, dtype=bool)
 
     @property
     def num_envs(self):
@@ -47,17 +45,12 @@ class Observation:
     def compute(self) -> torch.Tensor:
         raise NotImplementedError
     
-    def fliplr(self, obs: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError
-    
     def lerp(self, obs_tm1: torch.Tensor, obs_t: torch.Tensor, t) -> torch.Tensor:
         return torch.lerp(obs_tm1, obs_t, t)
     
     def __call__(self) ->  Tuple[torch.Tensor, torch.Tensor]:
         tensor = self.compute()
-        if self.mask_ratio > 0.:
-            tensor[self.mask] = 0.
-        return tensor, self.mask
+        return tensor
     
     def startup(self):
         pass
@@ -71,8 +64,6 @@ class Observation:
 
     def reset(self, env_ids: torch.Tensor):
         """Called after episode termination"""
-        if self.mask_ratio > 0.:
-            self.mask[env_ids] = torch.rand(env_ids.shape[0], device=self.device) < self.mask_ratio
 
     def debug_draw(self):
         """Called at each step **after** simulation, if GUI is enabled"""
@@ -345,13 +336,19 @@ class root_angvel_b(Observation):
         self.asset: Articulation = self.env.scene["robot"]
         self.noise_std = noise_std
         self.yaw_only = yaw_only
+        self.update()
     
-    def compute(self) -> torch.Tensor:
-        ang_vel_b = random_noise(self.asset.data.root_ang_vel_b, self.noise_std) 
+    def update(self):
         if self.yaw_only:
-            return ang_vel_b[:, 2].reshape(self.num_envs, 1)
+            self.quat = yaw_quat(self.asset.data.root_quat_w)
         else:
-            return ang_vel_b
+            self.quat = self.asset.data.root_quat_w
+        self.root_angvel_b = self.asset.data.root_ang_vel_b.clone()
+
+    def compute(self) -> torch.Tensor:
+        ang_vel_b = random_noise(self.root_angvel_b, self.noise_std) 
+        ang_vel_b = quat_rotate_inverse(self.quat, ang_vel_b)
+        return ang_vel_b.reshape(self.num_envs, -1)
     
     def symmetry_transforms(self):
         # left-right symmetry: flip only roll and yaw
@@ -466,6 +463,7 @@ class root_linvel_b(Observation):
         self.yaw_only = yaw_only
         self.ema = EMA(self.asset.data.root_lin_vel_w, gammas=gammas)
         self.ema.update(self.asset.data.root_lin_vel_w)
+        self.update()
     
     def reset(self, env_ids: torch.Tensor):
         self.ema.reset(env_ids)
@@ -473,12 +471,15 @@ class root_linvel_b(Observation):
     def post_step(self, substep):
         self.ema.update(self.asset.data.root_lin_vel_w)
     
+    def update(self):
+        if self.yaw_only:
+            self.quat = yaw_quat(self.asset.data.root_quat_w).unsqueeze(1)
+        else:
+            self.quat = self.asset.data.root_quat_w.unsqueeze(1)
+
     def compute(self) -> torch.Tensor:
         linvel = self.ema.ema
-        if self.yaw_only:
-            linvel = quat_rotate_inverse(yaw_quat(self.asset.data.root_quat_w).unsqueeze(1), linvel)
-        else:
-            linvel = quat_rotate_inverse(self.asset.data.root_quat_w.unsqueeze(1), linvel)
+        linvel = quat_rotate_inverse(self.quat, linvel)
         return linvel.reshape(self.num_envs, -1)
     
     def symmetry_transforms(self):
@@ -803,9 +804,7 @@ class contact_indicator(Observation):
         self.force_substep[:, substep] = force
 
     def compute(self):
-        forces = self.force_substep.mean(1).norm(dim=-1)
-        forces = torch.where(forces < 2., 0., forces)
-        forces = torch.where(forces > 2., 1., forces)
+        forces = (self.force_substep.mean(1).norm(dim=-1) > 2.).float()
         return forces.reshape(self.num_envs, -1)
 
     def symmetry_transforms(self):

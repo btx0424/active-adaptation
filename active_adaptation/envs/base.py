@@ -30,15 +30,10 @@ class ObsGroup:
         name: str,
         funcs: Dict[str, mdp.Observation],
         max_delay: int = 0,
-        use_flip: bool = False,
     ):
         self.name = name
         self.funcs = funcs
         self.max_delay = max_delay
-        self.use_flip = use_flip
-        self.raw_obs_t = OrderedDict()
-        self.raw_obs_tm1: OrderedDict = None
-        self.buf_obs = OrderedDict()
         self.timestamp = -1
 
     @property
@@ -51,32 +46,23 @@ class ObsGroup:
             foo = self.compute({}, 0)
             spec = {}
             spec[self.name] = UnboundedContinuous(foo[self.name].shape, dtype=foo[self.name].dtype)
-            if self.use_flip:
-                spec[self.name + "_flipped"] = spec[self.name]
             self._spec = Composite(spec, shape=[foo[self.name].shape[0]]).to(foo[self.name].device)
         return self._spec
 
     def compute(self, tensordict: TensorDictBase, timestamp: int) -> torch.Tensor:
-        # update only if outdated
-        if timestamp > self.timestamp:
-            self.raw_obs_tm1 = self.raw_obs_t
-            self.raw_obs_t = OrderedDict()
-            for obs_key, func in self.funcs.items():
-                tensor, mask = func()
-                self.raw_obs_tm1[obs_key] = self.raw_obs_t.get(obs_key, tensor)
-                self.raw_obs_t[obs_key] = tensor
-                if self.max_delay > 0:
-                    shape = tensor.shape[0:1] + (1,) * (tensor.ndim - 1)
-                    delay = torch.rand(shape, device=tensor.device) * self.max_delay
-                    self.buf_obs[obs_key] = func.lerp(self.raw_obs_tm1[obs_key], self.raw_obs_t[obs_key], 1 - delay)
-                else:
-                    self.buf_obs[obs_key] = self.raw_obs_t[obs_key]
-        self.timestamp = timestamp
-        
-        tensors = torch.cat([self.buf_obs[key] for key in self.funcs.keys()], dim=-1)
-        tensordict[self.name] = tensors
-
+        # torch.compiler.cudagraph_mark_step_begin()
+        output = self._compute()
+        tensordict[self.name] = output
         return tensordict
+    
+    # @torch.compile(mode="reduce-overhead")
+    def _compute(self) -> torch.Tensor:
+        # update only if outdated
+        tensors = []
+        for obs_key, func in self.funcs.items():
+            tensor = func()
+            tensors.append(tensor)
+        return torch.cat(tensors, dim=-1)
     
     def symmetry_transforms(self):
         transforms = []
