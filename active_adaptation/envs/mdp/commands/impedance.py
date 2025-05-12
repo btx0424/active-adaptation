@@ -425,8 +425,9 @@ class Impedance(Command):
         return mask.nonzero().squeeze(-1)
 
     def update_command(self):
-        sample_command = ((self.env.episode_length_buf-50) % 200 == 0)
+        sample_command = ((self.env.episode_length_buf-50) % 150 == 0)
         sample_command = sample_command & (torch.rand(self.num_envs, device=self.device) < 0.5)
+        sample_command = sample_command | (self.command_mode[:, 0] == self.CMD_POSITION)
         if sample_command.any():
             probs = torch.tensor([0.4, 0.5, 0.1, 0.0], device=self.device)
             # probs = torch.tensor([0.0, 0.1, 0.0, 0.9], device=self.device)
@@ -537,7 +538,7 @@ class Impedance(Command):
         self.ang_kp[env_ids] = lin_kp
         self.ang_kd[env_ids] = lin_kd
         set_linvel = torch.zeros(len(env_ids), 3, device=self.device)
-        set_linvel[:, 0].uniform_(0.4, 1.2)
+        set_linvel[:, 0].uniform_(0.4, 1.5)
         self.set_linvel[env_ids] = set_linvel
         target_yaw = self.asset.data.heading_w[env_ids, None] + scalar.uniform_(-torch.pi/2, torch.pi/2)
         self.command_setrpy_w[env_ids, 2:3] = math_utils.wrap_to_pi(target_yaw)
