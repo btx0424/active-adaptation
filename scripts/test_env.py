@@ -104,26 +104,6 @@ def main(cfg: DictConfig):
     episode_stats = EpisodeStats(stats_keys)
 
     rollout_policy = policy.get_rollout_policy("train")
-    compile_policy = cfg.get("compile", False)
-    assert compile_policy in (True, False, "auto")
-    if compile_policy or compile_policy == "auto":
-        fake_td = env.fake_tensordict()
-        rollout_policy_compiled = torch.compile(rollout_policy)
-        for _ in range(16): 
-            rollout_policy_compiled(fake_td)
-    if compile_policy == "auto":
-        @torch.inference_mode()
-        def _timeit(policy):
-            start = time.perf_counter()
-            for _ in range(128): 
-                policy(fake_td)
-            return (time.perf_counter() - start) / 128
-        inference_time = _timeit(rollout_policy)
-        inference_time_compiled = _timeit(rollout_policy_compiled)
-        print(f"Inference time: {inference_time:.4f} -> {inference_time_compiled:.4f}")
-        if inference_time_compiled < inference_time:
-            rollout_policy = rollout_policy_compiled
-            print("Using compiled policy")
 
     collector = SyncDataCollector(
         env,

@@ -41,6 +41,18 @@ DONE_KEY = ("next", "done")
 CMD_KEY = "command"
 
 
+class ResFCLayer(nn.Module):
+    def __init__(self, out_dim: int, activation=nn.Mish):
+        super().__init__()
+        self.linear = nn.LazyLinear(out_dim * 2)
+        self.mish = activation()
+        self.ln = nn.LayerNorm(out_dim)
+    
+    def forward(self, x):
+        x, skip = self.linear(x).chunk(2, dim=-1)
+        return self.ln(self.mish(x) + skip)
+
+
 def make_mlp(num_units, activation=nn.Mish, norm="before", dropout=0.):
     assert norm in ("before", "after", None)
     layers = []

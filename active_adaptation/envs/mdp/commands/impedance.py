@@ -268,8 +268,8 @@ class Impedance(Command):
         return r.max(dim=1).values
 
     def reset(self, env_ids: torch.Tensor):
-        # self.sample_command_world(env_ids)
-        self.sample_command_compliant(env_ids)
+        self.sample_command_world(env_ids)
+        # self.sample_command_compliant(env_ids)
         self._cum_error[env_ids] = 0.0
         self.env.extra["stats/distance_commanded"] = self.distance_commanded.mean().item()
         self.env.extra["stats/distance_covered"] = self.distance_covered.mean().item()
@@ -425,10 +425,11 @@ class Impedance(Command):
         return mask.nonzero().squeeze(-1)
 
     def update_command(self):
-        sample_command = ((self.env.episode_length_buf-10) % 500 == 0) # & (torch.rand(self.num_envs, device=self.device) < 0.5)
+        sample_command = ((self.env.episode_length_buf-50) % 200 == 0)
+        sample_command = sample_command & (torch.rand(self.num_envs, device=self.device) < 0.5)
         if sample_command.any():
-            # probs = torch.tensor([0.4, 0.5, 0.1, 0.0], device=self.device)
-            probs = torch.tensor([0.0, 0.1, 0.0, 0.9], device=self.device)
+            probs = torch.tensor([0.4, 0.5, 0.1, 0.0], device=self.device)
+            # probs = torch.tensor([0.0, 0.1, 0.0, 0.9], device=self.device)
             mode = torch.multinomial(probs, num_samples=self.num_envs, replacement=True)
             self.sample_command_world(self.mask2id(sample_command & (mode == 0)))
             self.sample_command_setvel(self.mask2id(sample_command & (mode == 1)))
@@ -463,7 +464,8 @@ class Impedance(Command):
 
         # sample constant force
         expire = self.constant_force.time > self.constant_force.duration - 1e-4
-        r = (torch.rand(self.num_envs, 1, device=self.device) < self.resample_prob)
+        r = self.env.episode_length_buf[:, None] % 10 == 0
+        r = r & (torch.rand(self.num_envs, 1, device=self.device) < 0.02)
         sample = r & expire & (self.command_mode != self.CMD_LARGE_FORCE).reshape(self.num_envs, 1)
         constant_force = ConstantForce.sample(
             self.num_envs,
@@ -475,7 +477,8 @@ class Impedance(Command):
         self.constant_force: ConstantForce = constant_force.where(sample, self.constant_force)
 
         expire = self.impulse_force.time > self.impulse_force.duration - 1e-4
-        r = (torch.rand(self.num_envs, 1, device=self.device) < 0.005)
+        r = self.env.episode_length_buf[:, None] % 20 == 0
+        r = r & (torch.rand(self.num_envs, 1, device=self.device) < 0.01)
         sample = r & expire & (self.command_mode != self.CMD_LARGE_FORCE).reshape(self.num_envs, 1)
         impulse_force = ImpulseForce.sample(
             self.num_envs,
@@ -584,15 +587,15 @@ class Impedance(Command):
             + torch.tensor([2., 2., 2.]) 
             # + 0.5 * torch.tensor([1., 1., 1.]) * self.env.episode_length_buf[0].item() * self.env.step_dt
         )
-        target = self.asset.data.root_pos_w[0].cpu()
-        self.env.sim.set_camera_view(eye, target)
+        # target = self.asset.data.root_pos_w[0].cpu()
+        # self.env.sim.set_camera_view(eye, target)
         # draw command linvel (green)
-        # self.env.debug_draw.vector(
-        #     self.asset.data.root_pos_w
-        #     + torch.tensor([0.0, 0.0, 0.2], device=self.device),
-        #     self.ref_lin_vel_w[:, -2],
-        #     color=(0.0, 1.0, 0.0, 1.0),
-        # )
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w
+            + torch.tensor([0.0, 0.0, 0.2], device=self.device),
+            self.ref_lin_vel_w[:, -2],
+            color=(0.0, 1.0, 0.0, 1.0),
+        )
         # return
         # draw vector to setpoint pos (red)
         self.env.debug_draw.vector(
@@ -662,19 +665,19 @@ class Impedance(Command):
             #     quat_from_euler_xyz(*self.command_setrpy_w.unbind(-1)),
             #     scales=torch.tensor([[4., 1., 0.1]]).expand(self.num_envs, 3),
             # )
-        # self.env.debug_draw.vector(
-        #     self.asset.data.root_pos_w,
-        #     self.lin_vel_ema.ema[:, 2],
-        #     # self.asset.data.body_lin_vel_w[:, [0, self.torso_id]].mean(1),
-        #     color=(1.0, 1.0, 0.0, 1.0),
-        #     size=4.0,
-        # )
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w,
+            self.lin_vel_ema.ema[:, 2],
+            # self.asset.data.body_lin_vel_w[:, [0, self.torso_id]].mean(1),
+            color=(1.0, 1.0, 0.0, 1.0),
+            size=4.0,
+        )
 
 
 
 class ImpedanceImpulse(Impedance):
     
-    X_VEL = 0.0
+    X_VEL = 1.5
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -754,8 +757,8 @@ class ImpedanceImpulse(Impedance):
         self.impulse_force: ImpulseForce = impulse_force.where(sample, self.impulse_force)
 
         self.force_ext_w[:] = (
-            self.constant_force.get_force() \
-            # + self.impulse_force.get_force()
+            # self.constant_force.get_force() \
+            + self.impulse_force.get_force()
         )
     
     def update(self):

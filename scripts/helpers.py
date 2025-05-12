@@ -151,7 +151,8 @@ def make_env_policy(cfg: DictConfig):
         env.observation_spec, 
         env.action_spec, 
         env.reward_spec,
-        device=base_env.device
+        device=base_env.device,
+        env=env
     )
     
     if "policy" in state_dict.keys():
