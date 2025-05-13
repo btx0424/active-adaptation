@@ -171,7 +171,15 @@ G1_27DOF_CFG = ArticulationCfg(
     actuators={
         "base_legs": ImplicitActuatorCfg(
             joint_names_expr=".*",
-            effort_limit=300,
+            effort_limit_sim={
+                ".*_hip.*": 88.0,
+                ".*_knee.*": 139.0,
+                ".*_ankle.*": 50,
+                ".*_shoulder.*": 25,
+                ".*_elbow.*": 25,
+                ".*_wrist.*": 25,
+                "waist_yaw_joint": 88,
+            },
             velocity_limit=100.0,
             stiffness={
                 ".*_hip_yaw_joint": 150.0,
@@ -203,20 +211,8 @@ G1_27DOF_CFG = ArticulationCfg(
                 ".*wrist_pitch_joint": 1.0,
                 ".*wrist_yaw_joint": 1.0,
             },
-            armature={
-                "waist_yaw_joint": 0.01, # unitree_ros
-                # "waist_roll_joint": 0.01, # unitree_ros
-                ".*_shoulder_.*": 0.01,
-                ".*_elbow_joint": 0.01,
-                ".*_hip_.*": 0.01,
-                ".*_knee_joint": 0.01,
-                ".*_ankle_pitch_joint": 0.01,
-                ".*_ankle_roll_joint": 0.01,
-                ".*wrist_roll_joint": 0.01,
-                ".*wrist_pitch_joint": 0.01,
-                ".*wrist_yaw_joint": 0.01,
-            },
-            friction=0.02,
+            armature=0.01,
+            friction=0.01,
         ),
     },
     joint_symmetry_mapping=symmetry_utils.mirrored({
@@ -326,18 +322,8 @@ G1_23DOF_CFG = ArticulationCfg( # no wrist pitch and yaw
                 ".*ankle_roll_joint": 1.0,
                 ".*wrist_roll_joint": 1.0,
             },
-            armature={
-                "waist_yaw_joint": 0.01, # unitree_ros
-                # "waist_roll_joint": 0.01, # unitree_ros
-                ".*_shoulder_.*": 0.01,
-                ".*_elbow_joint": 0.01,
-                ".*_hip_.*": 0.01,
-                ".*_knee_joint": 0.01,
-                ".*_ankle_pitch_joint": 0.01,
-                ".*_ankle_roll_joint": 0.01,
-                ".*wrist_roll_joint": 0.01,
-            },
-            friction=0.02,
+            armature=0.01,
+            friction=0.01,
         ),
     },
 )

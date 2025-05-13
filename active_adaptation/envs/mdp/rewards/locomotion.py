@@ -1087,112 +1087,30 @@ class base_height_l1(Reward):
         return height.clamp(max=target_height).reshape(self.num_envs, 1)
 
 
-class Articulation_stand_always(Reward):
-    def __init__(
-        self,
-        env,
-        weight: float,
-        enabled: bool = True,
-    ):
-        super().__init__(env, weight, enabled,)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.joint_ids = self.asset.actuators["base_legs"].joint_indices
-
-    def compute(self):
-        jpos_error = (
-            (
-                self.asset.data.joint_pos[:, self.joint_ids]
-                - self.asset.data.default_joint_pos[:, self.joint_ids]
-            )
-            .abs()
-            .sum(dim=1, keepdim=True)
-        )
-
-        front_symmetry = (
-            self.asset.data.feet_pos_b[:, [0, 1], 1].sum(dim=1, keepdim=True).abs()
-        )
-        back_symmetry = (
-            self.asset.data.feet_pos_b[:, [2, 3], 1].sum(dim=1, keepdim=True).abs()
-        )
-        cost = -(jpos_error + front_symmetry + back_symmetry)
-
-        return cost
-
-
-class Articulation_stand(Reward):
-    def __init__(
-        self,
-        env,
-        weight: float,
-        enabled: bool = True,
-    ):
-        super().__init__(env, weight, enabled,)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.joint_ids = self.asset.actuators["base_legs"].joint_indices
-
-    def compute(self):
-        jpos_error = (
-            (
-                self.asset.data.joint_pos[:, self.joint_ids]
-                - self.asset.data.default_joint_pos[:, self.joint_ids]
-            )
-            .abs()
-            .sum(dim=1, keepdim=True)
-        )
-
-        front_symmetry = (
-            self.asset.data.feet_pos_b[:, [0, 1], 1].sum(dim=1, keepdim=True).abs()
-        )
-        back_symmetry = (
-            self.asset.data.feet_pos_b[:, [2, 3], 1].sum(dim=1, keepdim=True).abs()
-        )
-        cost = -(jpos_error + front_symmetry + back_symmetry)
-
-        is_standing = self.env.command_manager.is_standing_env.reshape(self.num_envs, 1)
-        return cost * is_standing
-
-
-class Articulation_stand_feet_contact_force(Reward):
-    # expecting the foot to contact the ground firmly but not with too much force
-
-    def __init__(self, env, weight, body_names, enabled=True, force_range=(10.0, 80.0)):
+class tracking_base_height(Reward):
+    def __init__(self, env, target_height: float, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
+        self.target_height = target_height
+
+    def compute(self) -> torch.Tensor:
+        current_height = self.asset.data.root_pos_w[:, 2, None]
+        error = (current_height - self.target_height).square()
+        return torch.exp(-error / 0.25)
+
+
+class single_foot_contact(Reward):
+    def __init__(self, env, body_names: str, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        # self.asset: Articulation = self.env.scene["robot"]
         self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
-        self.force_range = force_range
-
-        self.articulation_body_ids = self.asset.find_bodies(body_names)[0]
-
         self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names)
         self.body_ids = torch.tensor(self.body_ids, device=self.env.device)
 
-    def compute(self):
-        contact_forces = self.contact_sensor.data.net_forces_w[:, self.body_ids]
-        lower_bound, upper_bound = self.force_range
-        force_penalty = (contact_forces < lower_bound).float() + (
-            contact_forces > upper_bound
-        ).float()
-        # force_penalty = (contact_forces - contact_forces.clamp(lower_bound, upper_bound)).abs()
-        total_penalty = torch.sum(force_penalty, dim=(1, 2)).reshape(self.num_envs, 1)
-        is_standing = self.env.command_manager.is_standing_env.squeeze(1)
-        total_penalty[~is_standing] = 0
-        total_penalty[is_standing] -= total_penalty[is_standing].mean(0)
-        return -total_penalty
-
-    def debug_draw(self):
-        # draw contact forces on each of the body (orange)
-        contact_forces = self.contact_sensor.data.net_forces_w_history.mean(1)[
-            :, self.body_ids
-        ]
-        body_pos_w = self.asset.data.body_pos_w[:, self.articulation_body_ids]
-        is_standing = self.env.command_manager.is_standing_env.squeeze(1)
-        self.env.debug_draw.vector(
-            body_pos_w[is_standing].view(-1, 3),
-            contact_forces[is_standing].view(-1, 3),
-            # orange
-            color=(1.0, 0.1, 0.1, 1.0),
-            size=5.0,
-        )
+    def compute(self) -> torch.Tensor:
+        in_contact = self.contact_sensor.data.net_forces_w[:, self.body_ids, 2] > 0.5
+        single_contact = torch.where(torch.sum(in_contact, dim=1) == 1, 0., -1.)
+        return single_contact.reshape(self.num_envs, 1)
 
 
 class is_standing_env(Reward):
@@ -1442,12 +1360,29 @@ class oscillator(Reward):
         self.mass = self.asset.data.default_mass[0].sum().to(self.device)
         self.gravity = self.mass * 9.81
 
+        # if not hasattr(self.asset, "phi"):
+        #     self.asset.phi = torch.zeros(self.num_envs, 4, device=self.device)
+        #     self.asset.phi_dot = torch.zeros(self.num_envs, 4, device=self.device)
+        # self.asset.phi[:, 0] = torch.pi
+        # self.asset.phi[:, 3] = torch.pi
         self.grf_substep = torch.zeros(
             self.num_envs,
             self.env.decimation,
             len(self.feet_ids),
             device=self.device,
         )
+        self.omega_range = omega_range
+        self.omega = torch.zeros(self.num_envs, 1, device=self.device)
+        self.omega.uniform_(*self.omega_range).mul_(torch.pi)
+
+        self.rest_target = torch.pi * 3 / 2
+        self.keep_steping = torch.zeros(
+            self.num_envs, 1, dtype=bool, device=self.device
+        )
+
+    # def reset(self, env_ids):
+    #     self.keep_steping[env_ids] = (torch.rand(len(env_ids), 1, device=self.device) < 0.)
+    #     self.asset.phi_dot[env_ids] = self.omega[env_ids]
 
     def post_step(self, substep):
         grf = self.contact_sensor.data.net_forces_w[:, self.feet_ids].norm(dim=-1)
@@ -1456,6 +1391,20 @@ class oscillator(Reward):
 
     def update(self):
         self.grf = self.grf_substep.mean(1) / self.gravity
+        # inp = (
+        #     (~self.command_manager.is_standing_env)
+        #     | self.keep_steping
+        # )
+        # correction = self.trot(self.asset.phi, self.asset.phi_dot)
+        # phi_dot = torch.where(
+        #     inp,
+        #     self.omega + correction,
+        #     self.stand(self.asset.phi, self.asset.phi_dot),
+        # )
+        
+        # self.asset.phi_dot = phi_dot
+        # self.asset.phi += self.asset.phi_dot * self.env.step_dt
+        # self.asset.phi = torch.where((self.asset.phi > torch.pi * 2).all(1, True), self.asset.phi - torch.pi * 2, self.asset.phi)
 
     def compute(self):
         phi_sin = self.asset.phi.sin()
@@ -1466,6 +1415,23 @@ class oscillator(Reward):
             * (phi_sin.abs() > self.margin)
         )
         return r.sum(1, True)
+
+    def stand(self, phi: torch.Tensor, phi_dot: torch.Tensor,):
+        two_pi = torch.pi * 2
+        target = self.rest_target
+        dt = self.env.step_dt
+        a = ((phi % two_pi) < target - 1e-4) & (((phi + phi_dot * dt) % two_pi) > target + 1e-4)
+        b = ((phi % two_pi) - target).abs() < 1e-4
+        phi_dot = torch.where(a, (((target - phi) % two_pi) / dt), phi_dot)
+        return phi_dot * (~b)
+
+    def trot(self, phi: torch.Tensor, phi_dot: torch.Tensor):
+        phi_dot = torch.zeros_like(phi)
+        phi_dot[:, 0] = (phi[:, 3] - phi[:, 0]) + (phi[:, 1] + torch.pi - phi[:, 0]) 
+        phi_dot[:, 1] = (phi[:, 2] - phi[:, 1]) + (phi[:, 0] - torch.pi - phi[:, 1]) 
+        phi_dot[:, 2] = (phi[:, 1] - phi[:, 2]) + (phi[:, 0] - torch.pi - phi[:, 2])
+        phi_dot[:, 3] = (phi[:, 0] - phi[:, 3]) + (phi[:, 1] + torch.pi - phi[:, 3])
+        return phi_dot
 
 
 class gait(Reward):

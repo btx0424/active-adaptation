@@ -52,21 +52,22 @@ class MJArticulationData:
     applied_torque: ArrayType = None
     projected_gravity_b: ArrayType = None
     
-    body_lin_vel_w: ArrayType = None
-    body_ang_vel_w: ArrayType = None
+    body_vel_w: ArrayType = None
+    # body_lin_vel_w: ArrayType = None
+    # body_ang_vel_w: ArrayType = None
     root_lin_vel_w: ArrayType = None
     root_ang_vel_w: ArrayType = None
     root_ang_vel_b: ArrayType = None
     root_lin_vel_b: ArrayType = None
     heading_w: ArrayType = None
 
-    # @property
-    # def body_lin_vel_w(self):
-    #     return self.body_vel_w[..., :3]
+    @property
+    def body_lin_vel_w(self):
+        return self.body_vel_w[..., :3]
     
-    # @property
-    # def body_ang_vel_w(self):
-    #     return self.body_vel_w[..., 3:]
+    @property
+    def body_ang_vel_w(self):
+        return self.body_vel_w[..., 3:]
 
     @property
     def root_pos_w(self):
@@ -254,8 +255,9 @@ class MJArticulation:
         jpos = self.mj_data.qpos[self.joint_qposadr_read]
         jvel = self.mj_data.qvel[self.joint_qveladr_read]
         body_pos_w = self.mj_data.xpos[self.body_adrs_read]
-        body_ang_vel_w = self.mj_data.cvel[self.body_adrs_read, :3]
-        body_lin_vel_w = self.mj_data.cvel[self.body_adrs_read, 3:]
+        # body_ang_vel_w = self.mj_data.cvel[self.body_adrs_read, :3]
+        # body_lin_vel_w = self.mj_data.cvel[self.body_adrs_read, 3:]
+        body_vel_w = self.mj_data.cvel[self.body_adrs_read]
         body_quat_w = self.mj_data.xquat[self.body_adrs_read] # wxyz
         
         # rot = sRot.from_quat(body_quat_w[0], scalar_first=True)
@@ -269,8 +271,9 @@ class MJArticulation:
             self._data,
             body_pos_w=torch.as_tensor(body_pos_w, dtype=torch.float32)[None],
             body_quat_w=torch.as_tensor(body_quat_w, dtype=torch.float32)[None],
-            body_lin_vel_w=torch.as_tensor(body_lin_vel_w, dtype=torch.float32)[None],
-            body_ang_vel_w=torch.as_tensor(body_ang_vel_w, dtype=torch.float32)[None],
+            # body_lin_vel_w=torch.as_tensor(body_lin_vel_w, dtype=torch.float32)[None],
+            # body_ang_vel_w=torch.as_tensor(body_ang_vel_w, dtype=torch.float32)[None],
+            body_vel_w=torch.as_tensor(body_vel_w, dtype=torch.float32)[None],
             joint_pos=torch.as_tensor(jpos, dtype=torch.float32)[None],
             joint_pos_target=self._data.joint_pos_target.clone(),
             joint_vel=torch.as_tensor(jvel, dtype=torch.float32)[None],

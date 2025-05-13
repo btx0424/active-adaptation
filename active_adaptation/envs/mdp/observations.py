@@ -167,6 +167,9 @@ class body_pos_b(Observation):
         self.yaw_only = yaw_only
         self.body_indices, self.body_names = self.asset.find_bodies(body_names)
         self.update()
+        if self.env.backend == "mujoco":
+            self.feet_marker_0 = self.env.scene.create_sphere_marker(0.05, [1, 0, 0, 0.5])
+            self.feet_marker_1 = self.env.scene.create_sphere_marker(0.05, [1, 0, 0, 0.5])
 
     def update(self):
         if self.yaw_only:
@@ -182,6 +185,11 @@ class body_pos_b(Observation):
     
     def symmetry_transforms(self):
         return sym_utils.cartesian_space_symmetry(self.asset, self.body_names)
+    
+    def debug_draw(self):
+        if self.env.backend == "mujoco":
+            self.feet_marker_0.geom.pos = self.asset.data.body_pos_w[0, self.body_indices[0]]
+            self.feet_marker_1.geom.pos = self.asset.data.body_pos_w[0, self.body_indices[1]]
 
 
 class body_vel_b(Observation):
