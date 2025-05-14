@@ -66,7 +66,7 @@ def main(cfg):
         k for k in env.reward_spec.keys(True, True) 
         if isinstance(k, tuple) and k[0]=="stats"
     ]
-    episode_stats = EpisodeStats(stats_keys)
+    episode_stats = EpisodeStats(stats_keys, device=env.device)
     policy = policy.get_rollout_policy("eval")
 
     env.base_env.eval()

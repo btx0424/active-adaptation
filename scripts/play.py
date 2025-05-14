@@ -56,22 +56,24 @@ def main(cfg):
         torch.save(_policy, path)
 
         meta = {}
-        meta["action_scaling"] = dict(cfg.task.action.get("action_scaling"))
-        meta["stiffness"] = dict(cfg.task.robot.stiffness)
-        meta["damping"] = dict(cfg.task.robot.damping)
-        meta["effort_limit"] = dict(cfg.task.robot.effort_limit)
+        # meta["action_scaling"] = dict(cfg.task.action.get("action_scaling"))
+        # meta["stiffness"] = dict(cfg.task.robot.stiffness)
+        # meta["damping"] = dict(cfg.task.robot.damping)
+        # meta["effort_limit"] = dict(cfg.task.robot.effort_limit)
         export_onnx(_policy, fake_input, path.replace(".pt", ".onnx"), meta)
 
     stats_keys = [
         k for k in env.reward_spec.keys(True, True) 
         if isinstance(k, tuple) and k[0]=="stats"
     ]
-    episode_stats = EpisodeStats(stats_keys)
+    episode_stats = EpisodeStats(stats_keys, device=env.device)
     policy = policy.get_rollout_policy("eval")
-
-    td_ = env.reset()
     
+    env.base_env.eval()
+    td_ = env.reset()
+    assert not env.base_env.training
     with torch.inference_mode(), set_exploration_type(ExplorationType.MODE):
+        torch.compiler.cudagraph_mark_step_begin()
         for i in itertools.count():
             td_ = policy(td_)
             td, td_ = env.step_and_maybe_reset(td_)
