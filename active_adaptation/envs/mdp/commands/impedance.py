@@ -426,8 +426,7 @@ class Impedance(Command):
 
     def update_command(self):
         sample_command = ((self.env.episode_length_buf-50) % 150 == 0)
-        sample_command = sample_command & (torch.rand(self.num_envs, device=self.device) < 0.5)
-        sample_command = sample_command | (self.command_mode[:, 0] == self.CMD_POSITION)
+        sample_command = sample_command & ( (torch.rand(self.num_envs, device=self.device) < 0.5) | (self.command_mode[:, 0] == self.CMD_POSITION) )
         if sample_command.any():
             probs = torch.tensor([0.4, 0.5, 0.1, 0.0], device=self.device)
             # probs = torch.tensor([0.0, 0.1, 0.0, 0.9], device=self.device)

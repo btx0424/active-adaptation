@@ -55,7 +55,7 @@
     <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
 
-    <body name="base">
+    <body name="base" pos="0 0 0.445">
       <inertial pos="0.0201531 0 -0.00510896" quat="-0.000484971 0.713304 -0.00161969 0.700853" mass="7.279" diaginertia="0.112836 0.103121 0.0257104"/>
       <joint name="floating_base_joint" type="free" limited="false" actuatorfrclimited="false"/>
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" mesh="base"/>

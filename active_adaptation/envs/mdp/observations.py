@@ -351,11 +351,11 @@ class root_angvel_b(Observation):
             self.quat = yaw_quat(self.asset.data.root_quat_w)
         else:
             self.quat = self.asset.data.root_quat_w
-        self.root_angvel_b = self.asset.data.root_ang_vel_b.clone()
+        self.root_angvel_w = self.asset.data.root_ang_vel_w.clone()
 
     def compute(self) -> torch.Tensor:
-        ang_vel_b = random_noise(self.root_angvel_b, self.noise_std) 
-        ang_vel_b = quat_rotate_inverse(self.quat, ang_vel_b)
+        ang_vel_w = random_noise(self.root_angvel_w, self.noise_std) 
+        ang_vel_b = quat_rotate_inverse(self.quat, ang_vel_w)
         return ang_vel_b.reshape(self.num_envs, -1)
     
     def symmetry_transforms(self):

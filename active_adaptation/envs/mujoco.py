@@ -63,11 +63,11 @@ class MJArticulationData:
 
     @property
     def body_lin_vel_w(self):
-        return self.body_vel_w[..., :3]
+        return self.body_vel_w[..., 3:]
     
     @property
     def body_ang_vel_w(self):
-        return self.body_vel_w[..., 3:]
+        return self.body_vel_w[..., :3]
 
     @property
     def root_pos_w(self):
@@ -460,7 +460,7 @@ class MJSim:
 
     def step(self, render: bool=False):
         mujoco.mj_step(self.mj_model, self.mj_data)
-        # time.sleep(self.get_physics_dt())
+        time.sleep(self.get_physics_dt())
 
 
 class MjvGeom:

@@ -13,10 +13,10 @@ from tensordict.nn import TensorDictSequential
 import active_adaptation
 from active_adaptation.utils.export import export_onnx
 
-active_adaptation.set_backend("mujoco")
 
 @hydra.main(config_path="../cfg", config_name="play", version_base=None)
 def main(cfg):
+    active_adaptation.set_backend("mujoco")
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
 
@@ -69,6 +69,7 @@ def main(cfg):
     episode_stats = EpisodeStats(stats_keys)
     policy = policy.get_rollout_policy("eval")
 
+    env.base_env.eval()
     td_ = env.reset()
     
     with torch.inference_mode(), set_exploration_type(ExplorationType.MODE):

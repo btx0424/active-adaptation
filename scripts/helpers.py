@@ -69,30 +69,30 @@ class ObsNorm(ModBase):
 
 
 class EpisodeStats:
-    def __init__(self, in_keys: Sequence[str] = None):
+    def __init__(self, in_keys: Sequence[str], device: torch.device):
         self.in_keys = in_keys
-        self._stats = []
-        self._episodes = 0
+        self.device = device
+        self._stats = TensorDict({key: torch.tensor([0.], device=device) for key in in_keys}, [1])
+        self._episodes = torch.tensor(0, device=device)
 
     def add(self, tensordict: TensorDictBase) -> TensorDictBase:
         next_tensordict = tensordict["next"]
         done = next_tensordict["done"]
         if done.any():
             done = done.squeeze(-1)
-            self._episodes += done.sum().item()
             next_tensordict = next_tensordict.select(*self.in_keys)
-            self._stats.extend(
-                next_tensordict[done].clone().unbind(0)
-            )
+            self._stats = self._stats + next_tensordict[done].sum(dim=0)
+            self._episodes += done.sum()
         return len(self)
     
     def pop(self):
-        stats: TensorDictBase = torch.stack(self._stats)
-        self._stats.clear()
-        return stats
+        stats = self._stats / self._episodes
+        self._stats.zero_()
+        self._episodes.zero_()
+        return stats.cpu()
 
     def __len__(self):
-        return len(self._stats)
+        return self._episodes.item()
 
 
 def make_env_policy(cfg: DictConfig):
@@ -195,6 +195,7 @@ def evaluate(
     frames = []
 
     inference_time = []
+    torch.compiler.cudagraph_mark_step_begin()
     with set_exploration_type(exploration_type):
         for i in tqdm(range(env.max_episode_length), miniters=10):
             s = time.perf_counter()
