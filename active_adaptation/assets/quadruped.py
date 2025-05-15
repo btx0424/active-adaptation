@@ -15,34 +15,6 @@ if TYPE_CHECKING:
 
 from .base import ArticulationCfg
 
-class QuadrupedManipulator(Articulation):
-    def _create_buffers(self):
-        super()._create_buffers()
-
-        # oscillators
-        self.phi = torch.zeros(self.num_instances, 4, device=self.device)
-        self.phi_dot = torch.zeros(self.num_instances, 4, device=self.device)
-
-        self.ee_body_id = self.find_bodies(self.cfg.ee_body_name)[0][0]
-        self.ee_pos_w = self.data.body_pos_w[:, self.ee_body_id].clone()
-        self.ee_pos_b = torch.zeros_like(self.ee_pos_w)
-        self._ee_pos_w_buffer = torch.zeros(
-            self.num_instances, 4, 3, device=self.device
-        )
-        self.ee_lin_vel_w = torch.zeros(self.num_instances, 3, device=self.device)
-
-    def update(self, dt: float):
-        super().update(dt)
-        self.ee_pos_w[:] = self.data.body_pos_w[:, self.ee_body_id]
-        self.ee_pos_b = quat_rotate_inverse(
-            self.data.root_quat_w, self.ee_pos_w - self.data.root_pos_w
-        )
-        self._ee_pos_w_buffer = self._ee_pos_w_buffer.roll(1, dims=1)
-        self._ee_pos_w_buffer[:, 0] = self.ee_pos_w
-        self.ee_lin_vel_w[:] = torch.mean(
-            -self._ee_pos_w_buffer.diff(dim=1) / dt, dim=1
-        )
-
 
 ASSET_PATH = os.path.dirname(__file__)
 
@@ -129,78 +101,6 @@ UNITREE_GO2_CFG = ArticulationCfg(
 )
 
 
-UNITREE_GO2M_CFG = copy.deepcopy(UNITREE_GO2_CFG)
-UNITREE_GO2M_CFG.spawn.usd_path = f"{ASSET_PATH}/go2m.usd"
-UNITREE_GO2M_CFG.actuators["arm"] = DCMotorCfg(
-    joint_names_expr=["joint.*"],
-    effort_limit=200.0,
-    saturation_effort=200.0,
-    velocity_limit=5.0,
-    # stiffness=30.0,
-    # damping=1.0,
-    # friction=0.0,
-    stiffness={
-        "joint[1-3]": 20.0,
-        "joint[4-6]": 15.0,
-    },
-    damping={
-        "joint[1-3]": 1.0,
-        "joint[4-6]": 0.5,
-    },
-    friction=0.001,
-)
-UNITREE_GO2M_CFG.init_state.joint_pos["joint[1,2]"] = 0.3
-
-UNITREE_GO2ABP_CFG = copy.deepcopy(UNITREE_GO2_CFG)
-UNITREE_GO2ABP_CFG.spawn.usd_path = f"{ASSET_PATH}/Go2/go2abpg.usd"
-UNITREE_GO2ABP_CFG.actuators["arm"] = DCMotorCfg(
-    joint_names_expr=["(joint.*)"],
-    effort_limit=200.0,
-    saturation_effort=200.0,
-    velocity_limit=5.0,
-    stiffness={
-        "joint[1-3]": 20.0,
-        "joint[4-6]": 15.0,
-    },
-    damping={
-        "joint[1-3]": 1.0,
-        "joint[4-6]": 0.5,
-    },
-    friction=0.001,
-)
-
-UNITREE_GO2ABP_CFG.actuators["gripper"] = ImplicitActuatorCfg(
-    joint_names_expr=["end(left|right)"],
-    effort_limit=200.0,
-    stiffness=100.0,
-    damping=0.5,
-    friction=0.001,
-)
-UNITREE_GO2ABP_CFG.init_state.joint_pos["joint2"] = -0.3
-UNITREE_GO2ABP_CFG.init_state.joint_pos["joint3"] = 0.3
-# UNITREE_GO2ABP_CFG.init_state.joint_pos["endleft"] = 0.02
-# UNITREE_GO2ABP_CFG.init_state.joint_pos["endright"] = -0.02
-
-
-UNITREE_GO2ARX_CFG = copy.deepcopy(UNITREE_GO2_CFG)
-UNITREE_GO2ARX_CFG.spawn.usd_path = f"{ASSET_PATH}/Go2/go2arxg.usd"
-UNITREE_GO2ARX_CFG.actuators["arm"] = DCMotorCfg(
-    joint_names_expr=["(joint.*)"],
-    effort_limit=200.0,
-    saturation_effort=200.0,
-    velocity_limit=5.0,
-    stiffness={
-        "joint[1-3]": 20.0,
-        "joint[4-6]": 15.0,
-    },
-    damping={
-        "joint[1-3]": 1.0,
-        "joint[4-6]": 0.5,
-    },
-    friction=0.001,
-)
-# UNITREE_GO2ABP_CFG.init_state.joint_pos["joint2"] = -0.3
-# UNITREE_GO2ABP_CFG.init_state.joint_pos["joint3"] = 0.3
 UNITREE_ALIENGO_CFG = copy.deepcopy(UNITREE_GO2_CFG)
 UNITREE_ALIENGO_CFG.spawn.usd_path = f"{ASSET_PATH}/Aliengo/aliengo.usd"
 UNITREE_ALIENGO_CFG.init_state.pos = (0.0, 0.0, 0.40)

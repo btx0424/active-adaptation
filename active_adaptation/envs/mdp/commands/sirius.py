@@ -3,7 +3,7 @@ import math
 
 from tensordict import TensorClass
 from active_adaptation.utils.math import (
-    euler_xyz_from_quat,
+    euler_from_quat,
     quat_from_euler_xyz,
     wrap_to_pi,
     quat_rotate,
@@ -11,6 +11,7 @@ from active_adaptation.utils.math import (
     yaw_quat
 )
 from active_adaptation.envs.mdp import reward, termination, observation
+from active_adaptation.utils.symmetry import SymmetryTransform
 from .base import Command
 
 
@@ -76,7 +77,7 @@ class SiriusCommandManager(Command):
         self.stand_kp = 12.
         self.stand_kd = 2.0 * math.sqrt(self.stand_kp) * 0.8
 
-        self.wheel_joint_ids = self.asset.find_joints("wheel.*")[0]
+        self.wheel_joint_ids = self.asset.find_joints(".*_WHEEL")[0]
         self.leg_joint_ids = self.asset.find_joints(".*(HAA|HFE)")[0]
 
         self.front_body_id = self.asset.find_bodies("front")[0][0]
@@ -100,15 +101,17 @@ class SiriusCommandManager(Command):
         self.target_base_height = torch.zeros(self.num_envs, 1, device=self.device)
         self.default_mass = self.asset.data.default_mass.to(self.device)
 
+        self._stand_height = self.asset.data.root_pos_w[:, 2:3]
         self._cum_error = torch.zeros(self.num_envs, 1, device=self.device)
         
         self._command = SiriusCommand.zero(self.num_envs, self.device)
         with torch.device(self.device):
             self.transition = torch.eye(4) 
-            self.transition[self.CMD_WALK]  = torch.tensor([.2, .8, 0., 0.]) # normal to others
+            self.transition[self.CMD_WALK]  = torch.tensor([1., .0, 0., .0]) # normal to others
             self.transition[self.CMD_STAND] = torch.tensor([1., 0., 0., 0.]) # stand to others
             self.transition[self.CMD_JUMP]  = torch.tensor([1., 0., 0., 0.]) # jump to others
             self.transition[self.CMD_FLIP]  = torch.tensor([1., 0., 0., 0.]) # flip to others
+            
             self.transition /= self.transition.sum(1, keepdim=True)
             
         if self.env.sim.has_gui() and self.env.backend == "isaac":
@@ -122,6 +125,7 @@ class SiriusCommandManager(Command):
         elif self.env.sim.has_gui() and self.env.backend == "mujoco":
             self.arrow_marker_0 = self.env.scene.create_arrow_marker(radius=0.02, rgba=[1, 0, 0, 0.8])
             self.arrow_marker_1 = self.env.scene.create_arrow_marker(radius=0.02, rgba=[0, 0, 1, 0.8])
+    
     @reward
     def jump_lin_vel(self):
         is_active = (self._command.mode==self.CMD_JUMP).unsqueeze(1)
@@ -207,7 +211,8 @@ class SiriusCommandManager(Command):
     
     @termination
     def flip_error_exceeds(self):
-        return (self._command.mode == self.CMD_FLIP).unsqueeze(1) & (self.roll_error_l2 > 0.5)
+        flip_mode = (self._command.mode == self.CMD_FLIP).unsqueeze(1)
+        return  flip_mode & ((self.roll_error_l2 > 0.5) | (self.asset.data.root_pos_w[:, 2:3] < 0.3))
 
     @termination
     def jump_error_exceeds(self):
@@ -225,6 +230,14 @@ class SiriusCommandManager(Command):
             self._command.phase,
             torch.nn.functional.one_hot(self._command.mode, num_classes=4)
         ], dim=-1)
+
+    def symmetry_transforms(self):
+        return SymmetryTransform.cat([
+            SymmetryTransform(perm=torch.arange(2), signs=torch.tensor([1, -1])), # flip y
+            SymmetryTransform(perm=torch.arange(3), signs=torch.tensor([-1, 1, -1])), # flip roll and yaw
+            SymmetryTransform(perm=torch.arange(2), signs=torch.tensor([-1, 1])), # flip roll
+            SymmetryTransform(perm=torch.arange(6), signs=torch.ones(6)), # do nothing
+        ])
     
     def reset(self, env_ids):
         command = self.sample_command_normal(len(env_ids))
@@ -233,7 +246,7 @@ class SiriusCommandManager(Command):
         self.target_base_height[env_ids] = 0.4
 
     def update(self):
-        r, p, y = euler_xyz_from_quat(self.asset.data.root_quat_w)
+        r, p, y = euler_from_quat(self.asset.data.root_quat_w).unbind(-1)
         self.pitch_error_l2 = torch.square( wrap_to_pi(self._command.cmd_pitch - p.unsqueeze(1)) )
 
         quat_yaw = yaw_quat(self.asset.data.root_quat_w)

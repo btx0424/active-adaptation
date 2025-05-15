@@ -13,12 +13,7 @@ ASSET_PATH = os.path.dirname(__file__)
 
 ROBOTS = {
     "go2": UNITREE_GO2_CFG,
-    "go2m": UNITREE_GO2M_CFG,
-    "go2abp": UNITREE_GO2ABP_CFG,
-    "go2arx": UNITREE_GO2ARX_CFG,
     "aliengo": UNITREE_ALIENGO_CFG,
-    "aliengo-a1": UNITREE_ALIENGO_A1_CFG,
-    "aliengo-a1-fix": UNITREE_ALIENGO_A1_FIX_CFG,
     "h1": H1_CFG,
     "cy1": CY1_CFG,
     "abp": ABP_CFG,
@@ -39,8 +34,12 @@ def get_asset_meta(asset: Articulation):
         "body_names_isaac": asset.body_names,
         "joint_names_isaac": asset.joint_names,
         "actuators": {},
-        "default_joint_pos": asset.data.default_joint_pos[0].tolist(),
     }
+    if asset.is_initialized: # parsed values
+        meta["default_joint_pos"] = asset.data.default_joint_pos[0].tolist()
+        meta["stiffness"] = asset.data.joint_stiffness[0].tolist()
+        meta["damping"] = asset.data.joint_damping[0].tolist()
+
     for actuator_name, actuator in asset.actuators.items():
         meta["actuators"][actuator_name] = actuator.cfg.to_dict()
     return meta

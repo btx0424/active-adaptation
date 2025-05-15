@@ -1,14 +1,15 @@
 import os
 import isaaclab.sim as sim_utils
 
-from isaaclab_assets import ArticulationCfg
 from isaaclab.actuators import ImplicitActuatorCfg, DCMotorCfg
+from active_adaptation.assets.base import ArticulationCfg
+from active_adaptation.utils.symmetry import mirrored
 
 ASSET_PATH = os.path.dirname(__file__)
 
 SIRIUS_WHEEL_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ASSET_PATH}/sirius_wheel_mid/sirius_wheel_mid.usd",
+        usd_path=f"{ASSET_PATH}/sirius_wheel/sirius_wheel.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -21,19 +22,19 @@ SIRIUS_WHEEL_CFG = ArticulationCfg(
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
             enabled_self_collisions=True,
-            solver_position_iteration_count=8,
-            solver_velocity_iteration_count=0,
+            solver_position_iteration_count=4,
+            solver_velocity_iteration_count=1,
         ),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.5),
+        pos=(0.0, 0.0, 0.6),
         joint_pos={
             ".*_HAA": 0.,
             "[L,R]F_HFE":  0.4,
             "[L,R]H_HFE": -0.4,
             "[L,R]F_KFE": -1.2,
             "[L,R]H_KFE":  1.2,
-            "wheel_.*": 0.
+            ".*_WHEEL": 0.
         },
         joint_vel={".*": 0.}
     ),
@@ -45,7 +46,7 @@ SIRIUS_WHEEL_CFG = ArticulationCfg(
                 ".*_HAA": 40.,
                 ".*_HFE": 40.,
                 ".*_KFE": 80.,
-                "wheel_.*": 40.
+                ".*_WHEEL": 40.
             },
             velocity_limit=40.,
             velocity_limit_sim=40.,
@@ -54,15 +55,37 @@ SIRIUS_WHEEL_CFG = ArticulationCfg(
                 ".*_HAA": 40.,
                 ".*_HFE": 40.,
                 ".*_KFE": 40.,
-                "wheel_.*": 0.
+                ".*_WHEEL": 0.
             },
             damping={
                 ".*_HAA": 1.,
                 ".*_HFE": 1.,
                 ".*_HFE": 1.,
-                "wheel_.*": 20.
+                ".*_WHEEL": 20.
             }
         )
-    }
+    },
+    joint_symmetry_mapping=mirrored({
+        "LF_HAA": (-1, "RF_HAA"),
+        "LH_HAA": (-1, "RH_HAA"),
+        "LF_HFE": (1, "RF_HFE"),
+        "LH_HFE": (1, "RH_HFE"),
+        "LF_KFE": (1, "RF_KFE"),
+        "LH_KFE": (1, "RH_KFE"),
+        "LF_WHEEL": (1, "RF_WHEEL"),
+        "LH_WHEEL": (1, "RH_WHEEL"),
+    }),
+    spatial_symmetry_mapping=mirrored({
+        "trunk": "trunk",
+        "front": "front",
+        "back": "back",
+        "LF_hip": "RF_hip",
+        "LH_hip": "RH_hip",
+        "LF_calf": "RF_calf",
+        "LH_calf": "RH_calf",
+        "LF_thigh": "RF_thigh",
+        "LH_thigh": "RH_thigh",
+        "LF_FOOT": "RF_FOOT",
+        "LH_FOOT": "RH_FOOT",
+    }),
 )
-

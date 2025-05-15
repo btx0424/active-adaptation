@@ -61,7 +61,7 @@ class PPOConfig:
     orthogonal_init: bool = True
     value_norm: bool = False
 
-    se_arch: str = "rnn"
+    symaug: bool = False
     hack: bool = False # debug option, which gives actor access to the privileged information
     checkpoint_path: Union[str, None] = None
     in_keys: List[str] = field(default_factory=lambda: ["command_mode_", "command_end_", CMD_KEY, OBS_KEY, OBS_PRIV_KEY, "ext"])
@@ -86,12 +86,10 @@ class GRUModule(nn.Module):
 
 
 class PPOPolicy(ModBase):
-    """
     
-    Concurrent Training of a Control Policy and a State Estimator for Dynamic and Robust Legged Locomotion
-    https://arxiv.org/abs/2202.05481
+    train_in_keys = [CMD_KEY, OBS_KEY, OBS_PRIV_KEY, ACTION_KEY, 
+                     "adv", "ret", "is_init", "sample_log_prob"]
 
-    """
     def __init__(
         self, 
         cfg: PPOConfig, 
@@ -99,7 +97,8 @@ class PPOPolicy(ModBase):
         action_spec: CompositeSpec, 
         reward_spec: TensorSpec,
         vecnorm: VecNorm=None,
-        device: str="cuda:0"
+        device: str="cuda:0",
+        env=None
     ):
         super().__init__()
         self.cfg = cfg
@@ -111,6 +110,7 @@ class PPOPolicy(ModBase):
         self.critic_loss_fn = nn.MSELoss(reduction="none")
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(0.99, 0.95)
+        self.symaug = self.cfg.symaug
 
         if cfg.value_norm:
             value_norm_cls = ValueNorm1
@@ -123,6 +123,11 @@ class PPOPolicy(ModBase):
 
         self.observation_spec = observation_spec
         fake_input = observation_spec.zero()
+
+        self.cmd_transform = env.observation_funcs[CMD_KEY].symmetry_transforms().to(self.device)
+        self.obs_transform = env.observation_funcs[OBS_KEY].symmetry_transforms().to(self.device)
+        self.priv_transform = env.observation_funcs[OBS_PRIV_KEY].symmetry_transforms().to(self.device)
+        self.act_transform = env.action_manager.symmetry_transforms().to(self.device)
 
         self.state_estimator = Mod(
             GRUModule(observation_spec["priv"].shape[-1]),
@@ -190,12 +195,13 @@ class PPOPolicy(ModBase):
         num_envs = self.observation_spec.shape[0]
         return TensorDictPrimer(
             {"estimator_hx": UnboundedContinuous((num_envs, 128), device=self.device)},
-            reset_key="done"
+            reset_key="done",
+            expand_specs=False
         )
     
     def get_rollout_policy(self, mode: str="train"):
         policy = TensorDictSequential(
-            self.state_estimator,
+            # self.state_estimator,
             self.actor,
             ExcludeTransform("priv_estimate", "loc", "scale")
         )
@@ -210,13 +216,16 @@ class PPOPolicy(ModBase):
         mode_0 = tensordict["command_mode_"] == 0
         mode_1 = tensordict["command_mode_"] == 1
         mode_2 = tensordict["command_mode_"] == 2
+        mode_3 = tensordict["command_mode_"] == 3
         if False:
             adv[:] = normalize(adv, subtract_mean=True)
         else:
             adv[mode_0] = normalize(adv[mode_0], subtract_mean=True)
             adv[mode_1] = normalize(adv[mode_1], subtract_mean=True)
             adv[mode_2] = normalize(adv[mode_2], subtract_mean=True)
-
+            adv[mode_3] = normalize(adv[mode_3], subtract_mean=True)
+        tensordict = tensordict.select(*self.train_in_keys)
+        
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every)
             for minibatch in batch:
@@ -226,6 +235,7 @@ class PPOPolicy(ModBase):
         infos["critic/value_mode_0"] = tensordict["ret"][mode_0].mean().item()
         infos["critic/value_mode_1"] = tensordict["ret"][mode_1].mean().item()
         infos["critic/value_mode_2"] = tensordict["ret"][mode_2].mean().item()
+        infos["critic/value_mode_3"] = tensordict["ret"][mode_3].mean().item()
         self.num_frames += tensordict.numel()
         self.num_updates += 1
         return dict(sorted(infos.items()))
@@ -268,16 +278,19 @@ class PPOPolicy(ModBase):
 
     def _update(self, tensordict: TensorDict):
         losses = {}
-        self.state_estimator(tensordict)
-        losses["state_est_loss"] = F.mse_loss(
-            tensordict["priv_estimate"],
-            tensordict[OBS_PRIV_KEY]
-        )
-
-        tensordict = tensordict.detach()
+        bsize = tensordict.shape[0]
+        symmetry = tensordict.empty()
+        symmetry[CMD_KEY] = self.cmd_transform(tensordict[CMD_KEY])
+        symmetry[OBS_KEY] = self.obs_transform(tensordict[OBS_KEY])
+        symmetry[OBS_PRIV_KEY] = self.priv_transform(tensordict[OBS_PRIV_KEY])
+        symmetry[ACTION_KEY] = self.act_transform(tensordict[ACTION_KEY])
+        symmetry["sample_log_prob"] = tensordict["sample_log_prob"]
+        symmetry["adv"] = tensordict["adv"]
+        symmetry["ret"] = tensordict["ret"]
+        symmetry["is_init"] = tensordict["is_init"]
+        if self.symaug:
+            tensordict = torch.cat([tensordict, symmetry], dim=0)
         
-        for key in self.actor.in_keys:
-            tensordict[key].requires_grad_(True)
         dist = self.actor.get_dist(tensordict)
         log_probs = dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy().mean()
@@ -288,19 +301,6 @@ class PPOPolicy(ModBase):
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
         losses["actor/policy_loss"] = - torch.mean(torch.min(surr1, surr2))
         losses["actor/entropy_loss"] = - self.entropy_coef * entropy
-
-        # with torch.no_grad():
-        grad = torch.autograd.grad(
-            outputs=dist.__class__(dist.mean, dist.scale.detach()).log_prob(tensordict[ACTION_KEY]),
-            inputs=[tensordict[k] for k in self.actor.in_keys],
-            grad_outputs=torch.ones_like(log_probs),
-            retain_graph=True,
-            create_graph=True,
-        )
-        grad = torch.cat(grad, dim=-1)
-        grad_norm = grad.norm(dim=-1)
-        losses["actor/logp_grad_pen"] = 0.002 * grad_norm.square().mean()
-        # losses["actor/aux"] = F.mse_loss(tensordict["actor_value"], tensordict["ret"])
 
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["state_value"]
@@ -315,22 +315,15 @@ class PPOPolicy(ModBase):
         losses["critic/grad_norm"] = nn.utils.clip_grad_norm_(self.critic.parameters(), 2.)
         self.opt.step()
         
-        losses["critic/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-        losses["actor/noise_std"] = tensordict["scale"].mean()
-        losses["actor/entropy"] = entropy
-        losses["actor/logp_grad_norm"] = grad_norm.mean()
+        with torch.no_grad():
+            losses["critic/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
+            losses["actor/entropy"] = entropy
+            losses["actor/clamp_ratio"] = ((ratio - 1.0).abs() > self.clip_param).float().mean()
+            losses["actor/symmetry_loss"] = F.mse_loss(
+                self.actor.get_dist(symmetry).mean, 
+                self.act_transform(dist.mean[:bsize])
+            )
         return losses
-
-    def _update_aux(self, tensordict: TensorDict):
-        dist_old = self.actor.build_dist_from_params(tensordict)
-        dist_new = self.actor.get_dist(tensordict)
-        loss_aux = F.mse_loss(tensordict["actor_value"], tensordict["ret"]) 
-        loss_kl = F.mse_loss(dist_new.mean, dist_old.mean)
-        self.opt_aux.zero_grad()
-        (loss_aux + 1.0 * loss_kl).backward()
-        grad_norm = nn.utils.clip_grad.clip_grad_norm_(self.actor.parameters(), 2.)
-        self.opt_aux.step()
-        return {"aux/loss": loss_aux, "aux/kl": loss_kl, "aux/grad_norm": grad_norm}
 
     def state_dict(self):
         state_dict = super().state_dict()

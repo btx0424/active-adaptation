@@ -623,7 +623,12 @@ class LegWheel(ActionManager):
         wheel_vel_target = self.wheel_scaling * wheel_action
         self.asset.set_joint_velocity_target(wheel_vel_target, self.wheel_ids)
 
-
+    def symmetry_transforms(self):
+        return symmetry_utils.SymmetryTransform.cat([
+            symmetry_utils.joint_space_symmetry(self.asset, self.leg_names),
+            symmetry_utils.joint_space_symmetry(self.asset, self.wheel_names),
+        ])
+    
 def clamp_norm(x: torch.Tensor, max_norm: float):
     norm = x.norm(dim=-1, keepdim=True)
     return x * (max_norm / norm.clamp(min=1e-6)).clamp(max=1.0)

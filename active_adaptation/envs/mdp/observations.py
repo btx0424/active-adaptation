@@ -1745,8 +1745,11 @@ class body_height(Observation):
     def __init__(self, env, body_names: str, mask_ratio = 0):
         super().__init__(env, mask_ratio)
         self.asset: Articulation = self.env.scene["robot"]
-        self.body_ids = torch.as_tensor(self.asset.find_bodies(body_names)[0], device=self.device)
+        self.body_ids, self.body_names = self.asset.find_bodies(body_names)
+        self.body_ids = torch.as_tensor(self.body_ids, device=self.device)
     
     def compute(self):
         return self.asset.data.body_pos_w[:, self.body_ids, 2]
 
+    def symmetry_transforms(self):
+        return sym_utils.cartesian_space_symmetry(self.asset, self.body_names, sign=(1,))
