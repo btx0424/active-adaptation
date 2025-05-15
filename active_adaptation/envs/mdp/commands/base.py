@@ -40,6 +40,9 @@ class Command:
             self.terrain_type = self.env.scene.terrain.cfg.terrain_type
         else:
             self.terrain_type = "plane"
+        
+        if self.terrain_type == "generator":
+            self._origins = self.env.scene.env_origins.clone()
 
         if self.teleop:
             # acquire omniverse interfaces
