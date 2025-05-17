@@ -1239,7 +1239,9 @@ class height_scan(Observation):
 
     def compute(self):
         root_pos_w = self.asset.data.root_pos_w.reshape(self.num_envs, 1, 1, 3)
-        self.height_map_w = self.env.get_height_at(root_pos_w + self.pos)
+        root_quat = yaw_quat(self.asset.data.root_quat_w).reshape(self.num_envs, 1, 1, 4)
+        self.offset = quat_rotate(root_quat, self.pos)
+        self.height_map_w = self.env.get_height_at(root_pos_w + self.offset)
         self.height_map = self.height_map_w - root_pos_w[:, :, :, 2]
         if self.flatten:
             return self.height_map.reshape(self.num_envs, -1)
@@ -1248,7 +1250,7 @@ class height_scan(Observation):
     
     def debug_draw(self):
         if self.env.backend == "isaac":
-            pos = self.asset.data.root_pos_w.reshape(self.num_envs, 1, 1, 3) + self.pos
+            pos = self.asset.data.root_pos_w.reshape(self.num_envs, 1, 1, 3) + self.offset
             pos[:, :, :, 2] = self.height_map_w
             self.marker.visualize(pos.reshape(-1, 3))
 
