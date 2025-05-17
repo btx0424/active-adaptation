@@ -43,7 +43,6 @@ from ..modules.distributions import IndependentNormal
 from ..modules.temporal import GRU, TConv
 from .common import *
 
-from active_adaptation.utils.wandb import parse_path
 
 @dataclass
 class LinearSchedule:

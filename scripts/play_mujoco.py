@@ -57,9 +57,6 @@ def main(cfg):
 
         meta = {}
         meta["action_scaling"] = dict(cfg.task.action.get("action_scaling"))
-        meta["stiffness"] = dict(cfg.task.robot.stiffness)
-        meta["damping"] = dict(cfg.task.robot.damping)
-        meta["effort_limit"] = dict(cfg.task.robot.effort_limit)
         export_onnx(_policy, fake_input, path.replace(".pt", ".onnx"), meta)
     
     stats_keys = [

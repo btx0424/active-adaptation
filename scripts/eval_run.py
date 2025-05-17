@@ -9,9 +9,11 @@ from omegaconf import OmegaConf
 from isaaclab.app import AppLauncher
 from scripts.play import main as play_main
 from scripts.eval import main as eval_main
+from scripts.play_mujoco import main as play_mujoco_main
 
 play = play_main.__wrapped__
 eval = eval_main.__wrapped__
+play_mujoco = play_mujoco_main.__wrapped__
 
 FILE_PATH = os.path.dirname(__file__)
 
@@ -20,6 +22,7 @@ def main():
     parser.add_argument("-r", "--run_path", type=str)
     parser.add_argument("--task", type=str, default=None)
     parser.add_argument("-p", "--play", action="store_true", default=False)
+    parser.add_argument("-pm", "--play_mujoco", action="store_true", default=False)
     # whether to override terrain and command
     parser.add_argument("-t", "--terrain", action="store_true", default=False)
     parser.add_argument("-c", "--command", action="store_true", default=False)
@@ -99,11 +102,17 @@ def main():
         if args.command:
             cfg["task"]["command"] = _cfg.task.command
     
+    assert not (args.play and args.play_mujoco), "Cannot play and play_mujoco at the same time"
     if args.play:
         cfg["app"]["headless"] = False
         cfg["task"]["num_envs"] = 16
         cfg["export_policy"] = args.export
         play(cfg)
+    elif args.play_mujoco:
+        cfg["app"]["headless"] = False
+        cfg["task"]["num_envs"] = 16
+        cfg["export_policy"] = args.export
+        play_mujoco(cfg)
     else:
         if args.video:
             cfg["task"]["num_envs"] = 16
