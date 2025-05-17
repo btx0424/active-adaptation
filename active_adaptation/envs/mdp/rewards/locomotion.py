@@ -1094,9 +1094,11 @@ class tracking_base_height(Reward):
         self.target_height = target_height
 
     def compute(self) -> torch.Tensor:
-        current_height = self.asset.data.root_pos_w[:, 2, None]
-        error = (current_height - self.target_height).square()
-        return torch.where(current_height < self.target_height, torch.exp(-error / 0.25), 1.)
+        current_height = self.asset.data.root_pos_w[:, 2]
+        target_height = self.env.get_height_at(self.asset.data.root_pos_w)
+        error = (current_height - target_height).square()
+        rew = torch.where(current_height < self.target_height, torch.exp(-error / 0.25), 1.)
+        return rew.reshape(self.num_envs, 1)
 
 
 class single_foot_contact(Reward):
