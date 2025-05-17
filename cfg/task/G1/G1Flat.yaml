@@ -76,7 +76,7 @@ observation:
     root_linvel_b:    {}
     # feet_pos_b:       {feet_names: .*ankle_roll_link}
     # feet_vel_b:       {feet_names: .*ankle_roll_link}
-    # feet_height_map:  {feet_names: .*ankle_link }
+    body_height:  {body_names: .*ankle_roll_link}
     applied_torque:   {}
 
 reward:
