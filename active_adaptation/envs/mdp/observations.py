@@ -1254,6 +1254,13 @@ class height_scan(Observation):
             pos[:, :, :, 2] = self.height_map_w
             self.marker.visualize(pos.reshape(-1, 3))
 
+    def symmetry_transforms(self):
+        assert not self.flatten
+        return sym_utils.SymmetryTransform(
+            perm=torch.arange(self.shape[1]).flip(0), # (1, H, W), flip W
+            signs=torch.ones(self.shape[1])
+        )
+
 
 class prev_actions(Observation):
     def __init__(self, env, steps: int=1, flatten: bool=True, permute: bool=False):
