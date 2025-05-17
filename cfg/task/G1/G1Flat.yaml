@@ -87,7 +87,7 @@ reward:
     angvel_xy_l2:       {weight: 0.02, enabled: true}
     linvel_z_l2:        {weight: 0.5, enabled: true}
     tracking_base_height: {weight: 2.0, enabled: true, target_height: 0.74}
-    single_foot_contact: {weight: 0.75, enabled: true, body_names: .*ankle_roll_link}
+    single_foot_contact: {weight: 0.75, enabled: true, body_names: .*ankle_roll_link, margin: 0.2}
 
     energy_l1:          {weight: 2.0e-4, enabled: true}
     joint_acc_l2:       {weight: 1.0e-7, enabled: true}
@@ -96,7 +96,7 @@ reward:
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.005, enabled: true}
     action_rate2_l2:    {weight: 0.005, enabled: true}
-    feet_air_time:      {weight: 1.0, enabled: true, body_names: .*ankle_roll_link, thres: 0.5}
+    feet_air_time:      {weight: 2.0, enabled: true, body_names: .*ankle_roll_link, thres: 0.5}
     joint_vel_l2:       {weight: 1.0e-3, enabled: true, joint_names: [.*shoulder.*]}
     joint_deviation_l2: {weight: 0.1, enabled: true, joint_names: [.*shoulder.*, .*hip_roll_joint, .*elbow_joint]}
   debug:

@@ -1102,15 +1102,16 @@ class tracking_base_height(Reward):
 
 
 class single_foot_contact(Reward):
-    def __init__(self, env, body_names: str, weight: float, enabled: bool = True):
+    def __init__(self, env, body_names: str, margin: float, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
         # self.asset: Articulation = self.env.scene["robot"]
         self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
         self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names)
         self.body_ids = torch.tensor(self.body_ids, device=self.env.device)
+        self.margin = margin
 
     def compute(self) -> torch.Tensor:
-        in_contact = self.contact_sensor.data.net_forces_w[:, self.body_ids, 2] > 0.5
+        in_contact = self.contact_sensor.data.current_contact_time[:, self.body_ids] > self.margin
         single_contact = torch.where(torch.sum(in_contact, dim=1) == 1, 0., -1.)
         return single_contact.reshape(self.num_envs, 1)
 
