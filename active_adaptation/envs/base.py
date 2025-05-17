@@ -22,6 +22,9 @@ import active_adaptation.utils.symmetry as symmetry_utils
 
 if active_adaptation.get_backend() == "isaac":
     import isaaclab.sim as sim_utils
+    from isaaclab.terrains.trimesh.utils import make_plane
+    from isaaclab.utils.warp import convert_to_warp_mesh, raycast_mesh
+    from pxr import UsdGeom, UsdPhysics
 
 class ObsGroup:
     
@@ -87,6 +90,7 @@ class _Env(EnvBase):
         self.backend = active_adaptation.get_backend()
 
         self.setup_scene()
+        self.ground_mesh = None
         
         self.max_episode_length = self.cfg.max_episode_length
         self.step_dt = self.cfg.sim.step_dt
@@ -404,6 +408,27 @@ class _Env(EnvBase):
             
         return tensordict
     
+    def get_height_at(self, pos: torch.Tensor) -> torch.Tensor:
+        if self.backend == "isaac":
+            if self.ground_mesh is None:
+                self.ground_mesh = _initialize_warp_meshes("/World/ground", self.device.type)
+            bshape = pos.shape[:-1]
+            ray_starts = pos.clone().reshape(-1, 3)
+            ray_starts[:, 2] = 10.
+            ray_directions = torch.tensor([0., 0., -1.], device=self.device)
+            ray_hits = raycast_mesh(
+                ray_starts=ray_starts.reshape(-1, 3),
+                ray_directions=ray_directions.expand(bshape.numel(), 3),
+                max_dist=100.,
+                mesh=self.ground_mesh,
+                return_distance=False,
+            )[0]
+            ray_distance = 10. - (ray_hits - ray_starts).norm(dim=-1)
+            assert not ray_distance.isnan().any()
+            return ray_distance.reshape(*bshape)
+        elif self.backend == "mujoco":
+            return pos[..., 2, None]
+    
     def _set_seed(self, seed: int = -1):
         # import omni.replicator.core as rep
         # rep.set_global_seed(seed)
@@ -478,3 +503,30 @@ class RewardGroup:
             self.rew_buf[:] = torch.cat(rewards, 1)
         return self.rew_buf.sum(1, True)
 
+
+def _initialize_warp_meshes(mesh_prim_path, device):
+    # check if the prim is a plane - handle PhysX plane as a special case
+    # if a plane exists then we need to create an infinite mesh that is a plane
+    mesh_prim = sim_utils.get_first_matching_child_prim(
+        mesh_prim_path, lambda prim: prim.GetTypeName() == "Plane"
+    )
+    # if we did not find a plane then we need to read the mesh
+    if mesh_prim is None:
+        # obtain the mesh prim
+        mesh_prim = sim_utils.get_first_matching_child_prim(
+            mesh_prim_path, lambda prim: prim.GetTypeName() == "Mesh"
+        )
+        # check if valid
+        if mesh_prim is None or not mesh_prim.IsValid():
+            raise RuntimeError(f"Invalid mesh prim path: {mesh_prim_path}")
+        # cast into UsdGeomMesh
+        mesh_prim = UsdGeom.Mesh(mesh_prim)
+        # read the vertices and faces
+        points = np.asarray(mesh_prim.GetPointsAttr().Get())
+        indices = np.asarray(mesh_prim.GetFaceVertexIndicesAttr().Get())
+        wp_mesh = convert_to_warp_mesh(points, indices, device=device)
+    else:
+        mesh = make_plane(size=(2e6, 2e6), height=0.0, center_zero=True)
+        wp_mesh = convert_to_warp_mesh(mesh.vertices, mesh.faces, device=device)
+    # add the warp mesh to the list
+    return wp_mesh

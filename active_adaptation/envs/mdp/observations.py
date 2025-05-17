@@ -1206,40 +1206,52 @@ class path_integrator(Observation):
 
 
 class height_scan(Observation):
-    def __init__(self, env, prim_path, flatten: bool=False, noise_scale = 0.005):
+    def __init__(self, env, x_range, y_range, flatten: bool=False, noise_scale = 0.005):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
-        self.height_scanner: RayCaster = self.env.scene["height_scanner"]
-        self.height_scan = torch.zeros(self.num_envs, 11, 17, device=self.device)
         self.flatten = flatten
         self.noise_scale = noise_scale
-        self.asset.data.height_scan = self.height_scan
-
-    def update(self):
-        height_scan = (
-            self.height_scanner.data.pos_w[:, 2].unsqueeze(1)
-            - self.height_scanner.data.ray_hits_w[..., 2]
-            - 0.5
-        )
-        self.height_scan[:] = height_scan.reshape(self.num_envs, 11, 17)
+        
+        x = torch.linspace(x_range[0], x_range[1], 11)
+        y = torch.linspace(y_range[0], y_range[1], 11)
+        xx, yy = torch.meshgrid(x, y, indexing="ij")
+        self.pos = torch.stack([xx, yy, torch.zeros_like(xx)], dim=-1).to(self.device)
+        self.shape = self.pos.shape[:2]
+        
+        if self.env.backend == "isaac":
+            from isaaclab.markers import (
+                VisualizationMarkers,
+                VisualizationMarkersCfg,
+                sim_utils
+            )
+            self.marker = VisualizationMarkers(
+                VisualizationMarkersCfg(
+                    prim_path=f"/Visuals/Command/height_scan",
+                    markers={
+                        "scandot": sim_utils.SphereCfg(
+                            radius=0.02,
+                            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.0, 0.0)),
+                        ),
+                    }
+                )
+            )
+            self.marker.set_visibility(True)
 
     def compute(self):
-        height_scan = self.height_scan.clamp(-1., 1.)
-        if self.noise_scale > 0:
-            noise = torch.randn_like(height_scan) * self.noise_scale
-            height_scan = height_scan + noise
+        root_pos_w = self.asset.data.root_pos_w.reshape(self.num_envs, 1, 1, 3)
+        self.height_map_w = self.env.get_height_at(root_pos_w + self.pos)
+        self.height_map = self.height_map_w - root_pos_w[:, :, :, 2]
         if self.flatten:
-            return height_scan.reshape(self.num_envs, -1)
+            return self.height_map.reshape(self.num_envs, -1)
         else:
-            return height_scan.reshape(self.num_envs, 1, 11, 17)
+            return self.height_map.reshape(self.num_envs, 1, *self.shape)
+    
+    def debug_draw(self):
+        if self.env.backend == "isaac":
+            pos = self.asset.data.root_pos_w.reshape(self.num_envs, 1, 1, 3) + self.pos
+            pos[:, :, :, 2] = self.height_map_w
+            self.marker.visualize(pos.reshape(-1, 3))
 
-    # def debug_draw(self):
-    #     to = self.height_scan.data.ray_hits_w.reshape(-1, 11, 17, 3)[:, :, 0].reshape(-1, 11, 3)
-    #     start = self.root_pos_w.unsqueeze(-2).expand_as(to)
-    #     self.env.debug_draw.vector(
-    #         start,
-    #         to - start,
-    #     )
 
 class prev_actions(Observation):
     def __init__(self, env, steps: int=1, flatten: bool=True, permute: bool=False):
