@@ -272,13 +272,15 @@ class SiriusCommandManager(Command):
         self.target_base_height = target_base_height
         # print(self.base_height_error_l2.squeeze(1))
 
-        self.front_height = self.asset.data.body_pos_w[:, self.front_body_id, 2:3]
-        self.back_height = self.asset.data.body_pos_w[:, self.back_body_id, 2:3]
+        self.height_at_center = self.env.get_height_at(self.asset.data.root_pos_w).unsqueeze(1)
+
+        self.front_height = self.asset.data.body_pos_w[:, self.front_body_id, 2:3] - self.height_at_center
+        self.back_height = self.asset.data.body_pos_w[:, self.back_body_id, 2:3] - self.height_at_center
 
         self.front_height_error_l2 = (self.front_height - self.target_base_height).square()
         self.back_height_error_l2 = (self.back_height - self.target_base_height).square()
         
-        self._stand_height = self.asset.data.root_pos_w[:, 2:3] # base height
+        self._stand_height = self.asset.data.root_pos_w[:, 2:3] - self.height_at_center # base height
         self.stand_fore_legs = self._command.cmd_pitch > +0.3*torch.pi
         self.stand_hind_legs = self._command.cmd_pitch < -0.3*torch.pi
         self._stand_height = torch.where(self.stand_fore_legs, self.back_height, self._stand_height)
@@ -326,14 +328,17 @@ class SiriusCommandManager(Command):
         self._command: SiriusCommand = self.sample_command_jump(self.num_envs) \
             .where(sample & (next_mode==self.CMD_JUMP), self._command)
 
-    def step(self, substep):
-        self.asset._external_torque_b[:, 0]
-        self.asset.has_external_wrench = True
+    # def step(self, substep):
+    #     self.asset._external_torque_b[:, 0]
+    #     self.asset.has_external_wrench = True
 
     def sample_command_normal(self, size):
         command = SiriusCommand.zero(size, self.device)
-        command.cmd_lin_vel[:, 0].uniform_(*self.lin_vel_x_range).mul_(torch.randn(size, device=self.device).sign())
-        command.cmd_lin_vel[:, 1].uniform_(*self.lin_vel_y_range).mul_(torch.randn(size, device=self.device).sign())
+        command.cmd_lin_vel[:, 0].uniform_(*self.lin_vel_x_range)
+        command.cmd_lin_vel[:, 1].uniform_(*self.lin_vel_y_range)
+        direction = torch.randn(size, 3, device=self.device).sign()
+        command.cmd_lin_vel = command.cmd_lin_vel * command.cmd_lin_vel.norm(dim=-1, keepdim=True) > 0.15
+        command.cmd_lin_vel = command.cmd_lin_vel * direction
         command.yaw_stiffness.uniform_(0.8, 1.2)
         command.des_rpy[:, 2].uniform_(-torch.pi, torch.pi)
         command.des_rpy[:, 1].uniform_(-0.2 * torch.pi, 0.2 * torch.pi)
