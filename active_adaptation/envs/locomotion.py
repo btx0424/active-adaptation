@@ -60,7 +60,8 @@ class SimpleEnv(_Env):
                     # antialiasing_mode="FXAA",
                     # enable_global_illumination=True,
                     # enable_reflections=True,
-                )
+                ),
+                device=f"cuda:{active_adaptation.get_local_rank()}"
             )
             
             # slightly reduces GPU memory usage

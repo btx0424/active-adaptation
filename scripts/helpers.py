@@ -19,7 +19,7 @@ from torchvision.io import write_video
 from omegaconf import OmegaConf, DictConfig
 import active_adaptation.learning
 from active_adaptation.utils.wandb import parse_checkpoint_path
-
+import active_adaptation
 
 class Every:
     def __init__(self, func, steps):
@@ -146,6 +146,7 @@ def make_env_policy(cfg: DictConfig):
     
     # setup policy
     policy_cls = hydra.utils.get_class(cfg.algo._target_)
+    active_adaptation.print(f"Creating policy {policy_cls} on device {base_env.device}")
     policy = policy_cls(
         cfg.algo,
         env.observation_spec, 

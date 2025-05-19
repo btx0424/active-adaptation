@@ -15,6 +15,7 @@ from collections import OrderedDict
 from tqdm import tqdm
 from setproctitle import setproctitle
 
+import active_adaptation as aa
 from isaaclab.app import AppLauncher
 from active_adaptation.utils.torchrl import SyncDataCollector
 
@@ -26,28 +27,6 @@ torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
 
-
-def log_video(env, it, render_interval, render_decimation):
-    if it == 0 or it - env.last_recording_it >= render_interval:
-        env.start_recording(render_decimation)
-        env.last_recording_it = it
-
-    frames = env.get_complete_frames()
-    if len(frames) > 0:
-        env.pause_recording()
-        video_array = np.stack(frames, axis=0).transpose(0, 3, 1, 2)
-        video_tensor = torch.from_numpy(video_array)
-
-        run_dir = wandb.run.dir
-        video_path = os.path.join(run_dir, f"video_{it}.mp4")
-        torchvision.io.write_video(
-            video_path,
-            video_tensor.permute(0, 2, 3, 1),  # Change to (T, H, W, C) format
-            fps=1 / env.step_dt / env.render_decimation
-        )
-        
-        wandb.log({"video": wandb.Video(video_path)}, step=it)
-
 FILE_PATH = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(FILE_PATH, "..", "cfg")
 
@@ -56,7 +35,12 @@ def main(cfg: DictConfig):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
     
-    app_launcher = AppLauncher(OmegaConf.to_container(cfg.app))
+    print(f"is_distributed: {aa.is_distributed()}, local_rank: {aa.get_local_rank()}/{aa.get_world_size()}")
+    app_launcher = AppLauncher(
+        OmegaConf.to_container(cfg.app),
+        distributed=aa.is_distributed(),
+        device=f"cuda:{aa.get_local_rank()}"
+    )
     simulation_app = app_launcher.app
 
     run = wandb.init(
@@ -87,11 +71,9 @@ def main(cfg: DictConfig):
     wandb.save(target_path, policy="now")
 
     frames_per_batch = env.num_envs * cfg.algo.train_every
-    total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
+    total_frames = cfg.get("total_frames", -1) // aa.get_world_size()
+    total_frames = total_frames // frames_per_batch * frames_per_batch
     total_iters = total_frames // frames_per_batch
-    eval_interval = cfg.get("eval_interval", -1)
-    render_interval = cfg.get("render_interval", -1)
-    render_decimation = cfg.get("render_decimation", 1)
     save_interval = cfg.get("save_interval", -1)
 
     log_interval = (env.max_episode_length // cfg.algo.train_every) + 1
@@ -134,9 +116,18 @@ def main(cfg: DictConfig):
         run.save(ckpt_path, policy="now", base_path=run.dir)
         logging.info(f"Saved checkpoint to {str(ckpt_path)}")
 
-    pbar = tqdm(collector, total=total_iters)
     assert env.training
-    for i, data in enumerate(pbar):
+    if aa.is_main_process():
+        p = tqdm(collector, total=total_iters)
+    else:
+        p = collector
+    
+    def should_save(i):
+        if not aa.is_main_process():
+            return False
+        return i > 0 and i % save_interval == 0
+    
+    for i, data in enumerate(p):
         start = time.perf_counter()
         
         info = {}
@@ -154,22 +145,20 @@ def main(cfg: DictConfig):
         if hasattr(policy, "step_schedule"):
             policy.step_schedule(i / total_iters)
 
-        info["env_frames"] = collector._frames
-        info["rollout_fps"] = collector._fps
+        info["env_frames"] = collector._frames * aa.get_world_size()
+        info["rollout_fps"] = collector._fps * aa.get_world_size()
         info["training_time"] = time.perf_counter() - start
         
-        if save_interval > 0  and i % save_interval == 0:
+        if should_save(i):
             save(policy, f"checkpoint_{i}")
-
-        if render_interval > 0:
-            log_video(env, i, render_interval, render_decimation)
 
         run.log(info)
 
-        print()
-        print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, (float, int))}))
+        if aa.is_main_process():
+            print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, (float, int))}))
     
-    save(policy, "checkpoint_final")
+    if aa.is_main_process():
+        save(policy, "checkpoint_final")
 
     policy_eval = policy.get_rollout_policy("eval")
     info, trajs, stats = evaluate(env, policy_eval, render=cfg.eval_render, seed=cfg.seed)

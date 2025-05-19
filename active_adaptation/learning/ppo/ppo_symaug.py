@@ -50,6 +50,10 @@ from .common import *
 
 torch.set_float32_matmul_precision('high')
 
+import active_adaptation
+import torch.distributed as distr
+from torch.nn.parallel import DistributedDataParallel as DDP
+
 @dataclass
 class PPOConfig:
     _target_: str = "active_adaptation.learning.ppo.ppo_symaug.PPOPolicy"
@@ -142,6 +146,18 @@ class PPOPolicy(TensorDictModuleBase):
         self.actor.apply(init_)
         self.critic.apply(init_)
 
+        if active_adaptation.is_distributed():
+            distr.init_process_group(
+                backend="nccl",
+                world_size=active_adaptation.get_world_size(),
+                rank=active_adaptation.get_local_rank()
+            )
+            for param in self.actor.parameters():
+                distr.broadcast(param, src=0)
+            for param in self.critic.parameters():
+                distr.broadcast(param, src=0)
+            self.world_size = active_adaptation.get_world_size()
+            
         self.update = self._update
         if self.cfg.compile:
             self.update = torch.compile(self.update)
@@ -241,6 +257,15 @@ class PPOPolicy(TensorDictModuleBase):
         loss = policy_loss + entropy_loss + value_loss + 0.0 * symmetry_loss
         self.opt.zero_grad()
         loss.backward()
+
+        if active_adaptation.is_distributed():
+            for param in self.actor.parameters():
+                distr.all_reduce(param.grad, op=distr.ReduceOp.SUM)
+                param.grad /= self.world_size
+            for param in self.critic.parameters():
+                distr.all_reduce(param.grad, op=distr.ReduceOp.SUM)
+                param.grad /= self.world_size
+
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
         critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
         self.opt.step()
