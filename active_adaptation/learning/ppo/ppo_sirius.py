@@ -45,7 +45,7 @@ from typing import Union, List
 
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
 from ..modules.distributions import IndependentNormal
-from ..modules.temporal import GRU
+from ..modules.rnn import set_recurrent_mode, recurrent_mode
 from .common import *
 
 
@@ -74,11 +74,44 @@ cs.store("ppo_sirius_adapt", node=PPOConfig(phase="adapt"), group="algo")
 cs.store("ppo_sirius_hack", node=PPOConfig(hack=True), group="algo")
 
 
+class GRU(nn.Module):
+    def __init__(
+        self, 
+        input_size, 
+        hidden_size, 
+        burn_in: bool = False
+    ) -> None:
+        super().__init__()
+        self.gru = nn.GRUCell(input_size, hidden_size)
+        self.ln = nn.LayerNorm(hidden_size)
+        self.burn_in = burn_in
+
+    def forward(self, x: torch.Tensor, is_init: torch.Tensor, hx: torch.Tensor):
+        if recurrent_mode():
+            N, T = x.shape[:2]
+            hx = hx[:, 0]
+            output = []
+            reset = 1. - is_init.float().reshape(N, T, 1)
+            for i, x_t, reset_t in zip(range(T), x.unbind(1), reset.unbind(1)):
+                hx = self.gru(x_t, hx * reset_t)
+                if self.burn_in and i < T // 4:
+                    hx = hx.detach()
+                output.append(hx)
+            output = torch.stack(output, dim=1)
+            output = self.ln(output)
+            return output, einops.repeat(hx, "b h -> b t h", t=T)
+        else:
+            N = x.shape[0]
+            hx = self.gru(x, hx)
+            output = self.ln(hx)
+            return output, hx
+
+
 class GRUModule(nn.Module):
     def __init__(self, dim: int):
         super().__init__()
         self.mlp = make_mlp([128, 128])
-        self.gru = GRU(128, hidden_size=128, allow_none=False)
+        self.gru = GRU(128, hidden_size=128)
         self.out = nn.LazyLinear(dim)
     
     def forward(self, x, is_init, hx):
@@ -331,6 +364,7 @@ class PPOPolicy(ModBase):
             )
         return losses
 
+    @set_recurrent_mode(True)
     def train_adapt(self, tensordict: TensorDict):
         with torch.no_grad():
             self.priv_encoder(tensordict)

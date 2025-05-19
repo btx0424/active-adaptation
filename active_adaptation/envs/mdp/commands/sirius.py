@@ -226,8 +226,8 @@ class SiriusCommandManager(Command):
             self._command.cmd_ang_vel,
             self._command.cmd_roll,
             self._command.cmd_pitch,
-            self._command.des_stand_hei - self._stand_height,
             self._command.phase,
+            1 - self._command.phase,
             torch.nn.functional.one_hot(self._command.mode, num_classes=4)
         ], dim=-1)
 
