@@ -7,7 +7,7 @@ viewer:
   eye: [4.0, 4.0, 4.0]
 
 robot: 
-  name: g1_27dof
+  name: g1_waist_unlocked
 terrain: plane
 
 # common
@@ -27,18 +27,19 @@ action:
     .*hip.*: 0.5
     .*knee.*: 0.5
     waist_yaw_joint: 0.25
-    # waist_roll_joint: 0.25
+    waist_roll_joint: 0.25
+    waist_pitch_joint: 0.25
     .*ankle.*: 0.25
   max_delay: 1
-  alpha: [0.5, 1.0]
-  custom_command:
-    .*wrist_roll_joint: 0.
-    .*wrist_pitch_joint: 0.
-    .*wrist_yaw_joint: 0.
+  alpha: [0.6, 0.8]
+  # custom_command:
+  #   .*wrist_roll_joint: 0.
+  #   .*wrist_pitch_joint: 0.
+  #   .*wrist_yaw_joint: 0.
 
 command:
   _target_: active_adaptation.envs.mdp.Command2
-  linvel_x_range: [-0.8, 1.2]
+  linvel_x_range: [-0.8, 1.4]
   linvel_y_range: [-0.8, 0.8]
   angvel_range: [-2.0, 2.0]
   yaw_stiffness_range: [0.5, 1.0]
@@ -124,6 +125,9 @@ randomization:
       .*: [-0.1, 0.1]
     rel: true
   # impulse: {}
+  # constant_force:
+  #   force_range: [50, 50, 15]
+  #   offset_range: [0.1, 0.1, 0.1]
 
 termination:
   crash: 
