@@ -42,7 +42,7 @@ class Command:
             self.terrain_type = "plane"
         
         if self.terrain_type == "generator":
-            self._origins = self.env.scene.env_origins.clone()
+            self._origins = self.env.scene.terrain.terrain_origins.reshape(-1, 3).clone()
 
         if self.teleop:
             # acquire omniverse interfaces
@@ -81,8 +81,8 @@ class Command:
         if self.terrain_type == "plane":
             origins = self.env.scene.env_origins[env_ids]
         else:
-            idx = torch.randint(0, self.env.num_envs, (len(env_ids),), device=self.device)
-            origins = self._origins[idx % len(self._origins)]
+            idx = torch.randint(0, len(self._origins), (len(env_ids),), device=self.device)
+            origins = self._origins[idx]
         init_root_state[:, :3] += origins
         init_root_state[:, 3:7] = quat_mul(
             init_root_state[:, 3:7],

@@ -23,6 +23,7 @@ import active_adaptation.utils.symmetry as symmetry_utils
 if active_adaptation.get_backend() == "isaac":
     import isaaclab.sim as sim_utils
     from isaaclab.terrains.trimesh.utils import make_plane
+    from isaaclab.scene import InteractiveScene
     from isaaclab.utils.warp import convert_to_warp_mesh, raycast_mesh
     from pxr import UsdGeom, UsdPhysics
 
@@ -89,6 +90,7 @@ class _Env(EnvBase):
         self.cfg = cfg
         self.backend = active_adaptation.get_backend()
 
+        self.scene: InteractiveScene
         self.setup_scene()
         self.ground_mesh = None
         
