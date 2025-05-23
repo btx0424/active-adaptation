@@ -1544,16 +1544,31 @@ class vel_xy_tracking(Reward):
         return torch.exp(- error_l2 / 0.25)
 
 
+def is_expr(expr):
+    if isinstance(expr, str):
+        return True
+    else:
+        return all(isinstance(x, str) for x in expr)
+
+
 class joint_deviation_l1(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, joint_names: str=".*"):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.joint_ids = self.asset.find_joints(joint_names)[0]
+        if is_expr(joint_names):
+            self.joint_ids = self.asset.find_joints(joint_names)[0]
+            self.joint_weights = None
+        else:
+            self.joint_ids, _, self.joint_weights = string_utils.resolve_matching_names_values(joint_names, self.asset.joint_names)
+            self.joint_weights = torch.tensor(self.joint_weights, device=self.device)
+            assert torch.all(self.joint_weights > 0)
         self.default_joint_pos = self.asset.data.default_joint_pos[:, self.joint_ids].clone()
         self.joint_ids = torch.tensor(self.joint_ids, device=self.device)
     
     def compute(self) -> torch.Tensor:
         dev = self.asset.data.joint_pos[:, self.joint_ids] - self.default_joint_pos
+        if self.joint_weights is not None:
+            dev = dev * self.joint_weights
         return - dev.abs().sum(1, True)
 
 
@@ -1561,12 +1576,20 @@ class joint_deviation_l2(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, joint_names: str=".*"):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.joint_ids = self.asset.find_joints(joint_names)[0]
+        if is_expr(joint_names):
+            self.joint_ids = self.asset.find_joints(joint_names)[0]
+            self.joint_weights = None
+        else:
+            self.joint_ids, _, self.joint_weights = string_utils.resolve_matching_names_values(joint_names, self.asset.joint_names)
+            self.joint_weights = torch.tensor(self.joint_weights, device=self.device)
+            assert torch.all(self.joint_weights > 0)
         self.default_joint_pos = self.asset.data.default_joint_pos[:, self.joint_ids].clone()
         self.joint_ids = torch.tensor(self.joint_ids, device=self.device)
     
     def compute(self) -> torch.Tensor:
         dev = self.asset.data.joint_pos[:, self.joint_ids] - self.default_joint_pos
+        if self.joint_weights is not None:
+            dev = dev * self.joint_weights
         return - dev.square().sum(1, True)
 
 
