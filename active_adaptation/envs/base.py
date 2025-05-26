@@ -92,7 +92,7 @@ class _Env(EnvBase):
 
         self.scene: InteractiveScene
         self.setup_scene()
-        self.ground_mesh = None
+        self._ground_mesh = None
         
         self.max_episode_length = self.cfg.max_episode_length
         self.step_dt = self.cfg.sim.step_dt
@@ -410,10 +410,17 @@ class _Env(EnvBase):
             
         return tensordict
     
+    @property
+    def ground_mesh(self):
+        if self.backend == "isaac":
+            if self._ground_mesh is None:
+                self._ground_mesh = _initialize_warp_meshes("/World/ground", self.device.type)
+            return self._ground_mesh
+        else:
+            raise NotImplementedError
+        
     def get_ground_height_at(self, pos: torch.Tensor) -> torch.Tensor:
         if self.backend == "isaac":
-            if self.ground_mesh is None:
-                self.ground_mesh = _initialize_warp_meshes("/World/ground", self.device.type)
             bshape = pos.shape[:-1]
             ray_starts = pos.clone().reshape(-1, 3)
             ray_starts[:, 2] = 10.
@@ -426,6 +433,7 @@ class _Env(EnvBase):
                 return_distance=False,
             )[0]
             ray_distance = 10. - (ray_hits - ray_starts).norm(dim=-1)
+            ray_distance = ray_distance.nan_to_num(10.)
             assert not ray_distance.isnan().any()
             return ray_distance.reshape(*bshape)
         elif self.backend == "mujoco":
