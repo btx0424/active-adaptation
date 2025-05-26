@@ -391,6 +391,8 @@ class _Env(EnvBase):
         
         tensordict = TensorDict({}, self.num_envs, device=self.device)
         tensordict.update(self._compute_reward())
+        # Note that command update is a special case
+        # it should take place after reward computation
         self.command_manager.update()
         self._compute_observation(tensordict)
         terminated = self._compute_termination()
@@ -406,7 +408,6 @@ class _Env(EnvBase):
                 self.debug_draw.clear()
             for callback in self._debug_draw_callbacks:
                 callback()
-            self.debug_vis()
             
         return tensordict
     
@@ -457,10 +458,6 @@ class _Env(EnvBase):
             return rgb_data[:, :, :3]
         else:
             raise NotImplementedError
-    
-    def debug_vis(self):
-        pass
-    
 
     def state_dict(self):
         sd = super().state_dict()

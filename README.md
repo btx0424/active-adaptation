@@ -1,39 +1,13 @@
 # active-adaptation
 
-## Relationship to IsaacLab
+## Features
+* Automatic shape handling for observation.
+* Clean and efficient single-file RL implementation.
+* Easy symmetry augmentation.
+* Seamless Mujoco sim2sim.
 
-This repo started prior to IsaacLab and later borrowed many components from it to ease maintainence. It is slightly more intuitive to use and comes with tailored RL implementations.
-
-Research code should be readable. It is sometimes better to just copy-and-paste than modularize things. This repo aims to strike a balance between
-
-Things suited for modularization and reuse:
-* math operations, e.g., quaternion rotation
-* robot definition
-* terrain definition
-* task-agnostic observation functions, e.g., joint state readings
-* task-agnostic reward functions, e.g. contact penalty
-* task-agnostic domain randomization, e.g., body mass perturbation
-
-More specific things that are better hard-coded at a focused place:
-* scene setup: robots, sensors, terrains, objects to interact with, etc.
-* task-specifc observation, reward functions, etc.
-* command and task logic, e.g. sampling a desired velocity or reference motion clip
-* training logic, e.g., curriculums
-
-so that you can code up your new project in minutes.
-
-Some principles:
-* Explicit over implicit. It is hard to understand a configuration or implementation that has too many **defualt** behaviors.
-
-<!-- ### Environmet Definition
-
-When to subclass `Env`: 
-
-When to subclass `Command`:  -->
-
-<!-- ### TorchRL and TensorDict instead of OpenAI Gym
-
-Realistic robotics tasks usually has complex input-outputs (e.g., nested dict of tensors) that do not fit in the commonly used `gym` interface well. Also, some public environments and algorithms do not explicitly distinguish `termination`, `truncation` and `done`. -->
+## Current Limitations
+* TorchRL stores redundant information and therefore the rollout buffer consumes more GPU memory.
 
 ## Installation
 
@@ -61,7 +35,7 @@ Realistic robotics tasks usually has complex input-outputs (e.g., nested dict of
    mv pip_prebundle pip_prebundle.back # backup the packages shipped with Isaac Sim
    ln -s $CONDA_PREFIX/lib/python3.10/site-packages
    ```
-4. [**Optional**] VSCode setup.
+4. [**Optional**] VSCode setup. This enables the Python extension for code analysis to provide auto-completiong and linting.
 5. `pip install -U torch torchvision tensordict torchrl`
 6. Install this repo:
    ```bash
@@ -73,18 +47,12 @@ Realistic robotics tasks usually has complex input-outputs (e.g., nested dict of
 
 ## Basic Usage
 
-Each task is specified by a yaml file under `cfg/task`, for example:
+We use Hydra for configuration management. Each task is specified by a yaml file placed under `cfg/task` or `cfg/task/{subfolder}`, for example:
 
 ```yaml
 # @package task
 name: Go2Flat
 task: Quadruped
-
-defaults:
-  # see https://hydra.cc/docs/advanced/overriding_packages/
-  - /task/Velocity@_here_
-  - override /task/action@action: null
-  - _self_
 
 robot: go2
 terrain: plane
@@ -148,6 +116,7 @@ reward:
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.01, enabled: true}
     feet_air_time:      {weight: 0.4, enabled: true, body_names: .*_foot, thres: 0.4}
+  debug:
     feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
     undesired_contact:  {body_names: [.*_calf, .*thigh, Head.*], weight: 0.25, enabled: true}
@@ -168,33 +137,24 @@ Observations are grouped by keys and the observation of the same group is concat
 
 Rewards are grouped by keys and the rewards of the same group is summed up, excluding those marked with `enabled=false`. However, rewards with `enabled=false` will still be computed and logged as metrics for debugging purposes.
 
+## Guide
 
-### Training
+### 1. Asset Specification
 
-Examples:
+We borrow the asset specification and management of [IsaacLab](): each robot specification is defined with an `ArticulationCfg` in `active_adaptation/assets/` and stored in `active_adaptation.assets.ROBOTS`.
 
-```bash
-python test_env.py task=Go2/Go2Flat algo=ppo
-python test_env.py task=ORCA/CY1Flat algo=ppo_adapt_train total_frames=250000000
-```
+For Mujoco sim2sim verification (optional), provide a MJCF file that aligns with the USD and put the MJCF under `active_adaptation/assets_mjcf/`. We may implement USD-to-MJCF exporting in the future.
 
-### Evaluation and Visualization
+For symmetry augmentation, provide joint- and cartesian-space mappings that specify the left-right symmetry of a robot. See `assets.quadruped` for examples.
 
-Examples:
+### 2. Task Definition
 
-```bash
-python eval_run.py --run_path ${wandb_run_path} -p # p for play
-```
-
-## Adding New Tasks
-
-All of observation, reward, termination, randomization and command follow a similar protocol, for example:
+All components, including action, command, observation, reward, termination condition are defined by subclassing the base class. The base classes have a series of callbacks that will be called at each environment step:
 
 ```python
-
 class Observation:
     def __init__(self, env):
-        self.env = env
+        self.env: _Env = env
 
     @property
     def num_envs(self):
@@ -208,15 +168,46 @@ class Observation:
     def compute(self) -> torch.Tensor:
         raise NotImplementedError
     
+    def __call__(self) ->  Tuple[torch.Tensor, torch.Tensor]:
+        tensor = self.compute()
+        return tensor
+    
+    def startup(self):
+        """Called once upon initialization of the environment"""
+        pass
+    
+    def post_step(self, substep: int):
+        """Called after each physics substep"""
+        pass
+
     def update(self):
-        """Called at each step **after** simulation"""
+        """Called after all physics substeps are completed"""
+        pass
 
     def reset(self, env_ids: torch.Tensor):
         """Called after episode termination"""
 
     def debug_draw(self):
         """Called at each step **after** simulation, if GUI is enabled"""
-
+        pass
 ```
 
-Inherit from and extend the classes in `envs/mdp/xxx.py` to implement environment logic.
+The stepping logic is defined in `active_adaptation.envs.base._Env.step`.
+
+
+### Training
+
+Examples:
+
+```bash
+python test_env.py task=Go2/Go2Flat algo=ppo
+```
+
+### Evaluation and Visualization
+
+Examples:
+
+```bash
+python eval_run.py --run_path ${wandb_run_path} -p # p for play
+```
+

@@ -25,12 +25,7 @@ if active_adaptation.get_backend() == "isaac":
 
 
 class Observation:
-    def __init__(self, env, mask_ratio: float=0.):
-        """
-        For each episode, with probability mask_ratio, the observation will be masked.
-        Note that `True` means the observation is masked.
-
-        """
+    def __init__(self, env):
         self.env: _Env = env
 
     @property
@@ -45,21 +40,20 @@ class Observation:
     def compute(self) -> torch.Tensor:
         raise NotImplementedError
     
-    def lerp(self, obs_tm1: torch.Tensor, obs_t: torch.Tensor, t) -> torch.Tensor:
-        return torch.lerp(obs_tm1, obs_t, t)
-    
     def __call__(self) ->  Tuple[torch.Tensor, torch.Tensor]:
         tensor = self.compute()
         return tensor
     
     def startup(self):
+        """Called once upon initialization of the environment"""
         pass
     
     def post_step(self, substep: int):
+        """Called after each physics substep"""
         pass
 
     def update(self):
-        """Called at each step **after** simulation"""
+        """Called after all physics substeps are completed"""
         pass
 
     def reset(self, env_ids: torch.Tensor):
