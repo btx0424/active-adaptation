@@ -11,8 +11,18 @@
 
 ## Installation
 
-1. Install [Isaac Sim 4.5.0](https://docs.isaacsim.omniverse.nvidia.com/latest/installation/download.html) by downloading the latest release and unzip it to a desired location `$ISAACSIM_PATH`.
-2. Install [Isaac Lab](https://github.com/isaac-sim/IsaacLab) and setup a conda environment:
+1. For the following steps, the recommended way to structure the (VSCode or Cursor) workspace is:
+   ```bash
+    ${workspaceFolder}/ # File->Open Folder here
+      .vscode/
+        launch.json # use vscode Python debugging for better experience!
+        settings.json
+      active-adaptation/
+      IsaacLab/
+        _isaac_sim/
+   ```
+2. Install [Isaac Sim 4.5.0](https://docs.isaacsim.omniverse.nvidia.com/latest/installation/download.html) by downloading the latest release and unzip it to a desired location `$ISAACSIM_PATH`.
+3. Install [Isaac Lab](https://github.com/isaac-sim/IsaacLab) and setup a conda environment:
    ```bash
    conda create -n lab python=3.10
    conda activate lab
@@ -28,16 +38,32 @@
    echo $PYTHONPATH 
    ```
    You should see the isaac-sim related dependencies are added to `$PYTHONPATH`.
-3. [**Recommended**] Isaac Sim comes with its cumstom Python environment which may lead to conflicts with our conda environment.
+4. [**Recommended**] Isaac Sim comes with its cumstom Python environment which may lead to conflicts with our conda environment.
    To avoid Python environment conflicts, try the following steps:
    ```bash
    cd $ISAACSIM_PATH/exts/omni.isaac.ml_archive
    mv pip_prebundle pip_prebundle.back # backup the packages shipped with Isaac Sim
    ln -s $CONDA_PREFIX/lib/python3.10/site-packages
    ```
-4. [**Optional**] VSCode setup. This enables the Python extension for code analysis to provide auto-completiong and linting.
-5. `pip install -U torch torchvision tensordict torchrl`
-6. Install this repo:
+5. [**Optional**] VSCode setup. This enables the Python extension for code analysis to provide auto-completiong and linting. Edit `.vscode/settings.json` on demand:
+   ```json
+   "python.analysis.extraPaths": [
+        // Recommended
+        "./IsaacLab/source/isaaclab",
+        "./IsaacLab/source/isaaclab_assets",
+        // Optional, modified from IsaacLab/.vscode/settings.json
+        "${workspaceFolder}/IsaacLab/_isaac_sim/exts/isaacsim.replicator.behavior",
+        "${workspaceFolder}/IsaacLab/_isaac_sim/exts/isaacsim.replicator.behavior.ui",
+        "${workspaceFolder}/IsaacLab/_isaac_sim/exts/isaacsim.replicator.domain_randomization",
+        "${workspaceFolder}/IsaacLab/_isaac_sim/exts/isaacsim.replicator.examples",
+        "${workspaceFolder}/IsaacLab/_isaac_sim/exts/isaacsim.replicator.scene_blox",
+        "${workspaceFolder}/IsaacLab/_isaac_sim/exts/isaacsim.replicator.synthetic_recorder",
+        "${workspaceFolder}/IsaacLab/_isaac_sim/exts/isaacsim.replicator.writers",
+        //... note that adding extraPaths may increase VSCode CPU usage
+    ],
+   ```
+6. `pip install -U torch torchvision tensordict torchrl`
+7. Install this repo:
    ```bash
    git clone git@github.com:btx0424/active-adaptation.git # SSH recommended
    cd active-adaptation
@@ -137,7 +163,65 @@ Observations are grouped by keys and the observation of the same group is concat
 
 Rewards are grouped by keys and the rewards of the same group is summed up, excluding those marked with `enabled=false`. However, rewards with `enabled=false` will still be computed and logged as metrics for debugging purposes.
 
-## Guide
+### Training
+
+Examples:
+
+```bash
+python test_env.py task=Go2/Go2Flat algo=ppo
+# hydra command-line overrides
+python test_env.py task=Go2/Go2Flat algo=ppo algo.entropy_coef=0.002 total_frames=200_000_000 task.terrain=medium
+# finetuning
+python test_env.py task=Go2/Go2Flat algo=ppo checkpoint_path=${local_checkpoint_path}
+python test_env.py task=Go2/Go2Flat algo=ppo checkpoint_path=run:${wandb_run_path}
+# multi-GPU training
+export OMP_NUM_THREADS=4 # a number greater than 1
+python -m torch.distributed --nnodes=1 --nproc-per-node=4 ...
+```
+
+### VSCode/Cursor Python Debugging
+
+Create and modify `.vscode/launch.json` to add debug configurations. For example:
+```json
+"configurations": [
+  {
+      "name": "Python Debugger: Go2 Loco",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {"CUDA_VISIBLE_DEVICES": "0"},
+      "args": [
+          "task=Go2/Go2Force",
+          "algo=ppo_dic_train",
+          "algo.symaug=True",
+          "wandb.mode=disabled",
+          "task.num_envs=16"
+      ]
+  }
+]
+```
+
+### Evaluation and Visualization
+
+Examples:
+
+```bash
+# play the policy
+python play.py task=Go2/Go2Flat algo=ppo checkpoint_path=${local_checkpoint_path}
+python play.py task=Go2/Go2Flat algo=ppo checkpoint_path=run:${wandb_run_path}
+# mujoco sim2sim verification, requires MJCF assets to be specified
+python play_mujoco.py task=Go2/Go2Flat algo=ppo
+# export to onnx for deployment
+python play.py task=Go2/Go2Flat algo=ppo export_policy=true
+# record video
+python eval.py task=Go2/Go2Flat algo=ppo eval_render=true
+# coordination with servers or other collaborators
+python eval_run.py --run_path ${wandb_run_path} --play # eval/visualize remote runs
+```
+
+## Development Guide
 
 ### 1. Asset Specification
 
@@ -193,21 +277,4 @@ class Observation:
 ```
 
 The stepping logic is defined in `active_adaptation.envs.base._Env.step`.
-
-
-### Training
-
-Examples:
-
-```bash
-python test_env.py task=Go2/Go2Flat algo=ppo
-```
-
-### Evaluation and Visualization
-
-Examples:
-
-```bash
-python eval_run.py --run_path ${wandb_run_path} -p # p for play
-```
 
