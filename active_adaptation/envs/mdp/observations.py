@@ -1246,7 +1246,7 @@ class height_scan(Observation):
         root_pos_w = self.asset.data.root_pos_w.reshape(self.num_envs, 1, 1, 3)
         root_quat = yaw_quat(self.asset.data.root_quat_w).reshape(self.num_envs, 1, 1, 4)
         self.offset = quat_rotate(root_quat, self.pos)
-        self.height_map_w = self.env.get_height_at(root_pos_w + self.offset)
+        self.height_map_w = self.env.get_ground_height_at(root_pos_w + self.offset)
         self.height_map = self.height_map_w - root_pos_w[:, :, :, 2]
         if self.flatten:
             return self.height_map.reshape(self.num_envs, -1)
@@ -1775,7 +1775,9 @@ class body_height(Observation):
         self.body_ids = torch.as_tensor(self.body_ids, device=self.device)
     
     def compute(self):
-        return self.asset.data.body_pos_w[:, self.body_ids, 2]
+        body_pos_w = self.asset.data.body_pos_w[:, self.body_ids, 2]
+        body_height = body_pos_w - self.env.get_ground_height_at(body_pos_w)
+        return body_height.reshape(self.num_envs, -1)
 
     def symmetry_transforms(self):
         return sym_utils.cartesian_space_symmetry(self.asset, self.body_names, sign=(1,))

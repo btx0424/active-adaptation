@@ -410,7 +410,7 @@ class _Env(EnvBase):
             
         return tensordict
     
-    def get_height_at(self, pos: torch.Tensor) -> torch.Tensor:
+    def get_ground_height_at(self, pos: torch.Tensor) -> torch.Tensor:
         if self.backend == "isaac":
             if self.ground_mesh is None:
                 self.ground_mesh = _initialize_warp_meshes("/World/ground", self.device.type)

@@ -1095,7 +1095,7 @@ class tracking_base_height(Reward):
 
     def compute(self) -> torch.Tensor:
         current_height = self.asset.data.root_pos_w[:, 2]
-        target_height = self.env.get_height_at(self.asset.data.root_pos_w)
+        target_height = self.env.get_ground_height_at(self.asset.data.root_pos_w)
         error = (current_height - target_height).square()
         rew = torch.where(current_height < self.target_height, torch.exp(-error / 0.25), 1.)
         return rew.reshape(self.num_envs, 1)
@@ -1666,7 +1666,7 @@ class lateral_swing_height(Reward):
             self.asset.data.root_quat_w.unsqueeze(1),
             feet_lin_vel_w
         )
-        feet_height_w = feet_pos_w[:, :, 2] - self.env.get_height_at(feet_pos_w) # [N, 4]
+        feet_height_w = feet_pos_w[:, :, 2] - self.env.get_ground_height_at(feet_pos_w) # [N, 4]
         rew = torch.where(
             feet_lin_vel_b[:, :, 1].abs() > 0.4,
             (feet_height_w - self.target_height).clamp_max(0.),
