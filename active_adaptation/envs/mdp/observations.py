@@ -287,8 +287,8 @@ def root_quat_w(self):
 
 
 class command(Observation):
-    def __init__(self, env, mask_ratio: float = 0):
-        super().__init__(env, mask_ratio)
+    def __init__(self, env):
+        super().__init__(env)
         self.command_manager = self.env.command_manager
 
     def compute(self):
@@ -299,8 +299,8 @@ class command(Observation):
 
 
 class command_hidden(Observation):
-    def __init__(self, env, mask_ratio: float = 0):
-        super().__init__(env, mask_ratio)
+    def __init__(self, env):
+        super().__init__(env)
         self.command_manager = self.env.command_manager
     
     def compute(self):
@@ -320,8 +320,8 @@ class command_hidden(Observation):
 
 
 class joint_pos_target(Observation):
-    def __init__(self, env, mask_ratio = 0, subtract_offset: bool=False):
-        super().__init__(env, mask_ratio)
+    def __init__(self, env, subtract_offset: bool=False):
+        super().__init__(env)
         self.subtract_offset = subtract_offset
         self.asset: Articulation = self.env.scene["robot"]
 
@@ -333,8 +333,8 @@ class joint_pos_target(Observation):
 
 
 class root_angvel_b(Observation):
-    def __init__(self, env, noise_std: float=0., yaw_only: bool=False, mask_ratio: float=0.):
-        super().__init__(env, mask_ratio=mask_ratio)
+    def __init__(self, env, noise_std: float=0., yaw_only: bool=False):
+        super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.noise_std = noise_std
         self.yaw_only = yaw_only
@@ -459,8 +459,8 @@ class gravity_substep(Observation):
 
 
 class root_linvel_b(Observation):
-    def __init__(self, env, gammas=(0.,), yaw_only: bool=False, mask_ratio: float=0):
-        super().__init__(env, mask_ratio=mask_ratio)
+    def __init__(self, env, gammas=(0.,), yaw_only: bool=False):
+        super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.yaw_only = yaw_only
         self.ema = EMA(self.asset.data.root_lin_vel_w, gammas=gammas)
@@ -499,73 +499,11 @@ class root_linvel_b(Observation):
     #             linvel,
     #             color=(0.8, 0.1, 0.1, 1.)
     #         )
-    
-class JointObs(Observation):
-    def __init__(
-        self, 
-        env,
-        joint_names: str=".*", 
-        left_joints = None,
-        right_joints = None,
-        asym_joints = None,
-        mask_ratio: float = 0
-    ):
-        super().__init__(env, mask_ratio)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.joint_ids, self.joint_names = self.asset.find_joints(joint_names)
-        if left_joints is not None:
-            self.left_joint_ids, self.left_joint_names = resolve_matching_names(left_joints, self.joint_names)
-            self.right_joint_ids, self.right_joint_names = resolve_matching_names(right_joints, self.joint_names)
-        else:
-            self.left_joint_ids = None
-            self.right_joint_ids = None
-        self.signs = torch.ones(len(self.joint_ids), device=self.device)
-        
-        if asym_joints is not None:
-            self.asym_joint_ids = resolve_matching_names(asym_joints, self.joint_names)[0]
-            self.signs[self.asym_joint_ids] = -1.
-
-    def fliplr(self, obs: torch.Tensor):
-        if self.left_joint_ids is None and self.middle_joint_ids is None:
-            raise ValueError(f"Flipping is not supported for this {self.__class__.__name__}.")
-        obs_flipped = obs.clone()
-        if self.left_joint_ids is not None:
-            obs_flipped[:, self.left_joint_ids] = obs[:, self.right_joint_ids]
-            obs_flipped[:, self.right_joint_ids] = obs[:, self.left_joint_ids]
-        return obs_flipped * self.signs
-
-
-class joint_pos(JointObs):
-    def __init__(
-        self, 
-        env, 
-        joint_names: str=".*",
-        left_joints = None,
-        right_joints = None,
-        asym_joints = None,
-        subtract_offset: bool=False,
-        noise_std: float=0.0,
-    ):
-        super().__init__(env, joint_names, left_joints, right_joints, asym_joints)
-        self.noise_std = noise_std
-        self.subtract_offset = subtract_offset
-        self.offset = self.asset.data.default_joint_pos[:, self.joint_ids]
-        shape = (self.num_envs, 2, len(self.joint_names))
-        self.joint_pos = torch.zeros(shape, device=self.device)
-    
-    def post_step(self, substep):
-        self.joint_pos[:, substep % 2] = self.asset.data.joint_pos[:, self.joint_ids]
-
-    def compute(self) -> torch.Tensor:
-        joint_pos = self.joint_pos.mean(1)
-        if self.subtract_offset:
-            joint_pos = joint_pos - self.offset
-        return random_noise(joint_pos, self.noise_std)
 
 
 class joint_pos_substep(Observation):
-    def __init__(self, env, mask_ratio = 0):
-        super().__init__(env, mask_ratio)
+    def __init__(self, env):
+        super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         shape = (self.num_envs, self.env.decimation, self.asset.num_joints)
         self.joint_pos = torch.zeros(shape, device=self.device)
@@ -576,14 +514,6 @@ class joint_pos_substep(Observation):
     def compute(self):
         return self.joint_pos
 
-
-class continuous_walking(Observation):
-    def __init__(self, env, mask_ratio = 0):
-        super().__init__(env, mask_ratio)
-        self.continuous_walking = env.command_manager.continuous_walking
-    
-    def compute(self):
-        return self.continuous_walking
 
     
 class joint_pos_multistep(Observation):
@@ -680,8 +610,8 @@ class joint_vel_multistep(Observation):
 
 
 class joint_vel_substep(Observation):
-    def __init__(self, env, mask_ratio = 0):
-        super().__init__(env, mask_ratio)
+    def __init__(self, env):
+        super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         shape = (self.num_envs, self.env.decimation, self.asset.num_joints)
         self.joint_vel = torch.zeros(shape, device=self.device)
@@ -694,8 +624,8 @@ class joint_vel_substep(Observation):
 
 
 class joint_pos_des_substep(Observation):
-    def __init__(self, env, mask_ratio = 0):
-        super().__init__(env, mask_ratio)
+    def __init__(self, env):
+        super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         shape = (self.num_envs, self.env.decimation, self.asset.num_joints)
         self.joint_pos_des = torch.zeros(shape, device=self.device)
@@ -705,42 +635,6 @@ class joint_pos_des_substep(Observation):
     
     def compute(self):
         return self.joint_pos_des
-
-
-class joint_vel(JointObs):
-    def __init__(
-        self,
-        env,
-        joint_names: str=".*",
-        left_joints = None,
-        right_joints = None,
-        asym_joints = None,
-        noise_std: float=0.0,
-        from_pos: bool=False
-    ):
-        super().__init__(env, joint_names, left_joints, right_joints, asym_joints)
-        self.noise_std = noise_std
-        self.from_pos = from_pos
-
-        if self.from_pos:
-            shape = (self.num_envs, self.env.decimation, self.asset.num_joints)
-            self.joint_pos_substep = torch.zeros(shape, device=self.device)
-        else:
-            shape = (self.num_envs, 2, self.asset.num_joints)
-            self.joint_vel = torch.zeros(shape, device=self.device)
-
-    def post_step(self, substep):
-        if self.from_pos:
-            self.joint_pos_substep[:, substep] = self.asset.data.joint_pos
-        else:
-            self.joint_vel[:, substep % 2] = self.asset.data.joint_vel[:, self.joint_ids]
-
-    def compute(self) -> torch.Tensor:
-        if self.from_pos:
-            joint_vel = self.joint_pos_substep.diff(dim=1).mean(dim=1) / self.env.physics_dt
-        else:
-            joint_vel = self.joint_vel.mean(dim=1)
-        return random_noise(joint_vel, self.noise_std)
 
 
 class joint_acc(Observation):
@@ -1097,8 +991,8 @@ class feet_height_map(Observation):
 
 
 class head_height(Observation):
-    def __init__(self, env, mask_ratio: float = 0):
-        super().__init__(env, mask_ratio)
+    def __init__(self, env):
+        super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.head_id = self.asset.find_bodies("Head_lower")[0][0]
         
@@ -1128,8 +1022,8 @@ class path_integrator(Observation):
     
     decimation: int = 3
 
-    def __init__(self, env, mask_ratio: float = 0):
-        super().__init__(env, mask_ratio)
+    def __init__(self, env):
+        super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         _initialize_warp_meshes("/World/ground", "cuda")
         with torch.device(self.device):
@@ -1205,19 +1099,28 @@ class path_integrator(Observation):
 
 
 class height_scan(Observation):
-    def __init__(self, env, x_range, y_range, flatten: bool=False, noise_scale = 0.005):
+    def __init__(
+        self,
+        env,
+        x_range: Tuple[float, float],
+        y_range: Tuple[float, float],
+        x_resolution: float,
+        y_resolution: float,
+        flatten: bool=False,
+        noise_scale = 0.005
+    ):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.flatten = flatten
         self.noise_scale = noise_scale
         
-        x = torch.linspace(x_range[0], x_range[1], 11)
-        y = torch.linspace(y_range[0], y_range[1], 11)
+        x = torch.linspace(x_range[0], x_range[1], int((x_range[1] - x_range[0]) / x_resolution)+1)
+        y = torch.linspace(y_range[0], y_range[1], int((y_range[1] - y_range[0]) / y_resolution)+1)
         xx, yy = torch.meshgrid(x, y, indexing="ij")
         self.pos = torch.stack([xx, yy, torch.zeros_like(xx)], dim=-1).to(self.device)
         self.shape = self.pos.shape[:2]
         
-        if self.env.backend == "isaac":
+        if self.env.backend == "isaac" and self.env.sim.has_gui():
             from isaaclab.markers import (
                 VisualizationMarkers,
                 VisualizationMarkersCfg,
@@ -1241,11 +1144,11 @@ class height_scan(Observation):
         root_quat = yaw_quat(self.asset.data.root_quat_w).reshape(self.num_envs, 1, 1, 4)
         self.offset = quat_rotate(root_quat, self.pos)
         self.height_map_w = self.env.get_ground_height_at(root_pos_w + self.offset)
-        self.height_map = self.height_map_w - root_pos_w[:, :, :, 2]
+        height_map = self.height_map_w - root_pos_w[:, :, :, 2]
         if self.flatten:
-            return self.height_map.reshape(self.num_envs, -1)
+            return height_map.reshape(self.num_envs, -1)
         else:
-            return self.height_map.reshape(self.num_envs, 1, *self.shape)
+            return height_map.reshape(self.num_envs, 1, *self.shape)
     
     def debug_draw(self):
         if self.env.backend == "isaac":
@@ -1391,27 +1294,6 @@ class applied_action(Observation):
     def symmetry_transforms(self):
         transform = self.action_manager.symmetry_transforms()
         return transform
-
-class joint_forces(JointObs):
-
-    def compute(self) -> torch.Tensor:
-        measured_forces = self.asset.root_physx_view.get_dof_projected_joint_forces()
-        return measured_forces[:, self.joint_ids]
-
-
-class jacobians(Observation):
-    def __init__(self, env, body_names: str=".*"):
-        super().__init__(env)
-        raise NotImplementedError
-        self.asset: Articulation = self.env.scene["robot"]
-        self.body_ids, self.body_names = self.asset.find_bodies(body_names)
-        self.body_ids = torch.tensor(self.body_ids, device=self.device)
-        if self.env.fix_root_link:
-            self.body_ids = self.body_ids - 1
-    
-    def compute(self) -> torch.Tensor:
-        jacobian = self.asset.root_physx_view.get_jacobians()[:, self.body_ids]
-        return jacobian.reshape(self.num_envs, -1)
 
 
 class jacobians_b(Observation):
@@ -1640,8 +1522,8 @@ class symmetry_quad(Observation):
 
 class oscillator(Observation):
     
-    def __init__(self, env, history: bool=False,mask_ratio = 0):
-        super().__init__(env, mask_ratio)
+    def __init__(self, env, history: bool=False):
+        super().__init__(env)
         self.history = history
         self.asset: Articulation = self.env.scene["robot"]
         self.phi_history = torch.zeros(self.num_envs, 4, 4, device=self.device)
@@ -1685,8 +1567,8 @@ class oscillator_biped(Observation):
 
 
 class is_standing(Observation):
-    def __init__(self, env, mask_ratio = 0):
-        super().__init__(env, mask_ratio)
+    def __init__(self, env):
+        super().__init__(env)
         self.command_manager = self.env.command_manager
         if not hasattr(self.command_manager, "is_standing_env"):
             raise RuntimeError(" ")
@@ -1762,8 +1644,8 @@ class cartesian_force(Observation):
 
 
 class body_height(Observation):
-    def __init__(self, env, body_names: str, mask_ratio = 0):
-        super().__init__(env, mask_ratio)
+    def __init__(self, env, body_names: str):
+        super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.body_ids, self.body_names = self.asset.find_bodies(body_names)
         self.body_ids = torch.as_tensor(self.body_ids, device=self.device)

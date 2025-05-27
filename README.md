@@ -278,3 +278,35 @@ class Observation:
 
 The stepping logic is defined in `active_adaptation.envs.base._Env.step`.
 
+The data tensordict's content looks like:
+
+```
+TensorDict(
+    fields={
+        action: Tensor(shape=torch.Size([4096, 32, 12]), device=cuda:0, dtype=torch.float32, is_shared=True),
+        done: Tensor(shape=torch.Size([4096, 32, 1]), device=cuda:0, dtype=torch.bool, is_shared=True),
+        height_scan_: Tensor(shape=torch.Size([4096, 32, 1, 21, 21]), device=cuda:0, dtype=torch.float32, is_shared=True),
+        is_init: Tensor(shape=torch.Size([4096, 32, 1]), device=cuda:0, dtype=torch.bool, is_shared=True),
+        next: TensorDict(
+            fields={
+                discount: Tensor(shape=torch.Size([4096, 32, 1]), device=cuda:0, dtype=torch.float32, is_shared=True),
+                done: Tensor(shape=torch.Size([4096, 32, 1]), device=cuda:0, dtype=torch.bool, is_shared=True),
+                height_scan_: Tensor(shape=torch.Size([4096, 32, 1, 21, 21]), device=cuda:0, dtype=torch.float32, is_shared=True),
+                is_init: Tensor(shape=torch.Size([4096, 32, 1]), device=cuda:0, dtype=torch.bool, is_shared=True),
+                policy: Tensor(shape=torch.Size([4096, 32, 100]), device=cuda:0, dtype=torch.float32, is_shared=True),
+                stats: TensorDict(
+                    ...),
+                step_count: Tensor(shape=torch.Size([4096, 32, 1]), device=cuda:0, dtype=torch.int64, is_shared=True),
+                terminated: Tensor(shape=torch.Size([4096, 32, 1]), device=cuda:0, dtype=torch.bool, is_shared=True),
+                truncated: Tensor(shape=torch.Size([4096, 32, 1]), device=cuda:0, dtype=torch.bool, is_shared=True)},
+            batch_size=torch.Size([4096, 32]),
+            device=cuda:0,
+            is_shared=True),
+        policy: Tensor(shape=torch.Size([4096, 32, 100]), device=cuda:0, dtype=torch.float32, is_shared=True),
+        step_count: Tensor(shape=torch.Size([4096, 32, 1]), device=cuda:0, dtype=torch.int64, is_shared=True),
+        terminated: Tensor(shape=torch.Size([4096, 32, 1]), device=cuda:0, dtype=torch.bool, is_shared=True),
+        truncated: Tensor(shape=torch.Size([4096, 32, 1]), device=cuda:0, dtype=torch.bool, is_shared=True)},
+    batch_size=torch.Size([4096, 32]),
+    device=cuda:0,
+    is_shared=True)
+```

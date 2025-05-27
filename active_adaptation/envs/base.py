@@ -274,7 +274,6 @@ class _Env(EnvBase):
     
         self.input_tensordict = None
         self.extra = {}
-        self.observation_prev = TensorDict({}, [self.num_envs])
 
     @property
     def action_dim(self) -> int:
@@ -322,14 +321,10 @@ class _Env(EnvBase):
         self.input_tensordict = tensordict
         self.action_manager(tensordict, substep)
 
-    def _compute_observation(self, tensordict: TensorDictBase):
-        observation_this = TensorDict({}, [self.num_envs])
-    
+    def _compute_observation(self, tensordict: TensorDictBase):    
         for group_key, obs_group in self.observation_funcs.items():
             obs_group.compute(tensordict, self.timestamp)
-        
-        self.observation_prev = observation_this.clone()
-    
+            
     def _compute_reward(self) -> TensorDictBase:
         if not self.reward_groups:
             return {"reward": torch.ones((self.num_envs, 1), device=self.device)}
