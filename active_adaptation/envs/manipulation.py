@@ -2,8 +2,8 @@ from math import inf
 import torch
 import logging
 
-from omni.isaac.lab.assets import Articulation
-from omni.isaac.lab.utils.math import yaw_quat, quat_from_euler_xyz, wrap_to_pi, quat_inv, quat_mul
+from isaaclab.assets import Articulation
+from isaaclab.utils.math import yaw_quat, quat_from_euler_xyz, wrap_to_pi, quat_inv, quat_mul
 from active_adaptation.utils.helpers import batchify
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 from active_adaptation.assets import DoorArticulation
@@ -39,8 +39,8 @@ class QuadrupedManip(LocomotionEnv):
     
     def __init__(self, cfg):
         super().__init__(cfg)
-        self.base_legs_indices = self.robot.actuators["base_legs"].joint_indices
-        self.arm_indices = self.robot.actuators["arm"].joint_indices
+        # self.base_legs_indices = self.robot.actuators["base_legs"].joint_indices
+        # self.arm_indices = self.robot.actuators["arm"].joint_indices
         self.door = self.scene.articulations.get("door", None)
 
     class joint_acc_l2(Reward):

@@ -1,0 +1,108 @@
+{
+    "init_state": {
+        "pos": [
+            0.0,
+            0.0,
+            0.6
+        ],
+        "rot": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+        ],
+        "lin_vel": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "ang_vel": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "joint_pos": {
+            ".*_HAA": 0.0,
+            "[L,R]F_HFE": 0.4,
+            "[L,R]H_HFE": -0.4,
+            "[L,R]F_KFE": -1.2,
+            "[L,R]H_KFE": 1.2,
+            ".*_WHEEL": 0.0
+        },
+        "joint_vel": {
+            ".*": 0.0
+        }
+    },
+    "body_names_isaac": [
+        "trunk",
+        "LF_hip",
+        "LH_hip",
+        "RF_hip",
+        "RH_hip",
+        "front",
+        "back",
+        "LF_thigh",
+        "LH_thigh",
+        "RF_thigh",
+        "RH_thigh",
+        "LF_calf",
+        "LH_calf",
+        "RF_calf",
+        "RH_calf",
+        "LF_FOOT",
+        "LH_FOOT",
+        "RF_FOOT",
+        "RH_FOOT"
+    ],
+    "joint_names_isaac": [
+        "LF_HAA",
+        "LH_HAA",
+        "RF_HAA",
+        "RH_HAA",
+        "LF_HFE",
+        "LH_HFE",
+        "RF_HFE",
+        "RH_HFE",
+        "LF_KFE",
+        "LH_KFE",
+        "RF_KFE",
+        "RH_KFE",
+        "LF_WHEEL",
+        "LH_WHEEL",
+        "RF_WHEEL",
+        "RH_WHEEL"
+    ],
+    "actuators": {
+        "base_legs": {
+            "class_type": "isaaclab.actuators.actuator_pd:ImplicitActuator",
+            "joint_names_expr": ".*",
+            "effort_limit": {
+                ".*_HAA": 40.0,
+                ".*_HFE": 40.0,
+                ".*_KFE": 80.0,
+                ".*_WHEEL": 40.0
+            },
+            "velocity_limit": 40.0,
+            "effort_limit_sim": {
+                ".*_HAA": 40.0,
+                ".*_HFE": 40.0,
+                ".*_KFE": 80.0,
+                ".*_WHEEL": 40.0
+            },
+            "velocity_limit_sim": 40.0,
+            "stiffness": {
+                ".*_HAA": 40.0,
+                ".*_HFE": 40.0,
+                ".*_KFE": 40.0,
+                ".*_WHEEL": 0.0
+            },
+            "damping": {
+                ".*_HAA": 1.0,
+                ".*_HFE": 1.0,
+                ".*_WHEEL": 20.0
+            },
+            "armature": null,
+            "friction": null
+        }
+    }
+}

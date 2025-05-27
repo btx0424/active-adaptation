@@ -145,6 +145,10 @@ class IndependentNormal(D.Independent):
         super().__init__(base_dist, 1, validate_args=validate_args)
 
     @property
+    def scale(self):
+        return self.base_dist.scale
+    
+    @property
     def deterministic_sample(self):
         return self.base_dist.mean
 

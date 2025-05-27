@@ -1,0 +1,149 @@
+{
+    "init_state": {
+        "pos": [
+            0.0,
+            0.0,
+            1.05
+        ],
+        "rot": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+        ],
+        "lin_vel": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "ang_vel": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "joint_pos": {
+            ".*_hip_yaw_joint": 0.0,
+            ".*_hip_roll_joint": 0.0,
+            ".*_hip_pitch_joint": -0.15,
+            ".*_knee_joint": 0.5,
+            ".*_ankle_pitch_joint": -0.35,
+            ".*_ankle_roll_joint": 0.0,
+            "torso_joint": 0.0,
+            ".*_shoulder_pitch_joint": 0.28,
+            ".*_shoulder_roll_joint": 0.0,
+            ".*_shoulder_yaw_joint": 0.0,
+            ".*_elbow_joint": 0.52,
+            ".*_wrist_.*_joint": 0.0
+        },
+        "joint_vel": {
+            ".*": 0.0
+        }
+    },
+    "body_names_isaac": [
+        "pelvis",
+        "left_hip_yaw_link",
+        "right_hip_yaw_link",
+        "torso_link",
+        "left_hip_pitch_link",
+        "right_hip_pitch_link",
+        "left_shoulder_pitch_link",
+        "right_shoulder_pitch_link",
+        "left_hip_roll_link",
+        "right_hip_roll_link",
+        "left_shoulder_roll_link",
+        "right_shoulder_roll_link",
+        "left_knee_link",
+        "right_knee_link",
+        "left_shoulder_yaw_link",
+        "right_shoulder_yaw_link",
+        "left_ankle_pitch_link",
+        "right_ankle_pitch_link",
+        "left_elbow_link",
+        "right_elbow_link",
+        "left_ankle_roll_link",
+        "right_ankle_roll_link",
+        "left_wrist_roll_link",
+        "right_wrist_roll_link",
+        "left_wrist_pitch_link",
+        "right_wrist_pitch_link",
+        "left_wrist_yaw_link",
+        "right_wrist_yaw_link"
+    ],
+    "joint_names_isaac": [
+        "left_hip_yaw_joint",
+        "right_hip_yaw_joint",
+        "torso_joint",
+        "left_hip_pitch_joint",
+        "right_hip_pitch_joint",
+        "left_shoulder_pitch_joint",
+        "right_shoulder_pitch_joint",
+        "left_hip_roll_joint",
+        "right_hip_roll_joint",
+        "left_shoulder_roll_joint",
+        "right_shoulder_roll_joint",
+        "left_knee_joint",
+        "right_knee_joint",
+        "left_shoulder_yaw_joint",
+        "right_shoulder_yaw_joint",
+        "left_ankle_pitch_joint",
+        "right_ankle_pitch_joint",
+        "left_elbow_joint",
+        "right_elbow_joint",
+        "left_ankle_roll_joint",
+        "right_ankle_roll_joint",
+        "left_wrist_roll_joint",
+        "right_wrist_roll_joint",
+        "left_wrist_pitch_joint",
+        "right_wrist_pitch_joint",
+        "left_wrist_yaw_joint",
+        "right_wrist_yaw_joint"
+    ],
+    "actuators": {
+        "base_legs": {
+            "class_type": "isaaclab.actuators.actuator_pd:ImplicitActuator",
+            "joint_names_expr": ".*",
+            "effort_limit": {
+                ".*_hip_.*": 300.0,
+                ".*_knee_joint": 200.0,
+                "torso_joint": 200.0,
+                ".*_ankle_.*": 100.0,
+                ".*_shoulder_.*": 300.0,
+                ".*_elbow_joint": 300.0
+            },
+            "velocity_limit": 100.0,
+            "effort_limit_sim": {
+                ".*_hip_.*": 300.0,
+                ".*_knee_joint": 200.0,
+                "torso_joint": 200.0,
+                ".*_ankle_.*": 100.0,
+                ".*_shoulder_.*": 300.0,
+                ".*_elbow_joint": 300.0
+            },
+            "velocity_limit_sim": 100.0,
+            "stiffness": {
+                ".*_hip_yaw_joint": 200.0,
+                ".*_hip_roll_joint": 200.0,
+                ".*_hip_pitch_joint": 200.0,
+                ".*_knee_joint": 300.0,
+                "torso_joint": 150.0,
+                ".*_shoulder_.*": 40.0,
+                ".*_elbow_joint": 40.0,
+                ".*_ankle_.*": 20.0,
+                ".*_wrist_.*_joint": 20.0
+            },
+            "damping": {
+                ".*_hip_yaw_joint": 5.0,
+                ".*_hip_roll_joint": 5.0,
+                ".*_hip_pitch_joint": 5.0,
+                ".*_knee_joint": 5.0,
+                "torso_joint": 5.0,
+                ".*_ankle_.*": 2.0,
+                ".*_shoulder_.*": 2.0,
+                ".*_elbow_joint": 2.0,
+                ".*_wrist_.*_joint": 2.0
+            },
+            "armature": 0.01,
+            "friction": 0.01
+        }
+    }
+}

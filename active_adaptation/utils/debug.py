@@ -2,7 +2,7 @@ import torch
 
 class DebugDraw:
     def __init__(self):
-        from omni.isaac.debug_draw import _debug_draw
+        from isaacsim.util.debug_draw import _debug_draw
         self._draw = _debug_draw.acquire_debug_draw_interface()
     
     def clear(self):

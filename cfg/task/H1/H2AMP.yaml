@@ -1,0 +1,124 @@
+# @package task
+name: G1Flat
+
+viewer:
+  resolution: [1280, 720]
+  lookat: [0., 0., 0.]
+  eye: [4.0, 4.0, 4.0]
+
+robot: 
+  name: h2
+terrain: plane
+
+# common
+num_envs: 4096
+max_episode_length: 1000
+
+sim:
+  step_dt: 0.02
+  isaac_physics_dt: 0.005
+  mujoco_physics_dt: 0.002
+
+action:
+  _target_: active_adaptation.envs.mdp.action.JointPosition
+  action_scaling: 
+    .*_hip_.*_joint: 0.5
+    .*_knee_joint: 0.5
+    torso_joint: 0.5
+    .*_ankle_.*_joint: 0.25
+    .*_shoulder_.*_joint: 0.5
+    .*_elbow_joint: 0.5
+  custom_command:
+    .*_wrist_.*_joint: 0.
+
+  max_delay: 1
+  alpha: [0.5, 1.0]
+
+# command:
+#   _target_: active_adaptation.envs.mdp.Command2
+#   linvel_x_range: [0., 1.5]
+#   linvel_y_range: [-0.2, 0.2]
+#   angvel_range: [-2.0, 2.0]
+#   yaw_stiffness_range: [0.8, 1.2]
+#   stand_prob: 0.05
+
+command:
+  _target_: active_adaptation.envs.mdp.commands.motion_tracking.MotionTrackingCommand
+  data_path: /home/btx0424/lab45/retarget/simple-retarget/data/h2
+
+observation:
+  command:
+    command:
+  policy:
+    root_angvel_b:  {noise_std: 0.05}
+    projected_gravity_b: {noise_std: 0.05}
+    joint_pos_multistep: {steps: 4, noise_std: 0.05}
+    joint_vel_multistep: {steps: 4, noise_std: 0.2}
+    prev_actions:   {steps: 4}
+  priv:
+    applied_action:   {}
+    root_linvel_b:    {}
+    feet_pos_b:       {feet_names: .*ankle_roll_link}
+    feet_vel_b:       {feet_names: .*ankle_roll_link}
+    applied_torque:   {}
+    cum_error:        {}
+
+reward:
+  tracking:
+    root_pos_tracking:  {weight: 2.0}
+    keypoint_tracking:  {weight: 2.5}
+    orientation_tracking:  {weight: 2.0}
+    joint_pos_tracking:  {weight: 2.0}
+    feet_tracking:      {weight: 2.0}
+  loco:
+    # linvel_exp:         {weight: 1.8, body_names: ["pelvis", "torso_link"], enabled: true, dim: 3, gamma: 0.8}
+    linacc_z_l2:        {weight: 0.005}
+    # linvel_projection:  {weight: 1.0, enabled: true}
+    # angvel_z_exp:       {weight: 1.5, enabled: true, gamma: 0.8}
+    angvel_xy_l2:       {weight: 0.02, enabled: true}
+    # linvel_z_l2:        {weight: 1.0, enabled: true}
+    energy_l1:          {weight: 1.0e-4, enabled: true}
+    joint_acc_l2:       {weight: 3.5e-8, enabled: true}
+    joint_torques_l2:   {weight: 5.0e-7, enabled: true}
+    # stand: 0.5
+    body_upright:       {weight: 1.0, enabled: true, body_name: "pelvis"}
+    survival:           {weight: 1.0, enabled: true}
+    action_rate_l2:     {weight: 0.005, enabled: true}
+    action_rate2_l2:    {weight: 0.005, enabled: true}
+    feet_air_time:      {weight: 1.0, enabled: true, body_names: .*ankle_roll_link, thres: 0.4}
+    feet_slip:          {weight: 0.5, enabled: true, body_names: .*ankle_roll_link}
+    feet_contact_count: {weight: 1.0, enabled: false, body_names: .*ankle_roll_link}
+    # joint_deviation_l2: {weight: 0.2, enabled: true, joint_names: [.*_shoulder_.*, .*_hip_.*, .*_knee_joint]}
+
+randomization:
+  # push:     {body_names: ["pelvis", ".*shoulder_pitch_link"]}
+  perturb_body_mass:
+    (?!(pelvis|torso_link)).*: [0.7, 1.1]
+    pelvis: [0.7, 1.1]
+  perturb_body_materials:
+    body_names: ".*ankle_roll_link"
+    static_friction_range: [0.6, 4.0]
+    dynamic_friction_range: [0.6, 4.0]
+    restitution_range: [0.0, 0.2]
+  # motor_params:
+  #   actuator_name:    base_legs
+  #   stiffness:
+  #     .*: [0.8, 1.1]
+  #   damping:
+  #     .*: [0.8, 1.1]
+  #   scale_factor_range:
+  #     .*: [1.0, 1.0]
+  #   armatrue_range:   [0.01, 0.01]
+  reset_joint_states_uniform:
+    pos_ranges:
+      .*: [-0.4, 0.4]
+    rel: true
+
+termination:
+  crash: 
+    body_names_expr:
+    - "pelvis"
+    - "torso_link"
+    - ".*_hip_.*_link"
+    - ".*_shoulder_.*"
+    - ".*_elbow_.*"

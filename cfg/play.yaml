@@ -1,13 +1,12 @@
-# hydra.job.chdir: false
+hydra:
+  run:
+    dir: ./outputs_play/${now:%Y-%m-%d}/${now:%H-%M-%S}-${task.name}-${algo.name}
 
 headless: false
 
 app:
   headless: ${..headless}
   enable_cameras: false
-
-sim: ${task.sim}
-# env: ${task.env}
 
 total_frames: -1
 max_iters: -1

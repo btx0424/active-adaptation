@@ -6,7 +6,7 @@ import einops
 from omegaconf import OmegaConf
 from collections import OrderedDict
 
-from omni.isaac.lab.app import AppLauncher
+from isaaclab.app import AppLauncher
 from omni_drones.utils.wandb import init_wandb
 from active_adaptation.utils.torchrl import StackFrames, SyncDataCollector
 

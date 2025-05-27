@@ -7,7 +7,7 @@ import sys
 from tqdm import tqdm
 from omegaconf import OmegaConf
 
-from omni.isaac.lab.app import AppLauncher
+from isaaclab.app import AppLauncher
 
 from active_adaptation.learning import ALGOS
 

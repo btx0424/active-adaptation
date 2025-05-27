@@ -1,7 +1,7 @@
 import torch
 
-from omni.isaac.lab.assets import Articulation
-from omni.isaac.lab.utils.math import wrap_to_pi, quat_rotate
+from isaaclab.assets import Articulation
+from isaaclab.utils.math import wrap_to_pi, quat_rotate, yaw_quat, normalize
 from active_adaptation.utils.helpers import batchify
 from ..commands import BaseEEImpedance, Impedance
 from .locomotion import Reward
@@ -66,6 +66,23 @@ class impedance_ee_pos_b(Reward):
         r = torch.exp(- diff.norm(dim=-1, keepdim=True) / self.l)
         return r * self.command_manager.is_arm_activated
 
+
+class impedance_ee_pos_w(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.1):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.command_manager: BaseEEImpedance = self.env.command_manager
+        self.l = l
+
+    def compute(self) -> torch.Tensor:
+        ee_pos_w = self.asset.data.body_pos_w[:, self.command_manager.ee_body_id]
+        target_pos_w = self.command_manager.desired_pos_ee_w[:, [-1, -8]]
+        diff = (target_pos_w - ee_pos_w.unsqueeze(1))
+        error_l2 = diff.square().sum(dim=-1)
+        r = torch.exp(- error_l2 / self.l).mean(1, True)
+        return r * self.command_manager.is_arm_activated
+
+
 class impedance_ee_vel_b(Reward):
     def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.05):
         super().__init__(env, weight, enabled)
@@ -93,29 +110,29 @@ class impedance_ee_vel_b(Reward):
         r = torch.exp(- diff.square().sum(dim=-1, keepdim=True) / self.l)
         return r * self.command_manager.is_arm_activated
 
-class impedance_yaw_pos(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
-        super().__init__(env, weight, enabled)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: BaseEEImpedance | Impedance = self.env.command_manager
-        self.l = l
+# class impedance_yaw_pos(Reward):
+#     def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
+#         super().__init__(env, weight, enabled)
+#         self.asset: Articulation = self.env.scene["robot"]
+#         self.command_manager: BaseEEImpedance | Impedance = self.env.command_manager
+#         self.l = l
     
-    def compute(self) -> torch.Tensor:
-        diff = wrap_to_pi(self.command_manager.command_yaw_w - self.asset.data.heading_w[:, None])
-        r = torch.exp(- diff.abs() / self.l)
-        return r
+#     def compute(self) -> torch.Tensor:
+#         diff = wrap_to_pi(self.command_manager.command_yaw_w - self.asset.data.heading_w[:, None])
+#         r = torch.exp(- diff.abs() / self.l)
+#         return r
 
-class impedance_yaw_vel(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
-        super().__init__(env, weight, enabled)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: BaseEEImpedance | Impedance = self.env.command_manager
-        self.l = l
+# class impedance_yaw_vel(Reward):
+#     def __init__(self, env, weight: float, enabled: bool = True, l: float = 0.25):
+#         super().__init__(env, weight, enabled)
+#         self.asset: Articulation = self.env.scene["robot"]
+#         self.command_manager: BaseEEImpedance | Impedance = self.env.command_manager
+#         self.l = l
     
-    def compute(self) -> torch.Tensor:
-        diff = (self.command_manager.command_yaw_vel - self.asset.data.root_ang_vel_w[:, 2:3])
-        r = torch.exp(- diff.abs() / self.l)
-        return r
+#     def compute(self) -> torch.Tensor:
+#         diff = (self.command_manager.command_yaw_vel - self.asset.data.root_ang_vel_w[:, 2:3])
+#         r = torch.exp(- diff.abs() / self.l)
+#         return r
 
 class ee_forward(Reward):
     def __init__(self, env, weight: float, enabled: bool = True):
@@ -125,28 +142,12 @@ class ee_forward(Reward):
 
         self.ee_fwd_vec = torch.tensor([0.0, 0.0, 1.0], device=self.device).repeat(self.num_envs, 1)
         self.base_fwd_vec = torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
-        self.ee_fwd_w = torch.zeros(self.num_envs, 3, device=self.device)
-        self.base_fwd_w = torch.zeros(self.num_envs, 3, device=self.device)
-    
-    def update(self):
-        self.ee_fwd_w[:] = quat_rotate(self.asset.data.body_quat_w[:, self.command_manager.ee_body_id], self.ee_fwd_vec)
-        self.base_fwd_w[:] = quat_rotate(self.asset.data.root_quat_w, self.base_fwd_vec)
+        self.ee_body_id = self.command_manager.ee_body_id
     
     def compute(self) -> torch.Tensor:
-        diff = self.base_fwd_w - self.ee_fwd_w
+        base_fwd = quat_rotate(yaw_quat(self.asset.data.root_quat_w), self.base_fwd_vec)[:, :2]
+        ee_fwd = normalize(quat_rotate(self.asset.data.body_quat_w[:, self.ee_body_id], self.ee_fwd_vec)[:, :2])
+        diff = base_fwd - ee_fwd
         r = - diff.norm(dim=-1, keepdim=True)
         return r
-    
-    def debug_draw(self):
-        # draw ee forward vector (yellow)
-        self.env.debug_draw.vector(
-            self.asset.data.body_pos_w[:, self.command_manager.ee_body_id],
-            self.ee_fwd_w,
-            color=(1.0, 1.0, 0.0, 1.0),
-        )
-        # draw body forward vector
-        self.env.debug_draw.vector(
-            self.asset.data.body_pos_w[:, self.command_manager.ee_body_id],
-            self.base_fwd_w,
-            color=(1.0, 0.0, 0.0, 1.0),
-        )
+

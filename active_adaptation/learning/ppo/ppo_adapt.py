@@ -103,8 +103,8 @@ class GRU(nn.Module):
             if hx is None and self.allow_none:
                 hx = torch.zeros(N, self.gru.hidden_size, device=x.device)
             # assert (hx[is_init.squeeze()] == 0.).all()
-            output = hx = self.gru(x, hx)
-            output = self.ln(output)
+            hx = self.gru(x, hx)
+            output = self.ln(hx)
             return output, hx
 
         elif x.ndim == 3: # multi-step

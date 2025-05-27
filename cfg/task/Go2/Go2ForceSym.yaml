@@ -1,0 +1,146 @@
+# @package task
+name: Go2Force
+
+viewer:
+  resolution: [1280, 720]
+  lookat: [0., 0., 0.]
+  eye: [4.0, 4.0, 4.0]
+
+robot:
+  name: go2
+terrain: plane
+
+# common
+num_envs: 4096
+max_episode_length: 1000
+
+sim:
+  step_dt: 0.02
+  isaac_physics_dt: 0.005
+  mujoco_physics_dt: 0.002
+
+action:
+  _target_: active_adaptation.envs.mdp.action.JointPosition
+  action_scaling: {.*_joint: 0.5}
+  max_delay: 1
+  alpha: [0.5, 0.8]
+
+command:
+  _target_: active_adaptation.envs.mdp.commands.impedance.Impedance
+  body_names: base
+  virtual_mass_range: [1., 2., 4.] # base mass: 6.921
+  force_saturate: 120.0
+  constant_force_scale: [60., 60., 15.]
+  constant_force_offset_scale: [0.1, 0.1, 0.1]
+  # impulse_force_momentum_scale: [5.0, 5.0, 1.0]
+  # impulse_force_duration_range: [0.1, 0.4]
+  temporal_smoothing: 32
+  surr_steps: [16, 24, 32]
+  linear_kp_range: [4.0, 32.0]
+  angular_kp_range: [4.0, 24.0]
+
+observation:
+  # command:
+    # oscillator: {history: false}
+  policy:
+    command:
+    # root_angvel_b: {noise_std: 0.2}
+    gravity_multistep:  {steps: 3, noise_std: 0.05}
+    joint_pos_multistep: {steps: 3, noise_std: 0.05}
+    joint_vel_multistep: {steps: 3, noise_std: 0.2}
+    prev_actions: {steps: 1, permute: true}
+  # priv:
+    command_hidden:
+    applied_action:
+    root_linvel_b:    {yaw_only: true}
+    root_angvel_b:
+    applied_torque:   {}
+    contact_indicator: {body_names: [".*foot"], timing: false}
+  flag_:
+    is_standing:      {}
+  ext:
+    external_forces:  {body_names: ["base"]}
+    external_torques: {body_names: ["base"]}
+  ext_:
+    external_forces:  {body_names: ["base"], divide_by_mass: false}
+    external_torques: {body_names: ["base"], divide_by_mass: false, scale: 0.2}
+
+reward:
+  loco:
+    impedance_yaw_pos:      {weight: 0.75, enabled: true}
+    impedance_yaw_vel:      {weight: 1.0, enabled: true}
+    impedance_pos:      {weight: 0.75, enabled: true}
+    impedance_vel:      {weight: 1.5, enabled: true}
+    impedance_acc:      {weight: 1.0, enabled: true}
+    # impedance_acc:      {weight: 2.5, enabled: false}
+
+    angvel_xy_l2:       {weight: 0.02, enabled: true}
+    linvel_z_l2:        {weight: 2.0, enabled: true}
+    base_height_l1:     {weight: 3.0, enabled: true, target_height: 0.35}
+    
+    energy_l1:          {weight: 0.0005, enabled: true}
+    joint_acc_l2:       {weight: 2.5e-7, enabled: true}
+    joint_torques_l2:   {weight: 2.0e-4, enabled: true}
+    # quadruped_stand:    {weight: 0.2, enabled: false}
+    survival:           {weight: 1.0, enabled: true}
+    action_rate_l2:     {weight: 0.01, enabled: true}
+    action_rate2_l2:    {weight: 0.005, enabled: true}
+    feet_slip:          {weight: 0.2, enabled: true, body_names: .*_foot}
+    feet_air_time:      {weight: 0.2, enabled: true, body_names: .*_foot, thres: 0.3}
+    undesired_contact:  {body_names: [Head.*, .*_calf, .*thigh], weight: 2.0, enabled: true}
+  metrics:
+    feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
+    feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
+    impedance_acc_error: {weight: 1.0, enabled: false}
+    impedance_vel_error: {weight: 1.0, enabled: false}
+    impedance_pos_error: {weight: 1.0, enabled: false}
+
+termination:
+  crash: {body_names_expr: [Head.*, base, .*_calf], t_thres: 0.06}
+  fall_over: {xy_thres: 0.9}
+
+randomization:
+  perturb_body_mass:
+    (?!(payload|base|Head.*)).*: [0.8, 1.2]
+    base: [0.8, 1.2]
+    # Head.*: [10, 250.]
+  perturb_body_materials:
+    body_names: [.*_foot, .*_calf]
+    static_friction_range:  [0.5, 4.0]
+    dynamic_friction_range: [0.5, 4.0]
+    restitution_range:      [0.0, 0.5]
+  motor_params:
+    actuator_name: base_legs
+    stiffness_range:  
+      F[L,R]_hip_joint:   [0.8, 1.2]
+      F[L,R]_thigh_joint: [0.8, 1.2]
+      F[L,R]_calf_joint:  [0.8, 1.2]
+      R[L,R]_hip_joint:   [0.8, 1.2]
+      R[L,R]_thigh_joint: [0.8, 1.2]
+      R[L,R]_calf_joint:  [0.8, 1.2]
+    damping_range:
+      F[L,R]_hip_joint:   [0.8, 1.2]
+      F[L,R]_thigh_joint: [0.8, 1.2]
+      F[L,R]_calf_joint:  [0.8, 1.2]
+      R[L,R]_hip_joint:   [0.8, 1.2]
+      R[L,R]_thigh_joint: [0.8, 1.2]
+      R[L,R]_calf_joint:  [0.8, 1.2]
+    scale_factor_range:
+      .*_hip_joint:   [0.8, 1.2]
+      .*_thigh_joint: [0.8, 1.2]
+      .*_calf_joint:  [0.8, 1.2]
+    armature_range:
+      .*: [0.0, 0.02]
+  reset_joint_states_scale:
+    pos_scales:
+      .*: [0.8, 1.2]
+  random_joint_offset:
+    .*hip_joint: [-0.05, 0.05]
+    F[L,R]_thigh_joint: [-0.05, 0.05]
+    R[L,R]_thigh_joint: [-0.05, 0.05]
+    .*calf_joint: [-0.05, 0.05]
+  # stumble: {body_names: .*_foot, stumble_height: 0.02, friction_range: [0.1, 0.4]}
+  # spring_grf:
+  #   feet_names: .*_foot
+  #   kp_range: [200, 300]
+  #   thres_range: [0.1, 0.2]

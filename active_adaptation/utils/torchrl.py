@@ -51,6 +51,7 @@ class SyncDataCollector(_SyncDataCollector):
         while True:
             i += 1
             self._iter = i
+            torch.compiler.cudagraph_mark_step_begin()
             tensordict_out = self.rollout()
             self._frames += tensordict_out.numel()
             # if self._frames >= total_frames:

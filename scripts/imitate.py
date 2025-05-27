@@ -12,7 +12,7 @@ from setproctitle import setproctitle
 from tqdm import tqdm
 from collections import OrderedDict
 
-from omni.isaac.lab.app import AppLauncher
+from isaaclab.app import AppLauncher
 from active_adaptation.utils.torchrl import SyncDataCollector
 from active_adaptation.learning import BCPolicy, ALGOS
 

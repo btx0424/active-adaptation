@@ -3,25 +3,20 @@ import hydra
 import numpy as np
 import einops
 import itertools
+import os
+import datetime
 from omegaconf import OmegaConf
 
-from omni.isaac.lab.app import AppLauncher
-# from omni_drones.utils.wandb import init_wandb
-# from omni_drones.utils.torchrl import SyncDataCollector
+from isaaclab.app import AppLauncher
 
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from tensordict.nn import TensorDictSequential
+
 from active_adaptation.learning import ALGOS
-from collections import OrderedDict
+from active_adaptation.utils.export import export_onnx
 
-import wandb
-import logging
-from tqdm import tqdm
 
-import os
-import datetime
-
-@hydra.main(config_path="../cfg", config_name="play")
+@hydra.main(config_path="../cfg", config_name="play", version_base=None)
 def main(cfg):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
@@ -29,13 +24,14 @@ def main(cfg):
     app_launcher = AppLauncher(cfg.app)
     simulation_app = app_launcher.app
 
-    from scripts.helpers import EpisodeStats, make_env_policy
+    from scripts.helpers import EpisodeStats, make_env_policy, ObsNorm
     env, policy, vecnorm = make_env_policy(cfg)
     
     if cfg.export_policy:
         import time
+        import copy
         time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
-        fake_input = env.observation_spec[0].zero().cpu()
+        fake_input = env.observation_spec[0].rand().cpu()
         fake_input["is_init"] = torch.tensor(1, dtype=bool)
         fake_input["context_adapt_hx"] = torch.zeros(128)
         fake_input = fake_input.unsqueeze(0)
@@ -47,31 +43,37 @@ def main(cfg):
             return (time.perf_counter() - start) / 1000
         
         FILE_PATH = os.path.dirname(__file__)
-        _policy = TensorDictSequential(
-            vecnorm.to_observation_norm(),
-            policy.get_rollout_policy("deploy")
-        ).cpu()
+        
+        deploy_policy = copy.deepcopy(policy.get_rollout_policy("deploy"))
+        obs_norm = ObsNorm.from_vecnorm(vecnorm, deploy_policy.in_keys)
+        _policy = TensorDictSequential(obs_norm, deploy_policy).cpu()
         
         print(f"Inference time of policy: {test(_policy, fake_input)}")
 
-        torch.save(_policy, os.path.join(FILE_PATH, f"policy-{time_str}.pt"))
+        time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
+        os.makedirs(os.path.join(FILE_PATH, "exports", cfg.task.name), exist_ok=True)
+        path = os.path.join(FILE_PATH, "exports", cfg.task.name, f"policy-{time_str}.pt")
+        torch.save(_policy, path)
 
-    frames_per_batch = env.num_envs * 32
-    total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
+        meta = {}
+        # meta["action_scaling"] = dict(cfg.task.action.get("action_scaling"))
+        # meta["stiffness"] = dict(cfg.task.robot.stiffness)
+        # meta["damping"] = dict(cfg.task.robot.damping)
+        # meta["effort_limit"] = dict(cfg.task.robot.effort_limit)
+        export_onnx(_policy, fake_input, path.replace(".pt", ".onnx"), meta)
 
     stats_keys = [
         k for k in env.reward_spec.keys(True, True) 
         if isinstance(k, tuple) and k[0]=="stats"
     ]
-    episode_stats = EpisodeStats(stats_keys)
+    episode_stats = EpisodeStats(stats_keys, device=env.device)
     policy = policy.get_rollout_policy("eval")
-
-    with (
-        torch.inference_mode(), 
-        set_exploration_type(ExplorationType.MODE)
-    ):
-        td_ = env.reset()
-        
+    
+    env.base_env.eval()
+    td_ = env.reset()
+    assert not env.base_env.training
+    with torch.inference_mode(), set_exploration_type(ExplorationType.MODE):
+        torch.compiler.cudagraph_mark_step_begin()
         for i in itertools.count():
             td_ = policy(td_)
             td, td_ = env.step_and_maybe_reset(td_)

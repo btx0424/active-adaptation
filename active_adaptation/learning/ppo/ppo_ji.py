@@ -27,28 +27,33 @@ import torch.nn.functional as F
 import torch.distributions as D
 import einops
 
-from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuousTensorSpec
+from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuous
 from torchrl.modules import ProbabilisticActor
-from torchrl.envs.transforms import CatTensors, TensorDictPrimer, ExcludeTransform, VecNorm
+from torchrl.envs.transforms import TensorDictPrimer, ExcludeTransform, VecNorm
 from tensordict import TensorDict
-from tensordict.nn import TensorDictModuleBase, TensorDictModule, TensorDictSequential
+from tensordict.nn import (
+    TensorDictModuleBase as ModBase,
+    TensorDictModule as Mod,
+    TensorDictSequential
+)
 
 from hydra.core.config_store import ConfigStore
-from dataclasses import dataclass
-from typing import Union
+from dataclasses import dataclass, field
+from typing import Union, Tuple
 
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
 from ..modules.distributions import IndependentNormal
 from ..modules.temporal import GRU, TConv
 from .common import *
 
+
 @dataclass
 class PPOConfig:
     _target_: str = "active_adaptation.learning.ppo.ppo_ji.PPOPolicy"
     name: str = "ppo_ji"
     train_every: int = 32
-    ppo_epochs: int = 4
-    num_minibatches: int = 16
+    ppo_epochs: int = 5
+    num_minibatches: int = 4
     lr: float = 5e-4
     clip_param: float = 0.2
     entropy_coef: float = 0.002
@@ -59,6 +64,7 @@ class PPOConfig:
     se_arch: str = "rnn"
     hack: bool = False # debug option, which gives actor access to the privileged information
     checkpoint_path: Union[str, None] = None
+    in_keys: Tuple[str] = ("command", OBS_KEY, OBS_PRIV_KEY, "ext")
 
 cs = ConfigStore.instance()
 cs.store("ppo_ji", node=PPOConfig, group="algo")
@@ -79,7 +85,7 @@ class GRUModule(nn.Module):
         return x, hx.contiguous()
 
 
-class PPOPolicy(TensorDictModuleBase):
+class PPOPolicy(ModBase):
     """
     
     Concurrent Training of a Control Policy and a State Estimator for Dynamic and Robust Legged Locomotion
@@ -102,7 +108,7 @@ class PPOPolicy(TensorDictModuleBase):
 
         self.entropy_coef = self.cfg.entropy_coef
         self.clip_param = self.cfg.clip_param
-        self.critic_loss_fn = nn.HuberLoss(delta=10, reduction="none")
+        self.critic_loss_fn = nn.MSELoss(reduction="none")
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(0.99, 0.95)
 
@@ -117,25 +123,29 @@ class PPOPolicy(TensorDictModuleBase):
 
         self.observation_spec = observation_spec
         fake_input = observation_spec.zero()
-        
+
         # the state estimator
         if self.cfg.se_arch == "rnn":
-            self.state_estimator = TensorDictModule(
+            self.state_estimator = Mod(
                 GRUModule(observation_spec["priv"].shape[-1]),
                 [OBS_KEY, "is_init", "estimator_hx"],
                 ["priv_estimate", ("next", "estimator_hx")]
             ).to(self.device)
         else:
-            self.state_estimator = TensorDictModule(
+            self.state_estimator = Mod(
                 TConv(observation_spec["priv"].shape[-1]),
                 [OBS_HIST_KEY], ["priv_estimate"]
             ).to(self.device)
 
-        actor_module = nn.Sequential(make_mlp([256, 256, 256], nn.Mish), Actor(self.action_dim))
+        if self.cfg.hack:
+            actor_in_keys = ["command", OBS_KEY, OBS_PRIV_KEY]
+        else:
+            actor_in_keys = ["command", OBS_KEY, "priv_estimate"]
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=TensorDictSequential(
-                CatTensors([OBS_KEY, OBS_PRIV_KEY if self.cfg.hack else "priv_estimate"], "policy_estimate", del_keys=False),
-                TensorDictModule(actor_module, ["policy_estimate"], ["loc", "scale"])
+                CatTensors(actor_in_keys, "policy_estimate", del_keys=False),
+                Mod(make_mlp([512, 256, 256]), ["policy_estimate"], ["actor_input"]),
+                Mod(Actor(self.action_dim), ["actor_input"], ["loc", "scale"]),
             ),
             in_keys=["loc", "scale"],
             out_keys=[ACTION_KEY],
@@ -145,8 +155,8 @@ class PPOPolicy(TensorDictModuleBase):
         
         critic_module = nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1))
         self.critic = TensorDictSequential(
-            CatTensors([OBS_KEY, OBS_PRIV_KEY], "policy_priv", del_keys=False),
-            TensorDictModule(critic_module, ["policy_priv"], ["state_value"])
+            CatTensors(["command", OBS_KEY, OBS_PRIV_KEY], "policy_priv", del_keys=False),
+            Mod(critic_module, ["policy_priv"], ["state_value"])
         ).to(self.device)
 
         # lazy initialization
@@ -172,10 +182,7 @@ class PPOPolicy(TensorDictModuleBase):
                 nn.init.orthogonal_(module.weight, 0.01)
                 nn.init.constant_(module.bias, 0.)
 
-        if self.cfg.checkpoint_path is not None:
-            state_dict = torch.load(self.cfg.checkpoint_path)
-            self.load_state_dict(state_dict, strict=False)
-        elif self.cfg.orthogonal_init:
+        if self.cfg.orthogonal_init:
             self.state_estimator.apply(init_)
             self.actor.apply(init_)
             self.critic.apply(init_)
@@ -183,7 +190,7 @@ class PPOPolicy(TensorDictModuleBase):
     def make_tensordict_primer(self):
         num_envs = self.observation_spec.shape[0]
         return TensorDictPrimer(
-            {"estimator_hx": UnboundedContinuousTensorSpec((num_envs, 128), device=self.device)},
+            {"estimator_hx": UnboundedContinuous((num_envs, 128), device=self.device)},
             reset_key="done"
         )
     
@@ -198,7 +205,7 @@ class PPOPolicy(TensorDictModuleBase):
     # @torch.compile
     def train_op(self, tensordict: TensorDict):
         infos = []
-        self._compute_advantage(tensordict, self.critic, "adv", "ret", update_value_norm=True)
+        self._compute_advantage(tensordict, self.critic, "adv", "ret")
 
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every)
@@ -206,7 +213,7 @@ class PPOPolicy(TensorDictModuleBase):
                 infos.append(TensorDict(self._update(minibatch), []))
         
         infos = {k: v.mean().item() for k, v in sorted(torch.stack(infos).items())}
-        infos["value_priv"] = self.value_norm.denormalize(tensordict["ret"]).mean().item()
+        infos["critic/value_priv"] = self.value_norm.denormalize(tensordict["ret"]).mean().item()
         self.num_frames += tensordict.numel()
         self.num_updates += 1
         return infos
@@ -215,15 +222,19 @@ class PPOPolicy(TensorDictModuleBase):
     def _compute_advantage(
         self, 
         tensordict: TensorDict,
-        critic: TensorDictModule, 
+        critic: Mod, 
         adv_key: str="adv",
         ret_key: str="ret",
         update_value_norm: bool=True,
     ):
-        values = critic(tensordict)["state_value"]
-        next_values = critic(tensordict["next"])["state_value"]
+        with tensordict.view(-1) as tensordict_flat:
+            critic(tensordict_flat)
+            critic(tensordict_flat["next"])
 
-        rewards = tensordict[REWARD_KEY]
+        values = tensordict["state_value"]
+        next_values = tensordict["next", "state_value"]
+
+        rewards = tensordict[REWARD_KEY].sum(-1, keepdim=True)
         terms = tensordict[TERM_KEY]
         dones = tensordict[DONE_KEY]
         values = self.value_norm.denormalize(values)
@@ -241,8 +252,9 @@ class PPOPolicy(TensorDictModuleBase):
 
     def _update(self, tensordict: TensorDict):
         losses = {}
+        self.state_estimator(tensordict)
         losses["state_est_loss"] = F.mse_loss(
-            self.state_estimator(tensordict)["priv_estimate"],
+            tensordict["priv_estimate"],
             tensordict[OBS_PRIV_KEY]
         )
 

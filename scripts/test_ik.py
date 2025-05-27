@@ -3,21 +3,21 @@ import torch
 import itertools
 import math
 
-from omni.isaac.lab.app import AppLauncher
+from isaaclab.app import AppLauncher
 
 def main():
 
     app_launcher = AppLauncher(headless=False)
     simulation_app = app_launcher.app
 
-    import omni.isaac.lab.sim as sim_utils
-    from omni.isaac.lab.sim import SimulationContext, SimulationCfg
-    from omni.isaac.lab.scene import InteractiveScene, InteractiveSceneCfg
-    from omni.isaac.lab.terrains import TerrainImporterCfg
-    from omni.isaac.lab.assets import ArticulationCfg, AssetBaseCfg, Articulation, RigidObjectCfg, RigidObject
-    from omni.isaac.lab.actuators import IdealPDActuatorCfg, ImplicitActuatorCfg, DCMotorCfg
-    from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
-    from omni.isaac.lab.utils.math import (
+    import isaaclab.sim as sim_utils
+    from isaaclab.sim import SimulationContext, SimulationCfg
+    from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
+    from isaaclab.terrains import TerrainImporterCfg
+    from isaaclab.assets import ArticulationCfg, AssetBaseCfg, Articulation, RigidObjectCfg, RigidObject
+    from isaaclab.actuators import IdealPDActuatorCfg, ImplicitActuatorCfg, DCMotorCfg
+    from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
+    from isaaclab.utils.math import (
         quat_rotate_inverse, 
         quat_rotate, 
         quat_conjugate, 
@@ -26,8 +26,8 @@ def main():
         quat_from_angle_axis,
         quat_from_euler_xyz,
     )
-    from omni.isaac.lab.markers import VisualizationMarkers
-    from omni.isaac.lab.markers.config import FRAME_MARKER_CFG
+    from isaaclab.markers import VisualizationMarkers
+    from isaaclab.markers.config import FRAME_MARKER_CFG
 
     from active_adaptation.assets.arm import A1_CFG
 

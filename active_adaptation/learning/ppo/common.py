@@ -25,7 +25,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tensordict import TensorDict, TensorDictBase
-from tensordict.nn import TensorDictModuleBase
+from tensordict.nn import TensorDictModuleBase as ModBase
 from torchrl.modules import ProbabilisticActor
 from torchrl.data import CompositeSpec
 
@@ -39,6 +39,18 @@ REWARD_KEY = ("next", "reward") # ("agents", "reward")
 TERM_KEY = ("next", "terminated")
 DONE_KEY = ("next", "done")
 CMD_KEY = "command"
+
+
+class ResFCLayer(nn.Module):
+    def __init__(self, out_dim: int, activation=nn.Mish):
+        super().__init__()
+        self.linear = nn.LazyLinear(out_dim * 2)
+        self.mish = activation()
+        self.ln = nn.LayerNorm(out_dim)
+    
+    def forward(self, x):
+        x, skip = self.linear(x).chunk(2, dim=-1)
+        return self.ln(self.mish(x) + skip)
 
 
 def make_mlp(num_units, activation=nn.Mish, norm="before", dropout=0.):
@@ -68,10 +80,10 @@ def make_conv(num_channels, activation=nn.LeakyReLU, kernel_sizes=3, flatten: bo
         layers.append(activation())
     if flatten:
         layers.append(nn.Flatten())
-    return _FlattenBatch(nn.Sequential(*layers), data_dim=3)
+    return FlattenBatch(nn.Sequential(*layers), data_dim=3)
 
 
-class _FlattenBatch(nn.Module):
+class FlattenBatch(nn.Module):
     def __init__(self, module, data_dim: int=1):
         super().__init__()
         self.module = module
@@ -137,27 +149,47 @@ class Actor(nn.Module):
             self.actor_mean = nn.LazyLinear(action_dim * 2)
         else:
             self.actor_mean = nn.LazyLinear(action_dim)
-            self.actor_std = nn.Parameter(torch.zeros(action_dim))
-        self.scale_mapping = torch.exp
+            self.actor_std = nn.Parameter(torch.ones(action_dim))
+        self.scale_mapping = nn.Identity()
     
     def forward(self, features: torch.Tensor):
         if self.predict_std:
             loc, scale = self.actor_mean(features).chunk(2, dim=-1)
         else:
             loc = self.actor_mean(features)
-            scale = self.actor_std.expand_as(loc)
+            scale = torch.ones_like(loc) * self.actor_std
         scale = self.scale_mapping(scale)
         return loc, scale
 
 
+class ActorCov(nn.Module):
+    """
+    Predicts state-dependent covariance between a_t and a_{t-1}.
+    """
+    def __init__(self, action_dim: int) -> None:
+        super().__init__()
+        self.actor_mean_cov = nn.LazyLinear(action_dim * 2)
+        self.actor_std = nn.Parameter(torch.zeros(action_dim))
+        self.scale_mapping = torch.exp
+    
+    def forward(self, features: torch.Tensor, prev_action: torch.Tensor, prev_loc: torch.Tensor):
+        loc, cov = self.actor_mean_cov(features).chunk(2, dim=-1)
+        scale = torch.ones_like(loc) * self.scale_mapping(self.actor_std)
+        var = scale.square()
+        cov = torch.tanh(cov) * var.detach()
+        loc = loc + (cov / var.detach()) * (prev_action - prev_loc)
+        var = var - cov.square() / var.detach()
+        scale = var.sqrt()
+        return loc, scale
+
+
 class GAE(nn.Module):
-    def __init__(self, gamma, lmbda, fake_bootstrap=False):
+    def __init__(self, gamma, lmbda):
         super().__init__()
         self.register_buffer("gamma", torch.tensor(gamma))
         self.register_buffer("lmbda", torch.tensor(lmbda))
         self.gamma: torch.Tensor
         self.lmbda: torch.Tensor
-        self.fake_bootstrap = fake_bootstrap
     
     def forward(
         self, 
@@ -165,20 +197,21 @@ class GAE(nn.Module):
         terminated: torch.Tensor,
         done: torch.Tensor, 
         value: torch.Tensor, 
-        next_value: torch.Tensor
+        next_value: torch.Tensor,
+        discount: torch.Tensor=None
     ):
         num_steps = terminated.shape[1]
         advantages = torch.zeros_like(reward)
         nonterm = 1 - terminated.float() # whether to backup value
         nondone = 1 - done.float()       # whether to backup reward
+        if discount is None:
+            discount = torch.ones_like(nonterm)
         gae = 0
         for step in reversed(range(num_steps)):
-            if self.fake_bootstrap:
-                next_value_t = torch.where(terminated[:, step], value[:, step], next_value[:, step])
-            else:
-                next_value_t = next_value[:, step] * nonterm[:, step]
-            delta = reward[:, step] + self.gamma * next_value_t - value[:, step]
-            advantages[:, step] = gae = delta + (self.gamma * self.lmbda * nondone[:, step] * gae)
+            next_value_t = next_value[:, step] * nonterm[:, step]
+            gamma_t = discount[:, step] * self.gamma
+            delta = reward[:, step] + gamma_t * next_value_t - value[:, step]
+            advantages[:, step] = gae = delta + (gamma_t * self.lmbda * nondone[:, step] * gae)
         returns = advantages + value
         return advantages, returns
 
@@ -214,7 +247,7 @@ def compute_policy_loss(
 
 def compute_value_loss(
     tensordict: TensorDictBase, 
-    critic: TensorDictModuleBase,
+    critic: ModBase,
     clip_param: float,
     critic_loss_fn: nn.Module,
     discard_init: bool=True,
@@ -314,6 +347,25 @@ class NormalExtractor(nn.Module):
         if self.include_loc:
             x_sample = torch.cat([x_sample, x_loc.unsqueeze(-2)], dim=-2)
         return x_sample.flatten(-2), x_loc, x_scale
+
+
+class CatTensors(ModBase):
+    def __init__(self, in_keys, out_key, del_keys=False, sort=True):
+        super().__init__()
+        self.in_keys = in_keys
+        self.out_keys = [out_key]
+
+        self.del_keys = del_keys
+        self.sort = sort
+        if self.sort:
+            self.in_keys = sorted(self.in_keys)
+
+    def forward(self, tensordict: TensorDictBase):
+        out = torch.cat([tensordict.get(k) for k in self.in_keys], dim=-1)
+        tensordict.set(self.out_keys[0], out)
+        if self.del_keys:
+            tensordict.exclude(*self.in_keys, inplace=True)
+        return tensordict
 
 
 def collect_info(infos, prefix=""):

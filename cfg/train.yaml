@@ -11,11 +11,8 @@ app:
   headless: ${..headless}
   enable_cameras: ${..eval_render}
 
-sim: ${task.sim}
-# env: ${task.env}
-
-total_frames: 300_000_000
-# total_frames: 150_000_000
+# total_frames: 300_000_000
+total_frames: 150_000_000
 max_iters: -1
 eval_interval: -1
 eval_render: false
@@ -31,10 +28,7 @@ camera_follow: true
 wandb:
   name: ${..exp_name}/${now:%m-%d}_${now:%H-%M}
   job_type: train
-  entity: cyber dribble
   project: go2m_impedance
-  # entity: btx0424
-  # project: adaptation
   mode: online # set to 'disabled' when debugging locally
   tags: []
 

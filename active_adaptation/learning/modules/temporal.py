@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import einops
 
-from ..ppo.common import make_mlp, _FlattenBatch
+from ..ppo.common import make_mlp, FlattenBatch
 
 class GRU(nn.Module):
     def __init__(

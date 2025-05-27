@@ -145,6 +145,18 @@ class PPOPolicy(TensorDictModuleBase):
         self.symmetry = nn.Sequential(make_mlp([256, 256]), nn.LazyLinear(1)).to(self.device)
         self.symmetry(fake_input["symmetry"])
 
+        self.random = nn.Sequential(make_mlp([256, 256], norm=None), nn.LazyLinear(32)).to(self.device)
+        self.random(fake_input["symmetry"])
+        self.random.requires_grad_(False)
+
+        def init_(module):
+            if isinstance(module, nn.Linear):
+                nn.init.orthogonal_(module.weight, 1.414) # sqrt(2)
+        
+        self.random.apply(init_)
+        self.random_target = nn.Sequential(make_mlp([256, 256], norm=None), nn.LazyLinear(32)).to(self.device)
+        self.random_target(fake_input["symmetry"])
+
         self.actor(fake_input)
         self.critic(fake_input)
 
@@ -157,6 +169,7 @@ class PPOPolicy(TensorDictModuleBase):
         )
 
         self.opt_symmetry = torch.optim.Adam(self.symmetry.parameters(), lr=cfg.lr)
+        self.opt_random = torch.optim.Adam(self.random_target.parameters(), lr=cfg.lr)
         
         def init_(module):
             if isinstance(module, nn.Linear):
@@ -169,32 +182,32 @@ class PPOPolicy(TensorDictModuleBase):
 
         self.symmetry_ema = copy.deepcopy(self.symmetry)
         self.symmetry_ema.requires_grad_(False)
-        
-        self.buffer = TensorDictReplayBuffer(
-            storage=LazyTensorStorage(max_size=observation_spec.shape[0] * 32),
-            batch_size=observation_spec.shape[0] // 2,
-            prefetch=1,
-        )
+        self.symmetry_reward_coef = 0.
     
     def get_rollout_policy(self, mode: str="train"):
         policy = TensorDictSequential(
             self.actor,
         )
         return policy
+    
+    def step_schedule(self, progress: float):
+        self.symmetry_reward_coef = min(2 * progress, 1.)
 
     # @torch.compile
     def train_op(self, tensordict: TensorDict):
         tensordict = tensordict.copy()
         infos = []
 
-        self.buffer.extend(tensordict.select("symmetry").view(-1).cpu())
-
         with torch.no_grad():
             left_obs, right_obs = tensordict["symmetry"].unbind(2)
             left_score = self.symmetry(left_obs)
             right_score = self.symmetry(right_obs)
-            symmetry_reward = (1 - (right_score - 1).square()).clamp(-1., 1.)
-            tensordict[REWARD_KEY] += symmetry_reward
+            symmetry_reward = (1 - (right_score - 1).square())
+            tensordict[REWARD_KEY] += self.symmetry_reward_coef * symmetry_reward
+
+            rnd_error_left = (self.random_target(left_obs) - self.random(left_obs)).square()
+            rnd_error_right = (self.random_target(right_obs) - self.random(right_obs)).square()
+            # tensordict[REWARD_KEY] += rnd_reward
 
         self._compute_advantage(tensordict, self.critic, "adv", "ret", update_value_norm=True)
         tensordict["adv"] = normalize(tensordict["adv"], subtract_mean=True)
@@ -205,9 +218,8 @@ class PPOPolicy(TensorDictModuleBase):
                 infos.append(TensorDict(self._update(minibatch), []))
 
         infos_symmetry = []
-        for iter in range(8):
-            batch = self.buffer.sample().to(self.device)
-            infos_symmetry.append(TensorDict(self._update_symmetry(batch), []))
+        for iter in range(2):
+            infos_symmetry.append(TensorDict(self._update_symmetry(tensordict.reshape(-1)), []))
         
         infos = collect_info(infos)
         infos.update(collect_info(infos_symmetry))
@@ -216,6 +228,8 @@ class PPOPolicy(TensorDictModuleBase):
         infos["symmetry/reward"] = symmetry_reward.mean().item()
         infos["symmetry/ema_acc"] = ((left_score > 0) & (right_score < 0)).float().mean().item()
         infos["symmetry/score"] = right_score.mean().item()
+        infos["symmetry/rnd_error_left"] = rnd_error_left.mean().item()
+        infos["symmetry/rnd_error_right"] = rnd_error_right.mean().item()
         return dict(sorted(infos.items()))
 
     @torch.no_grad()
@@ -235,13 +249,15 @@ class PPOPolicy(TensorDictModuleBase):
         next_values = tensordict["next", "state_value"]
 
         rewards = tensordict[REWARD_KEY].sum(-1, keepdim=True)
+        terms = tensordict[TERM_KEY]
+        dones = tensordict[DONE_KEY]
         # dones = tensordict["next", "done"]
         # rewards = torch.where(dones, rewards + values * self.gae.gamma, rewards)
         dones = tensordict[DONE_KEY]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
 
-        adv, ret = self.gae(rewards, dones, values, next_values)
+        adv, ret = self.gae(rewards, terms, dones, values, next_values)
         if update_value_norm:
             self.value_norm.update(ret)
         ret = self.value_norm.normalize(ret)
@@ -293,27 +309,36 @@ class PPOPolicy(TensorDictModuleBase):
         left_obs.requires_grad_(True)
         left_score = self.symmetry(left_obs)
         right_score = self.symmetry(right_obs)
-        symmetry_loss = (
-            F.mse_loss(left_score, torch.ones_like(left_score))
-            + F.mse_loss(right_score, -torch.ones_like(right_score))
-        )
+        valid = (~tensordict["is_init"]).float()
+        loss_left = (left_score - torch.ones_like(left_score)).square()
+        loss_right = (right_score + torch.ones_like(right_score)).square()
+        symmetry_loss = torch.mean((loss_left + loss_right) * valid)
 
         grad = torch.autograd.grad(
             left_score,
             left_obs, 
             torch.ones_like(left_score),
             retain_graph=True,
+            create_graph=True
         )[0]
         gradient_penalty = torch.mean(grad.square().sum(dim=-1))
         
         self.opt_symmetry.zero_grad()
-        (symmetry_loss + gradient_penalty).backward()
+        (symmetry_loss + 5 * gradient_penalty).backward()
         self.opt_symmetry.step()
+
+        rnd_target = self.random(left_obs)
+        rnd_loss = F.mse_loss(self.random_target(left_obs), rnd_target)
+
+        self.opt_random.zero_grad()
+        rnd_loss.backward()
+        self.opt_random.step()
 
         return {
             "symmetry/loss": symmetry_loss,
             "symmetry/gradient_penalty": gradient_penalty,
             "symmetry/acc": ((left_score > 0) & (right_score < 0)).float().mean(),
+            "symmetry/loss_rnd": rnd_loss
         }
 
     def state_dict(self):
