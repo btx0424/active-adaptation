@@ -198,9 +198,11 @@ class PPOPolicy(TensorDictModuleBase):
         ret_key: str="ret",
         update_value_norm: bool=True,
     ):
-        with tensordict.view(-1) as tensordict_flat:
-            critic(tensordict_flat)
-            critic(tensordict_flat["next"])
+        keys = tensordict.keys(True, True)
+        if not ("state_value" in keys and ("next", "state_value") in keys):
+            with tensordict.view(-1) as tensordict_flat:
+                critic(tensordict_flat)
+                critic(tensordict_flat["next"])
 
         values = tensordict["state_value"]
         next_values = tensordict["next", "state_value"]
