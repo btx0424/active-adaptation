@@ -153,7 +153,7 @@ def main(cfg: DictConfig):
             policy.step_schedule(i / total_iters)
         
         info["env_frames"] = env_frames
-        info["rollout_fps"] = env_frames / rollout_time
+        info["rollout_fps"] = data.numel() / rollout_time
         info["training_time"] = training_time
         
         if should_save(i):
