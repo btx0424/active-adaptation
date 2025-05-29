@@ -43,6 +43,7 @@ command:
   linvel_y_range: [-0.8, 0.8]
   angvel_range: [-2.0, 2.0]
   yaw_stiffness_range: [0.5, 1.0]
+  use_stiffness_ratio: 0.9
   stand_prob: 0.05
   curriculum: true
 
