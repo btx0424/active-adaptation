@@ -107,6 +107,7 @@ class _Env(EnvBase):
             run_type_checks=False,
         )
         self.episode_length_buf = torch.zeros(self.num_envs, dtype=int, device=self.device)
+        self.episode_count = 0
 
         # parse obs and reward functions
         self.done_spec = Composite(
@@ -293,12 +294,13 @@ class _Env(EnvBase):
     def setup_scene(self):
         raise NotImplementedError
     
-    def _reset(self, tensordict: TensorDictBase, **kwargs) -> TensorDictBase:
+    def _reset(self, tensordict: TensorDictBase | None = None, **kwargs) -> TensorDictBase:
         if tensordict is not None:
             env_mask = tensordict.get("_reset").reshape(self.num_envs)
+            env_ids = env_mask.nonzero().squeeze(-1)
+            self.episode_count += env_ids.numel()
         else:
-            env_mask = torch.ones(self.num_envs, dtype=bool, device=self.device)
-        env_ids = env_mask.nonzero().squeeze(-1)
+            env_ids = torch.arange(self.num_envs, device=self.device)
         if len(env_ids):
             self._reset_idx(env_ids)
         self.episode_length_buf[env_ids] = 0

@@ -77,6 +77,10 @@ class Command:
         pass
 
     def sample_init(self, env_ids: torch.Tensor) -> torch.Tensor:
+        """
+        Called before `reset` to sample initial state for the next episodes.
+        This can be used for implementing curriculum learning.
+        """
         init_root_state = self.init_root_state[env_ids]
         if self.terrain_type == "plane":
             origins = self.env.scene.env_origins[env_ids]

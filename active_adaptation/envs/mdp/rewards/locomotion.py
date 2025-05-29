@@ -1095,7 +1095,8 @@ class tracking_base_height(Reward):
         self.target_height = target_height
 
     def compute(self) -> torch.Tensor:
-        current_height = self.asset.data.root_pos_w[:, 2] - self.env.get_ground_height_at(self.asset.data.root_pos_w)
+        ground_height = self.env.get_ground_height_at(self.asset.data.root_pos_w)
+        current_height = self.asset.data.root_pos_w[:, 2] - ground_height
         error = (current_height - self.target_height).square()
         rew = torch.where(current_height < self.target_height, torch.exp(-error / 0.25), 1.)
         return rew.reshape(self.num_envs, 1)

@@ -230,11 +230,10 @@ class Command2(Command):
         resample_prob: float = 0.75,
         stand_prob=0.2,
         target_yaw_range=(0, torch.pi * 2),
-        adaptive: bool = False,
         body_name: str = None,
-        teleop: bool = False,
+        curriculum: bool = False,
     ):
-        super().__init__(env, teleop=teleop)
+        super().__init__(env)
         self.robot: Articulation = env.scene["robot"]
         self.linvel_x_range = linvel_x_range
         self.linvel_y_range = linvel_y_range
@@ -245,10 +244,12 @@ class Command2(Command):
         self.resample_interval = resample_interval
         self.resample_prob = resample_prob
         self.stand_prob = stand_prob
-        self.adaptive = adaptive
+        self.curriculum = curriculum and self.env.backend == "isaac"
 
-        if self.adaptive:
-            self.ground_mesh = _initialize_warp_meshes("/World/ground", "cuda")
+        if self.curriculum:
+            self.terrain = self.env.scene.terrain
+            assert self.terrain.cfg.terrain_type == "generator", "Curriculum is only supported for generator terrain"
+            assert self.terrain.cfg.terrain_generator.curriculum, "Curriculum is not enabled for the terrain"
 
         if body_name is not None:
             self.body_id = self.asset.find_bodies(body_name)[0][0]
@@ -264,32 +265,27 @@ class Command2(Command):
             else:
                 self.target_yaw_dist = D.Uniform(*torch.tensor(target_yaw_range))
 
-            self.command = torch.zeros(self.num_envs, 4)
-            self.target_yaw = torch.zeros(self.num_envs)
-            self.yaw_stiffness = torch.zeros(self.num_envs)
-            self.use_stiffness = torch.zeros(self.num_envs, dtype=bool)
-            self.fixed_yaw_speed = torch.zeros(self.num_envs)
+            self.target_yaw = torch.zeros(self.num_envs, 1)
+            self.yaw_stiffness = torch.zeros(self.num_envs, 1)
+            self.use_stiffness = torch.zeros(self.num_envs, 1, dtype=bool)
+            self.fixed_yaw_speed = torch.zeros(self.num_envs, 1)
 
             self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
 
             self.command_speed = torch.zeros(self.num_envs, 1)
-            self._target_direction = torch.zeros(self.num_envs, 3)
-            self._target_linvel = torch.zeros(self.num_envs, 3)
             self.next_command_linvel = torch.zeros(self.num_envs, 3)
             self.command_linvel = torch.zeros(self.num_envs, 3)
             self.command_linvel_w = torch.zeros(self.num_envs, 3)
-            self.command_angvel = torch.zeros(self.num_envs)
+            self.command_angvel = torch.zeros(self.num_envs, 1)
+
+            self.distance_commanded = torch.zeros(self.num_envs, 1)
+            self.distance_traveled = torch.zeros(self.num_envs, 1)
 
             self.aux_input = torch.zeros(self.num_envs, 1)
 
             self._cum_error = torch.zeros(self.num_envs, 2)
             self._cum_linvel_error = self._cum_error[:, 0].unsqueeze(1)
             self._cum_angvel_error = self._cum_error[:, 1].unsqueeze(1)
-
-        self._decay = 0.999
-        self._sum_error = torch.tensor(0.0, device=self.device)
-        self._count = torch.tensor(0.0, device=self.device)
-        self._avg_error = torch.tensor(0.0, device=self.device)
 
         if self.teleop:
             self.key_mappings_pos = {
@@ -306,92 +302,95 @@ class Command2(Command):
                     [0.0, self.linvel_y_range[0], 0.0], device=self.device
                 ),
             }
+    
+    @property
+    def command(self):
+        return torch.cat([
+            self.command_linvel[:, :2],
+            self.command_angvel.reshape(self.num_envs, 1),
+            self.aux_input.reshape(self.num_envs, 1),
+        ], dim=-1)
 
-    def reset(self, env_ids, reward_stats=None):
-        self.command[env_ids] = 0.0
+    def reset(self, env_ids):
         self.next_command_linvel[env_ids] = 0.0
         self.command_linvel[env_ids] = 0.0
-
-        self.target_yaw[env_ids] = self.asset.data.heading_w[env_ids]
+        self.target_yaw[env_ids] = self.asset.data.heading_w[env_ids, None]
+        self.command_angvel[env_ids] = 0.0
 
         self._cum_linvel_error[env_ids] = 0.0
         self._cum_angvel_error[env_ids] = 0.0
         self.is_standing_env[env_ids] = True
-        self.env.extra["stats/avg_error"] = self._avg_error.item()
+    
+    def sample_init(self, env_ids):
+        if self.curriculum and self.env.episode_count > 1 and self.env.training:
+            move_up = self.distance_traveled[env_ids] > self.distance_commanded[env_ids] * 0.8
+            move_down = self.distance_traveled[env_ids] < self.distance_commanded[env_ids] * 0.4
+            self.terrain.update_env_origins(env_ids, move_up.squeeze(-1), move_down.squeeze(-1))
+            self._origins = self.terrain.env_origins.clone()
+            self.env.extra["curriculum/terrain_level"] = self.terrain.terrain_levels.float().mean()
+        self.distance_commanded[env_ids] = 0.0
+        self.distance_traveled[env_ids] = 0.0
+        return super().sample_init(env_ids)
 
     def update(self):
         if self.body_id is not None:
             self.body_quat_w = self.asset.data.body_quat_w[:, self.body_id]
             forward_w = quat_rotate(self.body_quat_w, self.FWDVEC)
-            self.body_heading_w = torch.atan2(forward_w[:, 1], forward_w[:, 0])
-        else:
-            self.body_heading_w = self.asset.data.heading_w
-        if self.teleop:
-            command_linvel_target = torch.tensor([0.0, 0.0, 0.0], device=self.device)
-            for key, vec in self.key_mappings_pos.items():
-                if self.key_pressed[key]:
-                    command_linvel_target.add_(vec)
-            if not self.key_pressed["LEFT_SHIFT"]:
-                command_linvel_target *= 0.6
-            self.command_linvel.lerp_(command_linvel_target, 0.5)
-        else:
-            interval_reached = (
-                self.env.episode_length_buf - 20
-            ) % self.resample_interval == 0
-            resample_vel = interval_reached & (
-                (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
-                | self.is_standing_env.squeeze(1)
-            )
-            resample_yaw = interval_reached & (
-                (torch.rand(self.num_envs, device=self.device) < self.resample_prob)
-                | self.is_standing_env.squeeze(1)
-            )
-            self.sample_vel_command(resample_vel.nonzero().squeeze(-1))
-            self.sample_yaw_command(resample_yaw.nonzero().squeeze(-1))
-
-        self.target_yaw[~self.use_stiffness] = self.body_heading_w[~self.use_stiffness]
-        yaw_diff = self.target_yaw - self.body_heading_w
-        command_yaw_speed = torch.clamp(
-            self.yaw_stiffness * wrap_to_pi(yaw_diff),
-            min=self.angvel_range[0],
-            max=self.angvel_range[1],
-        )
-        self.command_angvel[:] = torch.where(
-            self.use_stiffness, command_yaw_speed, self.fixed_yaw_speed
-        )
+            self.body_heading_w = torch.atan2(forward_w[:, 1], forward_w[:, 0]).unsqueeze(1)
+            self.lin_vel_w = self.robot.data.body_lin_vel_w[:, self.body_id]
+            self.ang_vel_w = self.robot.data.body_ang_vel_w[:, self.body_id]
+            self.quat_w = self.body_quat_w
+        else: # use root data
+            self.body_heading_w = self.asset.data.heading_w.unsqueeze(1)
+            self.lin_vel_w = self.asset.data.root_lin_vel_w
+            self.ang_vel_w = self.asset.data.root_ang_vel_w
+            self.quat_w = self.asset.data.root_quat_w
 
         # this is used for terminating episodes where the robot is inactive due to whatever reason
-        linvel_error = (
-            self.robot.data.root_lin_vel_w[:, :2] - self.command_linvel_w[:, :2]
-        ).norm(dim=-1, keepdim=True)
-        angvel_error = (
-            (self.command_angvel - self.robot.data.root_ang_vel_w[:, 2])
-            .abs()
-            .unsqueeze(1)
-        )
-
-        self._sum_error.add_(linvel_error.sum()).mul_(self._decay)
-        self._count.add_(self.num_envs).mul_(self._decay)
-        self._avg_error.copy_(self._sum_error / self._count)
+        linvel_diff = self.lin_vel_w[:, :2] - self.command_linvel_w[:, :2]
+        linvel_error = linvel_diff.norm(dim=-1, keepdim=True)
+        angvel_diff = self.command_angvel - self.ang_vel_w[:, 2, None]
+        angvel_error = angvel_diff.abs()
 
         self._cum_linvel_error.mul_(0.98).add_(linvel_error * self.env.step_dt)
         self._cum_angvel_error.mul_(0.98).add_(angvel_error * self.env.step_dt)
 
-        max_command_speed = (2.5 - self.command_angvel.abs()).clamp(0.0).unsqueeze(1)
+        max_command_speed = (2.5 - self.command_angvel.abs()).clamp(0.0)
         self.command_linvel.lerp_(self.next_command_linvel, 0.1)
         self.command_linvel = clamp_norm(self.command_linvel, max=max_command_speed)
         self.command_speed = self.command_linvel.norm(dim=-1, keepdim=True)
+    
+        self.current_speed = self.lin_vel_w.norm(dim=-1, keepdim=True)
+        self.distance_commanded = self.distance_commanded + self.command_speed * self.env.step_dt
+        self.distance_traveled = self.distance_traveled + self.current_speed * self.env.step_dt
 
-        self.command_linvel_w[:] = quat_rotate(
-            yaw_quat(self.robot.data.root_quat_w), self.command_linvel
+        interval_reached = (self.env.episode_length_buf - 20) % self.resample_interval == 0
+        resample_vel = interval_reached & (
+            self.with_prob(self.num_envs, self.resample_prob)
+            | self.is_standing_env.squeeze(1)
         )
-        self.command[:, :2] = self.command_linvel[:, :2]
-        self.command[:, 2] = self.command_angvel
-        self.command[:, 3] = self.aux_input.squeeze(1)
-        # self.command[:, :2] = torch.tensor([1.0, 0.], device=self.device)
-        self.is_standing_env[:, 0] = (
-            (self.command_linvel.norm(dim=-1) < 0.1) & (self.command_angvel < 0.1)
+        resample_yaw = interval_reached & (
+            self.with_prob(self.num_envs, self.resample_prob)
+            | self.is_standing_env.squeeze(1)
         )
+        self.sample_vel_command(resample_vel.nonzero().squeeze(-1))
+        self.sample_yaw_command(resample_yaw.nonzero().squeeze(-1))
+
+        yaw_diff = (self.target_yaw - self.body_heading_w).reshape(self.num_envs, 1)
+        command_yaw_speed = torch.clamp(
+            self.yaw_stiffness * wrap_to_pi(yaw_diff),
+            min=self.angvel_range[0],
+            max=self.angvel_range[1],
+        ).reshape(self.num_envs, 1)
+
+        self.command_angvel = torch.where(
+            self.use_stiffness,
+            command_yaw_speed,
+            self.fixed_yaw_speed
+        ).reshape(self.num_envs, 1)
+
+        self.command_linvel_w[:] = quat_rotate(yaw_quat(self.quat_w), self.command_linvel)
+        self.is_standing_env = (self.command_speed < 0.1) & (self.command_angvel.abs() < 0.1)
 
     def sample_vel_command(self, env_ids: torch.Tensor):
         next_command_linvel = torch.zeros(len(env_ids), 3, device=self.device)
@@ -407,22 +406,15 @@ class Command2(Command):
         ).unsqueeze(1)
 
     def sample_yaw_command(self, env_ids: torch.Tensor):
-        r = torch.rand(len(env_ids), device=self.device) < self.stand_prob
-        self.target_yaw[env_ids] = torch.where(
-            r,
-            self.asset.data.heading_w[env_ids],
-            self.target_yaw_dist.sample(env_ids.shape)
-        )
-        self.yaw_stiffness[env_ids] = sample_uniform(
-            env_ids.shape, *self.yaw_stiffness_range, self.device
-        )
-        self.use_stiffness[env_ids] = (
-            torch.rand(len(env_ids), device=self.device) < self.use_stiffness_ratio
-        )
-        self.fixed_yaw_speed[env_ids] = sample_uniform(
-            env_ids.shape, *self.angvel_range, self.device
-        )
+        self.target_yaw[env_ids] = self.target_yaw_dist.sample(env_ids.shape).unsqueeze(1)
+        shape = (len(env_ids), 1)
+        self.yaw_stiffness[env_ids] = sample_uniform(shape, *self.yaw_stiffness_range, self.device)
+        self.use_stiffness[env_ids] = self.with_prob(shape, self.use_stiffness_ratio)
+        self.fixed_yaw_speed[env_ids] = sample_uniform(shape, *self.angvel_range, self.device)
 
+    def with_prob(self, n, p):
+        return torch.rand(n, device=self.device) < p
+    
     def debug_draw(self):
         self.env.debug_draw.vector(
             self.robot.data.root_pos_w

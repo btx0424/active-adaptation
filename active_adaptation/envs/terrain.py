@@ -495,6 +495,7 @@ TRACK_TERRAIN_CFG.origins = [
 
 TERRAINS = {
     "medium": ROUGH_TERRAIN_BASE_CFG.replace(terrain_generator=ROUGH_MEDIUM),
+    "medium_curriculum": ROUGH_TERRAIN_BASE_CFG.replace(terrain_generator=ROUGH_MEDIUM.replace(curriculum=True)),
     "easy": ROUGH_TERRAIN_BASE_CFG.replace(terrain_generator=ROUGH_EASY),
     "hard": ROUGH_TERRAIN_BASE_CFG.replace(terrain_generator=ROUGH_HARD),
     "plane": PLANE_TERRAIN_CFG,
