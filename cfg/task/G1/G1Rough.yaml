@@ -139,4 +139,4 @@ termination:
     - ".*_hip_.*_link"
     - ".*shoulder_.*_link"
     - ".*(wrist|elbow).*"
-  fall_over: {xy_thres: 0.8}
+  fall_over: {xy_thres: 0.9}

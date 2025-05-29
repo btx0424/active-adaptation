@@ -327,7 +327,9 @@ class Command2(Command):
             move_down = self.distance_traveled[env_ids] < self.distance_commanded[env_ids] * 0.4
             self.terrain.update_env_origins(env_ids, move_up.squeeze(-1), move_down.squeeze(-1))
             self._origins = self.terrain.env_origins.clone()
-            self.env.extra["curriculum/terrain_level"] = self.terrain.terrain_levels.float().mean()
+        self.env.extra["curriculum/terrain_level"] = self.terrain.terrain_levels.float().mean()
+        self.env.extra["curriculum/distance_commanded"] = self.distance_commanded.mean()
+        self.env.extra["curriculum/distance_traveled"] = self.distance_traveled.mean()
         self.distance_commanded[env_ids] = 0.0
         self.distance_traveled[env_ids] = 0.0
         return super().sample_init(env_ids)
@@ -388,6 +390,7 @@ class Command2(Command):
             command_yaw_speed,
             self.fixed_yaw_speed
         ).reshape(self.num_envs, 1)
+        print(self.command_angvel.squeeze(-1))
 
         self.command_linvel_w[:] = quat_rotate(yaw_quat(self.quat_w), self.command_linvel)
         self.is_standing_env = (self.command_speed < 0.1) & (self.command_angvel.abs() < 0.1)
