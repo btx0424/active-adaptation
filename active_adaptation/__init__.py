@@ -1,5 +1,5 @@
 import os
-from active_adaptation.learning import ALGOS
+import active_adaptation.learning
 
 _BACKEND = "isaac"
 

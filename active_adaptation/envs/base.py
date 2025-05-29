@@ -132,8 +132,6 @@ class _Env(EnvBase):
 
         RAND_FUNCS = mdp.RAND_FUNCS
         RAND_FUNCS.update(mdp.get_obj_by_class(members, mdp.Randomization))
-        OBS_FUNCS = mdp.OBS_FUNCS
-        OBS_FUNCS.update(mdp.get_obj_by_class(members, mdp.Observation))
         REW_FUNCS = mdp.REW_FUNCS
         REW_FUNCS.update(mdp.get_obj_by_class(members, mdp.Reward))
         TERM_FUNCS = mdp.TERM_FUNCS
@@ -142,8 +140,6 @@ class _Env(EnvBase):
         for k, v in inspect.getmembers(self.command_manager):
             if getattr(v, "is_reward", False):
                 REW_FUNCS[k] = mdp.reward_wrapper(v)
-            elif getattr(v, "is_observation", False):
-                OBS_FUNCS[k] = mdp.observation_wrapper(v)
             elif getattr(v, "is_termination", False):
                 TERM_FUNCS[k] = mdp.termination_wrapper(v)
 
@@ -198,7 +194,8 @@ class _Env(EnvBase):
                 raise NotImplementedError
             funcs = OrderedDict()            
             for key, kwargs in params.items():
-                obs = OBS_FUNCS[key](self, **(kwargs if kwargs is not None else {}))
+                obs_cls= mdp.Observation.registry[key]
+                obs = obs_cls(self, **(kwargs if kwargs is not None else {}))
                 funcs[key] = obs
 
                 self._startup_callbacks.append(obs.startup)
@@ -433,7 +430,7 @@ class _Env(EnvBase):
             assert not ray_distance.isnan().any()
             return ray_distance.reshape(*bshape)
         elif self.backend == "mujoco":
-            return pos[..., 2, None]
+            return pos[..., 2]
     
     def _set_seed(self, seed: int = -1):
         # import omni.replicator.core as rep

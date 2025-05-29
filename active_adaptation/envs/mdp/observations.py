@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import abc
 import einops
+import inspect
 from typing import Tuple, TYPE_CHECKING, Callable
 
 from isaaclab.utils.math import quat_apply_yaw, quat_mul, quat_inv
@@ -25,6 +26,11 @@ if active_adaptation.get_backend() == "isaac":
 
 
 class Observation:
+    """
+    Base class for all observations.
+    """
+    registry = {}
+
     def __init__(self, env):
         self.env: _Env = env
 
@@ -63,12 +69,17 @@ class Observation:
         """Called at each step **after** simulation, if GUI is enabled"""
         pass
 
-
-def observation_wrapper(func: Callable[[], torch.Tensor]):
-    class ObservationWrapper(Observation):
-        def compute(self):
-            return func()
-    return ObservationWrapper
+    def __init_subclass__(cls) -> None:
+        """Put the subclass in the global registry"""
+        cls_name = cls.__name__
+        cls._file = inspect.getfile(cls)
+        cls._line = inspect.getsourcelines(cls)[1]
+        if cls_name not in Observation.registry:
+            Observation.registry[cls_name] = cls    
+        else:
+            conflicting_cls = Observation.registry[cls_name]
+            location = f"{conflicting_cls._file}:{conflicting_cls._line}"
+            raise ValueError(f"Observation {cls_name} already registered in {location}")
 
 
 
@@ -887,23 +898,6 @@ class body_momentum(Observation):
         return momentum.reshape(self.num_envs, -1)
 
 
-class body_height(Observation):
-    def __init__(self, env, body_names=".*", nomial_height=0.3):
-        super().__init__(env)
-        self.nominal_height = nomial_height
-        self.asset: Articulation = self.env.scene["robot"]
-        self.body_ids, self.body_names = self.asset.find_bodies(body_names)
-        self.num_feet = len(self.body_ids)
-    
-    def compute(self) -> torch.Tensor:
-        body_pos_w = self.asset.data.body_pos_w[:, self.body_ids]
-        body_height = body_pos_w[:, :, 2] / self.nominal_height
-        return body_height.reshape(self.num_envs, -1)
-    
-    def symmetry_transforms(self):
-        return sym_utils.cartesian_space_symmetry(self.asset, self.body_names, (1,))
-
-
 class feet_height_map(Observation):
     def __init__(
         self, 
@@ -1651,8 +1645,8 @@ class body_height(Observation):
         self.body_ids = torch.as_tensor(self.body_ids, device=self.device)
     
     def compute(self):
-        body_pos_w = self.asset.data.body_pos_w[:, self.body_ids, 2]
-        body_height = body_pos_w - self.env.get_ground_height_at(body_pos_w)
+        body_pos_w = self.asset.data.body_pos_w[:, self.body_ids]
+        body_height = body_pos_w[:, :, 2] - self.env.get_ground_height_at(body_pos_w)
         return body_height.reshape(self.num_envs, -1)
 
     def symmetry_transforms(self):
