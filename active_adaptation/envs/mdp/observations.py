@@ -1,13 +1,12 @@
 import torch
 import numpy as np
-import abc
 import einops
-import inspect
-from typing import Tuple, TYPE_CHECKING, Callable
+from typing import Tuple, TYPE_CHECKING
 
 from isaaclab.utils.math import quat_apply_yaw, quat_mul, quat_inv
 from isaaclab.utils.string import resolve_matching_names
 import active_adaptation
+from active_adaptation.envs.mdp.base import Observation
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse, yaw_quat, EMA
 import active_adaptation.utils.symmetry as sym_utils
 
@@ -15,72 +14,12 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation
     from isaaclab.sensors import ContactSensor, RayCaster, Imu
     from isaaclab.sensors import Camera, TiledCamera
-    from active_adaptation.envs.base import _Env
-
 
 if active_adaptation.get_backend() == "isaac":
     import isaaclab.sim as sim_utils
     from isaaclab.terrains.trimesh.utils import make_plane
     from isaaclab.utils.warp import convert_to_warp_mesh, raycast_mesh
     from pxr import UsdGeom, UsdPhysics
-
-
-class Observation:
-    """
-    Base class for all observations.
-    """
-    registry = {}
-
-    def __init__(self, env):
-        self.env: _Env = env
-
-    @property
-    def num_envs(self):
-        return self.env.num_envs
-    
-    @property
-    def device(self):
-        return self.env.device
-
-    @abc.abstractmethod
-    def compute(self) -> torch.Tensor:
-        raise NotImplementedError
-    
-    def __call__(self) ->  Tuple[torch.Tensor, torch.Tensor]:
-        tensor = self.compute()
-        return tensor
-    
-    def startup(self):
-        """Called once upon initialization of the environment"""
-        pass
-    
-    def post_step(self, substep: int):
-        """Called after each physics substep"""
-        pass
-
-    def update(self):
-        """Called after all physics substeps are completed"""
-        pass
-
-    def reset(self, env_ids: torch.Tensor):
-        """Called after episode termination"""
-
-    def debug_draw(self):
-        """Called at each step **after** simulation, if GUI is enabled"""
-        pass
-
-    def __init_subclass__(cls) -> None:
-        """Put the subclass in the global registry"""
-        cls_name = cls.__name__
-        cls._file = inspect.getfile(cls)
-        cls._line = inspect.getsourcelines(cls)[1]
-        if cls_name not in Observation.registry:
-            Observation.registry[cls_name] = cls    
-        else:
-            conflicting_cls = Observation.registry[cls_name]
-            location = f"{conflicting_cls._file}:{conflicting_cls._line}"
-            raise ValueError(f"Observation {cls_name} already registered in {location}")
-
 
 
 class root_linacc_b(Observation):

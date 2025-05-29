@@ -9,8 +9,6 @@ from omegaconf import OmegaConf
 
 from isaaclab.app import AppLauncher
 
-from active_adaptation.learning import ALGOS
-
 import wandb
 import logging
 from tqdm import tqdm

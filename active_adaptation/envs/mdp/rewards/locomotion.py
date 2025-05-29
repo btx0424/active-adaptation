@@ -121,30 +121,31 @@ class linvel_z_l2(Reward):
 
 
 class angvel_xy_l2(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True, body_name: str = None):
+    def __init__(self, env, weight: float, enabled: bool = True, body_names: str = None):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        if body_name is not None:
-            self.body_id = self.asset.find_bodies(body_name)[0][0]
+        if body_names is not None:
+            self.body_ids, self.body_names = self.asset.find_bodies(body_names)
+            self.body_ids = torch.tensor(self.body_ids, device=self.device)
         else:
-            self.body_id = None
-        self.world_frame = False
+            self.body_ids = None
 
     def update(self):
-        if self.body_id is not None:
-            angvel = self.asset.data.body_ang_vel_w[:, self.body_id]
-            if not self.world_frame:
-                angvel = quat_rotate_inverse(self.asset.data.root_quat_w, angvel)
+        if self.body_ids is not None:
+            angvel = quat_rotate_inverse(
+                self.asset.data.body_quat_w[:, self.body_ids],
+                self.asset.data.body_ang_vel_w[:, self.body_ids]
+            )
         else:
-            if self.world_frame:
-                angvel = self.asset.data.root_ang_vel_w
-            else:
-                angvel = self.asset.data.root_ang_vel_b
+            angvel = self.asset.data.root_ang_vel_b
         self.angvel = angvel
 
     def compute(self) -> torch.Tensor:
-        r = -self.angvel[:, :2].square().sum(-1, True)
-        return r
+        if self.body_ids is not None:
+            r = -self.angvel[:, :, :2].square().sum(-1).mean(1)
+        else:
+            r = -self.angvel[:, :2].square().sum(-1)
+        return r.reshape(self.num_envs, 1)
 
 
 @reward_func
@@ -1094,9 +1095,8 @@ class tracking_base_height(Reward):
         self.target_height = target_height
 
     def compute(self) -> torch.Tensor:
-        current_height = self.asset.data.root_pos_w[:, 2]
-        target_height = self.env.get_ground_height_at(self.asset.data.root_pos_w)
-        error = (current_height - target_height).square()
+        current_height = self.asset.data.root_pos_w[:, 2] - self.env.get_ground_height_at(self.asset.data.root_pos_w)
+        error = (current_height - self.target_height).square()
         rew = torch.where(current_height < self.target_height, torch.exp(-error / 0.25), 1.)
         return rew.reshape(self.num_envs, 1)
 
