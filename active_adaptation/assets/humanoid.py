@@ -364,7 +364,7 @@ G1_23DOF_CFG = ArticulationCfg( # no wrist pitch and yaw
 
 G1_WAIST_UNLOCKED_CFG = ArticulationCfg( # no wrist pitch and yaw
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ASSET_PATH}/G1/g1_waist_unlocked/g1_waist_unlocked.usd",
+        usd_path=f"{ASSET_PATH}/G1/g1_waist_unlocked/torso_root.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
