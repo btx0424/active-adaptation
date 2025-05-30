@@ -282,3 +282,27 @@ class orientation_isaaclab(Reward):
     def compute(self) -> torch.Tensor:
         return -torch.sum(self.asset.data.projected_gravity_b[:, :2].square(), dim=1, keepdim=True)
 
+
+class linvel_x_exp(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.command_manager = self.env.command_manager
+    
+    def compute(self):
+        linvel_x = self.asset.data.root_lin_vel_b[:, 0]
+        error = torch.square(self.command_manager.command_linvel[:, 0] - linvel_x)
+        return torch.exp(-error / 0.25).reshape(self.num_envs, 1)
+
+
+class linvel_y_exp(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.command_manager = self.env.command_manager
+    
+    def compute(self):
+        linvel_y = self.asset.data.root_lin_vel_b[:, 1]
+        error = torch.square(self.command_manager.command_linvel[:, 1] - linvel_y)
+        return torch.exp(-error / 0.25).reshape(self.num_envs, 1)
+

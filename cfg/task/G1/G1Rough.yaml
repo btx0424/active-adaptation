@@ -39,7 +39,7 @@ action:
 
 command:
   _target_: active_adaptation.envs.mdp.Command2
-  linvel_x_range: [-0.8, 1.4]
+  linvel_x_range: [-0.8, 1.5]
   linvel_y_range: [-0.8, 0.8]
   angvel_range: [-2.0, 2.0]
   yaw_stiffness_range: [0.5, 1.0]
@@ -86,7 +86,9 @@ observation:
 
 reward:
   loco:
-    linvel_exp:         {weight: 1.5, enabled: true, dim: 2}
+    linvel_x_exp:       {weight: 1.5, enabled: true}
+    linvel_y_exp:       {weight: 1.0, enabled: true}
+    
     linvel_projection:  {weight: 0.5, enabled: true}
     angvel_z_exp:       {weight: 1.2, enabled: true, gamma: 0.8}
     angvel_xy_l2:       {weight: 0.02, enabled: true}
@@ -99,7 +101,8 @@ reward:
     energy_l1:          {weight: 2.0e-4, enabled: true}
     joint_acc_l2:       {weight: 1.0e-7, enabled: true}
     joint_torques_l2:   {weight: 1.0e-6, enabled: true}
-    
+    orientation_isaaclab: {weight: 1.5, enabled: true}
+
     body_upright:       {weight: 1.0, enabled: true, body_name: "torso_link"}
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.005, enabled: true}
