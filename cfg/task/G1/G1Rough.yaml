@@ -84,10 +84,10 @@ observation:
 
 reward:
   loco:
-    linvel_exp:         {weight: 1.5, enabled: true, dim: 2, body_names: ["pelvis", "torso_link"]}
+    linvel_exp:         {weight: 1.5, enabled: true, dim: 2}
     linvel_projection:  {weight: 0.5, enabled: true}
     angvel_z_exp:       {weight: 1.2, enabled: true, gamma: 0.8}
-    angvel_xy_l2:       {weight: 0.02, enabled: true, body_names: ["pelvis", "torso_link"]}
+    angvel_xy_l2:       {weight: 0.02, enabled: true}
     linvel_z_l2:        {weight: 0.5, enabled: true}
     tracking_base_height: {weight: 2.0, enabled: true, target_height: 0.74}
     single_foot_contact: {weight: 0.75, enabled: true, body_names: .*ankle_roll_link, margin: 0.2}
@@ -100,8 +100,8 @@ reward:
     action_rate_l2:     {weight: 0.005, enabled: true}
     action_rate2_l2:    {weight: 0.005, enabled: true}
     feet_air_time:      {weight: 2.0, enabled: true, body_names: .*ankle_roll_link, thres: 0.5}
-    joint_vel_l2:       {weight: 1.0e-3, enabled: true, joint_names: [.*shoulder.*]}
-    joint_deviation_l2: {weight: 0.1, enabled: true, joint_names: [.*shoulder.*, .*hip_roll_joint, .*elbow_joint]}
+    joint_vel_l2:       {weight: 0.5e-4, enabled: true, joint_names: [.*shoulder.*, "waist_roll_joint"]}
+    joint_deviation_l2: {weight: 0.1, enabled: true, joint_names: [.*shoulder.*, .*hip_roll_joint, .*hip_yaw_joint, .*elbow_joint]}
   debug:
     feet_slip:          {weight: 0.5, enabled: false, body_names: .*ankle_roll_link}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*ankle_roll_link}

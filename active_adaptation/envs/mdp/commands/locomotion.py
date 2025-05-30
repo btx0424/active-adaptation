@@ -325,8 +325,10 @@ class Command2(Command):
         if self.curriculum and self.env.episode_count > 1 and self.env.training:
             time_remaining = (self.env.max_episode_length - self.env.episode_length_buf[env_ids, None]) * self.env.step_dt
             distance_commanded = (self.distance_commanded[env_ids] + self.command_speed[env_ids] * time_remaining)
+            distance_commanded = distance_commanded.clamp_min(0.5)
             move_up = self.distance_traveled[env_ids] > distance_commanded * 0.8
             move_down = self.distance_traveled[env_ids] < distance_commanded * 0.4
+            move_up = move_up & ~move_down
             self.terrain.update_env_origins(env_ids, move_up.squeeze(-1), move_down.squeeze(-1))
             self._origins = self.terrain.env_origins.clone()
             self.env.extra["curriculum/terrain_level"] = self.terrain.terrain_levels.float().mean()
