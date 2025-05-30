@@ -31,7 +31,7 @@ action:
     waist_pitch_joint: 0.25
     .*ankle.*: 0.25
   max_delay: 1
-  alpha: [0.5, 1.0]
+  alpha: [0.8, 1.0]
   # custom_command:
   #   .*wrist_roll_joint: 0.
   #   .*wrist_pitch_joint: 0.
@@ -115,7 +115,8 @@ reward:
     # reach_target_pos:       {weight: 1.0, enabled: true}
     # reach_target_yaw:       {weight: 1.0, enabled: true}
     # reaching_target:        {weight: 1.0, enabled: true}
-    linvel_exp:         {weight: 1.5, enabled: true, dim: 2}
+    linvel_x_exp:       {weight: 1.5, enabled: true}
+    linvel_y_exp:       {weight: 1.0, enabled: true}
     linvel_projection:  {weight: 0.5, enabled: true}
     angvel_z_exp:       {weight: 1.2, enabled: true, gamma: 0.8}
     tracking_base_height:   {weight: 2.0, enabled: true, target_height: 0.74}
