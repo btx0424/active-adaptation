@@ -329,7 +329,7 @@ class Command2(Command):
             move_down = self.distance_traveled[env_ids] < distance_commanded * 0.4
             self.terrain.update_env_origins(env_ids, move_up.squeeze(-1), move_down.squeeze(-1))
             self._origins = self.terrain.env_origins.clone()
-        self.env.extra["curriculum/terrain_level"] = self.terrain.terrain_levels.float().mean()
+            self.env.extra["curriculum/terrain_level"] = self.terrain.terrain_levels.float().mean()
         self.env.extra["curriculum/distance_commanded"] = self.distance_commanded.mean()
         self.env.extra["curriculum/distance_traveled"] = self.distance_traveled.mean()
         self.distance_commanded[env_ids] = 0.0

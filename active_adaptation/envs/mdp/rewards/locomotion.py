@@ -500,7 +500,6 @@ class angvel_z_exp(Reward):
         self.asset: Articulation = self.env.scene["robot"]
         self.world_frame = world_frame
         self.gamma = gamma
-        self.target_angvel: torch.Tensor = self.env.command_manager.command_angvel.reshape(self.num_envs)
         self.count = torch.zeros(self.num_envs, 1, device=self.device)
         self.angvel_sum = torch.zeros(self.num_envs, 3, device=self.device)
         if body_name is not None:
@@ -521,6 +520,7 @@ class angvel_z_exp(Reward):
         self.angvel_sum.mul_(self.gamma).add_(angvel)
         self.count.mul_(self.gamma).add_(1)
         self.angvel = self.angvel_sum / self.count
+        self.target_angvel: torch.Tensor = self.env.command_manager.command_angvel.reshape(self.num_envs)
 
     def compute(self) -> torch.Tensor:
         angvel_error = (self.target_angvel - self.angvel[:, 2]).square().unsqueeze(1)
