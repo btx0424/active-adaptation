@@ -236,12 +236,21 @@ class feet_parallel(Reward):
             torch.tensor([1., 0., 0.], device=self.device).expand(self.num_envs, 2, 3)
         )
         dot = torch.sum(self.feet_fwd_vec[:, 0] * self.feet_fwd_vec[:, 1], dim=1, keepdim=True)
-        return 1. - dot
+        return dot - 1.
     
-    # def debug_draw(self):
-    #     self.env.debug_draw.vector(
-    #         self.asset.data.body_pos_w[:, self.body_ids].reshape(-1, 3),
-    #         self.feet_fwd_vec.reshape(-1, 3),
-    #         color=(0, 0, 1, 1),
-    #     )
+    def debug_draw(self):
+        self.env.debug_draw.vector(
+            self.asset.data.body_pos_w[:, self.body_ids].reshape(-1, 3),
+            self.feet_fwd_vec.reshape(-1, 3),
+            color=(0, 0, 1, 1),
+        )
+
+
+class orientation_isaaclab(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+    
+    def compute(self) -> torch.Tensor:
+        return -torch.sum(self.asset.data.projected_gravity_b[:, :2].square(), dim=1, keepdim=True)
 
