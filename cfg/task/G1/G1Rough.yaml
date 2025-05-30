@@ -94,17 +94,20 @@ reward:
     tracking_base_height: {weight: 2.0, enabled: true, target_height: 0.74}
     single_foot_contact: {weight: 0.75, enabled: true, body_names: .*ankle_roll_link, margin: 0.2}
     feet_parallel:      {weight: 2.0, enabled: true, body_names: .*ankle_roll_link}
-
+    feet_clearance_simple: {weight: 2.0, enabled: true, body_names: .*ankle_roll_link}
+    
     energy_l1:          {weight: 2.0e-4, enabled: true}
     joint_acc_l2:       {weight: 1.0e-7, enabled: true}
-    # joint_torques_l2:   {weight: 5.0e-7, enabled: true}
+    joint_torques_l2:   {weight: 1.0e-6, enabled: true}
+    
     body_upright:       {weight: 1.0, enabled: true, body_name: "torso_link"}
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.005, enabled: true}
     action_rate2_l2:    {weight: 0.005, enabled: true}
     feet_air_time:      {weight: 2.0, enabled: true, body_names: .*ankle_roll_link, thres: 0.5}
-    joint_vel_l2:       {weight: 0.5e-4, enabled: true, joint_names: [.*shoulder.*, "waist_roll_joint"]}
+    joint_vel_l2:       {weight: 0.5e-4, enabled: true, joint_names: [.*shoulder.*, "waist.*"]}
     joint_deviation_l2: {weight: 0.1, enabled: true, joint_names: [.*shoulder.*, .*hip_roll_joint, .*hip_yaw_joint, .*elbow_joint]}
+    waist_deviation_l2: {weight: 0.5, enabled: true, joint_names: [waist.*]}
   debug:
     feet_slip:          {weight: 0.5, enabled: false, body_names: .*ankle_roll_link}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*ankle_roll_link}

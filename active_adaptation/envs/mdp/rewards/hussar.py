@@ -17,7 +17,7 @@ class torques_scaled(Reward):
     def compute(self) -> torch.Tensor:
         torques = self.asset.data.applied_torque / self.asset.data.joint_stiffness
         rew = torques.square().sum(1)
-        return rew.reshape(self.num_envs, 1)
+        return -rew.reshape(self.num_envs, 1)
 
 
 class feet_stumble(Reward):
@@ -232,7 +232,7 @@ class feet_parallel(Reward):
 
     def compute(self):
         self.feet_fwd_vec = quat_rotate(
-            self.asset.data.body_quat_w[:, self.body_ids],
+            yaw_quat(self.asset.data.body_quat_w[:, self.body_ids]),
             torch.tensor([1., 0., 0.], device=self.device).expand(self.num_envs, 2, 3)
         )
         dot = torch.sum(self.feet_fwd_vec[:, 0] * self.feet_fwd_vec[:, 1], dim=1, keepdim=True)
@@ -244,6 +244,34 @@ class feet_parallel(Reward):
             self.feet_fwd_vec.reshape(-1, 3),
             color=(0, 0, 1, 1),
         )
+
+
+class feet_clearance_simple(Reward):
+    def __init__(self, env, body_names, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_ids = self.asset.find_bodies(body_names)[0]
+        self.target_height = 0.08
+    
+    def compute(self):
+        feet_pos_w = self.asset.data.body_pos_w[:, self.body_ids]
+        feet_vel_w = self.asset.data.body_vel_w[:, self.body_ids]
+        feet_speed = torch.norm(feet_vel_w[:, :, :2], dim=2).square()
+        feet_height = feet_pos_w[:, :, 2] - self.env.get_ground_height_at(feet_pos_w)
+        error = (feet_height - self.target_height).clamp_max(0.0)
+        return (feet_speed * error).sum(dim=1).reshape(self.num_envs, 1)
+
+
+class waist_deviation_l2(Reward):
+    def __init__(self, env, joint_names, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids = self.asset.find_joints(joint_names)[0]
+        self.default_joint_pos = self.asset.data.default_joint_pos[:, self.joint_ids].clone()
+    
+    def compute(self):
+        dev = self.asset.data.joint_pos[:, self.joint_ids] - self.default_joint_pos
+        return -dev.square().sum(1, True)
 
 
 class orientation_isaaclab(Reward):
