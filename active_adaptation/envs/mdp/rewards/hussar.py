@@ -163,7 +163,7 @@ class feet_distance_lateral(Reward):
         for i in range(2):
             feetpos_in_body_frame[:, i, :] = quat_rotate_inverse(yaw_quat(self.asset.data.root_link_quat_w), cur_feetpos_translated[:, i, :])
         foot_lateral_dis = torch.abs(feetpos_in_body_frame[:, 0, 1] - feetpos_in_body_frame[:, 1, 1])
-        return -(torch.clamp(foot_lateral_dis - self.least_distance, max=0) + torch.clamp(-foot_lateral_dis + self.most_distance, max=0)).reshape(self.env.num_envs, -1)
+        return (torch.clamp(foot_lateral_dis - self.least_distance, max=0) + torch.clamp(-foot_lateral_dis + self.most_distance, max=0)).reshape(self.env.num_envs, -1)
 
 
 class knee_distance_lateral(Reward):
@@ -180,7 +180,7 @@ class knee_distance_lateral(Reward):
         for i in range(4):
             kneepos_in_body_frame[:, i, :] = quat_rotate_inverse(yaw_quat(self.asset.data.root_link_quat_w), cur_feetpos_translated[:, i, :])
         foot_lateral_dis = torch.abs(kneepos_in_body_frame[:, 0, 1] - kneepos_in_body_frame[:, 1, 1]) + torch.abs(kneepos_in_body_frame[:, 2, 1] - kneepos_in_body_frame[:, 3, 1])
-        return -(torch.clamp(foot_lateral_dis - 2 * self.least_distance, max=0) + torch.clamp(-foot_lateral_dis + 2 * self.most_distance, max=0)).reshape(self.env.num_envs, -1)
+        return (torch.clamp(foot_lateral_dis - 2 * self.least_distance, max=0) + torch.clamp(-foot_lateral_dis + 2 * self.most_distance, max=0)).reshape(self.env.num_envs, -1)
 
 
 class stand_still(Reward):
