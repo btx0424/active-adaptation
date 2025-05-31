@@ -108,16 +108,10 @@ class linvel_z_l2(Reward):
     def __init__(self, env, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager = self.env.command_manager
-        if isinstance(self.command_manager, Command2):
-            self.coeff = self.command_manager.command[:, 3].unsqueeze(1)
-        else:
-            self.coeff = 1.0
 
     def compute(self) -> torch.Tensor:
-        # command_speed = self.command_manager.command_linvel[:, 2].norm(dim=-1, keepdim=True)
         linvel_z = self.asset.data.root_lin_vel_b[:, 2].unsqueeze(1)
-        return -linvel_z.square() * self.coeff
+        return -linvel_z.square()
 
 
 class angvel_xy_l2(Reward):

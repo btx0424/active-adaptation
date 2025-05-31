@@ -7,9 +7,9 @@ from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation
     from isaaclab.sensors import ContactSensor
-    from active_adaptation.assets import Humanoid
+    from active_adaptation.envs.mdp.commands.locomotion import Command2
 
-from .locomotion import Reward, normalize, Command2
+from .locomotion import Reward, normalize
 
 def dot(a: torch.Tensor, b: torch.Tensor):
     return (a * b).sum(-1, True)
