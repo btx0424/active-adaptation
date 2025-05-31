@@ -111,14 +111,14 @@ reward:
     feet_contact_forces:    {weight: 2.5e-4, enabled: true, body_names: [.*ankle_roll_link], max_contact_force: 400.0}
     contact_momentum:       {weight: 2.5e-4, enabled: true, body_names: [.*ankle_roll_link]}
     # action_vanish:          {weight: 0.1, enabled: true} 
-    # velocity_direction:     {weight: 1.0, enabled: true}
-    # reach_target_pos:       {weight: 1.0, enabled: true}
-    # reach_target_yaw:       {weight: 1.0, enabled: true}
-    # reaching_target:        {weight: 1.0, enabled: true}
-    linvel_x_exp:       {weight: 1.5, enabled: true}
-    linvel_y_exp:       {weight: 1.0, enabled: true}
-    linvel_projection:  {weight: 0.5, enabled: true}
-    angvel_z_exp:       {weight: 1.2, enabled: true, gamma: 0.8}
+    velocity_direction:     {weight: 1.0, enabled: true}
+    reach_target_pos:       {weight: 1.0, enabled: true}
+    reach_target_yaw:       {weight: 1.0, enabled: true}
+    reaching_target:        {weight: 1.0, enabled: true}
+    # linvel_x_exp:       {weight: 1.5, enabled: true}
+    # linvel_y_exp:       {weight: 1.0, enabled: true}
+    # linvel_projection:  {weight: 0.5, enabled: true}
+    # angvel_z_exp:       {weight: 1.2, enabled: true, gamma: 0.8}
     tracking_base_height:   {weight: 2.0, enabled: true, target_height: 0.74}
   debug:
     feet_slip:              {weight: 0.25, enabled: false, body_names: [.*ankle_roll_link]}
