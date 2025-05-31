@@ -472,27 +472,6 @@ ROUGH_TERRAIN_BASE_CFG = TerrainImporterCfg(
 )
 
 
-TRACK_TERRAIN_CFG = TerrainImporterCfg(
-    prim_path="/World/ground",
-    terrain_type="usd",
-    collision_group=-1,
-    physics_material=sim_utils.RigidBodyMaterialCfg(
-        friction_combine_mode="multiply",
-        restitution_combine_mode="multiply",
-        static_friction=1.0,
-        dynamic_friction=1.0,
-        # restitution=1.0,
-    ),
-    usd_path="/home/btx0424/track.usd",
-)
-TRACK_TERRAIN_CFG.origins = [
-    [11.0, -3., 0.],
-    [11.0, -1., 0.],
-    [11.0, 1., 0.],
-    [11.0, 3., 0.],
-]
-
-
 TERRAINS = {
     "medium": ROUGH_TERRAIN_BASE_CFG.replace(terrain_generator=ROUGH_MEDIUM),
     "medium_curriculum": ROUGH_TERRAIN_BASE_CFG.replace(terrain_generator=ROUGH_MEDIUM.replace(curriculum=True)),
@@ -504,7 +483,6 @@ TERRAINS = {
     "stairs_easy": ROUGH_TERRAIN_BASE_CFG.replace(terrain_generator=STAIRS_EASY),
     "dic": DIC,
     "orca_loco": ORCA_LOCO,
-    "track": TRACK_TERRAIN_CFG
 }
 
 
