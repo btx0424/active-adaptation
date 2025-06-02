@@ -12,6 +12,8 @@ from tensordict.nn import (
 from torchrl.envs import EnvBase
 from active_adaptation.learning.ppo.common import *
 from torch.utils._pytree import tree_map
+from collections import OrderedDict
+import warnings
 
 
 @dataclass
@@ -236,3 +238,24 @@ class TD3(TensorDictModuleBase):
             "actor/loss": actor_loss,
             "actor/grad_norm": actor_grad_norm,
         }
+    
+    def state_dict(self):
+        state_dict = OrderedDict()
+        for name, module in self.named_children():
+            state_dict[name] = module.state_dict()
+        return state_dict
+    
+    def load_state_dict(self, state_dict, strict=True):
+        succeed_keys = []
+        failed_keys = []
+        for name, module in self.named_children():
+            _state_dict = state_dict.get(name, {})
+            try:
+                module.load_state_dict(_state_dict, strict=strict)
+                succeed_keys.append(name)
+            except Exception as e:
+                warnings.warn(f"Failed to load state dict for {name}: {str(e)}")
+                failed_keys.append(name)
+        print(f"Successfully loaded {succeed_keys}.")
+        return failed_keys
+
