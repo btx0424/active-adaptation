@@ -1,0 +1,238 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from copy import deepcopy
+from dataclasses import dataclass
+from hydra.core.config_store import ConfigStore
+from tensordict.nn import (
+    TensorDictModule as Mod,
+    TensorDictSequential as Seq,
+    TensorDictModuleBase,
+)
+from torchrl.envs import EnvBase
+from active_adaptation.learning.ppo.common import *
+from torch.utils._pytree import tree_map
+
+
+@dataclass
+class TD3Config:
+    _target_: str = "active_adaptation.learning.td3.td3.TD3"
+    name: str = "td3"
+    train_every: int = 1
+    gamma: float = 0.99
+    max_grad_norm: float = 1.0
+    learning_starts: int = 10
+
+    buffer_size: int = 1024 * 10
+    batch_size: int = 32768
+    num_updates: int = 2 # number of updates per step
+    policy_frequency: int = 2
+    n_steps: int = 4
+
+
+cs = ConfigStore.instance()
+cs.store("td3", node=TD3Config, group="algo")
+
+
+class Actor(nn.Module):
+    def __init__(self, action_dim):
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.LazyLinear(256), nn.ReLU(),
+            nn.LazyLinear(256), nn.ReLU(),
+            nn.LazyLinear(256), nn.ReLU(),
+        )
+        self.act = nn.Sequential(
+            nn.LazyLinear(action_dim), nn.Tanh(),
+        )
+    
+    def forward(self, obs):
+        return self.act(self.layers(obs))
+
+
+class Critic(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.q_net_1 = nn.Sequential(
+            nn.LazyLinear(256), nn.ReLU(),
+            nn.LazyLinear(256), nn.ReLU(),
+            nn.LazyLinear(256), nn.ReLU(),
+            nn.LazyLinear(1),
+        )
+        self.q_net_2 = nn.Sequential(
+            nn.LazyLinear(256), nn.ReLU(),
+            nn.LazyLinear(256), nn.ReLU(),
+            nn.LazyLinear(256), nn.ReLU(),
+            nn.LazyLinear(1),
+        )
+    
+    def forward(self, obs: torch.Tensor, act: torch.Tensor):
+        obs_act = torch.cat([obs, act], dim=-1)
+        q1 = self.q_net_1(obs_act)
+        q2 = self.q_net_2(obs_act)
+        return torch.cat([q1, q2], dim=-1)
+
+
+class Noise(nn.Module):
+    def __init__(self, batch_size, action_dim):
+        super().__init__()
+        self.noise_scales = nn.Parameter(torch.ones(batch_size, action_dim))
+    
+    def forward(self, obs: torch.Tensor):
+        noise = torch.randn_like(obs).clamp(-.8, .8) * self.noise_scales
+        return obs + noise
+
+
+class TD3(TensorDictModuleBase):
+    def __init__(
+        self,
+        cfg: TD3Config,
+        observation_spec,
+        action_spec,
+        reward_spec,
+        device,
+        env: EnvBase,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.device = device
+        self.gamma = cfg.gamma
+        self.n_steps = cfg.n_steps
+        self.max_grad_norm = cfg.max_grad_norm
+        self.num_updates = cfg.num_updates
+
+        fake_input = observation_spec.zero()
+        action_dim = action_spec.shape[-1]
+
+        self.actor = Mod(Actor(action_dim), [OBS_KEY], [ACTION_KEY]).to(self.device)
+        self.critic = Mod(Critic(), [OBS_KEY, ACTION_KEY], ["qs"]).to(self.device)
+        self.noise = Mod(Noise(fake_input.shape[0], action_dim), [ACTION_KEY], [ACTION_KEY]).to(self.device)
+
+        self.actor(fake_input)
+        self.critic(fake_input)
+        self.critic_target = deepcopy(self.critic)
+
+        self.opt_actor = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
+        self.opt_critic = torch.optim.Adam(self.critic.parameters(), lr=5e-4)
+
+        self.global_step = 0
+        self.buffer_ptr = 0
+        fake_tensordict = env.fake_tensordict()
+        buffer_shape = (fake_tensordict.shape[0], cfg.buffer_size)
+        self.buffer: TensorDict = (
+            fake_tensordict.exclude(("next", "stats"))
+            .unsqueeze(1)
+            .expand(buffer_shape)
+            .clone()
+        )
+        self.batch_size = cfg.batch_size // buffer_shape[0]
+        
+    def get_rollout_policy(self, mode: str="train"):
+        if mode == "train":
+            return Seq(self.actor, self.noise)
+        else:
+            return self.actor
+    
+    def train_op(self, tensordict: TensorDictBase):
+
+        infos = {"buffer": min(self.buffer_ptr, self.buffer.shape[1])}
+        tensordict = tensordict.exclude(("next", "stats"), "collector")
+        
+        self.buffer[:, self.buffer_ptr % self.buffer.shape[1]] = tensordict.squeeze(1).to(self.buffer.device)
+        self.buffer_ptr += 1
+        self.global_step += 1
+
+        if self.global_step < self.cfg.learning_starts:
+            return infos
+        
+        critic_infos = []
+        actor_infos = []
+
+        for i in range(self.num_updates):
+            batch = self.sample_batch()
+            critic_infos.append(self.update_critic(batch))
+            if i % self.cfg.policy_frequency == 1:
+                actor_infos.append(self.update_actor(batch))
+            soft_copy_(self.critic, self.critic_target, tau=0.1)
+        
+        critic_infos = tree_map(lambda *xs: sum(xs).item() / len(xs), *critic_infos)
+        actor_infos = tree_map(lambda *xs: sum(xs).item() / len(xs), *actor_infos)
+        infos.update(critic_infos)
+        infos.update(actor_infos)
+        return {k: v for k, v in sorted(infos.items())}
+    
+    def sample_batch(self) -> TensorDictBase:
+        shape = (self.buffer.shape[0], self.batch_size)
+        n_steps = self.n_steps - 1
+        indices = torch.randint(
+            0,
+            min(self.buffer_ptr, self.buffer.shape[1]-n_steps),
+            shape,
+            device=self.device,
+        )
+        steps = torch.arange(n_steps, device=self.device)
+        indices = (indices.unsqueeze(-1) + steps).flatten(start_dim=1)
+        samples: TensorDictBase = self.buffer.gather(dim=1, index=indices).reshape(*shape, n_steps)
+
+        done = samples["next", "done"] # [*shape, n_steps, 1]
+        reward = samples["next", "reward"].sum(dim=-1, keepdim=True) # [*shape, n_steps, 1]
+        gammas = torch.pow(self.gamma, steps).reshape(n_steps, 1)
+        discounts = (gammas * torch.cumprod(1.0 - done.float(), dim=2)) # [*shape, n_steps, 1]
+        discounted_reward = torch.sum(reward * discounts, dim=2) # [*shape, 1]
+
+        # if done.any():
+        #     print("hi")
+
+        next_indices = torch.where(
+            done.any(dim=2),
+            done.float().argmax(dim=2),
+            n_steps-1
+        )
+        result = samples[:, :, 0]
+        result["next"] = samples["next"].gather(2, next_indices.reshape(*shape, 1)).squeeze(2)
+        result["next", "reward"] = discounted_reward
+        return result
+    
+    def update_critic(self, tensordict: TensorDictBase):
+        next_tensordict = tensordict["next"]
+        
+        reward = next_tensordict["reward"]
+        gamma = self.gamma * (~next_tensordict["terminated"]).float()
+        
+        with torch.no_grad():
+            next_qs = reward + gamma * self.critic_target(self.actor(next_tensordict))["qs"]
+            q_target = torch.min(next_qs, dim=-1, keepdim=True).values
+
+        qs = self.critic(tensordict)["qs"]
+        q_loss = F.mse_loss(qs, q_target)
+
+        self.opt_critic.zero_grad(set_to_none=True)
+        q_loss.backward()
+        critic_grad_norm = torch.nn.utils.clip_grad_norm_(
+            self.critic.parameters(),
+            max_norm=self.max_grad_norm,
+        )
+        self.opt_critic.step()
+        return {
+            "critic/q_loss": q_loss.detach(),
+            "critic/q_value": qs.detach().mean(),
+            "critic/grad_norm": critic_grad_norm,
+        }
+    
+    def update_actor(self, tensordict: TensorDictBase):
+        next_tensordict = tensordict["next"]
+        next_qs = self.critic(self.actor(next_tensordict))["qs"]
+        q_value = torch.mean(next_qs, dim=-1)
+        actor_loss = -q_value.mean()
+
+        self.opt_actor.zero_grad(set_to_none=True)
+        actor_loss.backward()
+        actor_grad_norm = torch.nn.utils.clip_grad_norm_(
+            self.actor.parameters(),
+            max_norm=self.max_grad_norm,
+        )
+        self.opt_actor.step()
+        return {
+            "actor/loss": actor_loss,
+            "actor/grad_norm": actor_grad_norm,
+        }

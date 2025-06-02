@@ -38,7 +38,7 @@ action:
   #   .*wrist_yaw_joint: 0.
 
 command:
-  _target_: active_adaptation.envs.mdp.Command2
+  _target_: active_adaptation.envs.mdp.commands.locomotion.Command2
   linvel_x_range: [-0.8, 1.4]
   linvel_y_range: [-0.8, 0.8]
   angvel_range: [-2.0, 2.0]
