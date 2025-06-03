@@ -48,7 +48,7 @@ class Actor(nn.Module):
         self.act = nn.LazyLinear(action_dim)
     
     def forward(self, obs):
-        return F.tanh(self.act(self.layers(obs)))
+        return F.tanh(self.act(self.layers(obs)) / 2.0) * 2.0
 
 
 class DistributionalQNetwork(nn.Module):
@@ -241,8 +241,8 @@ class TD3(TensorDictModuleBase):
             n_obs=observation_spec["policy"].shape[-1],
             n_act=action_dim,
             num_atoms=101,
-            v_min=-10.0,
-            v_max=10.0,
+            v_min=-5.0,
+            v_max=20.0,
             hidden_dim=512,
             device=self.device,
         ).to(self.device)
@@ -337,7 +337,7 @@ class TD3(TensorDictModuleBase):
         samples: TensorDictBase = self.buffer.gather(dim=1, index=indices).reshape(*shape, n_steps)
 
         done = samples["next", "done"] # [*shape, n_steps, 1]
-        reward = samples["next", "reward"].sum(dim=-1, keepdim=True) # [*shape, n_steps, 1]
+        reward = samples["next", "reward"].sum(dim=-1, keepdim=True).clamp(0.) # [*shape, n_steps, 1]
         gammas = torch.pow(self.gamma, steps).reshape(n_steps, 1)
         discounts = (gammas * torch.cumprod(1.0 - done.float(), dim=2)) # [*shape, n_steps, 1]
         discounted_reward = torch.sum(reward * discounts, dim=2) # [*shape, 1]
@@ -353,6 +353,7 @@ class TD3(TensorDictModuleBase):
         result = samples[:, :, 0]
         result["next"] = samples["next"].gather(2, next_indices.reshape(*shape, 1)).squeeze(2)
         result["next", "reward"] = discounted_reward
+        assert torch.all(result["next", "done"] == done.any(dim=2))
         return result.reshape(-1), indices_start
     
     def update_critic(self, tensordict: TensorDictBase):
@@ -361,7 +362,7 @@ class TD3(TensorDictModuleBase):
         reward = next_tensordict["reward"]
         
         with torch.no_grad():
-            next_action = self.actor_target(next_tensordict)["action"]
+            next_action = self.actor(next_tensordict)["action"]
             noise = torch.randn_like(next_action)
             next_action += (noise * 0.01)
             next_tensordict["action"] = next_action
@@ -403,7 +404,7 @@ class TD3(TensorDictModuleBase):
             qf2 = self.critic.get_value(F.softmax(qf2, dim=1))
         return {
             "critic/q_loss": qf_loss.detach(),
-            "critic/q_value": (qf1 + qf2) / 2.0,
+            "critic/q_value": torch.mean((qf1 + qf2) / 2.0),
             "critic/grad_norm": critic_grad_norm,
         }
     
