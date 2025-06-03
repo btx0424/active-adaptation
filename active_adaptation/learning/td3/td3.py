@@ -22,10 +22,10 @@ class TD3Config:
     name: str = "td3"
     train_every: int = 1
     gamma: float = 0.99
-    max_grad_norm: float = 1.0
+    max_grad_norm: float = 2.0
     learning_starts: int = 10
 
-    buffer_size: int = 1024 * 10
+    buffer_size: int = 1024 * 5
     batch_size: int = 32768
     num_updates: int = 2 # number of updates per step
     policy_frequency: int = 2
@@ -40,9 +40,9 @@ class Actor(nn.Module):
     def __init__(self, action_dim):
         super().__init__()
         self.layers = nn.Sequential(
-            nn.LazyLinear(256), nn.ReLU(),
-            nn.LazyLinear(256), nn.ReLU(),
-            nn.LazyLinear(256), nn.ReLU(),
+            nn.LazyLinear(256), nn.LeakyReLU(),
+            nn.LazyLinear(256), nn.LeakyReLU(),
+            nn.LazyLinear(256), nn.LeakyReLU(),
         )
         self.act = nn.Sequential(
             nn.LazyLinear(action_dim), nn.Tanh(),
@@ -56,15 +56,15 @@ class Critic(nn.Module):
     def __init__(self):
         super().__init__()
         self.q_net_1 = nn.Sequential(
-            nn.LazyLinear(256), nn.ReLU(),
-            nn.LazyLinear(256), nn.ReLU(),
-            nn.LazyLinear(256), nn.ReLU(),
+            nn.LazyLinear(256), nn.LeakyReLU(),
+            nn.LazyLinear(256), nn.LeakyReLU(),
+            nn.LazyLinear(256), nn.LeakyReLU(),
             nn.LazyLinear(1),
         )
         self.q_net_2 = nn.Sequential(
-            nn.LazyLinear(256), nn.ReLU(),
-            nn.LazyLinear(256), nn.ReLU(),
-            nn.LazyLinear(256), nn.ReLU(),
+            nn.LazyLinear(256), nn.LeakyReLU(),
+            nn.LazyLinear(256), nn.LeakyReLU(),
+            nn.LazyLinear(256), nn.LeakyReLU(),
             nn.LazyLinear(1),
         )
     
@@ -78,7 +78,7 @@ class Critic(nn.Module):
 class Noise(nn.Module):
     def __init__(self, batch_size, action_dim):
         super().__init__()
-        self.noise_scales = nn.Parameter(torch.ones(batch_size, action_dim))
+        self.noise_scales = nn.Parameter(0.4 * torch.ones(batch_size, action_dim))
     
     def forward(self, obs: torch.Tensor):
         noise = torch.randn_like(obs).clamp(-.8, .8) * self.noise_scales
@@ -202,11 +202,14 @@ class TD3(TensorDictModuleBase):
         gamma = self.gamma * (~next_tensordict["terminated"]).float()
         
         with torch.no_grad():
-            next_qs = reward + gamma * self.critic_target(self.actor(next_tensordict))["qs"]
+            self.actor(next_tensordict)
+            noise = torch.randn_like(next_tensordict["action"])
+            next_tensordict["action"] += (noise * 0.001).clamp(-.5, .5)
+            next_qs = reward + gamma * self.critic_target(next_tensordict)["qs"]
             q_target = torch.min(next_qs, dim=-1, keepdim=True).values
 
         qs = self.critic(tensordict)["qs"]
-        q_loss = F.mse_loss(qs, q_target)
+        q_loss = F.mse_loss(qs, q_target.expand_as(qs))
 
         self.opt_critic.zero_grad(set_to_none=True)
         q_loss.backward()
@@ -222,9 +225,10 @@ class TD3(TensorDictModuleBase):
         }
     
     def update_actor(self, tensordict: TensorDictBase):
-        next_tensordict = tensordict["next"]
-        next_qs = self.critic(self.actor(next_tensordict))["qs"]
-        q_value = torch.mean(next_qs, dim=-1)
+        self.actor(tensordict)
+        tensordict["action"].retain_grad()
+        qs = self.critic(tensordict)["qs"]
+        q_value = torch.mean(qs, dim=-1)
         actor_loss = -q_value.mean()
 
         self.opt_actor.zero_grad(set_to_none=True)
@@ -235,8 +239,9 @@ class TD3(TensorDictModuleBase):
         )
         self.opt_actor.step()
         return {
-            "actor/loss": actor_loss,
+            "actor/loss": actor_loss.detach(),
             "actor/grad_norm": actor_grad_norm,
+            "actor/action_grad_norm": tensordict["action"].grad.norm(dim=-1).mean(),
         }
     
     def state_dict(self):
