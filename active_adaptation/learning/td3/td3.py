@@ -30,6 +30,7 @@ class TD3Config:
     num_updates: int = 2 # number of updates per step
     policy_frequency: int = 2
     n_steps: int = 4
+    backtrack: bool = False
 
 
 cs = ConfigStore.instance()
@@ -42,14 +43,12 @@ class Actor(nn.Module):
         self.layers = nn.Sequential(
             nn.LazyLinear(256), nn.LeakyReLU(),
             nn.LazyLinear(256), nn.LeakyReLU(),
-            nn.LazyLinear(256), nn.LeakyReLU(),
+            nn.LazyLinear(256), nn.LeakyReLU(), nn.LayerNorm(256),
         )
-        self.act = nn.Sequential(
-            nn.LazyLinear(action_dim), nn.Tanh(),
-        )
+        self.act = nn.LazyLinear(action_dim)
     
     def forward(self, obs):
-        return self.act(self.layers(obs))
+        return F.tanh(self.act(self.layers(obs)))
 
 
 class Critic(nn.Module):
@@ -58,13 +57,13 @@ class Critic(nn.Module):
         self.q_net_1 = nn.Sequential(
             nn.LazyLinear(256), nn.LeakyReLU(),
             nn.LazyLinear(256), nn.LeakyReLU(),
-            nn.LazyLinear(256), nn.LeakyReLU(),
+            nn.LazyLinear(256), nn.LeakyReLU(), nn.LayerNorm(256),
             nn.LazyLinear(1),
         )
         self.q_net_2 = nn.Sequential(
             nn.LazyLinear(256), nn.LeakyReLU(),
             nn.LazyLinear(256), nn.LeakyReLU(),
-            nn.LazyLinear(256), nn.LeakyReLU(),
+            nn.LazyLinear(256), nn.LeakyReLU(), nn.LayerNorm(256),
             nn.LazyLinear(1),
         )
     
@@ -78,9 +77,14 @@ class Critic(nn.Module):
 class Noise(nn.Module):
     def __init__(self, batch_size, action_dim):
         super().__init__()
-        self.noise_scales = nn.Parameter(0.4 * torch.ones(batch_size, action_dim))
-    
-    def forward(self, obs: torch.Tensor):
+        self.noise_scales: torch.Tensor
+        self.register_buffer("noise_scales", torch.ones(batch_size, action_dim))
+
+    def forward(self, obs: torch.Tensor, is_init: torch.Tensor):
+        if is_init.any():
+            is_init = is_init
+            new_scales = torch.rand_like(self.noise_scales) * 0.2 + 0.2
+            self.noise_scales = torch.where(is_init, new_scales, self.noise_scales)
         noise = torch.randn_like(obs).clamp(-.8, .8) * self.noise_scales
         return obs + noise
 
@@ -108,10 +112,24 @@ class TD3(TensorDictModuleBase):
 
         self.actor = Mod(Actor(action_dim), [OBS_KEY], [ACTION_KEY]).to(self.device)
         self.critic = Mod(Critic(), [OBS_KEY, ACTION_KEY], ["qs"]).to(self.device)
-        self.noise = Mod(Noise(fake_input.shape[0], action_dim), [ACTION_KEY], [ACTION_KEY]).to(self.device)
+        self.noise = Mod(
+            Noise(fake_input.shape[0], action_dim),
+            [ACTION_KEY, "is_init"],
+            [ACTION_KEY],
+        ).to(self.device)
 
         self.actor(fake_input)
         self.critic(fake_input)
+
+        def init(m: nn.Module):
+            if isinstance(m, nn.Linear):
+                nn.init.zeros_(m.bias)
+            elif isinstance(m, Actor):
+                nn.init.normal_(m.act.weight, 0.0, 0.01)
+        
+        self.actor.apply(init)
+        self.critic.apply(init)
+
         self.critic_target = deepcopy(self.critic)
 
         self.opt_actor = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
@@ -150,8 +168,9 @@ class TD3(TensorDictModuleBase):
         critic_infos = []
         actor_infos = []
 
+        indices_start = None
         for i in range(self.num_updates):
-            batch = self.sample_batch()
+            batch, indices_start = self.sample_batch(indices_start)
             critic_infos.append(self.update_critic(batch))
             if i % self.cfg.policy_frequency == 1:
                 actor_infos.append(self.update_actor(batch))
@@ -163,17 +182,20 @@ class TD3(TensorDictModuleBase):
         infos.update(actor_infos)
         return {k: v for k, v in sorted(infos.items())}
     
-    def sample_batch(self) -> TensorDictBase:
+    def sample_batch(self, indices_start = None) -> TensorDictBase:
         shape = (self.buffer.shape[0], self.batch_size)
         n_steps = self.n_steps - 1
-        indices = torch.randint(
-            0,
-            min(self.buffer_ptr, self.buffer.shape[1]-n_steps),
-            shape,
-            device=self.device,
-        )
+        if indices_start is not None and self.cfg.backtrack:
+            indices_start = (indices_start - 1) % self.buffer.shape[1]
+        else:
+            indices_start = torch.randint(
+                0,
+                min(self.buffer_ptr, self.buffer.shape[1] - n_steps),
+                shape,
+                device=self.device,
+            )
         steps = torch.arange(n_steps, device=self.device)
-        indices = (indices.unsqueeze(-1) + steps).flatten(start_dim=1)
+        indices = ((indices_start.unsqueeze(-1) + steps) % self.buffer.shape[1]).flatten(start_dim=1)
         samples: TensorDictBase = self.buffer.gather(dim=1, index=indices).reshape(*shape, n_steps)
 
         done = samples["next", "done"] # [*shape, n_steps, 1]
@@ -193,18 +215,18 @@ class TD3(TensorDictModuleBase):
         result = samples[:, :, 0]
         result["next"] = samples["next"].gather(2, next_indices.reshape(*shape, 1)).squeeze(2)
         result["next", "reward"] = discounted_reward
-        return result
+        return result, indices_start
     
     def update_critic(self, tensordict: TensorDictBase):
         next_tensordict = tensordict["next"]
         
         reward = next_tensordict["reward"]
-        gamma = self.gamma * (~next_tensordict["terminated"]).float()
+        gamma = (self.gamma**self.n_steps) * (~next_tensordict["terminated"]).float()
         
         with torch.no_grad():
             self.actor(next_tensordict)
-            noise = torch.randn_like(next_tensordict["action"])
-            next_tensordict["action"] += (noise * 0.001).clamp(-.5, .5)
+            # noise = torch.randn_like(next_tensordict["action"])
+            # next_tensordict["action"] += (noise * 0.001).clamp(-.5, .5)
             next_qs = reward + gamma * self.critic_target(next_tensordict)["qs"]
             q_target = torch.min(next_qs, dim=-1, keepdim=True).values
 
@@ -219,13 +241,16 @@ class TD3(TensorDictModuleBase):
         )
         self.opt_critic.step()
         return {
+            "critic/q_std": qs.detach().std(dim=-1).mean(),
             "critic/q_loss": q_loss.detach(),
             "critic/q_value": qs.detach().mean(),
             "critic/grad_norm": critic_grad_norm,
         }
     
     def update_actor(self, tensordict: TensorDictBase):
+        action_buffer = tensordict["action"].clone()
         self.actor(tensordict)
+        action_old = tensordict["action"].clone()
         tensordict["action"].retain_grad()
         qs = self.critic(tensordict)["qs"]
         q_value = torch.mean(qs, dim=-1)
@@ -238,10 +263,15 @@ class TD3(TensorDictModuleBase):
             max_norm=self.max_grad_norm,
         )
         self.opt_actor.step()
+        with torch.no_grad():
+            action = self.actor(tensordict)["action"]
+            action_dev_buffer = (action - action_buffer).norm(dim=-1)
+            action_dev_update = (action - action_old).norm(dim=-1)
         return {
+            "actor/action_dev_buffer": action_dev_buffer.mean(),
+            "actor/action_dev_update": action_dev_update.mean(),
             "actor/loss": actor_loss.detach(),
             "actor/grad_norm": actor_grad_norm,
-            "actor/action_grad_norm": tensordict["action"].grad.norm(dim=-1).mean(),
         }
     
     def state_dict(self):
