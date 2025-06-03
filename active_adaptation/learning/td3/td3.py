@@ -123,6 +123,7 @@ class TD3(TensorDictModuleBase):
 
         def init(m: nn.Module):
             if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight, gain=0.1)
                 nn.init.zeros_(m.bias)
             elif isinstance(m, Actor):
                 nn.init.normal_(m.act.weight, 0.0, 0.01)
@@ -130,10 +131,11 @@ class TD3(TensorDictModuleBase):
         self.actor.apply(init)
         self.critic.apply(init)
 
+        self.actor_target = deepcopy(self.actor)
         self.critic_target = deepcopy(self.critic)
 
-        self.opt_actor = torch.optim.Adam(self.actor.parameters(), lr=5e-4)
-        self.opt_critic = torch.optim.Adam(self.critic.parameters(), lr=5e-4)
+        self.opt_actor = torch.optim.AdamW(self.actor.parameters(), lr=2e-4, weight_decay=0.1)
+        self.opt_critic = torch.optim.AdamW(self.critic.parameters(), lr=5e-4, weight_decay=0.1)
 
         self.global_step = 0
         self.buffer_ptr = 0
@@ -174,6 +176,7 @@ class TD3(TensorDictModuleBase):
             critic_infos.append(self.update_critic(batch))
             if i % self.cfg.policy_frequency == 1:
                 actor_infos.append(self.update_actor(batch))
+            soft_copy_(self.actor, self.actor_target, tau=0.1)
             soft_copy_(self.critic, self.critic_target, tau=0.1)
         
         critic_infos = tree_map(lambda *xs: sum(xs).item() / len(xs), *critic_infos)
@@ -224,14 +227,15 @@ class TD3(TensorDictModuleBase):
         gamma = (self.gamma**self.n_steps) * (~next_tensordict["terminated"]).float()
         
         with torch.no_grad():
-            self.actor(next_tensordict)
-            # noise = torch.randn_like(next_tensordict["action"])
-            # next_tensordict["action"] += (noise * 0.001).clamp(-.5, .5)
+            next_action = self.actor_target(next_tensordict)["action"]
+            noise = torch.randn_like(next_action)
+            next_action += (noise * 0.01)
+            next_tensordict["action"] = next_action
             next_qs = reward + gamma * self.critic_target(next_tensordict)["qs"]
             q_target = torch.min(next_qs, dim=-1, keepdim=True).values
 
         qs = self.critic(tensordict)["qs"]
-        q_loss = F.mse_loss(qs, q_target.expand_as(qs))
+        q_loss = 2.0 * F.mse_loss(qs, q_target.expand_as(qs))
 
         self.opt_critic.zero_grad(set_to_none=True)
         q_loss.backward()
