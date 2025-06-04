@@ -116,4 +116,6 @@ randomization:
   reset_joint_states_scale:
     pos_scales:
       .*: [0.8, 1.2]
-  # external_force: {}
+  constant_force:
+    force_range: [50, 50, 15]
+    offset_range: [0.1, 0.1, 0.1]
