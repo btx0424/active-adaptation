@@ -162,21 +162,21 @@
   </worldbody>
 
   <actuator>
-    <motor name="LF_HAA" joint="LF_HAA" ctrllimited="true" ctrlrange="-40 40" gear="1" />
-    <motor name="LF_HFE" joint="LF_HFE" ctrllimited="true" ctrlrange="-40 40" gear="1" />
-    <motor name="LF_KFE" joint="LF_KFE" ctrllimited="true" ctrlrange="-80 80" gear="1" />
-    <motor name="LF_WHEEL" joint="LF_WHEEL" ctrllimited="true" ctrlrange="-100 100" gear="1" />
-    <motor name="LH_HAA" joint="LH_HAA" ctrllimited="true" ctrlrange="-40 40" gear="1" />
-    <motor name="LH_HFE" joint="LH_HFE" ctrllimited="true" ctrlrange="-40 40" gear="1" />
-    <motor name="LH_KFE" joint="LH_KFE" ctrllimited="true" ctrlrange="-80 80" gear="1" />
-    <motor name="LH_WHEEL" joint="LH_WHEEL" ctrllimited="true" ctrlrange="-100 100" gear="1" />
     <motor name="RF_HAA" joint="RF_HAA" ctrllimited="true" ctrlrange="-40 40" gear="1" />
     <motor name="RF_HFE" joint="RF_HFE" ctrllimited="true" ctrlrange="-40 40" gear="1" />
     <motor name="RF_KFE" joint="RF_KFE" ctrllimited="true" ctrlrange="-80 80" gear="1" />
-    <motor name="RF_WHEEL" joint="RF_WHEEL" ctrllimited="true" ctrlrange="-100 100" gear="1" />
+    <motor name="RF_WHEEL" joint="RF_WHEEL" ctrllimited="true" ctrlrange="-40 40" gear="1" />
+    <motor name="LF_HAA" joint="LF_HAA" ctrllimited="true" ctrlrange="-40 40" gear="1" />
+    <motor name="LF_HFE" joint="LF_HFE" ctrllimited="true" ctrlrange="-40 40" gear="1" />
+    <motor name="LF_KFE" joint="LF_KFE" ctrllimited="true" ctrlrange="-80 80" gear="1" />
+    <motor name="LF_WHEEL" joint="LF_WHEEL" ctrllimited="true" ctrlrange="-40 40" gear="1" />
     <motor name="RH_HAA" joint="RH_HAA" ctrllimited="true" ctrlrange="-40 40" gear="1" />
     <motor name="RH_HFE" joint="RH_HFE" ctrllimited="true" ctrlrange="-40 40" gear="1" />
     <motor name="RH_KFE" joint="RH_KFE" ctrllimited="true" ctrlrange="-80 80" gear="1" />
-    <motor name="RH_WHEEL" joint="RH_WHEEL" ctrllimited="true" ctrlrange="-100 100" gear="1" />
+    <motor name="RH_WHEEL" joint="RH_WHEEL" ctrllimited="true" ctrlrange="-40 40" gear="1" />
+    <motor name="LH_HAA" joint="LH_HAA" ctrllimited="true" ctrlrange="-40 40" gear="1" />
+    <motor name="LH_HFE" joint="LH_HFE" ctrllimited="true" ctrlrange="-40 40" gear="1" />
+    <motor name="LH_KFE" joint="LH_KFE" ctrllimited="true" ctrlrange="-80 80" gear="1" />
+    <motor name="LH_WHEEL" joint="LH_WHEEL" ctrllimited="true" ctrlrange="-40 40" gear="1" />
   </actuator>
 </mujoco>

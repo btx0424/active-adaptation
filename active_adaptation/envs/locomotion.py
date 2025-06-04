@@ -131,19 +131,12 @@ class SimpleEnv(_Env):
         self.stats[env_ids] = 0.
         self.scene.reset(env_ids)
 
-    # def render(self, mode: str="human"):
-    #     if self.timestamp not in [150, 160, 170, 180, 190, 200, 210, 500]:
-    #         return
-    #     self.sim.render()
-    #     if mode == "rgb_array":
-    #         rgb_data = self._rgb_annotator.get_data()
-    #         rgb_data = np.frombuffer(rgb_data, dtype=np.uint8).reshape(*rgb_data.shape)
-    #         seg_data = self._seg_annotator.get_data()
-    #         imageio.imwrite(f"images/rgb_{self.timestamp:03d}.png", rgb_data)
-    #         np.save(f"images/seg_{self.timestamp:03d}.npy", seg_data["data"])
-    #         json.dump(seg_data["info"], open(f"images/seg_info.json", "w"))
-    #     else:
-    #         raise NotImplementedError
+    def render(self, mode: str="human"):
+        self.sim.set_camera_view(
+            eye=self.robot.data.root_pos_w[0].cpu() + torch.as_tensor(self.cfg.viewer.eye),
+            target=self.robot.data.root_pos_w[0].cpu()
+        )
+        return super().render(mode)
         
     class feet_pos_b(mdp.body_pos_b):
         def __init__(self, env, feet_names, yaw_only: bool=False):

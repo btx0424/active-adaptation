@@ -44,9 +44,10 @@ observation:
     # wheel_trans_vel:    {}
   priv:
     applied_action:
+    applied_torque:
     root_linvel_b:    {yaw_only: true}
     external_forces:  {body_names: ["trunk"]}
-    body_height:      {body_names: ["front", "back"]}
+    body_height:      {body_names: [.*hip, .*_FOOT]}
 
 reward:
   loco:
@@ -72,6 +73,7 @@ reward:
     energy_l1:          {weight: 0.0001, enabled: true}
     joint_acc_l2:       {weight: 2.5e-7, enabled: true}
     joint_torques_l2:   {weight: 1.0e-4, enabled: true}
+    joint_torque_limits: {weight: 0.5, enabled: true}
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.01, enabled: true}
     action_rate2_l2:    {weight: 0.002, enabled: true}
@@ -118,4 +120,4 @@ randomization:
       .*: [0.8, 1.2]
   constant_force:
     force_range: [50, 50, 15]
-    offset_range: [0.1, 0.1, 0.1]
+    offset_range: [0.2, 0.1, 0.1]

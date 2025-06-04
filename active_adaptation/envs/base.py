@@ -432,7 +432,7 @@ class _Env(EnvBase):
             assert not ray_distance.isnan().any()
             return ray_distance.reshape(*bshape)
         elif self.backend == "mujoco":
-            return pos[..., 2]
+            return torch.zeros(pos.shape[:-1], device=self.device)
     
     def _set_seed(self, seed: int = -1):
         # import omni.replicator.core as rep

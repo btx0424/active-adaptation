@@ -99,10 +99,10 @@
             "damping": {
                 ".*_HAA": 1.0,
                 ".*_HFE": 1.0,
-                ".*_WHEEL": 20.0
+                ".*_WHEEL": 5.0
             },
-            "armature": null,
-            "friction": null
+            "armature": 0.01,
+            "friction": 0.01
         }
     }
 }
