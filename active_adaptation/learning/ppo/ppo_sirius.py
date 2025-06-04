@@ -40,10 +40,10 @@ from tensordict.nn import (
 )
 
 from hydra.core.config_store import ConfigStore
-from dataclasses import dataclass, field
-from typing import Union, List
+from dataclasses import dataclass
+from typing import Union, Tuple
 
-from ..utils.valuenorm import ValueNorm1, ValueNormFake
+from ..utils.valuenorm import ValueNormFake
 from ..modules.distributions import IndependentNormal
 from ..modules.rnn import set_recurrent_mode, recurrent_mode
 from .common import *
@@ -54,19 +54,19 @@ class PPOConfig:
     _target_: str = "active_adaptation.learning.ppo.ppo_sirius.PPOPolicy"
     name: str = "ppo_sirius"
     train_every: int = 32
-    ppo_epochs: int = 5
-    num_minibatches: int = 4
+    ppo_epochs: int = 4
+    num_minibatches: int = 8
     lr: float = 5e-4
     clip_param: float = 0.2
-    entropy_coef: float = 0.002
+    entropy_coef: float = 0.003
 
     orthogonal_init: bool = True
     phase: str = "train"
 
-    symaug: bool = False
+    symaug: bool = True
     hack: bool = False # debug option, which gives actor access to the privileged information
     checkpoint_path: Union[str, None] = None
-    in_keys: List[str] = field(default_factory=lambda: ["command_mode_", CMD_KEY, OBS_KEY, OBS_PRIV_KEY, "ext"])
+    in_keys: Tuple[str, ...] = ("command_mode_", CMD_KEY, OBS_KEY, OBS_PRIV_KEY, "ext")
     compile: bool = False
 
 cs = ConfigStore.instance()
