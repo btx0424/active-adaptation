@@ -69,17 +69,20 @@ class SiriusCommandManager(Command):
         env,
         lin_vel_x_range,
         lin_vel_y_range,
+        ang_vel_z_range = (-2.0, 2.0),
     ):
         super().__init__(env)
         self.lin_vel_x_range = lin_vel_x_range
         self.lin_vel_y_range = lin_vel_y_range
-        
+        self.ang_vel_z_range = ang_vel_z_range
+
         # virtual spring model for standing
         self.stand_kp = 12.
         self.stand_kd = 2.0 * math.sqrt(self.stand_kp) * 0.8
 
         self.wheel_joint_ids = self.asset.find_joints(".*_WHEEL")[0]
         self.leg_joint_ids = self.asset.find_joints(".*(HAA|HFE)")[0]
+        self.hip_joint_ids = self.asset.find_joints(".*HAA")[0]
 
         self.front_body_id = self.asset.find_bodies("front")[0][0]
         self.back_body_id = self.asset.find_bodies("back")[0][0]
@@ -173,7 +176,7 @@ class SiriusCommandManager(Command):
     @reward
     def walk_joint_devi_l2(self):
         diff = self.asset.data.joint_pos - self.asset.data.default_joint_pos
-        rew = - (diff[:, self.leg_joint_ids]).square().sum(1, True)
+        rew = - (diff[:, self.hip_joint_ids]).square().sum(1, True)
         is_active = (self._command.mode==self.CMD_WALK).unsqueeze(1)
         return rew, is_active
 
@@ -292,7 +295,7 @@ class SiriusCommandManager(Command):
 
         self._command.time.add_(self.env.step_dt)
         self._command.cmd_roll = self._command.cmd_ang_vel[:, 0:1] * (self._command.time-self.jump_prep).clamp_min(0.)
-        self._command.cmd_ang_vel[:, 2:3] = (self._command.yaw_stiffness * cmd_yaw_diff).clamp(-2., 2.)
+        self._command.cmd_ang_vel[:, 2:3] = (self._command.yaw_stiffness * cmd_yaw_diff).clamp(*self.ang_vel_z_range)
         self._command.cmd_pitch.lerp_(self._command.des_rpy[:, 1:2], 0.4)
         # self._command.des_stand_vel = 4. * (1.3 - self._command.des_stand_hei)
         des_stand_acc = self.stand_kp * (1.3 - self._command.des_stand_hei) - self.stand_kd * self._command.des_stand_vel
