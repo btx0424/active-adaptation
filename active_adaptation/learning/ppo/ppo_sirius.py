@@ -227,6 +227,9 @@ class PPOPolicy(ModBase):
             self.actor.apply(init_)
             self.critic.apply(init_)
             self.adapt_module.apply(init_)
+        
+        if self.cfg.compile:
+            self._update = torch.compile(self._update)
     
     def make_tensordict_primer(self):
         num_envs = self.observation_spec.shape[0]
@@ -241,8 +244,8 @@ class PPOPolicy(ModBase):
             policy = Seq(self.priv_encoder, self.teacher_in, self.actor)
         else:
             policy = Seq(self.adapt_module, self.student_in, self.actor)
-        if self.cfg.compile:
-            policy = torch.compile(policy)
+        # if self.cfg.compile:
+        #     policy = torch.compile(policy)
         return policy
 
     def train_op(self, tensordict: TensorDict):
@@ -345,30 +348,38 @@ class PPOPolicy(ModBase):
         ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
-        losses["actor/policy_loss"] = - torch.mean(torch.min(surr1, surr2))
-        losses["actor/entropy_loss"] = - self.entropy_coef * entropy
+        policy_loss = - torch.mean(torch.min(surr1, surr2))
+        entropy_loss = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["state_value"]
         value_loss = self.critic_loss_fn(b_returns, values)
-        losses["critic/value_loss_priv"] = (value_loss * (~tensordict["is_init"])).mean()
+        value_loss = (value_loss * (~tensordict["is_init"])).mean()
         
-        loss = sum(losses.values())
-        self.opt.zero_grad()
+        loss = policy_loss + entropy_loss + value_loss
+        self.opt.zero_grad(set_to_none=True)
         loss.backward()
-        losses["actor/grad_norm"] = nn.utils.clip_grad_norm_(self.actor.parameters(), 2.)
-        losses["critic/grad_norm"] = nn.utils.clip_grad_norm_(self.critic.parameters(), 2.)
+        actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), 2.)
+        critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), 2.)
         self.opt.step()
         
         with torch.no_grad():
-            losses["critic/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-            losses["actor/entropy"] = entropy
-            losses["actor/clamp_ratio"] = ((ratio - 1.0).abs() > self.clip_param).float().mean()
-            losses["actor/symmetry_loss"] = F.mse_loss(
+            explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
+            clipfrac = ((ratio - 1.0).abs() > self.clip_param).float().mean()
+            symmetry_loss = F.mse_loss(
                 self.actor.get_dist(self.teacher_in(self.priv_encoder(symmetry))).mean, 
                 self.act_transform(dist.mean[:bsize])
             )
-        return losses
+        return {
+            "actor/policy_loss": policy_loss.detach(),
+            "actor/entropy": entropy.detach(),
+            "actor/grad_norm": actor_grad_norm,
+            "actor/clamp_ratio": clipfrac,
+            "actor/symmetry_loss": symmetry_loss,
+            "critic/value_loss": value_loss.detach(),
+            "critic/grad_norm": critic_grad_norm,
+            "critic/explained_var": explained_var,
+        }
 
     @set_recurrent_mode(True)
     def train_adapt(self, tensordict: TensorDict):
