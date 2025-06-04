@@ -22,7 +22,7 @@ sim:
 action:
   _target_: active_adaptation.envs.mdp.action.LegWheel
   leg_scaling: {.*_(HAA|HFE|KFE): 0.5}
-  wheel_scaling: {.*_WHEEL: 2.0}
+  wheel_scaling: {.*_WHEEL: 10.0}
 
 command:
   _target_: active_adaptation.envs.mdp.commands.sirius.SiriusCommandManager
@@ -33,8 +33,6 @@ command:
 observation:
   command_mode_: # won't be normalized
     command_mode:
-  command_end_: # won't be normalized
-    command_end:
   command:
     command:
   policy:

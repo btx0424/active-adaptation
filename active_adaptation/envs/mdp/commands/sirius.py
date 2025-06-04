@@ -10,7 +10,8 @@ from active_adaptation.utils.math import (
     quat_rotate_inverse,
     yaw_quat
 )
-from active_adaptation.envs.mdp import reward, termination, observation
+from active_adaptation.envs.mdp import reward, termination
+from active_adaptation.envs.mdp.observations import Observation
 from active_adaptation.utils.symmetry import SymmetryTransform
 from .base import Command
 
@@ -189,21 +190,6 @@ class SiriusCommandManager(Command):
     def stand_height(self):
         is_active = (self._command.mode==self.CMD_STAND).unsqueeze(1)
         return self.rew_stand_height, is_active
-
-    @observation
-    def command_mode(self):
-        return self._command.mode
-
-    @observation
-    def command_end(self):
-        return self._command.time == 0.
-    
-    @observation
-    def wheel_trans_vel(self):
-        """
-        Computes the translational velocity of the wheels.
-        """
-        return self.asset.data.joint_vel[:, self.wheel_joint_ids] * self.WHEEL_RADIUS
     
     @termination
     def stand_error_exceeds(self):
@@ -272,7 +258,7 @@ class SiriusCommandManager(Command):
         self.target_base_height = target_base_height
         # print(self.base_height_error_l2.squeeze(1))
 
-        self.height_at_center = self.env.get_height_at(self.asset.data.root_pos_w).unsqueeze(1)
+        self.height_at_center = self.env.get_ground_height_at(self.asset.data.root_pos_w).unsqueeze(1)
 
         self.front_height = self.asset.data.body_pos_w[:, self.front_body_id, 2:3] - self.height_at_center
         self.back_height = self.asset.data.body_pos_w[:, self.back_body_id, 2:3] - self.height_at_center
@@ -419,4 +405,13 @@ class SiriusCommandManager(Command):
             from_ = self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2])
             self.arrow_marker_0.from_to(from_, from_ + self._cmd_lin_vel_w)
             self.arrow_marker_1.from_to(from_, from_ + self.asset.data.root_lin_vel_w)
+
+
+class command_mode(Observation):
+    def __init__(self, env):
+        super().__init__(env)
+        self.command_manager: SiriusCommandManager = self.env.command_manager
+
+    def compute(self) -> torch.Tensor:
+        return self.command_manager._command.mode.reshape(self.num_envs, 1)
 

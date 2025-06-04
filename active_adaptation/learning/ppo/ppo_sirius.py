@@ -66,7 +66,8 @@ class PPOConfig:
     symaug: bool = False
     hack: bool = False # debug option, which gives actor access to the privileged information
     checkpoint_path: Union[str, None] = None
-    in_keys: List[str] = field(default_factory=lambda: ["command_mode_", "command_end_", CMD_KEY, OBS_KEY, OBS_PRIV_KEY, "ext"])
+    in_keys: List[str] = field(default_factory=lambda: ["command_mode_", CMD_KEY, OBS_KEY, OBS_PRIV_KEY, "ext"])
+    compile: bool = False
 
 cs = ConfigStore.instance()
 cs.store("ppo_sirius_train", node=PPOConfig(phase="train"), group="algo")
@@ -240,6 +241,8 @@ class PPOPolicy(ModBase):
             policy = Seq(self.priv_encoder, self.teacher_in, self.actor)
         else:
             policy = Seq(self.adapt_module, self.student_in, self.actor)
+        if self.cfg.compile:
+            policy = torch.compile(policy)
         return policy
 
     def train_op(self, tensordict: TensorDict):
@@ -288,21 +291,24 @@ class PPOPolicy(ModBase):
         ret_key: str="ret",
         update_value_norm: bool=True,
     ):
-        with tensordict.view(-1) as tensordict_flat:
-            critic(tensordict_flat)
-            critic(tensordict_flat["next"])
+        keys = tensordict.keys(True, True)
+        if not ("state_value" in keys and ("next", "state_value") in keys):
+            with tensordict.view(-1) as tensordict_flat:
+                critic(tensordict_flat)
+                critic(tensordict_flat["next"])
 
         values = tensordict["state_value"]
         next_values = tensordict["next", "state_value"]
+
+        cmd_mode = tensordict["command_mode_"]
+        next_cmd_mode = tensordict["next", "command_mode_"]
         
-        # flag = tensordict["next", "command_end_"]
-        cmd_truncated = (tensordict["command_mode_"] != tensordict["next", "command_mode_"]).unsqueeze(-1)
-        # cmd_terminated = cmd_truncated & (tensordict["next", "command_mode_"] == 1)
-        next_values = torch.where(cmd_truncated, values, next_values)
+        cmd_changed = (cmd_mode != next_cmd_mode)
+        next_values = torch.where(cmd_changed, values, next_values)
 
         rewards = tensordict[REWARD_KEY].sum(-1, keepdim=True).clamp_min(0.)
         terms = tensordict[TERM_KEY] # | terminated
-        dones = tensordict[DONE_KEY] | cmd_truncated
+        dones = tensordict[DONE_KEY] | cmd_changed
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
 

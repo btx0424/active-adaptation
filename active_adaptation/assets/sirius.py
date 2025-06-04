@@ -21,7 +21,7 @@ SIRIUS_WHEEL_CFG = ArticulationCfg(
             max_depenetration_velocity=1.0,
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=True,
+            enabled_self_collisions=False,
             solver_position_iteration_count=4,
             solver_velocity_iteration_count=1,
         ),
@@ -61,8 +61,10 @@ SIRIUS_WHEEL_CFG = ArticulationCfg(
                 ".*_HAA": 1.,
                 ".*_HFE": 1.,
                 ".*_HFE": 1.,
-                ".*_WHEEL": 20.
-            }
+                ".*_WHEEL": 5.
+            },
+            armature=0.01,
+            friction=0.01
         )
     },
     joint_symmetry_mapping=mirrored({
