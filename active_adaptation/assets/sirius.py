@@ -9,7 +9,7 @@ ASSET_PATH = os.path.dirname(__file__)
 
 SIRIUS_WHEEL_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ASSET_PATH}/sirius_wheel/sirius_wheel.usd",
+        usd_path=f"{ASSET_PATH}/sirius_wheel/sirius_wheel_sphere.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
