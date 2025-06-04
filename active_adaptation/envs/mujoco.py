@@ -353,7 +353,7 @@ class MjContactSensor:
     def find_bodies(self, name_keys: str | Sequence[str], preserve_order: bool = False):
         return self.articulation.find_bodies(name_keys, preserve_order)
 
-    def update(self):
+    def update(self, dt: float):
         cfrc_ext = self.articulation.mj_data.cfrc_ext[self.body_adrs_read]
         self._data.net_forces_w = torch.as_tensor(cfrc_ext, dtype=torch.float32)[None]
 
@@ -396,6 +396,8 @@ class MJScene:
     def update(self, dt: float):
         for articulation in self.articulations.values():
             articulation.update(dt)
+        for sensor in self.sensors.values():
+            sensor.update(dt)
     
     def write_data_to_sim(self):
         for articulation in self.articulations.values():
@@ -460,6 +462,7 @@ class MJSim:
 
     def step(self, render: bool=False):
         mujoco.mj_step(self.mj_model, self.mj_data)
+        mujoco.mj_rnePostConstraint(self.mj_model, self.mj_data)
         time.sleep(self.get_physics_dt())
 
 

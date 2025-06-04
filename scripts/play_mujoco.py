@@ -23,7 +23,6 @@ def main(cfg):
     from scripts.helpers import EpisodeStats, make_env_policy, ObsNorm
     # TODO: maybe implement these
     cfg.task.randomization = {}
-    cfg.task.termination = {}
     cfg.task.reward = {}
     env, policy, vecnorm = make_env_policy(cfg)
     
