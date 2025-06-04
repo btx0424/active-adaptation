@@ -27,6 +27,7 @@ import torch.nn.functional as F
 import torch.distributions as D
 import einops
 import warnings
+import torch.utils._pytree as pytree
 
 from collections import OrderedDict
 from torchrl.data import CompositeSpec, TensorSpec, UnboundedContinuous
@@ -125,7 +126,10 @@ class GRUModule(nn.Module):
 class PPOPolicy(ModBase):
     
     train_in_keys = [CMD_KEY, OBS_KEY, OBS_PRIV_KEY, ACTION_KEY, 
-                     "adv", "ret", "is_init", "sample_log_prob"]
+                     "adv", "ret", "is_init", "sample_log_prob", ("next", "policy")]
+    
+    teacher_in_keys = [CMD_KEY, OBS_KEY, "priv_feature"]
+    student_in_keys = [CMD_KEY, OBS_KEY, "priv_feature_est"]
 
     def __init__(
         self, 
@@ -175,8 +179,8 @@ class PPOPolicy(ModBase):
 
         actor_mlp = make_mlp([256, 256, 128])
         self._actor = Actor(self.action_dim)
-        self.teacher_in = CatTensors([CMD_KEY, OBS_KEY, "priv_feature"], "actor_input", del_keys=False, sort=False)
-        self.student_in = CatTensors([CMD_KEY, OBS_KEY, "priv_feature_est"], "actor_input", del_keys=False, sort=False)
+        self.teacher_in = CatTensors(self.teacher_in_keys, "actor_input", del_keys=False, sort=False)
+        self.student_in = CatTensors(self.student_in_keys, "actor_input", del_keys=False, sort=False)
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=Seq(
                 Mod(actor_mlp, ["actor_input"], ["actor_input"]),
@@ -195,6 +199,13 @@ class PPOPolicy(ModBase):
             Mod(critic_module, ["policy_priv"], ["state_value"])
         ).to(self.device)
 
+        observation_dim = observation_spec[OBS_KEY].shape[-1]
+        self.dynamics = Seq(
+            CatTensors([OBS_KEY, ACTION_KEY], "dyn_input", del_keys=False, sort=False),
+            Mod(make_mlp([256, 256, 128]), ["dyn_input"], ["dyn_input"]),
+            Mod(nn.LazyLinear(observation_dim), ["dyn_input"], [f"next_{OBS_KEY}"]),
+        ).to(self.device)
+
         # lazy initialization
         with torch.device(self.device):
             fake_input["is_init"] = torch.ones(fake_input.shape[0], 1, dtype=torch.bool)
@@ -205,6 +216,7 @@ class PPOPolicy(ModBase):
         self.student_in(fake_input)
         self.actor(fake_input)
         self.critic(fake_input)
+        self.dynamics(fake_input)
 
         self.opt = torch.optim.Adam(
             [
@@ -214,6 +226,7 @@ class PPOPolicy(ModBase):
             ],
             lr=cfg.lr
         )
+        self.opt_model = torch.optim.Adam(self.dynamics.parameters(), lr=cfg.lr)
 
         self.opt_adapt = torch.optim.Adam(self.adapt_module.parameters(), lr=cfg.lr)
         
@@ -227,6 +240,7 @@ class PPOPolicy(ModBase):
             self.actor.apply(init_)
             self.critic.apply(init_)
             self.adapt_module.apply(init_)
+            self.dynamics.apply(init_)
         
         if self.cfg.compile:
             self._update = torch.compile(self._update)
@@ -274,9 +288,9 @@ class PPOPolicy(ModBase):
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every)
             for minibatch in batch:
-                infos.append(TensorDict(self._update(minibatch), []))
+                infos.append(self._update(minibatch))
         
-        infos = {k: v.mean().item() for k, v in torch.stack(infos).items()}
+        infos = pytree.tree_map(lambda *xs: sum(xs).item() / len(xs), *infos)
         infos["critic/value_mode_0"] = tensordict["ret"][mode_0].mean().item()
         infos["critic/value_mode_1"] = tensordict["ret"][mode_1].mean().item()
         infos["critic/value_mode_2"] = tensordict["ret"][mode_2].mean().item()
@@ -325,11 +339,11 @@ class PPOPolicy(ModBase):
         return tensordict
 
     def _update(self, tensordict: TensorDict):
-        losses = {}
         bsize = tensordict.shape[0]
         symmetry = tensordict.empty()
         symmetry[CMD_KEY] = self.cmd_transform(tensordict[CMD_KEY])
         symmetry[OBS_KEY] = self.obs_transform(tensordict[OBS_KEY])
+        symmetry["next", OBS_KEY] = self.obs_transform(tensordict["next", OBS_KEY])
         symmetry[OBS_PRIV_KEY] = self.priv_transform(tensordict[OBS_PRIV_KEY])
         symmetry[ACTION_KEY] = self.act_transform(tensordict[ACTION_KEY])
         symmetry["sample_log_prob"] = tensordict["sample_log_prob"]
@@ -362,6 +376,13 @@ class PPOPolicy(ModBase):
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), 2.)
         critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), 2.)
         self.opt.step()
+
+        self.dynamics(tensordict)
+        loss_dynamics = F.mse_loss(tensordict["next", OBS_KEY], tensordict[f"next_{OBS_KEY}"])
+        self.opt_model.zero_grad(set_to_none=True)
+        loss_dynamics.backward()
+        model_grad_norm = nn.utils.clip_grad_norm_(self.dynamics.parameters(), 2.)
+        self.opt_model.step()
         
         with torch.no_grad():
             explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
@@ -379,6 +400,8 @@ class PPOPolicy(ModBase):
             "critic/value_loss": value_loss.detach(),
             "critic/grad_norm": critic_grad_norm,
             "critic/explained_var": explained_var,
+            "dynamics/loss": loss_dynamics.detach(),
+            "dynamics/grad_norm": model_grad_norm,
         }
 
     @set_recurrent_mode(True)
