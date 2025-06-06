@@ -27,6 +27,7 @@ import torch.nn.functional as F
 import torch.distributions as D
 import einops
 import warnings
+import functools
 import torch.utils._pytree as pytree
 
 from collections import OrderedDict
@@ -73,6 +74,7 @@ class PPOConfig:
 cs = ConfigStore.instance()
 cs.store("ppo_sirius_train", node=PPOConfig(phase="train"), group="algo")
 cs.store("ppo_sirius_adapt", node=PPOConfig(phase="adapt"), group="algo")
+cs.store("ppo_sirius_finetune", node=PPOConfig(phase="finetune", symaug=False), group="algo")
 cs.store("ppo_sirius_hack", node=PPOConfig(hack=True), group="algo")
 
 
@@ -179,12 +181,23 @@ class PPOPolicy(ModBase):
 
         actor_mlp = make_mlp([256, 256, 128])
         self._actor = Actor(self.action_dim)
-        self.teacher_in = CatTensors(self.teacher_in_keys, "actor_input", del_keys=False, sort=False)
-        self.student_in = CatTensors(self.student_in_keys, "actor_input", del_keys=False, sort=False)
-        self.actor: ProbabilisticActor = ProbabilisticActor(
+        self.actor_teacher: ProbabilisticActor = ProbabilisticActor(
             module=Seq(
+                CatTensors(self.teacher_in_keys, "actor_input", del_keys=False, sort=False),
                 Mod(actor_mlp, ["actor_input"], ["actor_input"]),
                 Mod(self._actor, ["actor_input"], ["loc", "scale"]),
+            ),
+            in_keys=["loc", "scale"],
+            out_keys=[ACTION_KEY],
+            distribution_class=IndependentNormal,
+            return_log_prob=True
+        ).to(self.device)
+
+        self.actor_student: ProbabilisticActor = ProbabilisticActor(
+            module=Seq(
+                CatTensors(self.student_in_keys, "actor_input", del_keys=False, sort=False),
+                Mod(actor_mlp, ["actor_input"], ["actor_input"]),
+                Mod(Actor(self.action_dim), ["actor_input"], ["loc", "scale"]),
             ),
             in_keys=["loc", "scale"],
             out_keys=[ACTION_KEY],
@@ -212,23 +225,31 @@ class PPOPolicy(ModBase):
             fake_input["hx"] = torch.zeros(fake_input.shape[0], 128)
 
         self.priv_encoder(fake_input)
+        self.actor_teacher(fake_input)
         self.adapt_module(fake_input)
-        self.student_in(fake_input)
-        self.actor(fake_input)
+        self.actor_student(fake_input)
         self.critic(fake_input)
         self.dynamics(fake_input)
 
-        self.opt = torch.optim.Adam(
+        self.opt_teacher = torch.optim.Adam(
             [
                 {"params": self.priv_encoder.parameters()},
-                {"params": self.actor.parameters()},
+                {"params": self.actor_teacher.parameters()},
                 {"params": self.critic.parameters()},
             ],
-            lr=cfg.lr
+            lr=cfg.lr,
+            # fused=True
         )
         self.opt_model = torch.optim.Adam(self.dynamics.parameters(), lr=cfg.lr)
-
         self.opt_adapt = torch.optim.Adam(self.adapt_module.parameters(), lr=cfg.lr)
+        self.opt_student = torch.optim.Adam(
+            [
+                {"params": self.actor_student.parameters()},
+                {"params": self.critic.parameters()},
+            ],
+            lr=cfg.lr,
+            # fused=True
+        )
         
         def init_(module):
             if isinstance(module, nn.Linear):
@@ -237,13 +258,30 @@ class PPOPolicy(ModBase):
 
         if self.cfg.orthogonal_init:
             self.priv_encoder.apply(init_)
-            self.actor.apply(init_)
+            self.actor_teacher.apply(init_)
             self.critic.apply(init_)
             self.adapt_module.apply(init_)
             self.dynamics.apply(init_)
         
+        self.update_teacher = functools.partial(
+            self._update, 
+            encoder=self.priv_encoder,
+            actor=self.actor_teacher,
+            critic=self.critic,
+            opt=self.opt_teacher
+        )
+        self.update_student = functools.partial(
+            self._update, 
+            encoder=None,
+            actor=self.actor_student, 
+            critic=self.critic, 
+            opt=self.opt_student
+        )
+        self.iter_count = 0
+        
         if self.cfg.compile:
-            self._update = torch.compile(self._update)
+            self.update_teacher = torch.compile(self.update_teacher)
+            # self.update_student = torch.compile(self.update_student)
     
     def make_tensordict_primer(self):
         num_envs = self.observation_spec.shape[0]
@@ -255,18 +293,26 @@ class PPOPolicy(ModBase):
     
     def get_rollout_policy(self, mode: str="train"):
         if self.cfg.phase == "train":
-            policy = Seq(self.priv_encoder, self.teacher_in, self.actor)
+            policy = Seq(self.priv_encoder, self.actor_teacher)
         else:
-            policy = Seq(self.adapt_module, self.student_in, self.actor)
+            policy = Seq(self.adapt_module, self.actor_student) 
         # if self.cfg.compile:
         #     policy = torch.compile(policy)
         return policy
 
     def train_op(self, tensordict: TensorDict):
+        info = {}
         if self.cfg.phase == "train":
-            return self.train_policy(tensordict.copy())
-        else:
-            return self.train_adapt(tensordict.copy())
+            info.update(self.train_policy(tensordict.copy()))
+            if self.iter_count % 2 == 0:
+                info.update(self.train_adapt(tensordict.copy()))
+        elif self.cfg.phase == "adapt":
+            info.update(self.train_adapt(tensordict.copy()))
+        elif self.cfg.phase == "finetune":
+            info.update(self.train_adapt(tensordict.copy()))
+            info.update(self.train_finetune(tensordict.copy()))
+        self.iter_count += 1
+        return info
 
     def train_policy(self, tensordict: TensorDict):
         infos = []
@@ -288,7 +334,38 @@ class PPOPolicy(ModBase):
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every)
             for minibatch in batch:
-                infos.append(self._update(minibatch))
+                infos.append(self.update_teacher(minibatch))
+        
+        infos = pytree.tree_map(lambda *xs: sum(xs).item() / len(xs), *infos)
+        infos["critic/value_mode_0"] = tensordict["ret"][mode_0].mean().item()
+        infos["critic/value_mode_1"] = tensordict["ret"][mode_1].mean().item()
+        infos["critic/value_mode_2"] = tensordict["ret"][mode_2].mean().item()
+        infos["critic/value_mode_3"] = tensordict["ret"][mode_3].mean().item()
+        self.num_frames += tensordict.numel()
+        self.num_updates += 1
+        return dict(sorted(infos.items()))
+    
+    def train_finetune(self, tensordict: TensorDict):
+        infos = []
+        self._compute_advantage(tensordict, self.critic, "adv", "ret")
+        adv = tensordict["adv"]
+        mode_0 = tensordict["command_mode_"] == 0
+        mode_1 = tensordict["command_mode_"] == 1
+        mode_2 = tensordict["command_mode_"] == 2
+        mode_3 = tensordict["command_mode_"] == 3
+        if False:
+            adv[:] = normalize(adv, subtract_mean=True)
+        else:
+            adv[mode_0] = normalize(adv[mode_0], subtract_mean=True)
+            adv[mode_1] = normalize(adv[mode_1], subtract_mean=True)
+            adv[mode_2] = normalize(adv[mode_2], subtract_mean=True)
+            adv[mode_3] = normalize(adv[mode_3], subtract_mean=True)
+        # tensordict = tensordict.select(*self.train_in_keys)
+        
+        for epoch in range(self.cfg.ppo_epochs):
+            batch = make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every)
+            for minibatch in batch:
+                infos.append(self.update_student(minibatch))
         
         infos = pytree.tree_map(lambda *xs: sum(xs).item() / len(xs), *infos)
         infos["critic/value_mode_0"] = tensordict["ret"][mode_0].mean().item()
@@ -338,7 +415,7 @@ class PPOPolicy(ModBase):
         tensordict.set(ret_key, ret)
         return tensordict
 
-    def _update(self, tensordict: TensorDict):
+    def _update(self, tensordict: TensorDict, encoder: Mod, actor: ProbabilisticActor, critic: Mod, opt: torch.optim.Optimizer):
         bsize = tensordict.shape[0]
         symmetry = tensordict.empty()
         symmetry[CMD_KEY] = self.cmd_transform(tensordict[CMD_KEY])
@@ -353,8 +430,9 @@ class PPOPolicy(ModBase):
         if self.symaug:
             tensordict = torch.cat([tensordict, symmetry], dim=0)
         
-        self.priv_encoder(tensordict)
-        dist = self.actor.get_dist(self.teacher_in(tensordict))
+        if encoder is not None:
+            tensordict = encoder(tensordict)
+        dist = actor.get_dist(tensordict)
         log_probs = dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy().mean()
 
@@ -366,16 +444,16 @@ class PPOPolicy(ModBase):
         entropy_loss = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
-        values = self.critic(tensordict)["state_value"]
+        values = critic(tensordict)["state_value"]
         value_loss = self.critic_loss_fn(b_returns, values)
         value_loss = (value_loss * (~tensordict["is_init"])).mean()
         
         loss = policy_loss + entropy_loss + value_loss
-        self.opt.zero_grad(set_to_none=True)
+        opt.zero_grad(set_to_none=True)
         loss.backward()
-        actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), 2.)
-        critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), 2.)
-        self.opt.step()
+        actor_grad_norm = nn.utils.clip_grad_norm_(actor.parameters(), 2.)
+        critic_grad_norm = nn.utils.clip_grad_norm_(critic.parameters(), 2.)
+        opt.step()
 
         self.dynamics(tensordict)
         loss_dynamics = F.mse_loss(tensordict["next", OBS_KEY], tensordict[f"next_{OBS_KEY}"])
@@ -384,34 +462,36 @@ class PPOPolicy(ModBase):
         model_grad_norm = nn.utils.clip_grad_norm_(self.dynamics.parameters(), 2.)
         self.opt_model.step()
         
-        with torch.no_grad():
-            explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-            clipfrac = ((ratio - 1.0).abs() > self.clip_param).float().mean()
-            symmetry_loss = F.mse_loss(
-                self.actor.get_dist(self.teacher_in(self.priv_encoder(symmetry))).mean, 
-                self.act_transform(dist.mean[:bsize])
-            )
-        return {
+        info = {
             "actor/policy_loss": policy_loss.detach(),
             "actor/entropy": entropy.detach(),
             "actor/grad_norm": actor_grad_norm,
-            "actor/clamp_ratio": clipfrac,
-            "actor/symmetry_loss": symmetry_loss,
             "critic/value_loss": value_loss.detach(),
             "critic/grad_norm": critic_grad_norm,
-            "critic/explained_var": explained_var,
             "dynamics/loss": loss_dynamics.detach(),
             "dynamics/grad_norm": model_grad_norm,
         }
+        with torch.no_grad():
+            explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
+            clipfrac = ((ratio - 1.0).abs() > self.clip_param).float().mean()
+            info["actor/clamp_ratio"] = clipfrac
+            info["actor/explained_var"] = explained_var
+            if self.symaug:
+                symmetry_loss = F.mse_loss(
+                    actor.get_dist(self.priv_encoder(symmetry)).mean, 
+                    self.act_transform(dist.mean[:bsize])
+                )
+                info["actor/symmetry_loss"] = symmetry_loss
+        return info
 
     @set_recurrent_mode(True)
-    def train_adapt(self, tensordict: TensorDict):
+    def train_adapt(self, tensordict: TensorDict, epochs: int=2):
         with torch.no_grad():
             self.priv_encoder(tensordict)
         
         tensordict.pop("next")
 
-        for epoch in range(2):
+        for epoch in range(epochs):
             for minibatch in make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every):
                 self.adapt_module(minibatch)
                 adapt_loss = F.mse_loss(minibatch["priv_feature_est"], minibatch["priv_feature"])
@@ -443,6 +523,9 @@ class PPOPolicy(ModBase):
                 warnings.warn(f"Failed to load state dict for {name}: {str(e)}")
                 failed_keys.append(name)
         print(f"Successfully loaded {succeed_keys}.")
+        if state_dict.get("last_phase", "train") == "train":
+            # only copy to initialize the actor once
+            hard_copy_(self.actor_teacher, self.actor_student)
         return failed_keys
 
 
