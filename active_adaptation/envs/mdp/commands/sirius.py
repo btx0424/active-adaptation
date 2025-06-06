@@ -19,8 +19,7 @@ from .base import Command
 class SiriusCommand(TensorClass):
     cmd_lin_vel: torch.Tensor # body frame
     cmd_ang_vel: torch.Tensor
-    cmd_roll: torch.Tensor
-    cmd_pitch: torch.Tensor
+    cmd_rpy: torch.Tensor
     yaw_stiffness: torch.Tensor
 
     des_rpy: torch.Tensor
@@ -40,12 +39,11 @@ class SiriusCommand(TensorClass):
         return cls(
             cmd_lin_vel=torch.zeros(size, 3, device=device),
             cmd_ang_vel=torch.zeros(size, 3, device=device),
-            cmd_roll=torch.zeros(size, 1, device=device),
+            cmd_rpy=torch.zeros(size, 3, device=device),
             des_rpy=torch.zeros(size, 3, device=device),
             des_stand_vel=torch.zeros(size, 1, device=device),
             des_stand_hei=torch.zeros(size, 1, device=device),
             yaw_stiffness=torch.zeros(size, 1, device=device),
-            cmd_pitch=torch.zeros(size, 1, device=device),
             time=torch.zeros(size, 1, device=device),
             duration=torch.full((size, 1), torch.inf, device=device),
             mode=torch.zeros(size, dtype=int, device=device),
@@ -55,7 +53,8 @@ class SiriusCommand(TensorClass):
 
 class SiriusCommandManager(Command):
     
-    jump_prep: float = 0.16
+    jump_prepare_time: float = 0.2 # time for preparing for a jump
+    jump_landing_time: float = 0.2 # time for recovering balance after landing
     
     CMD_WALK = 0
     CMD_STAND = 1
@@ -210,15 +209,17 @@ class SiriusCommandManager(Command):
     
     @property
     def command(self):
-        return torch.cat([
+        # only episodic commands (jump and flip) have phase
+        phase = self._command.phase * (self._command.mode == self.CMD_JUMP).reshape(-1, 1)
+        result = torch.cat([
             self._command.cmd_lin_vel[:, :2],
             self._command.cmd_ang_vel,
-            self._command.cmd_roll,
-            self._command.cmd_pitch,
-            self._command.phase,
-            1 - self._command.phase,
+            self._command.cmd_rpy[:, :2],
+            phase,
+            1 - phase,
             torch.nn.functional.one_hot(self._command.mode, num_classes=4)
         ], dim=-1)
+        return result
 
     def symmetry_transforms(self):
         return SymmetryTransform.cat([
@@ -236,7 +237,7 @@ class SiriusCommandManager(Command):
 
     def update(self):
         r, p, y = euler_from_quat(self.asset.data.root_quat_w).unbind(-1)
-        self.pitch_error_l2 = torch.square( wrap_to_pi(self._command.cmd_pitch - p.unsqueeze(1)) )
+        self.pitch_error_l2 = torch.square( wrap_to_pi(self._command.cmd_rpy[:, 1:2] - p.unsqueeze(1)) )
 
         quat_yaw = yaw_quat(self.asset.data.root_quat_w)
         
@@ -249,8 +250,8 @@ class SiriusCommandManager(Command):
 
         self.roll_error_l2 = (
             self.asset.data.projected_gravity_b[:, 0:1].square()
-            + (self._command.cmd_roll.sin() + self.asset.data.projected_gravity_b[:, 1:2]).square()
-            + (self._command.cmd_roll.cos() + self.asset.data.projected_gravity_b[:, 2:3]).square()
+            + (self._command.cmd_rpy[:, 0:1].sin() + self.asset.data.projected_gravity_b[:, 1:2]).square()
+            + (self._command.cmd_rpy[:, 0:1].cos() + self.asset.data.projected_gravity_b[:, 2:3]).square()
         )
         # print(self.roll_error_l2.squeeze(1))
 
@@ -270,8 +271,8 @@ class SiriusCommandManager(Command):
         self.back_height_error_l2 = (self.back_height - self.target_base_height).square()
         
         self._stand_height = self.asset.data.root_pos_w[:, 2:3] - self.height_at_center # base height
-        self.stand_fore_legs = self._command.cmd_pitch > +0.3*torch.pi
-        self.stand_hind_legs = self._command.cmd_pitch < -0.3*torch.pi
+        self.stand_fore_legs = self._command.cmd_rpy[:, 1:2] > +0.3*torch.pi
+        self.stand_hind_legs = self._command.cmd_rpy[:, 1:2] < -0.3*torch.pi
         self._stand_height = torch.where(self.stand_fore_legs, self.back_height, self._stand_height)
         self._stand_height = torch.where(self.stand_hind_legs, self.front_height, self._stand_height)
         
@@ -294,9 +295,15 @@ class SiriusCommandManager(Command):
             .unsqueeze(1)
 
         self._command.time.add_(self.env.step_dt)
-        self._command.cmd_roll = self._command.cmd_ang_vel[:, 0:1] * (self._command.time-self.jump_prep).clamp_min(0.)
+
+        self._command.cmd_rpy[:, 0:1] = torch.where(
+            (self._command.mode == self.CMD_FLIP).reshape(-1, 1),
+            self._command.cmd_ang_vel[:, 0:1] * (self._command.time-self.jump_prepare_time).clamp_min(0.),
+            self._command.cmd_rpy[:, 0:1]
+        )
+        self._command.cmd_rpy[:, 1:2].lerp_(self._command.des_rpy[:, 1:2], 0.4)
         self._command.cmd_ang_vel[:, 2:3] = (self._command.yaw_stiffness * cmd_yaw_diff).clamp(*self.ang_vel_z_range)
-        self._command.cmd_pitch.lerp_(self._command.des_rpy[:, 1:2], 0.4)
+
         # self._command.des_stand_vel = 4. * (1.3 - self._command.des_stand_hei)
         des_stand_acc = self.stand_kp * (1.3 - self._command.des_stand_hei) - self.stand_kd * self._command.des_stand_vel
         self._command.des_stand_vel.add_(self.env.step_dt * des_stand_acc)
@@ -350,7 +357,7 @@ class SiriusCommandManager(Command):
         command = SiriusCommand.zero(size, self.device)
         command.des_rpy[:, 2] = self.asset.data.heading_w
         command.cmd_ang_vel[:, 0].uniform_(1.8 * torch.pi, 2.4 * torch.pi)
-        command.duration[:] = self.jump_prep + 2 * torch.pi / command.cmd_ang_vel[:, 0:1]
+        command.duration[:] = self.jump_prepare_time + 2 * torch.pi / command.cmd_ang_vel[:, 0:1]
         command.cmd_ang_vel[:, 0].mul_(-1.)
         # command.cmd_ang_vel[:, 0].mul_(torch.randn(size, device=self.device).sign())
         command.mode[:] = self.CMD_FLIP
@@ -360,7 +367,7 @@ class SiriusCommandManager(Command):
         command = SiriusCommand.zero(size, self.device)
         command.cmd_lin_vel[:, 0] = self._command.cmd_lin_vel[:, 0] * 0.8
         command.des_rpy[:, 2] = self.asset.data.heading_w
-        command.duration.uniform_(0.6, 1.0)
+        command.duration.uniform_(0.7, 0.9)
         command.mode[:] = self.CMD_JUMP
         return command
 
@@ -368,8 +375,8 @@ class SiriusCommandManager(Command):
         if self.env.sim.has_gui() and self.env.backend == "isaac":
             # r, p, y = euler_xyz_from_quat(self.asset.data.root_quat_w)
             quat = quat_from_euler_xyz(
-                self._command.cmd_roll.squeeze(1),
-                self._command.cmd_pitch.squeeze(1),
+                self._command.cmd_rpy[:, 0:1].squeeze(1),
+                self._command.cmd_rpy[:, 1:2].squeeze(1),
                 self._command.des_rpy[:, 2],
             )
             self.frame_marker.visualize(
