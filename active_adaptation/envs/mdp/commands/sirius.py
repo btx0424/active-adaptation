@@ -110,7 +110,7 @@ class SiriusCommandManager(Command):
         self._command = SiriusCommand.zero(self.num_envs, self.device)
         with torch.device(self.device):
             self.transition = torch.eye(4) 
-            self.transition[self.CMD_WALK]  = torch.tensor([1., .0, 0., .0]) # normal to others
+            self.transition[self.CMD_WALK]  = torch.tensor([0.2, 0.8, 0., .0]) # normal to others
             self.transition[self.CMD_STAND] = torch.tensor([1., 0., 0., 0.]) # stand to others
             self.transition[self.CMD_JUMP]  = torch.tensor([1., 0., 0., 0.]) # jump to others
             self.transition[self.CMD_FLIP]  = torch.tensor([1., 0., 0., 0.]) # flip to others
@@ -203,7 +203,7 @@ class SiriusCommandManager(Command):
             -torch.exp(target_height - base_height),
             0.
         )
-        return rew, is_active
+        return rew.reshape(self.num_envs, 1), is_active
     
     @termination
     def stand_error_exceeds(self):

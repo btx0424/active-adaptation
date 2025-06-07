@@ -28,12 +28,9 @@ def quat_rotate(quat: torch.Tensor, vec: torch.Tensor):
     Returns:
         The rotated vector in (x, y, z). Shape is (..., 3).
     """
-    shape = vec.shape
-    quat = quat.reshape(-1, 4)
-    vec = vec.reshape(-1, 3)
-    xyz = quat[:, 1:]
+    xyz = quat[..., 1:]
     t = xyz.cross(vec, dim=-1) * 2
-    return (vec + quat[:, 0:1] * t + xyz.cross(t, dim=-1)).view(shape)
+    return (vec + quat[..., 0:1] * t + xyz.cross(t, dim=-1))
 
 
 @torch.jit.script
@@ -47,12 +44,9 @@ def quat_rotate_inverse(quat: torch.Tensor, vec: torch.Tensor):
     Returns:
         The rotated vector in (x, y, z). Shape is (..., 3).
     """
-    shape = vec.shape
-    quat = quat.reshape(-1, 4)
-    vec = vec.reshape(-1, 3)
-    xyz = quat[:, 1:]
+    xyz = quat[..., 1:]
     t = xyz.cross(vec, dim=-1) * 2
-    return (vec - quat[:, 0:1] * t + xyz.cross(t, dim=-1)).view(shape)
+    return (vec - quat[..., 0:1] * t + xyz.cross(t, dim=-1))
 
 
 def clamp_norm(x: torch.Tensor, min: float=0., max: float=torch.inf):
