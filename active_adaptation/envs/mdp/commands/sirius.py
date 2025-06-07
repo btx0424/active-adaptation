@@ -192,6 +192,18 @@ class SiriusCommandManager(Command):
     def stand_height(self):
         is_active = (self._command.mode==self.CMD_STAND).unsqueeze(1)
         return self.rew_stand_height, is_active
+
+    @reward
+    def sirius_base_height(self):
+        is_active = (self._command.mode==self.CMD_WALK).unsqueeze(1)
+        base_height = self.asset.data.root_pos_w[:, 2] - self.env.get_ground_height_at(self.asset.data.root_pos_w)
+        target_height = 0.4
+        rew = torch.where(
+            base_height < target_height,
+            -torch.exp(target_height - base_height),
+            0.
+        )
+        return rew, is_active
     
     @termination
     def stand_error_exceeds(self):
@@ -417,10 +429,7 @@ class SiriusCommandManager(Command):
             self.arrow_marker_1.from_to(from_, from_ + self.asset.data.root_lin_vel_w)
 
 
-class command_mode(Observation):
-    def __init__(self, env):
-        super().__init__(env)
-        self.command_manager: SiriusCommandManager = self.env.command_manager
+class command_mode(Observation[SiriusCommandManager]):
 
     def compute(self) -> torch.Tensor:
         return self.command_manager._command.mode.reshape(self.num_envs, 1)
