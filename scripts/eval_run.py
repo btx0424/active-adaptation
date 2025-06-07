@@ -68,7 +68,7 @@ def main():
             if file.name == f"checkpoint_{args.interations}.pt":
                 checkpoint = file
                 break
-    print(f"Downloading {checkpoint.name}")
+    print(f"Downloading {os.path.join(root, checkpoint.name)}")
     checkpoint.download(root, replace=True)
 
     # `run.config` does not preserve order of the keys

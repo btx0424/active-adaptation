@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Callable
 from isaaclab.utils.math import yaw_quat, wrap_to_pi, euler_xyz_from_quat
 import isaaclab.utils.string as string_utils
 from active_adaptation.utils.math import quat_rotate, quat_rotate_inverse
-from ..commands import *
+from active_adaptation.envs.mdp.base import Reward
 
 if TYPE_CHECKING:
     from isaaclab.sensors import ContactSensor

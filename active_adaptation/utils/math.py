@@ -17,28 +17,42 @@ from isaaclab.utils.math import (
 
 from .helpers import batchify
 
-# @torch.compile
-@batchify
-def quat_rotate(q, v):
-    shape = q.shape
-    q_w = q[:, 0]
-    q_vec = q[:, 1:]
-    a = v * (2.0 * q_w**2 - 1.0).unsqueeze(-1)
-    b = torch.cross(q_vec, v, dim=-1) * q_w.unsqueeze(-1) * 2.0
-    c = q_vec * torch.bmm(q_vec.view(shape[0], 1, 3), v.view(shape[0], 3, 1)).squeeze(-1) * 2.0
-    return a + b + c
+@torch.jit.script
+def quat_rotate(quat: torch.Tensor, vec: torch.Tensor):
+    """Apply a quaternion rotation to a vector.
+
+    Args:
+        quat: The quaternion in (w, x, y, z). Shape is (..., 4).
+        vec: The vector in (x, y, z). Shape is (..., 3).
+
+    Returns:
+        The rotated vector in (x, y, z). Shape is (..., 3).
+    """
+    shape = vec.shape
+    quat = quat.reshape(-1, 4)
+    vec = vec.reshape(-1, 3)
+    xyz = quat[:, 1:]
+    t = xyz.cross(vec, dim=-1) * 2
+    return (vec + quat[:, 0:1] * t + xyz.cross(t, dim=-1)).view(shape)
 
 
-# @torch.compile
-@batchify
-def quat_rotate_inverse(q, v):
-    shape = q.shape
-    q_w = q[:, 0]
-    q_vec = q[:, 1:]
-    a = v * (2.0 * q_w**2 - 1.0).unsqueeze(-1)
-    b = torch.cross(q_vec, v, dim=-1) * q_w.unsqueeze(-1) * 2.0
-    c = q_vec * torch.bmm(q_vec.view(shape[0], 1, 3), v.view(shape[0], 3, 1)).squeeze(-1) * 2.0
-    return a - b + c
+@torch.jit.script
+def quat_rotate_inverse(quat: torch.Tensor, vec: torch.Tensor):
+    """Apply an inverse quaternion rotation to a vector.
+
+    Args:
+        quat: The quaternion in (w, x, y, z). Shape is (..., 4).
+        vec: The vector in (x, y, z). Shape is (..., 3).
+
+    Returns:
+        The rotated vector in (x, y, z). Shape is (..., 3).
+    """
+    shape = vec.shape
+    quat = quat.reshape(-1, 4)
+    vec = vec.reshape(-1, 3)
+    xyz = quat[:, 1:]
+    t = xyz.cross(vec, dim=-1) * 2
+    return (vec - quat[:, 0:1] * t + xyz.cross(t, dim=-1)).view(shape)
 
 
 def clamp_norm(x: torch.Tensor, min: float=0., max: float=torch.inf):
