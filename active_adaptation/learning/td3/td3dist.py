@@ -48,7 +48,7 @@ class Actor(nn.Module):
         self.act = nn.LazyLinear(action_dim)
     
     def forward(self, obs):
-        return F.tanh(self.act(self.layers(obs)) / 2.0) * 2.0
+        return F.tanh(self.act(self.layers(obs)) / 3.0) * 3.0
 
 
 class DistributionalQNetwork(nn.Module):
@@ -204,15 +204,20 @@ class Noise(nn.Module):
     def __init__(self, batch_size, action_dim):
         super().__init__()
         self.noise_scales: torch.Tensor
+        self.noise: torch.Tensor
+        self.theta: float = 0.15
         self.register_buffer("noise_scales", torch.ones(batch_size, action_dim))
+        self.register_buffer("noise", torch.zeros(batch_size, action_dim))
 
-    def forward(self, obs: torch.Tensor, is_init: torch.Tensor):
+    def forward(self, action: torch.Tensor, is_init: torch.Tensor):
         if is_init.any():
             is_init = is_init
-            new_scales = torch.rand_like(self.noise_scales) * 0.2 + 0.2
+            new_scales = torch.rand_like(self.noise_scales) * 0.9 + 0.1
             self.noise_scales = torch.where(is_init, new_scales, self.noise_scales)
-        noise = torch.randn_like(obs).clamp(-.8, .8) * self.noise_scales
-        return obs + noise
+        # Ornstein-Uhlenbeck process
+        sigma = torch.randn_like(action).clamp(-3, 3.) 
+        self.noise += self.theta * -self.noise + sigma * self.noise_scales
+        return action + self.noise
 
 
 class TD3(TensorDictModuleBase):
@@ -402,9 +407,12 @@ class TD3(TensorDictModuleBase):
         with torch.no_grad():
             qf1 = self.critic.get_value(F.softmax(qf1, dim=1))
             qf2 = self.critic.get_value(F.softmax(qf2, dim=1))
+            qf_mean = torch.mean((qf1 + qf2) / 2.0)
+            qf_var = torch.mean((qf1 - qf2).square())
         return {
             "critic/q_loss": qf_loss.detach(),
-            "critic/q_value": torch.mean((qf1 + qf2) / 2.0),
+            "critic/q_value": qf_mean,
+            "critic/q_var": qf_var,
             "critic/grad_norm": critic_grad_norm,
         }
     
