@@ -133,15 +133,11 @@ class _Env(EnvBase):
 
         RAND_FUNCS = mdp.RAND_FUNCS
         RAND_FUNCS.update(mdp.get_obj_by_class(members, mdp.Randomization))
-        REW_FUNCS = mdp.REW_FUNCS
-        REW_FUNCS.update(mdp.get_obj_by_class(members, mdp.Reward))
         TERM_FUNCS = mdp.TERM_FUNCS
         ADDONS = mdp.ADDONS
 
         for k, v in inspect.getmembers(self.command_manager):
-            if getattr(v, "is_reward", False):
-                REW_FUNCS[k] = mdp.reward_wrapper(v)
-            elif getattr(v, "is_termination", False):
+            if getattr(v, "is_termination", False):
                 TERM_FUNCS[k] = mdp.termination_wrapper(v)
 
         self.addons = OrderedDict()
@@ -225,7 +221,8 @@ class _Env(EnvBase):
             self._stats_ema[group_name] = {}
 
             for key, params in func_specs.items():
-                reward: mdp.Reward = REW_FUNCS[key](self, **params)
+                rew_cls = mdp.Reward.registry[key]
+                reward: mdp.Reward = rew_cls(self, **params)
                 funcs[key] = reward
                 reward_spec["stats", group_name, key] = UnboundedContinuous(1, device=self.device)
                 self._update_callbacks.append(reward.update)

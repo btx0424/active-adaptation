@@ -11,7 +11,7 @@ from active_adaptation.utils.math import (
     yaw_quat
 )
 from active_adaptation.envs.mdp import reward, termination
-from active_adaptation.envs.mdp.observations import Observation
+from active_adaptation.envs.mdp.base import Observation, Reward
 from active_adaptation.utils.symmetry import SymmetryTransform
 from .base import Command
 
@@ -110,7 +110,7 @@ class SiriusCommandManager(Command):
         self._command = SiriusCommand.zero(self.num_envs, self.device)
         with torch.device(self.device):
             self.transition = torch.eye(4) 
-            self.transition[self.CMD_WALK]  = torch.tensor([0.2, 0.8, 0., .0]) # normal to others
+            self.transition[self.CMD_WALK]  = torch.tensor([1., 0., 0., .0]) # normal to others
             self.transition[self.CMD_STAND] = torch.tensor([1., 0., 0., 0.]) # stand to others
             self.transition[self.CMD_JUMP]  = torch.tensor([1., 0., 0., 0.]) # jump to others
             self.transition[self.CMD_FLIP]  = torch.tensor([1., 0., 0., 0.]) # flip to others
@@ -129,81 +129,69 @@ class SiriusCommandManager(Command):
             self.arrow_marker_0 = self.env.scene.create_arrow_marker(radius=0.02, rgba=[1, 0, 0, 0.8])
             self.arrow_marker_1 = self.env.scene.create_arrow_marker(radius=0.02, rgba=[0, 0, 1, 0.8])
     
-    @reward
-    def jump_lin_vel(self):
-        is_active = (self._command.mode==self.CMD_JUMP).unsqueeze(1)
-        front_lin_vel = self.asset.data.body_lin_vel_w[:, [self.front_body_id, self.back_body_id], 2:3]
-        rew = front_lin_vel.clamp_max(self.target_jump_lin_vel.unsqueeze(1))
-        rew = (rew + rew.square()).mean(1) * (self._command.phase < 0.5)
-        return rew, is_active
+    # @reward
+    # def jump_lin_vel(self):
+    #     is_active = (self._command.mode==self.CMD_JUMP).unsqueeze(1)
+    #     front_lin_vel = self.asset.data.body_lin_vel_w[:, [self.front_body_id, self.back_body_id], 2:3]
+    #     rew = front_lin_vel.clamp_max(self.target_jump_lin_vel.unsqueeze(1))
+    #     rew = (rew + rew.square()).mean(1) * (self._command.phase < 0.5)
+    #     return rew, is_active
     
-    @reward
-    def jump_height(self):
-        is_active = (self._command.mode==self.CMD_JUMP).unsqueeze(1)
-        rew = torch.exp(-self.front_height_error_l2 / 0.1) + torch.exp(-self.back_height_error_l2 / 0.1)
-        return rew, is_active
+    # @reward
+    # def jump_height(self):
+    #     is_active = (self._command.mode==self.CMD_JUMP).unsqueeze(1)
+    #     rew = torch.exp(-self.front_height_error_l2 / 0.1) + torch.exp(-self.back_height_error_l2 / 0.1)
+    #     return rew, is_active
 
-    @reward
-    def flip_ang_vel(self):
-        is_active = (self._command.mode==self.CMD_FLIP).unsqueeze(1)
-        cmd_ang_vel_roll = self._command.cmd_ang_vel[:, 0:1]
-        ang_vel_roll = self.asset.data.root_ang_vel_b[:, 0:1]
-        rew_jump_ang_vel = torch.clamp(
-            ang_vel_roll * cmd_ang_vel_roll.sign(),
-            torch.zeros_like(ang_vel_roll),
-            cmd_ang_vel_roll.abs()
-        )
-        return rew_jump_ang_vel, is_active
+    # @reward
+    # def flip_ang_vel(self):
+    #     is_active = (self._command.mode==self.CMD_FLIP).unsqueeze(1)
+    #     cmd_ang_vel_roll = self._command.cmd_ang_vel[:, 0:1]
+    #     ang_vel_roll = self.asset.data.root_ang_vel_b[:, 0:1]
+    #     rew_jump_ang_vel = torch.clamp(
+    #         ang_vel_roll * cmd_ang_vel_roll.sign(),
+    #         torch.zeros_like(ang_vel_roll),
+    #         cmd_ang_vel_roll.abs()
+    #     )
+    #     return rew_jump_ang_vel, is_active
     
-    @reward
-    def flip_roll(self):
-        is_active = (self._command.mode==self.CMD_FLIP).unsqueeze(1)
-        return torch.exp( -self.roll_error_l2 / 0.25), is_active
+    # @reward
+    # def flip_roll(self):
+    #     is_active = (self._command.mode==self.CMD_FLIP).unsqueeze(1)
+    #     return torch.exp( -self.roll_error_l2 / 0.25), is_active
     
-    @reward
-    def walk_angvel_xy_l2(self):
-        rew = -self.asset.data.root_ang_vel_b[:, :2].square().sum(1, True)
-        is_active = (self._command.mode==self.CMD_WALK).unsqueeze(1)
-        return rew, is_active
+    # @reward
+    # def walk_angvel_xy_l2(self):
+    #     rew = -self.asset.data.root_ang_vel_b[:, :2].square().sum(1, True)
+    #     is_active = (self._command.mode==self.CMD_WALK).unsqueeze(1)
+    #     return rew, is_active
 
-    @reward
-    def walk_linvel_z_l2(self):
-        rew = -self.asset.data.root_lin_vel_b[:, 2:3].square()
-        is_active = (self._command.mode==self.CMD_WALK).unsqueeze(1)
-        return rew, is_active
+    # @reward
+    # def walk_linvel_z_l2(self):
+    #     rew = -self.asset.data.root_lin_vel_b[:, 2:3].square()
+    #     is_active = (self._command.mode==self.CMD_WALK).unsqueeze(1)
+    #     return rew, is_active
     
-    @reward
-    def walk_joint_devi_l2(self):
-        diff = self.asset.data.joint_pos - self.asset.data.default_joint_pos
-        rew = - (diff[:, self.hip_joint_ids]).square().sum(1, True)
-        is_active = (self._command.mode==self.CMD_WALK).unsqueeze(1)
-        return rew, is_active
+    # @reward
+    # def walk_joint_devi_l2(self):
+    #     diff = self.asset.data.joint_pos - self.asset.data.default_joint_pos
+    #     rew = - (diff[:, self.hip_joint_ids]).square().sum(1, True)
+    #     is_active = (self._command.mode==self.CMD_WALK).unsqueeze(1)
+    #     return rew, is_active
 
-    @reward
-    def jump_inertia(self):
-        return self.rew_jump_inertia
+    # @reward
+    # def jump_inertia(self):
+    #     return self.rew_jump_inertia
     
-    @reward
-    def stand_lin_vel(self):
-        is_active = (self._command.mode==self.CMD_STAND).unsqueeze(1)
-        return self.rew_stand_lin_vel, is_active
+    # @reward
+    # def stand_lin_vel(self):
+    #     is_active = (self._command.mode==self.CMD_STAND).unsqueeze(1)
+    #     return self.rew_stand_lin_vel, is_active
     
-    @reward
-    def stand_height(self):
-        is_active = (self._command.mode==self.CMD_STAND).unsqueeze(1)
-        return self.rew_stand_height, is_active
-
-    @reward
-    def sirius_base_height(self):
-        is_active = (self._command.mode==self.CMD_WALK).unsqueeze(1)
-        base_height = self.asset.data.root_pos_w[:, 2] - self.env.get_ground_height_at(self.asset.data.root_pos_w)
-        target_height = 0.4
-        rew = torch.where(
-            base_height < target_height,
-            -torch.exp(target_height - base_height),
-            0.
-        )
-        return rew.reshape(self.num_envs, 1), is_active
+    # @reward
+    # def stand_height(self):
+    #     is_active = (self._command.mode==self.CMD_STAND).unsqueeze(1)
+    #     return self.rew_stand_height, is_active
     
     @termination
     def stand_error_exceeds(self):
@@ -433,4 +421,30 @@ class command_mode(Observation[SiriusCommandManager]):
 
     def compute(self) -> torch.Tensor:
         return self.command_manager._command.mode.reshape(self.num_envs, 1)
+
+
+class no_drift(Reward[SiriusCommandManager]):
+    """Penalize undesired drifting when the command velocity is zero"""
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset = self.command_manager.asset
+        self.wheel_joint_ids = self.command_manager.wheel_joint_ids
+
+    def compute(self) -> torch.Tensor:
+        wheel_joint_vel = self.asset.data.joint_vel[:, self.wheel_joint_ids]
+        cmd_speed = self.command_manager._command.cmd_lin_vel[:, :2].norm(dim=-1)
+        rew = - wheel_joint_vel.abs().sum(dim=1) * (cmd_speed < 0.05)
+        return rew.reshape(self.num_envs, 1)
+
+
+class sirius_base_height(Reward[SiriusCommandManager]):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset = self.command_manager.asset
+
+    def compute(self) -> torch.Tensor:
+        base_height = self.asset.data.root_pos_w[:, 2] - self.env.get_ground_height_at(self.asset.data.root_pos_w)
+        target_height = 0.4
+        rew = torch.where(base_height < target_height, -torch.exp(target_height - base_height), 0.)
+        return rew.reshape(self.num_envs, 1)
 

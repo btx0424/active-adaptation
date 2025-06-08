@@ -103,13 +103,31 @@ class Command:
             self.key_pressed[event.input.name] = False
 
 
+class _RegistryMixin:
+    
+    def __init_subclass__(cls) -> None:
+        """Put the subclass in the global registry"""
+        if not hasattr(cls, 'registry'):
+            cls.registry = {}
+            
+        cls_name = cls.__name__
+        cls._file = inspect.getfile(cls)
+        cls._line = inspect.getsourcelines(cls)[1]
+        if cls_name not in cls.registry:
+            cls.registry[cls_name] = cls    
+        else:
+            conflicting_cls = cls.registry[cls_name]
+            location = f"{conflicting_cls._file}:{conflicting_cls._line}"
+            raise ValueError(f"Term {cls_name} already registered in {location}")
+
+
 CT = TypeVar('CT', bound=Command)
 
-class Observation(Generic[CT]):
+
+class Observation(Generic[CT], _RegistryMixin):
     """
     Base class for all observations.
     """
-    registry = {}
 
     def __init__(self, env):
         self.env: _Env = env
@@ -150,20 +168,8 @@ class Observation(Generic[CT]):
         """Called at each step **after** simulation, if GUI is enabled"""
         pass
 
-    def __init_subclass__(cls) -> None:
-        """Put the subclass in the global registry"""
-        cls_name = cls.__name__
-        cls._file = inspect.getfile(cls)
-        cls._line = inspect.getsourcelines(cls)[1]
-        if cls_name not in Observation.registry:
-            Observation.registry[cls_name] = cls    
-        else:
-            conflicting_cls = Observation.registry[cls_name]
-            location = f"{conflicting_cls._file}:{conflicting_cls._line}"
-            raise ValueError(f"Observation {cls_name} already registered in {location}")
 
-
-class Reward(Generic[CT]):
+class Reward(Generic[CT], _RegistryMixin):
     def __init__(
         self,
         env,
