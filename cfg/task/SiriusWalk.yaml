@@ -1,0 +1,112 @@
+# @package task
+name: Sirius
+
+viewer:
+  resolution: [1280, 720]
+  lookat: [0., 0., 0.]
+  eye: [4.0, 4.0, 4.0]
+
+robot:
+  name: sirius_wheel
+terrain: easy
+
+# common
+num_envs: 4096
+max_episode_length: 1000
+
+sim:
+  step_dt: 0.02
+  isaac_physics_dt: 0.005
+  mujoco_physics_dt: 0.002
+
+action:
+  _target_: active_adaptation.envs.mdp.action.LegWheel
+  leg_scaling: {.*_(HAA|HFE|KFE): 0.5}
+  wheel_scaling: {.*_WHEEL: 10.0}
+
+command:
+  _target_: active_adaptation.envs.mdp.commands.sirius.SiriusCommandManager
+  lin_vel_x_range: [0.0, 2.0]
+  lin_vel_y_range: [0.0, 0.8]
+  ang_vel_z_range: [-2.0, 2.0]
+
+observation:
+  command_mode_: # won't be normalized
+    command_mode:
+  command:
+    command:
+  policy:
+    root_angvel_b:
+    projected_gravity_b: {noise_std: 0.05}
+    joint_pos_multistep: {steps: 4, noise_std: 0.05, joint_names: .*_(HAA|HFE|KFE)}
+    joint_vel_multistep: {steps: 4, noise_std: 0.2, joint_names: .*}
+    prev_actions: {steps: 2, permute: true}
+    # wheel_trans_vel:    {}
+  priv:
+    applied_action:
+    applied_torque:
+    root_linvel_b:    {yaw_only: true}
+    external_forces:  {body_names: ["trunk"]}
+    body_height:      {body_names: [.*hip, .*_FOOT]}
+
+reward:
+  loco:
+    lin_vel_exp:        {weight: 1.5, enabled: true}
+    ang_vel_z_exp:      {weight: 1.0, enabled: true}
+    pitch_exp:          {weight: 1.5, enabled: true}
+  reg:
+    no_drift:           {weight: 1.0, enabled: true}
+    energy_l1:          {weight: 0.0001, enabled: true}
+    joint_acc_l2:       {weight: 2.5e-7, enabled: true}
+    joint_torques_l2:   {weight: 1.0e-4, enabled: true}
+    joint_torque_limits: {weight: 0.5, enabled: true}
+
+    action_rate_l2:     {weight: 0.01, enabled: true}
+    action_rate2_l2:    {weight: 0.002, enabled: true}
+
+    survival:           {weight: 1.0, enabled: true}
+    sirius_base_height:  {weight: 1.0, enabled: true}
+    lateral_swing_height: {weight: 2.0, enabled: true, feet_names: .*_FOOT}
+    undesired_contact:  {body_names: ["trunk", ".*(hip|thigh|calf)"], weight: 0.25, enabled: true}
+  debug:
+    feet_slip:          {weight: 1.0, enabled: false, body_names: .*_FOOT}
+    feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_FOOT}
+
+termination:
+  crash: {body_names_expr: ["trunk", "(front|back)", ".*hip", ".*thigh"], t_thres: 0.01}
+  stand_error_exceeds: {}
+  jump_error_exceeds: {}
+  flip_error_exceeds: {}
+
+randomization:
+  perturb_body_mass:
+    (?!(front|back)).*: [0.8, 1.1]
+  perturb_body_materials:
+    body_names: ".*_FOOT"
+    static_friction_range:  [0.5, 4.0]
+    dynamic_friction_range: [0.5, 4.0]
+    restitution_range:      [0.0, 0.5]
+    homogeneous: true # ${task.homogeneous}
+  motor_params:
+    actuator_name: base_legs
+    stiffness_range:  
+      .*_HAA: [0.8, 1.2]
+      .*_HFE: [0.8, 1.2]
+      .*_KFE: [0.8, 1.2]
+    damping_range:
+      .*_HAA: [0.8, 1.2]
+      .*_HFE: [0.8, 1.2]
+      .*_KFE: [0.8, 1.2]
+      .*_WHEEL: [0.8, 1.2]
+    scale_factor_range:
+      .*_HAA: [0.9, 1.1]
+      .*_HFE: [0.9, 1.1]
+      .*_KFE: [0.9, 1.1]
+    armature_range:
+      .*: [0.0, 0.02]
+  reset_joint_states_scale:
+    pos_scales:
+      .*: [0.8, 1.2]
+  constant_force:
+    force_range: [50, 50, 15]
+    offset_range: [0.2, 0.1, 0.1]

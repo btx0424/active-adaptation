@@ -14,55 +14,6 @@ if TYPE_CHECKING:
     from active_adaptation.envs.base import _Env
 
 
-class Reward:
-    def __init__(
-        self,
-        env,
-        weight: float,
-        enabled: bool = True,
-    ):
-        self.env: _Env = env
-        self.weight = weight
-        self.enabled = enabled
-
-    @property
-    def num_envs(self):
-        return self.env.num_envs
-
-    @property
-    def device(self):
-        return self.env.device
-
-    def step(self, substep: int):
-        pass
-
-    def post_step(self, substep: int):
-        pass
-
-    def update(self):
-        pass
-
-    def reset(self, env_ids: torch.Tensor):
-        pass
-
-    def __call__(self) -> torch.Tensor:
-        result = self.compute()
-        if isinstance(result, torch.Tensor):
-            rew, count = result, result.numel()
-        elif isinstance(result, tuple):
-            rew, is_active = result
-            rew = rew * is_active.float()
-            count = is_active.sum().item()
-        return self.weight * rew, count 
-
-    @abc.abstractmethod
-    def compute(self) -> torch.Tensor:
-        raise NotImplementedError
-
-    def debug_draw(self):
-        pass
-
-
 def reward_func(func):
     class RewFunc(Reward):
         def compute(self):
@@ -78,30 +29,22 @@ def reward_wrapper(func: Callable[[], torch.Tensor]):
     return RewardWrapper
 
 
-@reward_func
-def energy_l2(self):
-    asset: Articulation = self.scene["robot"]
-    energy = (
-        (asset.data.joint_vel * asset.data.applied_torque)
-        .square()
-        .sum(dim=-1, keepdim=True)
-    )
-    return -energy
+class joint_acc_l2(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+
+    def compute(self) -> torch.Tensor:
+        r = -self.asset.data.joint_acc.square().sum(dim=-1, keepdim=True)
+        if hasattr(self.asset.data, "linvel_exp"):
+            return r * (0.5 + 0.5 * self.asset.data.linvel_exp)
+        else:
+            return r
 
 
-@reward_func
-def joint_acc_l2(self):
-    asset: Articulation = self.scene["robot"]
-    r = -asset.data.joint_acc.square().sum(dim=-1, keepdim=True)
-    if hasattr(asset.data, "linvel_exp"):
-        return r * (0.5 + 0.5 * asset.data.linvel_exp)
-    else:
-        return r
-
-
-@reward_func
-def survival(self):
-    return torch.ones(self.num_envs, 1, device=self.device)
+class survival(Reward):
+    def compute(self):
+        return torch.ones(self.num_envs, 1, device=self.device)
 
 
 class linvel_z_l2(Reward):
@@ -140,13 +83,6 @@ class angvel_xy_l2(Reward):
         else:
             r = -self.angvel[:, :2].square().sum(-1)
         return r.reshape(self.num_envs, 1)
-
-
-@reward_func
-def heading_yaw(self):
-    asset: Articulation = self.scene["robot"]
-    yaw_diff = self.command_manager.command[:, 2].abs()
-    return -yaw_diff.unsqueeze(1)
 
 
 class energy_l1(Reward):
@@ -721,85 +657,6 @@ class feet_air_time(Reward):
         # if self.condition_on_linvel and hasattr(self.asset.data, "linvel_exp"):
         #     self.reward *= self.asset.data.linvel_exp
         return self.reward
-
-
-class max_feet_height(Reward):
-    def __init__(
-        self,
-        env,
-        body_names: str,
-        target_height: float,
-        weight: float,
-        enabled: bool = True,
-    ):
-        super().__init__(env, weight, enabled)
-        self.target_height = target_height
-
-        self.asset: Articulation = self.env.scene["robot"]
-        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
-        self.body_ids, self.body_names = self.contact_sensor.find_bodies(body_names)
-        self.body_ids = torch.tensor(self.body_ids, device=self.device)
-
-        self.asset_body_ids, self.asset_body_names = self.asset.find_bodies(body_names)
-
-        self.in_contact = torch.zeros(
-            self.num_envs, len(self.body_ids), dtype=bool, device=self.device
-        )
-        self.impact = torch.zeros(
-            self.num_envs, len(self.body_ids), dtype=bool, device=self.device
-        )
-        self.detach = torch.zeros(
-            self.num_envs, len(self.body_ids), dtype=bool, device=self.device
-        )
-        self.has_impact = torch.zeros(
-            self.num_envs, len(self.body_ids), dtype=bool, device=self.device
-        )
-        self.max_height = torch.zeros(
-            self.num_envs, len(self.body_ids), device=self.device
-        )
-        self.impact_point = torch.zeros(
-            self.num_envs, len(self.body_ids), 3, device=self.device
-        )
-        self.detach_point = torch.zeros(
-            self.num_envs, len(self.body_ids), 3, device=self.device
-        )
-
-    def reset(self, env_ids):
-        self.has_impact[env_ids] = False
-
-    def update(self):
-        contact_force = self.contact_sensor.data.net_forces_w_history[
-            :, :, self.body_ids
-        ]
-        feet_pos_w = self.asset.data.body_pos_w[:, self.asset_body_ids]
-        in_contact = (contact_force.norm(dim=-1) > 0.01).any(dim=1)
-        self.impact = (~self.in_contact) & in_contact
-        self.detach = self.in_contact & (~in_contact)
-        self.in_contact = in_contact
-        self.has_impact.logical_or_(self.impact)
-        self.impact_point[self.impact] = feet_pos_w[self.impact]
-        self.detach_point[self.detach] = feet_pos_w[self.detach]
-        self.max_height = torch.where(
-            self.detach,
-            feet_pos_w[:, :, 2],
-            torch.maximum(self.max_height, feet_pos_w[:, :, 2]),
-        )
-
-    def compute(self) -> torch.Tensor:
-        reference_height = torch.maximum(
-            self.impact_point[:, :, 2], self.detach_point[:, :, 2]
-        )
-        max_height = self.max_height - reference_height
-        r = self.impact * (max_height / self.target_height).clamp_max(1.0)
-        return r.sum(dim=1, keepdim=True) * self.env.command_manager.is_standing_env
-
-    def debug_draw(self):
-        feet_pos_w = self.asset.data.body_pos_w[:, self.asset_body_ids]
-        self.env.debug_draw.point(
-            feet_pos_w[self.impact],
-            color=(1.0, 0.0, 0.0, 1.0),
-            size=30,
-        )
 
 
 # class linvel_exp2(Reward):
@@ -1682,18 +1539,28 @@ class joint_torque_limits(Reward):
         return - (violation_high + violation_low).sum(1, True)
 
 
-@reward_func
-def action_rate_l2(self):
-    action_diff = self.action_buf[:, :, 0] - self.action_buf[:, :, 1]
-    return - action_diff.square().sum(dim=-1, keepdim=True)
+class action_rate_l2(Reward):
+    """Penalize the rate of change of the action"""
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+
+    def compute(self) -> torch.Tensor:
+        self.action_buf = self.env.action_buf # TODO: fix this
+        action_diff = self.action_buf[:, :, 0] - self.action_buf[:, :, 1]
+        return - action_diff.square().sum(dim=-1, keepdim=True)
 
 
-@reward_func
-def action_rate2_l2(self):
-    action_diff = (
-        self.action_buf[:, :, 0] - 2 * self.action_buf[:, :, 1] + self.action_buf[:, :, 2]
-    )
-    return - action_diff.square().sum(dim=-1, keepdim=True)
+class action_rate2_l2(Reward):
+    """Penalize the second order rate of change of the action"""
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+
+    def compute(self) -> torch.Tensor:
+        self.action_buf = self.env.action_buf # TODO: fix this
+        action_diff = (
+            self.action_buf[:, :, 0] - 2 * self.action_buf[:, :, 1] + self.action_buf[:, :, 2]
+        )
+        return - action_diff.square().sum(dim=-1, keepdim=True)
     
 
 def normalize(x: torch.Tensor):
