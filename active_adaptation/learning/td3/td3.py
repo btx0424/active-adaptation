@@ -41,29 +41,29 @@ class Actor(nn.Module):
     def __init__(self, action_dim):
         super().__init__()
         self.layers = nn.Sequential(
-            nn.LazyLinear(256), nn.LeakyReLU(),
-            nn.LazyLinear(256), nn.LeakyReLU(),
-            nn.LazyLinear(256), nn.LeakyReLU(), nn.LayerNorm(256),
+            nn.LazyLinear(256), nn.ReLU(),
+            nn.LazyLinear(256), nn.ReLU(),
+            nn.LazyLinear(256), nn.ReLU(),
         )
         self.act = nn.LazyLinear(action_dim)
     
     def forward(self, obs):
-        return F.tanh(self.act(self.layers(obs)))
+        return F.tanh( self.act(self.layers(obs)) / 2. ) * 2.
 
 
 class Critic(nn.Module):
     def __init__(self):
         super().__init__()
         self.q_net_1 = nn.Sequential(
-            nn.LazyLinear(256), nn.LeakyReLU(),
-            nn.LazyLinear(256), nn.LeakyReLU(),
-            nn.LazyLinear(256), nn.LeakyReLU(), nn.LayerNorm(256),
+            nn.LazyLinear(256), nn.ReLU(),
+            nn.LazyLinear(256), nn.ReLU(),
+            nn.LazyLinear(256), nn.ReLU(),
             nn.LazyLinear(1),
         )
         self.q_net_2 = nn.Sequential(
-            nn.LazyLinear(256), nn.LeakyReLU(),
-            nn.LazyLinear(256), nn.LeakyReLU(),
-            nn.LazyLinear(256), nn.LeakyReLU(), nn.LayerNorm(256),
+            nn.LazyLinear(256), nn.ReLU(),
+            nn.LazyLinear(256), nn.ReLU(),
+            nn.LazyLinear(256), nn.ReLU(),
             nn.LazyLinear(1),
         )
     
@@ -78,15 +78,20 @@ class Noise(nn.Module):
     def __init__(self, batch_size, action_dim):
         super().__init__()
         self.noise_scales: torch.Tensor
+        self.noise: torch.Tensor
+        self.theta: float = 0.15
         self.register_buffer("noise_scales", torch.ones(batch_size, action_dim))
+        self.register_buffer("noise", torch.zeros(batch_size, action_dim))
 
-    def forward(self, obs: torch.Tensor, is_init: torch.Tensor):
+    def forward(self, action: torch.Tensor, is_init: torch.Tensor):
         if is_init.any():
             is_init = is_init
-            new_scales = torch.rand_like(self.noise_scales) * 0.2 + 0.2
+            new_scales = torch.rand_like(self.noise_scales) * 0.8 + 0.2
             self.noise_scales = torch.where(is_init, new_scales, self.noise_scales)
-        noise = torch.randn_like(obs).clamp(-.8, .8) * self.noise_scales
-        return obs + noise
+        # Ornstein-Uhlenbeck process
+        sigma = torch.randn_like(action).clamp(-3, 3.) 
+        self.noise += self.theta * -self.noise + sigma * self.noise_scales
+        return (action + self.noise).clamp(-2., 2.)
 
 
 class TD3(TensorDictModuleBase):
@@ -153,7 +158,7 @@ class TD3(TensorDictModuleBase):
         if mode == "train":
             return Seq(self.actor, self.noise)
         else:
-            return self.actor
+            return Seq(self.actor, self.noise)
     
     def train_op(self, tensordict: TensorDictBase):
 
@@ -187,38 +192,50 @@ class TD3(TensorDictModuleBase):
     
     def sample_batch(self, indices_start = None) -> TensorDictBase:
         shape = (self.buffer.shape[0], self.batch_size)
-        n_steps = self.n_steps - 1
-        if indices_start is not None and self.cfg.backtrack:
-            indices_start = (indices_start - 1) % self.buffer.shape[1]
-        else:
-            indices_start = torch.randint(
+        if self.n_steps == 1:
+            indices = torch.randint(
                 0,
-                min(self.buffer_ptr, self.buffer.shape[1] - n_steps),
+                min(self.buffer_ptr, self.buffer.shape[1]),
                 shape,
                 device=self.device,
             )
-        steps = torch.arange(n_steps, device=self.device)
-        indices = ((indices_start.unsqueeze(-1) + steps) % self.buffer.shape[1]).flatten(start_dim=1)
-        samples: TensorDictBase = self.buffer.gather(dim=1, index=indices).reshape(*shape, n_steps)
+            samples: TensorDictBase = self.buffer.gather(dim=1, index=indices).reshape(*shape)
+            return samples, None
+        else:            
+            indices = torch.randint(
+                0,
+                min(self.buffer_ptr, self.buffer.shape[1] - self.n_steps),
+                shape,
+                device=self.device,
+            )
+            seq_offsets = torch.arange(self.n_steps, device=self.device)
+            all_indices = indices.unsqueeze(-1) + seq_offsets
+            samples: TensorDictBase = self.buffer.gather(
+                dim=1, index=all_indices.flatten(start_dim=1)
+            ).reshape(*shape, self.n_steps)
 
-        done = samples["next", "done"] # [*shape, n_steps, 1]
-        reward = samples["next", "reward"].sum(dim=-1, keepdim=True) # [*shape, n_steps, 1]
-        gammas = torch.pow(self.gamma, steps).reshape(n_steps, 1)
-        discounts = (gammas * torch.cumprod(1.0 - done.float(), dim=2)) # [*shape, n_steps, 1]
-        discounted_reward = torch.sum(reward * discounts, dim=2) # [*shape, 1]
-
-        # if done.any():
-        #     print("hi")
-
-        next_indices = torch.where(
-            done.any(dim=2),
-            done.float().argmax(dim=2),
-            n_steps-1
-        )
-        result = samples[:, :, 0]
-        result["next"] = samples["next"].gather(2, next_indices.reshape(*shape, 1)).squeeze(2)
-        result["next", "reward"] = discounted_reward
-        return result, indices_start
+            all_dones = samples["next", "done"] # [*shape, n_steps, 1]
+            all_rewards = samples["next", "reward"].sum(dim=-1, keepdim=True) # [*shape, n_steps, 1]
+            done_masks = torch.cumprod(1.0 - all_dones.float(), dim=2) # [*shape, n_steps, 1]
+            discounts = torch.pow(self.gamma, torch.arange(self.n_steps, device=self.device)) # [n_steps]
+            
+            masked_rewards = all_rewards * done_masks # [*shape, n_steps, 1]
+            discounted_rewards = masked_rewards * discounts.unsqueeze(-1) # [*shape, n_steps, 1]
+            n_step_rewards = discounted_rewards.sum(dim=2) # [*shape, 1]
+            no_dones = all_dones.sum(dim=2) == 0
+            first_done = torch.argmax((all_dones > 0).float(), dim=2)
+            first_done = torch.where(no_dones, self.n_steps - 1, first_done)
+            final_indices = torch.gather(all_indices, 2, first_done).squeeze(-1)
+            final_next = self.buffer["next"].gather(1, final_indices).reshape(*shape)
+            
+            result = samples[:, :, 0]
+            assert torch.all(~no_dones == final_next["done"])
+            result["next", "policy"] = final_next["policy"]
+            result["next", "reward"] = n_step_rewards
+            result["next", "done"] = final_next["done"]
+            result["next", "terminated"] = final_next["terminated"]
+            result["next", "truncated"] = final_next["truncated"]
+            return result, None
     
     def update_critic(self, tensordict: TensorDictBase):
         next_tensordict = tensordict["next"]
@@ -228,11 +245,11 @@ class TD3(TensorDictModuleBase):
         
         with torch.no_grad():
             next_action = self.actor_target(next_tensordict)["action"]
-            noise = torch.randn_like(next_action)
-            next_action += (noise * 0.01)
+            noise = torch.randn_like(next_action).clamp(-3., 3.)
+            next_action = torch.clamp(next_action + (noise * 0.05), -2., 2.)
             next_tensordict["action"] = next_action
             next_qs = reward + gamma * self.critic_target(next_tensordict)["qs"]
-            q_target = torch.min(next_qs, dim=-1, keepdim=True).values
+            q_target = torch.min(next_qs, dim=-1, keepdim=True).values - next_qs.var(dim=-1, keepdim=True)
 
         qs = self.critic(tensordict)["qs"]
         q_loss = 2.0 * F.mse_loss(qs, q_target.expand_as(qs))
