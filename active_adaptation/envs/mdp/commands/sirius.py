@@ -2,6 +2,7 @@ import torch
 import math
 
 from tensordict import TensorClass
+from typing import TYPE_CHECKING
 from active_adaptation.utils.math import (
     euler_from_quat,
     quat_from_euler_xyz,
@@ -13,6 +14,9 @@ from active_adaptation.utils.math import (
 from active_adaptation.envs.mdp import reward, termination
 from active_adaptation.envs.mdp.base import Observation, Reward
 from active_adaptation.utils.symmetry import SymmetryTransform
+if TYPE_CHECKING:
+    from isaaclab.sensors import ContactSensor
+
 from .base import Command
 
 
@@ -448,3 +452,22 @@ class sirius_base_height(Reward[SiriusCommandManager]):
         rew = torch.where(base_height < target_height, -torch.exp(target_height - base_height), 0.)
         return rew.reshape(self.num_envs, 1)
 
+
+class wheel_contact_direction(Reward[SiriusCommandManager]):
+    """Penalize contacts where the wheels are not upright"""
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset = self.command_manager.asset
+        self.contact_forces: ContactSensor = self.env.scene["contact_forces"]
+        self.wheel_ids = self.asset.find_bodies(".*_FOOT")[0]
+        self.wheel_ids_contact = self.contact_forces.find_bodies(".*_FOOT")[0]
+        self.gravity = self.asset.data.default_mass[0].sum(-1).to(self.device) * 9.81
+
+    def compute(self) -> torch.Tensor:
+        wheel_contact_forces = self.contact_forces.data.net_forces_w[:, self.wheel_ids_contact] / self.gravity
+        wheel_normal = quat_rotate(
+            self.asset.data.body_quat_w[:, self.wheel_ids],
+            torch.tensor([0., 0., 1.], device=self.device).expand(self.num_envs, 4, 3)
+        )
+        rew = - (wheel_contact_forces * wheel_normal).sum(dim=-1).abs()
+        return rew.sum(1, True)
