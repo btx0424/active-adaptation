@@ -26,9 +26,9 @@ class SiriusCommand(TensorClass):
     cmd_rpy: torch.Tensor
     yaw_stiffness: torch.Tensor
 
+    des_height: torch.Tensor # [N, 2], fore and hind hip height
     des_rpy: torch.Tensor
     des_stand_vel: torch.Tensor
-    des_stand_hei: torch.Tensor
     
     time: torch.Tensor
     duration: torch.Tensor
@@ -45,8 +45,8 @@ class SiriusCommand(TensorClass):
             cmd_ang_vel=torch.zeros(size, 3, device=device),
             cmd_rpy=torch.zeros(size, 3, device=device),
             des_rpy=torch.zeros(size, 3, device=device),
+            des_height=torch.zeros(size, 2, device=device),
             des_stand_vel=torch.zeros(size, 1, device=device),
-            des_stand_hei=torch.zeros(size, 1, device=device),
             yaw_stiffness=torch.zeros(size, 1, device=device),
             time=torch.zeros(size, 1, device=device),
             duration=torch.full((size, 1), torch.inf, device=device),
@@ -85,10 +85,8 @@ class SiriusCommandManager(Command):
 
         self.wheel_joint_ids = self.asset.find_joints(".*_WHEEL")[0]
         self.leg_joint_ids = self.asset.find_joints(".*(HAA|HFE)")[0]
-        self.hip_joint_ids = self.asset.find_joints(".*HAA")[0]
-
-        self.front_body_id = self.asset.find_bodies("front")[0][0]
-        self.back_body_id = self.asset.find_bodies("back")[0][0]
+        self.fore_hip_ids = self.asset.find_bodies("[L,R]F_hip")[0]
+        self.hind_hip_ids = self.asset.find_bodies("[L,R]H_hip")[0]
         
         self.pitch_error_l2 = torch.zeros(self.num_envs, 1, device=self.device)
         self.roll_error_l2 = torch.zeros(self.num_envs, 1, device=self.device)
@@ -114,7 +112,7 @@ class SiriusCommandManager(Command):
         self._command = SiriusCommand.zero(self.num_envs, self.device)
         with torch.device(self.device):
             self.transition = torch.eye(4) 
-            self.transition[self.CMD_WALK]  = torch.tensor([1., 0., 0., .0]) # normal to others
+            self.transition[self.CMD_WALK]  = torch.tensor([.2, .8, 0., .0]) # normal to others
             self.transition[self.CMD_STAND] = torch.tensor([1., 0., 0., 0.]) # stand to others
             self.transition[self.CMD_JUMP]  = torch.tensor([1., 0., 0., 0.]) # jump to others
             self.transition[self.CMD_FLIP]  = torch.tensor([1., 0., 0., 0.]) # flip to others
@@ -183,20 +181,6 @@ class SiriusCommandManager(Command):
     #     is_active = (self._command.mode==self.CMD_WALK).unsqueeze(1)
     #     return rew, is_active
 
-    # @reward
-    # def jump_inertia(self):
-    #     return self.rew_jump_inertia
-    
-    # @reward
-    # def stand_lin_vel(self):
-    #     is_active = (self._command.mode==self.CMD_STAND).unsqueeze(1)
-    #     return self.rew_stand_lin_vel, is_active
-    
-    # @reward
-    # def stand_height(self):
-    #     is_active = (self._command.mode==self.CMD_STAND).unsqueeze(1)
-    #     return self.rew_stand_height, is_active
-    
     @termination
     def stand_error_exceeds(self):
         return (self._command.mode == self.CMD_STAND).unsqueeze(1) & (self.stand_height_error_l2 > 0.2)
@@ -266,33 +250,13 @@ class SiriusCommandManager(Command):
         self.target_base_height = target_base_height
         # print(self.base_height_error_l2.squeeze(1))
 
-        self.height_at_center = self.env.get_ground_height_at(self.asset.data.root_pos_w).unsqueeze(1)
+        # self.height_at_center = self.env.get_ground_height_at(self.asset.data.root_pos_w).unsqueeze(1)
 
-        self.front_height = self.asset.data.body_pos_w[:, self.front_body_id, 2:3] - self.height_at_center
-        self.back_height = self.asset.data.body_pos_w[:, self.back_body_id, 2:3] - self.height_at_center
+        # self.front_height = self.asset.data.body_pos_w[:, self.front_body_id, 2:3] - self.height_at_center
+        # self.back_height = self.asset.data.body_pos_w[:, self.back_body_id, 2:3] - self.height_at_center
 
-        self.front_height_error_l2 = (self.front_height - self.target_base_height).square()
-        self.back_height_error_l2 = (self.back_height - self.target_base_height).square()
-        
-        self._stand_height = self.asset.data.root_pos_w[:, 2:3] - self.height_at_center # base height
-        self.stand_fore_legs = self._command.cmd_rpy[:, 1:2] > +0.3*torch.pi
-        self.stand_hind_legs = self._command.cmd_rpy[:, 1:2] < -0.3*torch.pi
-        self._stand_height = torch.where(self.stand_fore_legs, self.back_height, self._stand_height)
-        self._stand_height = torch.where(self.stand_hind_legs, self.front_height, self._stand_height)
-        
-        stand_lin_vel = torch.zeros(self.num_envs, 1, device=self.device)
-        stand_lin_vel_front = self.asset.data.body_lin_vel_w[:, self.front_body_id, 2:3]
-        stand_lin_vel_back = self.asset.data.body_lin_vel_w[:, self.back_body_id, 2:3]
-        stand_lin_vel = torch.where(self.stand_fore_legs, stand_lin_vel_back, stand_lin_vel)
-        stand_lin_vel = torch.where(self.stand_hind_legs, stand_lin_vel_front, stand_lin_vel)
-        
-        self.stand_height_error_l2 = (self._command.mode == self.CMD_STAND).unsqueeze(1) \
-            * (self._command.des_stand_hei - self._stand_height).square()
-        self.stand_linvel_error_l2 = (self._command.mode == self.CMD_STAND).unsqueeze(1) \
-            * (self._command.des_stand_vel - stand_lin_vel).square()
-
-        self.rew_stand_lin_vel = torch.exp(- self.stand_linvel_error_l2 )
-        self.rew_stand_height = torch.exp(- self.stand_height_error_l2 / 0.2)
+        # self.front_height_error_l2 = (self.front_height - self.target_base_height).square()
+        # self.back_height_error_l2 = (self.back_height - self.target_base_height).square()
         
         cmd_yaw_diff = (self._command.mode == self.CMD_WALK) \
             .mul(wrap_to_pi(self._command.des_rpy[:, 2] - self.asset.data.heading_w)) \
@@ -309,9 +273,9 @@ class SiriusCommandManager(Command):
         self._command.cmd_ang_vel[:, 2:3] = (self._command.yaw_stiffness * cmd_yaw_diff).clamp(*self.ang_vel_z_range)
 
         # self._command.des_stand_vel = 4. * (1.3 - self._command.des_stand_hei)
-        des_stand_acc = self.stand_kp * (1.3 - self._command.des_stand_hei) - self.stand_kd * self._command.des_stand_vel
-        self._command.des_stand_vel.add_(self.env.step_dt * des_stand_acc)
-        self._command.des_stand_hei.add_(self.env.step_dt * self._command.des_stand_vel)
+        # des_stand_acc = self.stand_kp * (1.3 - self._command.des_stand_hei) - self.stand_kd * self._command.des_stand_vel
+        # self._command.des_stand_vel.add_(self.env.step_dt * des_stand_acc)
+        # self._command.des_stand_hei.add_(self.env.step_dt * self._command.des_stand_vel)
 
         sample = (self.env.episode_length_buf-20) % 175 == 0
         sample |= self._command.phase.squeeze(1) > 1.0
@@ -341,8 +305,9 @@ class SiriusCommandManager(Command):
         command.cmd_lin_vel = command.cmd_lin_vel * direction
         command.yaw_stiffness.uniform_(0.8, 1.2)
         command.des_rpy[:, 2].uniform_(-torch.pi, torch.pi)
-        command.des_rpy[:, 1].uniform_(-0.2 * torch.pi, 0.2 * torch.pi)
-        command.des_stand_hei[:] = 0.4
+        command.des_rpy[:, 1].uniform_(-0.2 * torch.pi, 0.2 * torch.pi) # pitch
+        command.des_height[:, 0] = 0.45 - command.des_rpy[:, 1].sin() * 0.314
+        command.des_height[:, 1] = 0.45 + command.des_rpy[:, 1].sin() * 0.314
         command.mode[:] = self.CMD_WALK
         return command
 
@@ -353,7 +318,8 @@ class SiriusCommandManager(Command):
         command.des_rpy[:, 1].uniform_(0.4 * torch.pi, 0.45 * torch.pi)
         command.des_rpy[:, 1].mul_(torch.randn(size, device=self.device).sign())
         command.des_rpy[:, 2] = self.asset.data.heading_w
-        command.des_stand_hei[:] = 0.4
+        command.des_height[:, 0] = 0.7 - command.des_rpy[:, 1].sin() * 0.314
+        command.des_height[:, 1] = 0.7 + command.des_rpy[:, 1].sin() * 0.314
         command.mode[:] = self.CMD_STAND
         return command
     
@@ -397,12 +363,12 @@ class SiriusCommandManager(Command):
             point[:, 2] = self.target_base_height.squeeze(1)
             self.env.debug_draw.point(point)
 
-            point = self.asset.data.body_pos_w[self.stand_fore_legs.squeeze(1), self.back_body_id]
-            point[:, 2] = self._command.des_stand_hei[self.stand_fore_legs.squeeze(1)].squeeze(1)
+            point = self.asset.data.body_pos_w[:, self.fore_hip_ids].mean(dim=1)
+            point[:, 2] = self._command.des_height[:, 0]
             self.env.debug_draw.point(point, color=(0, 0, 1, 1))
 
-            point = self.asset.data.body_pos_w[self.stand_hind_legs.squeeze(1), self.front_body_id]
-            point[:, 2] = self._command.des_stand_hei[self.stand_hind_legs.squeeze(1)].squeeze(1)
+            point = self.asset.data.body_pos_w[:, self.hind_hip_ids].mean(dim=1)
+            point[:, 2] = self._command.des_height[:, 1]
             self.env.debug_draw.point(point, color=(0, 1, 0, 1))
 
             # start = self.asset.data.body_pos_w[self.stand_fore_legs.squeeze(1)][:, self.back_body_id]
@@ -445,11 +411,17 @@ class sirius_base_height(Reward[SiriusCommandManager]):
     def __init__(self, env, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
         self.asset = self.command_manager.asset
+        self.fore_hip_ids = self.asset.find_bodies("[L,R]F_hip")[0]
+        self.hind_hip_ids = self.asset.find_bodies("[L,R]H_hip")[0]
 
     def compute(self) -> torch.Tensor:
-        base_height = self.asset.data.root_pos_w[:, 2] - self.env.get_ground_height_at(self.asset.data.root_pos_w)
-        target_height = 0.4
-        rew = torch.where(base_height < target_height, -torch.exp(target_height - base_height), 0.)
+        fore_height = self.asset.data.body_pos_w[:, self.fore_hip_ids, 2].mean(dim=1)
+        hind_height = self.asset.data.body_pos_w[:, self.hind_hip_ids, 2].mean(dim=1)
+        des_height = self.command_manager._command.des_height
+        rew = 0.5 * (
+            torch.exp( - (fore_height - des_height[:, 0]).square() / 0.1)
+            + torch.exp( - (hind_height - des_height[:, 1]).square() / 0.1)
+        )
         return rew.reshape(self.num_envs, 1)
 
 

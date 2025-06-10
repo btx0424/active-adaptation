@@ -56,6 +56,7 @@ reward:
     pitch_exp:          {weight: 1.5, enabled: true}
     angvel_xy_l2:       {weight: 0.02, enabled: true}
     linvel_z_l2:        {weight: 2.0, enabled: true}
+    sirius_base_height:  {weight: 1.0, enabled: true}
   reg:
     no_drift:           {weight: 1.0, enabled: false}
     energy_l1:          {weight: 0.0001, enabled: true}
@@ -67,7 +68,6 @@ reward:
     action_rate2_l2:    {weight: 0.002, enabled: true}
 
     survival:           {weight: 1.0, enabled: true}
-    sirius_base_height:  {weight: 1.0, enabled: true}
     lateral_swing_height: {weight: 2.0, enabled: true, feet_names: .*_FOOT}
     undesired_contact:  {body_names: ["trunk", ".*(hip|thigh|calf)"], weight: 0.25, enabled: true}
     wheel_contact_direction: {weight: 0.5, enabled: true}
@@ -77,9 +77,7 @@ reward:
 
 termination:
   crash: {body_names_expr: ["trunk", "(front|back)", ".*hip", ".*thigh"], t_thres: 0.01}
-  stand_error_exceeds: {}
-  jump_error_exceeds: {}
-  flip_error_exceeds: {}
+  # stand_error_exceeds: {}
 
 randomization:
   perturb_body_mass:
@@ -112,4 +110,4 @@ randomization:
       .*: [0.8, 1.2]
   constant_force:
     force_range: [50, 50, 15]
-    offset_range: [0.2, 0.1, 0.1]
+    offset_range: [0.3, 0.1, 0.1]
