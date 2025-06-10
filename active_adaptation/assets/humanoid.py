@@ -376,13 +376,13 @@ G1_WAIST_UNLOCKED_CFG = ArticulationCfg( # no wrist pitch and yaw
             max_depenetration_velocity=1.0,
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=False, 
+            enabled_self_collisions=True, 
             solver_position_iteration_count=6,
             solver_velocity_iteration_count=1
         ),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.80),
+        pos=(0.0, 0.0, 0.78),
         joint_pos={
             ".*_hip_pitch_joint": -0.28,
             ".*_knee_joint": 0.5,
@@ -436,17 +436,17 @@ G1_WAIST_UNLOCKED_CFG = ArticulationCfg( # no wrist pitch and yaw
     },
     joint_symmetry_mapping=symmetry_utils.mirrored({
         "left_hip_pitch_joint": (1, "right_hip_pitch_joint"),
-        "left_hip_roll_joint": (1, "right_hip_roll_joint"),
-        "left_hip_yaw_joint": (1, "right_hip_yaw_joint"),
+        "left_hip_roll_joint": (-1, "right_hip_roll_joint"),
+        "left_hip_yaw_joint": (-1, "right_hip_yaw_joint"),
         "left_knee_joint": (1, "right_knee_joint"),
         "left_ankle_pitch_joint": (1, "right_ankle_pitch_joint"),
-        "left_ankle_roll_joint": (1, "right_ankle_roll_joint"),
+        "left_ankle_roll_joint": (-1, "right_ankle_roll_joint"),
         "waist_yaw_joint": (-1, "waist_yaw_joint"),
         "waist_roll_joint": (-1, "waist_roll_joint"),
         "waist_pitch_joint": (1, "waist_pitch_joint"),
         "left_shoulder_pitch_joint": (1, "right_shoulder_pitch_joint"),
-        "left_shoulder_roll_joint": (1, "right_shoulder_roll_joint"),
-        "left_shoulder_yaw_joint": (1, "right_shoulder_yaw_joint"),
+        "left_shoulder_roll_joint": (-1, "right_shoulder_roll_joint"),
+        "left_shoulder_yaw_joint": (-1, "right_shoulder_yaw_joint"),
         "left_elbow_joint": (1, "right_elbow_joint"),
     }),
     spatial_symmetry_mapping=symmetry_utils.mirrored({
@@ -544,4 +544,123 @@ H2_CFG = ArticulationCfg(
             friction=0.01,
         ),
     },
+)
+
+
+GR1_CFG = ArticulationCfg(
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_PATH}/GR1T2_nohand/GR1T2_nohand.usd",
+        activate_contact_sensors=True,
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            disable_gravity=False,
+            retain_accelerations=False,
+            linear_damping=0.01,
+            angular_damping=0.01,
+            max_linear_velocity=1000.0,
+            max_angular_velocity=1000.0,
+            max_depenetration_velocity=0.5,
+        ),
+        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+            enabled_self_collisions=False,
+            solver_position_iteration_count=4,
+            solver_velocity_iteration_count=1
+        ),
+    ),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, 1.05),
+        joint_pos={
+            "(left|right)_hip_(roll|yaw)_joint": 0.0,
+            "(left|right)_hip_pitch_joint": -0.2618,
+            "(left|right)_knee_pitch_joint": 0.5236,
+            "(left|right)_ankle_pitch_joint": -0.2618,
+            "(left|right)_ankle_roll_joint": 0.0,
+            "waist_(yaw|roll|pitch)_joint": 0.0,
+            "head_(yaw|roll|pitch)_joint": 0.0,
+            "(left|right)_shoulder_(pitch|yaw)_joint": 0.0,
+            "(left|right)_elbow_pitch_joint": -0.3,
+            "(left|right)_wrist_(yaw|roll|pitch)_joint": 0.0,
+            # important note on symmetry:
+            # all the paired roll/yaw joints have different directions on left/right
+            # while the pitch joints have the same direction
+            'left_shoulder_roll_joint': 0.2,
+            'right_shoulder_roll_joint': -0.2,
+        },
+        joint_vel={".*": 0.0},
+    ),
+    soft_joint_pos_limit_factor=0.9,
+    actuators={
+        "base_legs": ImplicitActuatorCfg(
+            joint_names_expr=".*",
+            effort_limit_sim=300.0,
+            velocity_limit_sim=100.0,
+            stiffness={
+                '.*hip_roll_joint': 251.625, '.*hip_yaw_joint': 362.52, '.*hip_pitch_joint': 200,
+                '.*knee_pitch_joint': 200,
+                '.*ankle_pitch_joint': 10.9805, '.*ankle_roll_joint': 10.9805,
+                'waist_yaw_joint': 350., 'waist_pitch_joint': 350., 'waist_roll_joint': 350.,
+                'head_yaw_joint': 112.06, 'head_pitch_joint': 112.06, 'head_roll_joint': 112.06,
+                '.*shoulder_pitch_joint': 92.85, '.*shoulder_roll_joint': 92.85, '.*shoulder_yaw_joint': 112.06,
+                '.*elbow_pitch_joint': 112.06,
+                '.*wrist_yaw_joint': 112.06, '.*wrist_roll_joint': 10.0, '.*wrist_pitch_joint': 10.0
+            },
+            damping={
+                '.*hip_roll_joint': 14.72, '.*hip_yaw_joint': 10.0833, '.*hip_pitch_joint': 11,
+                '.*knee_pitch_joint': 11,
+                '.*ankle_pitch_joint': 0.6, '.*ankle_roll_joint': 0.6,
+                'waist_yaw_joint': 15.0, 'waist_pitch_joint': 15.0, 'waist_roll_joint': 15.0,
+                'head_yaw_joint': 3.1, 'head_pitch_joint': 3.1, 'head_roll_joint': 3.1,
+                '.*shoulder_pitch_joint': 2.575, '.*shoulder_roll_joint': 2.575, '.*shoulder_yaw_joint': 3.1,
+                '.*elbow_pitch_joint': 3.1,
+                '.*wrist_yaw_joint': 3.1, '.*wrist_roll_joint': 1.0, '.*wrist_pitch_joint': 1.0
+            },
+            armature=0.01,
+            friction=0.01,
+        ),
+    },
+    # important note on symmetry:
+    # all the paired roll/yaw joints have different directions on left/right
+    # while the pitch joints have the same direction
+    joint_symmetry_mapping=symmetry_utils.mirrored({
+        "left_hip_pitch_joint": (1, "right_hip_pitch_joint"),
+        "left_hip_roll_joint": (-1, "right_hip_roll_joint"),
+        "left_hip_yaw_joint": (-1, "right_hip_yaw_joint"),
+        "left_knee_pitch_joint": (1, "right_knee_pitch_joint"),
+        "left_ankle_pitch_joint": (1, "right_ankle_pitch_joint"),
+        "left_ankle_roll_joint": (-1, "right_ankle_roll_joint"),
+        "waist_yaw_joint": (-1, "waist_yaw_joint"),
+        "waist_roll_joint": (-1, "waist_roll_joint"),
+        "waist_pitch_joint": (1, "waist_pitch_joint"),
+        "left_shoulder_pitch_joint": (1, "right_shoulder_pitch_joint"),
+        "left_shoulder_roll_joint": (-1, "right_shoulder_roll_joint"),
+        "left_shoulder_yaw_joint": (-1, "right_shoulder_yaw_joint"),
+        "left_elbow_pitch_joint": (1, "right_elbow_pitch_joint"),
+        "left_wrist_yaw_joint": (1, "right_wrist_yaw_joint"),
+        "left_wrist_roll_joint": (-1, "right_wrist_roll_joint"),
+        "left_wrist_pitch_joint": (1, "right_wrist_pitch_joint"),
+        "head_yaw_joint": (-1,  "head_yaw_joint"),
+        "head_roll_joint": (-1, "head_roll_joint"),
+        "head_pitch_joint": (1, "head_pitch_joint"),
+    }),
+    spatial_symmetry_mapping=symmetry_utils.mirrored({
+        "base_link": "base_link",
+        "left_thigh_roll_link": "right_thigh_roll_link",
+        "left_thigh_yaw_link": "right_thigh_yaw_link",
+        "left_thigh_pitch_link": "right_thigh_pitch_link",
+        "left_shank_pitch_link": "right_shank_pitch_link",
+        "left_foot_pitch_link": "right_foot_pitch_link",
+        "left_foot_roll_link": "right_foot_roll_link",
+        "waist_yaw_link": "waist_yaw_link",
+        "waist_pitch_link": "waist_pitch_link",
+        "waist_roll_link": "waist_roll_link",
+        "head_roll_link": "head_roll_link",
+        "head_yaw_link": "head_yaw_link",
+        "head_pitch_link": "head_pitch_link",
+        "left_upper_arm_pitch_link": "right_upper_arm_pitch_link",
+        "left_upper_arm_roll_link": "right_upper_arm_roll_link",
+        "left_upper_arm_yaw_link": "right_upper_arm_yaw_link",
+        "left_lower_arm_pitch_link": "right_lower_arm_pitch_link",
+        "left_hand_yaw_link": "right_hand_yaw_link",
+        "left_hand_roll_link": "right_hand_roll_link",
+        "left_hand_pitch_link": "right_hand_pitch_link",
+    })
 )
