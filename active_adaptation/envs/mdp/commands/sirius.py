@@ -27,6 +27,7 @@ class SiriusCommand(TensorClass):
     yaw_stiffness: torch.Tensor
 
     des_height: torch.Tensor # [N, 2], fore and hind hip height
+    des_contact: torch.Tensor # [N, 4]
     des_rpy: torch.Tensor
     des_stand_vel: torch.Tensor
     
@@ -46,6 +47,7 @@ class SiriusCommand(TensorClass):
             cmd_rpy=torch.zeros(size, 3, device=device),
             des_rpy=torch.zeros(size, 3, device=device),
             des_height=torch.zeros(size, 2, device=device),
+            des_contact=torch.zeros(size, 4, device=device),
             des_stand_vel=torch.zeros(size, 1, device=device),
             yaw_stiffness=torch.zeros(size, 1, device=device),
             time=torch.zeros(size, 1, device=device),
@@ -315,11 +317,16 @@ class SiriusCommandManager(Command):
         command = SiriusCommand.zero(size, self.device)
         # command.cmd_lin_vel[:, 0].uniform_(-0.4, 0.4)
         command.cmd_lin_vel[:, 0] = torch.randint(-2, 4, (size,), device=self.device) * 0.5
-        command.des_rpy[:, 1].uniform_(0.4 * torch.pi, 0.45 * torch.pi)
+        command.des_rpy[:, 1].uniform_(0.4 * torch.pi, 0.45 * torch.pi) # pitch
         command.des_rpy[:, 1].mul_(torch.randn(size, device=self.device).sign())
         command.des_rpy[:, 2] = self.asset.data.heading_w
         command.des_height[:, 0] = 0.7 - command.des_rpy[:, 1].sin() * 0.314
         command.des_height[:, 1] = 0.7 + command.des_rpy[:, 1].sin() * 0.314
+        command.des_contact = torch.where(
+            command.des_rpy[:, 1, None] > 0.0,
+            torch.tensor([0., -1., 0., -1.], device=self.device), # stand on fore legs
+            torch.tensor([-1., 0., -1., 0.], device=self.device), # stand on hind legs
+        )
         command.mode[:] = self.CMD_STAND
         return command
     
@@ -443,3 +450,18 @@ class wheel_contact_direction(Reward[SiriusCommandManager]):
         )
         rew = - (wheel_contact_forces * wheel_normal).sum(dim=-1).abs()
         return rew.sum(1, True)
+
+
+class contact_pattern(Reward[SiriusCommandManager]):
+    """Reward adherence to the commanded contact pattern"""
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset = self.command_manager.asset
+        self.contact_forces: ContactSensor = self.env.scene["contact_forces"]
+        self.wheel_ids_contact, self.wheel_names_contact = self.contact_forces.find_bodies(".*_FOOT")
+    
+    def compute(self) -> torch.Tensor:
+        des_contact = self.command_manager._command.des_contact
+        contact_forces = self.contact_forces.data.net_forces_w[:, self.wheel_ids_contact].norm(dim=-1)
+        rew = (des_contact * (contact_forces > 1.)).sum(dim=-1)
+        return rew.reshape(self.num_envs, 1)

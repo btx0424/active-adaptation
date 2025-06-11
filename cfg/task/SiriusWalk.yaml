@@ -57,6 +57,7 @@ reward:
     angvel_xy_l2:       {weight: 0.02, enabled: true}
     linvel_z_l2:        {weight: 2.0, enabled: true}
     sirius_base_height:  {weight: 1.0, enabled: true}
+    contact_pattern:    {weight: 1.0, enabled: true}
   reg:
     no_drift:           {weight: 1.0, enabled: false}
     energy_l1:          {weight: 0.0001, enabled: true}
