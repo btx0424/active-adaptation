@@ -184,9 +184,9 @@ class joint_torques_berhu(Reward):
     
     def compute(self) -> torch.Tensor:
         applied_torques = self.asset.data.applied_torque[:, self.joint_ids]
-        return torch.where(
-            applied_torques.abs() < self.c,
-            applied_torques.abs(),
+        return - torch.where(
+            applied_torques < self.c,
+            applied_torques,
             (applied_torques.square() + self.c**2) / (2 * self.c)
         ).sum(1, keepdim=True)
 
