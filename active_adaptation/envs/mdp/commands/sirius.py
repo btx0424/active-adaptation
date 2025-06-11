@@ -20,6 +20,9 @@ if TYPE_CHECKING:
 from .base import Command
 
 
+JUMP_PREPARE_TIME = 0.2
+JUMP_LANDING_TIME = 0.2
+
 class SiriusCommand(TensorClass):
     cmd_lin_vel: torch.Tensor # body frame
     cmd_ang_vel: torch.Tensor
@@ -31,13 +34,21 @@ class SiriusCommand(TensorClass):
     des_rpy: torch.Tensor
     des_stand_vel: torch.Tensor
     
-    time: torch.Tensor
-    duration: torch.Tensor
-    mode: torch.Tensor
+    time: torch.Tensor # [N, 1]
+    duration: torch.Tensor # [N, 1]
+    mode: torch.Tensor # [N]
 
     @property
     def phase(self):
         return self.time / self.duration
+    
+    @property
+    def is_jumping(self):
+        return (
+            (self.mode[:, None] == 2) 
+            & (self.time > JUMP_PREPARE_TIME) 
+            & (self.time < self.duration - JUMP_LANDING_TIME)
+        )
     
     @classmethod
     def zero(cls, size: int, device: str):
@@ -246,19 +257,26 @@ class SiriusCommandManager(Command):
             self.asset.data.projected_gravity_b[:, 0:1].square()
             + (self._command.cmd_rpy[:, 0:1].sin() + self.asset.data.projected_gravity_b[:, 1:2]).square()
             + (self._command.cmd_rpy[:, 0:1].cos() + self.asset.data.projected_gravity_b[:, 2:3]).square()
-        )
-
-        jump_height = torch.clamp_min(0.5 - .5*9.81*(self._command.time - self._command.duration/2)**2, 0.)
-        target_base_height = 0.5 + jump_height
-        
-        self.target_jump_lin_vel = (target_base_height - self.target_base_height) / self.env.step_dt
-        self.target_base_height = target_base_height
+        )        
         
         cmd_yaw_diff = (self._command.mode == self.CMD_WALK) \
             .mul(wrap_to_pi(self._command.des_rpy[:, 2] - self.asset.data.heading_w)) \
             .unsqueeze(1)
 
         self._command.time.add_(self.env.step_dt)
+
+        # update jump command
+        is_jumping = self._command.is_jumping.reshape(-1, 1)
+        self._command.des_contact[:] = torch.where(
+            is_jumping,
+            torch.tensor([-1., -1., -1., -1.], device=self.device),
+            torch.tensor([0.0, 0.0, 0.0, 0.0], device=self.device),
+        )
+        self._command.des_height[:] = torch.where(
+            is_jumping,
+            0.65,
+            self._command.des_height
+        )
 
         self._command.cmd_rpy[:, 0:1] = torch.where(
             (self._command.mode == self.CMD_FLIP).reshape(-1, 1),
@@ -306,11 +324,11 @@ class SiriusCommandManager(Command):
         command = SiriusCommand.zero(size, self.device)
         # command.cmd_lin_vel[:, 0].uniform_(-0.4, 0.4)
         command.cmd_lin_vel[:, 0] = torch.randint(-2, 4, (size,), device=self.device) * 0.5
-        command.des_rpy[:, 1].uniform_(0.4 * torch.pi, 0.45 * torch.pi) # pitch
+        command.des_rpy[:, 1].uniform_(0.42 * torch.pi, 0.48 * torch.pi) # pitch
         command.des_rpy[:, 1].mul_(torch.randn(size, device=self.device).sign())
         command.des_rpy[:, 2] = self.asset.data.heading_w
-        command.des_height[:, 0] = 0.7 - command.des_rpy[:, 1].sin() * 0.314
-        command.des_height[:, 1] = 0.7 + command.des_rpy[:, 1].sin() * 0.314
+        command.des_height[:, 0] = 0.71 - command.des_rpy[:, 1].sin() * 0.314
+        command.des_height[:, 1] = 0.71 + command.des_rpy[:, 1].sin() * 0.314
         command.des_contact = torch.where(
             command.des_rpy[:, 1, None] > 0.0,
             torch.tensor([0., -1., 0., -1.], device=self.device), # stand on fore legs
@@ -333,7 +351,8 @@ class SiriusCommandManager(Command):
         command = SiriusCommand.zero(size, self.device)
         command.cmd_lin_vel[:, 0] = self._command.cmd_lin_vel[:, 0] * 0.8
         command.des_rpy[:, 2] = self.asset.data.heading_w
-        command.duration.uniform_(0.7, 0.9)
+        command.duration.uniform_(0.8, 1.0)
+        command.des_height[:] = 0.45
         command.mode[:] = self.CMD_JUMP
         return command
 
@@ -355,9 +374,6 @@ class SiriusCommandManager(Command):
                 self.asset.data.root_pos_w,
                 quat_rotate(quat, torch.tensor([0., 0., 1.], device=self.device).expand(self.num_envs, 3))
             )
-            point = self.asset.data.root_pos_w.clone()
-            point[:, 2] = self.target_base_height.squeeze(1)
-            self.env.debug_draw.point(point)
 
             point = self.asset.data.body_pos_w[:, self.fore_hip_ids].mean(dim=1)
             point[:, 2] = self._command.des_height[:, 0]
