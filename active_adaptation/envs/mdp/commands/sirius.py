@@ -489,3 +489,17 @@ class contact_pattern(Reward[SiriusCommandManager]):
         # rew = (current_air_time / 0.02 < self.des_air_time) * -(des_contact != 0)
         self.env.discount.mul_(torch.exp(0.25 * rew))
         return rew.reshape(self.num_envs, 1)
+
+
+class sirius_joint_deviation(Reward[SiriusCommandManager]):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset = self.command_manager.asset
+        self.joint_ids = self.asset.find_joints(".*(HAA|HFE)")[0]
+
+    def compute(self) -> torch.Tensor:
+        is_active = self.command_manager._command.mode == self.command_manager.CMD_JUMP
+        joint_pos = self.asset.data.joint_pos[:, self.joint_ids]
+        joint_dev = (joint_pos - self.asset.data.default_joint_pos[:, self.joint_ids]).square().sum(1, True)
+        return -joint_dev, is_active.reshape(self.num_envs, 1)
+

@@ -231,13 +231,14 @@ class PPOPolicy(ModBase):
         self.critic(fake_input)
         self.dynamics(fake_input)
 
-        self.opt_teacher = torch.optim.Adam(
+        self.opt_teacher = torch.optim.AdamW(
             [
                 {"params": self.priv_encoder.parameters()},
                 {"params": self.actor_teacher.parameters()},
                 {"params": self.critic.parameters()},
             ],
             lr=cfg.lr,
+            weight_decay=0.1,
             # fused=True
         )
         self.opt_model = torch.optim.Adam(self.dynamics.parameters(), lr=cfg.lr)
@@ -316,6 +317,14 @@ class PPOPolicy(ModBase):
 
     def train_policy(self, tensordict: TensorDict):
         infos = []
+
+        # exploration bonus
+        # if self.iter_count > 20:
+        #     with torch.no_grad():
+        #         self.dynamics(tensordict)
+        #         error = (tensordict["next", OBS_KEY] - tensordict[f"next_{OBS_KEY}"]).square().mean(-1)
+        #         tensordict[REWARD_KEY] = tensordict[REWARD_KEY].sum(-1, True) + 0.1 * error.reshape(*tensordict.shape, 1)
+        
         self._compute_advantage(tensordict, self.critic, "adv", "ret")
         adv = tensordict["adv"]
         mode_0 = tensordict["command_mode_"] == 0
@@ -403,10 +412,11 @@ class PPOPolicy(ModBase):
         rewards = tensordict[REWARD_KEY].sum(-1, keepdim=True).clamp_min(0.)
         terms = tensordict[TERM_KEY] # | terminated
         dones = tensordict[DONE_KEY] | cmd_changed
+        discounts = tensordict["next", "discount"]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
 
-        adv, ret = self.gae(rewards, terms, dones, values, next_values)
+        adv, ret = self.gae(rewards, terms, dones, values, next_values, discounts)
         if update_value_norm:
             self.value_norm.update(ret)
         ret = self.value_norm.normalize(ret)

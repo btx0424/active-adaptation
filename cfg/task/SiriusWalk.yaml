@@ -53,6 +53,7 @@ observation:
     root_linvel_b:    {yaw_only: true}
     external_forces:  {body_names: ["trunk"]}
     body_height:      {body_names: [.*hip, .*_FOOT]}
+    contact_indicator:  {body_names: [".*_FOOT"], timing: false}
 
 reward:
   loco:
@@ -77,6 +78,7 @@ reward:
     lateral_swing_height: {weight: 2.0, enabled: true, feet_names: .*_FOOT}
     undesired_contact:  {body_names: ["trunk", ".*(hip|thigh|calf)"], weight: 0.25, enabled: true}
     wheel_contact_direction: {weight: 0.5, enabled: true}
+    sirius_joint_deviation: {weight: 0.2, enabled: true}
   debug:
     joint_torques_l2:   {weight: 1.0e-4, enabled: false}
     feet_slip:          {weight: 1.0, enabled: false, body_names: .*_FOOT}
