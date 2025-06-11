@@ -75,6 +75,7 @@ class SiriusCommandManager(Command):
         lin_vel_x_range,
         lin_vel_y_range,
         ang_vel_z_range = (-2.0, 2.0),
+        transitions = None,
     ):
         super().__init__(env)
         self.lin_vel_x_range = lin_vel_x_range
@@ -87,6 +88,7 @@ class SiriusCommandManager(Command):
 
         self.wheel_joint_ids = self.asset.find_joints(".*_WHEEL")[0]
         self.leg_joint_ids = self.asset.find_joints(".*(HAA|HFE)")[0]
+        self.thigh_joint_ids = self.asset.find_joints(".*HFE")[0]
         self.fore_hip_ids = self.asset.find_bodies("[L,R]F_hip")[0]
         self.hind_hip_ids = self.asset.find_bodies("[L,R]H_hip")[0]
         
@@ -113,12 +115,14 @@ class SiriusCommandManager(Command):
         
         self._command = SiriusCommand.zero(self.num_envs, self.device)
         with torch.device(self.device):
-            self.transition = torch.eye(4) 
-            self.transition[self.CMD_WALK]  = torch.tensor([.2, .8, 0., .0]) # normal to others
-            self.transition[self.CMD_STAND] = torch.tensor([1., 0., 0., 0.]) # stand to others
-            self.transition[self.CMD_JUMP]  = torch.tensor([1., 0., 0., 0.]) # jump to others
-            self.transition[self.CMD_FLIP]  = torch.tensor([1., 0., 0., 0.]) # flip to others
-            
+            if transitions is None:
+                self.transition = torch.eye(4) 
+                self.transition[self.CMD_WALK]  = torch.tensor([.2, .8, 0., .0]) # normal to others
+                self.transition[self.CMD_STAND] = torch.tensor([1., 0., 0., 0.]) # stand to others
+                self.transition[self.CMD_JUMP]  = torch.tensor([1., 0., 0., 0.]) # jump to others
+                self.transition[self.CMD_FLIP]  = torch.tensor([1., 0., 0., 0.]) # flip to others
+            else:
+                self.transition = torch.as_tensor(transitions)
             self.transition /= self.transition.sum(1, keepdim=True)
             
         if self.env.sim.has_gui() and self.env.backend == "isaac":
@@ -243,22 +247,12 @@ class SiriusCommandManager(Command):
             + (self._command.cmd_rpy[:, 0:1].sin() + self.asset.data.projected_gravity_b[:, 1:2]).square()
             + (self._command.cmd_rpy[:, 0:1].cos() + self.asset.data.projected_gravity_b[:, 2:3]).square()
         )
-        # print(self.roll_error_l2.squeeze(1))
 
         jump_height = torch.clamp_min(0.5 - .5*9.81*(self._command.time - self._command.duration/2)**2, 0.)
         target_base_height = 0.5 + jump_height
         
         self.target_jump_lin_vel = (target_base_height - self.target_base_height) / self.env.step_dt
         self.target_base_height = target_base_height
-        # print(self.base_height_error_l2.squeeze(1))
-
-        # self.height_at_center = self.env.get_ground_height_at(self.asset.data.root_pos_w).unsqueeze(1)
-
-        # self.front_height = self.asset.data.body_pos_w[:, self.front_body_id, 2:3] - self.height_at_center
-        # self.back_height = self.asset.data.body_pos_w[:, self.back_body_id, 2:3] - self.height_at_center
-
-        # self.front_height_error_l2 = (self.front_height - self.target_base_height).square()
-        # self.back_height_error_l2 = (self.back_height - self.target_base_height).square()
         
         cmd_yaw_diff = (self._command.mode == self.CMD_WALK) \
             .mul(wrap_to_pi(self._command.des_rpy[:, 2] - self.asset.data.heading_w)) \
@@ -273,11 +267,6 @@ class SiriusCommandManager(Command):
         )
         self._command.cmd_rpy[:, 1:2].lerp_(self._command.des_rpy[:, 1:2], 0.4)
         self._command.cmd_ang_vel[:, 2:3] = (self._command.yaw_stiffness * cmd_yaw_diff).clamp(*self.ang_vel_z_range)
-
-        # self._command.des_stand_vel = 4. * (1.3 - self._command.des_stand_hei)
-        # des_stand_acc = self.stand_kp * (1.3 - self._command.des_stand_hei) - self.stand_kd * self._command.des_stand_vel
-        # self._command.des_stand_vel.add_(self.env.step_dt * des_stand_acc)
-        # self._command.des_stand_hei.add_(self.env.step_dt * self._command.des_stand_vel)
 
         sample = (self.env.episode_length_buf-20) % 175 == 0
         sample |= self._command.phase.squeeze(1) > 1.0
