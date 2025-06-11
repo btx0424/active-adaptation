@@ -169,6 +169,28 @@ class joint_torques_l2(Reward):
         )
 
 
+class joint_torques_berhu(Reward):
+    """
+    Berhu loss:
+    L(x) = |x|, if |x| < c
+    L(x) = (x^2 + c^2) / (2 * c), if |x| >= c
+    """
+    def __init__(self, env, c: float,weight: float, enabled: bool = True, joint_names: str = ".*"):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids = self.asset.find_joints(joint_names)[0]
+        self.joint_ids = torch.tensor(self.joint_ids, device=self.device)
+        self.c = c
+    
+    def compute(self) -> torch.Tensor:
+        applied_torques = self.asset.data.applied_torque[:, self.joint_ids]
+        return torch.where(
+            applied_torques.abs() < self.c,
+            applied_torques.abs(),
+            (applied_torques.square() + self.c**2) / (2 * self.c)
+        ).sum(1, keepdim=True)
+
+
 class undesired_contact(Reward):
     def __init__(self, env, body_names, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
