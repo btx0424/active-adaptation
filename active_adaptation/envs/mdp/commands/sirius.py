@@ -20,8 +20,8 @@ if TYPE_CHECKING:
 from .base import Command
 
 
-JUMP_PREPARE_TIME = 0.2
-JUMP_LANDING_TIME = 0.2
+JUMP_PREPARE_TIME = 0.3
+JUMP_LANDING_TIME = 0.3
 
 class SiriusCommand(TensorClass):
     cmd_lin_vel: torch.Tensor # body frame
@@ -69,10 +69,7 @@ class SiriusCommand(TensorClass):
 
 
 class SiriusCommandManager(Command):
-    
-    jump_prepare_time: float = 0.2 # time for preparing for a jump
-    jump_landing_time: float = 0.2 # time for recovering balance after landing
-    
+        
     CMD_WALK = 0
     CMD_STAND = 1
     CMD_JUMP = 2
@@ -266,11 +263,15 @@ class SiriusCommandManager(Command):
         self._command.time.add_(self.env.step_dt)
 
         # update jump command
-        is_jumping = self._command.is_jumping.reshape(-1, 1)
+        is_jumping = self._command.is_jumping
         self._command.des_contact[:] = torch.where(
-            is_jumping,
-            torch.tensor([-1., -1., -1., -1.], device=self.device),
-            torch.tensor([0.0, 0.0, 0.0, 0.0], device=self.device),
+            self._command.mode[:, None] == self.CMD_JUMP,
+            torch.where(
+                is_jumping,
+                torch.tensor([-1., -1., -1., -1.], device=self.device),
+                torch.zeros(4, device=self.device),
+            ),
+            self._command.des_contact,
         )
         self._command.des_height[:] = torch.where(
             is_jumping,
@@ -278,11 +279,11 @@ class SiriusCommandManager(Command):
             self._command.des_height
         )
 
-        self._command.cmd_rpy[:, 0:1] = torch.where(
-            (self._command.mode == self.CMD_FLIP).reshape(-1, 1),
-            self._command.cmd_ang_vel[:, 0:1] * (self._command.time-self.jump_prepare_time).clamp_min(0.),
-            self._command.cmd_rpy[:, 0:1]
-        )
+        # self._command.cmd_rpy[:, 0:1] = torch.where(
+        #     (self._command.mode == self.CMD_FLIP).reshape(-1, 1),
+        #     self._command.cmd_ang_vel[:, 0:1] * (self._command.time-self.jump_prepare_time).clamp_min(0.),
+        #     self._command.cmd_rpy[:, 0:1]
+        # )
         self._command.cmd_rpy[:, 1:2].lerp_(self._command.des_rpy[:, 1:2], 0.4)
         self._command.cmd_ang_vel[:, 2:3] = (self._command.yaw_stiffness * cmd_yaw_diff).clamp(*self.ang_vel_z_range)
 
@@ -341,7 +342,7 @@ class SiriusCommandManager(Command):
         command = SiriusCommand.zero(size, self.device)
         command.des_rpy[:, 2] = self.asset.data.heading_w
         command.cmd_ang_vel[:, 0].uniform_(1.8 * torch.pi, 2.4 * torch.pi)
-        command.duration[:] = self.jump_prepare_time + 2 * torch.pi / command.cmd_ang_vel[:, 0:1]
+        command.duration[:] = JUMP_PREPARE_TIME + 2 * torch.pi / command.cmd_ang_vel[:, 0:1]
         command.cmd_ang_vel[:, 0].mul_(-1.)
         # command.cmd_ang_vel[:, 0].mul_(torch.randn(size, device=self.device).sign())
         command.mode[:] = self.CMD_FLIP
@@ -351,7 +352,7 @@ class SiriusCommandManager(Command):
         command = SiriusCommand.zero(size, self.device)
         command.cmd_lin_vel[:, 0] = self._command.cmd_lin_vel[:, 0] * 0.8
         command.des_rpy[:, 2] = self.asset.data.heading_w
-        command.duration.uniform_(0.8, 1.0)
+        command.duration.uniform_(1.0, 1.3)
         command.des_height[:] = 0.45
         command.mode[:] = self.CMD_JUMP
         return command
@@ -464,9 +465,24 @@ class contact_pattern(Reward[SiriusCommandManager]):
         self.asset = self.command_manager.asset
         self.contact_forces: ContactSensor = self.env.scene["contact_forces"]
         self.wheel_ids_contact, self.wheel_names_contact = self.contact_forces.find_bodies(".*_FOOT")
+        self.des_air_time = torch.zeros(self.num_envs, 4, device=self.device)
+
+    def update(self):
+        self.des_air_time = torch.where(
+            self.command_manager._command.des_contact != 0,
+            self.des_air_time - self.command_manager._command.des_contact,
+            0.0,
+        )
+    
+    def reset(self, env_ids):
+        self.des_air_time[env_ids] = 0.0
     
     def compute(self) -> torch.Tensor:
         des_contact = self.command_manager._command.des_contact
-        contact_forces = self.contact_forces.data.net_forces_w[:, self.wheel_ids_contact].norm(dim=-1)
-        rew = (des_contact * (contact_forces > 1.)).sum(dim=-1)
-        return rew.reshape(self.num_envs, 1)
+        # contact_forces = self.contact_forces.data.net_forces_w[:, self.wheel_ids_contact].norm(dim=-1)
+        # in_contact = contact_forces > 1.
+        # rew = (des_contact * in_contact).sum(dim=-1)
+        current_air_time = self.contact_forces.data.current_air_time[:, self.wheel_ids_contact]
+        rew = (current_air_time / 0.02 - self.des_air_time) * (des_contact != 0)
+        # rew = (current_air_time / 0.02 < self.des_air_time) * -(des_contact != 0)
+        return rew.sum(1, True)
