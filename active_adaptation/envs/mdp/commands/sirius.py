@@ -212,14 +212,15 @@ class SiriusCommandManager(Command):
     @property
     def command(self):
         # only episodic commands (jump and flip) have phase
-        phase = self._command.phase * (self._command.mode == self.CMD_JUMP).reshape(-1, 1)
+        jump_mode = (self._command.mode == self.CMD_JUMP).reshape(-1, 1)
         result = torch.cat([
             self._command.cmd_lin_vel[:, :2],
             self._command.cmd_ang_vel,
             self._command.cmd_rpy[:, :2],
-            phase,
-            1 - phase,
-            torch.nn.functional.one_hot(self._command.mode, num_classes=4)
+            self._command.time * jump_mode,
+            (self._command.duration - self._command.time) * jump_mode,
+            torch.nn.functional.one_hot(self._command.mode, num_classes=4),
+            self._command.des_contact,
         ], dim=-1)
         return result
 
@@ -229,6 +230,7 @@ class SiriusCommandManager(Command):
             SymmetryTransform(perm=torch.arange(3), signs=torch.tensor([-1, 1, -1])), # flip roll and yaw
             SymmetryTransform(perm=torch.arange(2), signs=torch.tensor([-1, 1])), # flip roll
             SymmetryTransform(perm=torch.arange(6), signs=torch.ones(6)), # do nothing
+            SymmetryTransform(perm=torch.tensor([2, 3, 0, 1]), signs=torch.ones(4))
         ])
     
     def reset(self, env_ids):
@@ -352,7 +354,7 @@ class SiriusCommandManager(Command):
         command = SiriusCommand.zero(size, self.device)
         command.cmd_lin_vel[:, 0] = self._command.cmd_lin_vel[:, 0] * 0.8
         command.des_rpy[:, 2] = self.asset.data.heading_w
-        command.duration.uniform_(1.0, 1.3)
+        command.duration.uniform_(0.9, 1.1)
         command.des_height[:] = 0.45
         command.mode[:] = self.CMD_JUMP
         return command
@@ -479,10 +481,11 @@ class contact_pattern(Reward[SiriusCommandManager]):
     
     def compute(self) -> torch.Tensor:
         des_contact = self.command_manager._command.des_contact
-        # contact_forces = self.contact_forces.data.net_forces_w[:, self.wheel_ids_contact].norm(dim=-1)
-        # in_contact = contact_forces > 1.
-        # rew = (des_contact * in_contact).sum(dim=-1)
-        current_air_time = self.contact_forces.data.current_air_time[:, self.wheel_ids_contact] / 0.02
-        rew = (current_air_time - self.des_air_time).clamp_max(0.) * (des_contact != 0)
+        contact_forces = self.contact_forces.data.net_forces_w[:, self.wheel_ids_contact].norm(dim=-1)
+        in_contact = contact_forces > 1.
+        rew = (des_contact * in_contact).sum(dim=-1, keepdim=True)
+        # current_air_time = self.contact_forces.data.current_air_time[:, self.wheel_ids_contact] / 0.02
+        # rew = (current_air_time - self.des_air_time).clamp(-4, 0) * (des_contact != 0)
         # rew = (current_air_time / 0.02 < self.des_air_time) * -(des_contact != 0)
-        return rew.sum(1, True)
+        self.env.discount.mul_(torch.exp(0.25 * rew))
+        return rew.reshape(self.num_envs, 1)
