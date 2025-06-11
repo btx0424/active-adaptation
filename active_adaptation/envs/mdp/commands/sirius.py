@@ -217,8 +217,8 @@ class SiriusCommandManager(Command):
             self._command.cmd_lin_vel[:, :2],
             self._command.cmd_ang_vel,
             self._command.cmd_rpy[:, :2],
-            self._command.time * jump_mode,
-            (self._command.duration - self._command.time) * jump_mode,
+            torch.where(jump_mode, self._command.time, torch.zeros_like(self._command.time)),
+            torch.where(jump_mode, self._command.duration - self._command.time, torch.zeros_like(self._command.time)),
             torch.nn.functional.one_hot(self._command.mode, num_classes=4),
             self._command.des_contact,
         ], dim=-1)
@@ -276,8 +276,8 @@ class SiriusCommandManager(Command):
             self._command.des_contact,
         )
         self._command.des_height[:] = torch.where(
-            is_jumping,
-            0.65,
+            self._command.mode[:, None] == self.CMD_JUMP,
+            torch.where(is_jumping, 0.65, 0.45),
             self._command.des_height
         )
 
