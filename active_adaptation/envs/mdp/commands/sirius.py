@@ -482,7 +482,7 @@ class contact_pattern(Reward[SiriusCommandManager]):
         # contact_forces = self.contact_forces.data.net_forces_w[:, self.wheel_ids_contact].norm(dim=-1)
         # in_contact = contact_forces > 1.
         # rew = (des_contact * in_contact).sum(dim=-1)
-        current_air_time = self.contact_forces.data.current_air_time[:, self.wheel_ids_contact]
-        rew = (current_air_time / 0.02 - self.des_air_time) * (des_contact != 0)
+        current_air_time = self.contact_forces.data.current_air_time[:, self.wheel_ids_contact] / 0.02
+        rew = (current_air_time - self.des_air_time).clamp_max(0.) * (des_contact != 0)
         # rew = (current_air_time / 0.02 < self.des_air_time) * -(des_contact != 0)
         return rew.sum(1, True)
