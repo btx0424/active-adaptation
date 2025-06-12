@@ -354,7 +354,7 @@ class MjContactSensor:
         return self.articulation.find_bodies(name_keys, preserve_order)
 
     def update(self, dt: float):
-        cfrc_ext = self.articulation.mj_data.cfrc_ext[self.body_adrs_read]
+        cfrc_ext = self.articulation.mj_data.cfrc_ext[self.body_adrs_read, :3]
         self._data.net_forces_w = torch.as_tensor(cfrc_ext, dtype=torch.float32)[None]
 
     @property
