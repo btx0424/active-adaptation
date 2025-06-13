@@ -59,7 +59,7 @@ class PPOConfig:
     _target_: str = "active_adaptation.learning.ppo.ppo_symaug.PPOPolicy"
     name: str = "ppo"
     train_every: int = 32
-    ppo_epochs: int = 5
+    ppo_epochs: int = 4
     num_minibatches: int = 8
     lr: float = 5e-4
     clip_param: float = 0.2
@@ -161,7 +161,7 @@ class PPOPolicy(TensorDictModuleBase):
         self.update = self._update
         if self.cfg.compile:
             self.update = torch.compile(self.update)
-            self.update = CudaGraphModule(self.update)
+            # self.update = CudaGraphModule(self.update)
     
     def get_rollout_policy(self, mode: str="train"):
         policy = TensorDictSequential(self.actor)
