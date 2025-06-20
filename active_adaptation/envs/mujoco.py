@@ -3,6 +3,7 @@ import numpy as np
 import mujoco
 import mujoco.viewer
 import time
+import warnings
 from pathlib import Path
 from typing import Sequence, Union, Any, Dict
 from dataclasses import dataclass, replace
@@ -112,11 +113,13 @@ class MJArticulation:
             body = self.mj_model.body(i)
             self.body_names_mjc.append(body.name)
             body_adrs.append(i)
+        
         if not set(self.body_names_isaac) == set(self.body_names_mjc):
-            diff = set(self.body_names_isaac) - set(self.body_names_mjc)
-            raise ValueError(
-                f"Isaac body names {self.body_names_isaac} do not match mujoco body names {self.body_names_mjc}\n"
-                f"Diff: {diff}"
+            warnings.warn(
+                f"Isaac body names do not match mujoco body names:\n"
+                f"Isaac - Mujoco: {set(self.body_names_isaac) - set(self.body_names_mjc)}\n"
+                f"Mujoco - Isaac: {set(self.body_names_mjc) - set(self.body_names_isaac)}\n",
+                category=UserWarning
             )
 
         # find only the actuated joints
@@ -133,12 +136,19 @@ class MJArticulation:
                 self.joint_names_mjc.append(joint.name)
                 joint_qposadr.append(self.mj_model.jnt_qposadr[joint_id])
                 joint_qveladr.append(self.mj_model.jnt_dofadr[joint_id])
+        
         if not set(self.joint_names_isaac) == set(self.joint_names_mjc):
-            raise ValueError(f"Isaac joint names {self.joint_names_isaac} do not match mujoco joint names {self.joint_names_mjc}")
-
-        self._jnt_isaac2mjc = [self.joint_names_isaac.index(joint_name) for joint_name in self.joint_names_mjc]
+            warnings.warn(
+                f"Isaac joint names do not match mujoco joint names:\n"
+                f"Isaac - Mujoco: {set(self.joint_names_isaac) - set(self.joint_names_mjc)}\n"
+                f"Mujoco - Isaac: {set(self.joint_names_mjc) - set(self.joint_names_isaac)}\n",
+                category=UserWarning
+            )
+        
+        # Isaac assets may have less joints/bodies due to asset simplification
+        self._jnt_isaac2mjc = [self.joint_names_isaac.index(joint_name) for joint_name in self.joint_names_mjc if joint_name in self.joint_names_isaac]
         self._jnt_mjc2isaac = [self.joint_names_mjc.index(joint_name) for joint_name in self.joint_names_isaac]
-        self._body_isaac2mjc = [self.body_names_isaac.index(body_name) for body_name in self.body_names_mjc]
+        self._body_isaac2mjc = [self.body_names_isaac.index(body_name) for body_name in self.body_names_mjc if body_name in self.body_names_isaac]
         self._body_mjc2isaac = [self.body_names_mjc.index(body_name) for body_name in self.body_names_isaac]
         
         self.body_adrs = np.array(body_adrs)
@@ -150,15 +160,16 @@ class MJArticulation:
         self.body_adrs_write = self.body_adrs[self._body_isaac2mjc]
         self.joint_qposadr_read = self.joint_qposadr[self._jnt_mjc2isaac]
         self.joint_qveladr_read = self.joint_qveladr[self._jnt_mjc2isaac]
-        # self.joint_qposadr_write = self.joint_qposadr[self._jnt_isaac2mjc]
-        # self.joint_qveladr_write = self.joint_qveladr[self._jnt_isaac2mjc]
+        self.joint_qposadr_write = self.joint_qposadr[self._jnt_isaac2mjc]
+        self.joint_qveladr_write = self.joint_qveladr[self._jnt_isaac2mjc]
 
         joint_ids, joint_names, joint_pos = string_utils.resolve_matching_names_values(self.cfg.init_state["joint_pos"], self.joint_names_isaac)
         if len(joint_names) < len(self.joint_names_isaac):
             print(f"Missing joint names: {set(self.joint_names_isaac) - set(joint_names)}")
         default_joint_pos = torch.zeros(self.num_joints)
         default_joint_pos[joint_ids] = torch.as_tensor(joint_pos)
-        print(default_joint_pos)
+        for jname, jpos in zip(self.joint_names, default_joint_pos, strict=True):
+            print(jname, jpos)
         default_joint_vel = torch.zeros(self.num_joints)
 
         joint_stiffness = torch.zeros(self.num_joints)
@@ -204,11 +215,11 @@ class MJArticulation:
 
     @property
     def num_joints(self):
-        return len(self.joint_names_mjc)
+        return len(self.joint_names)
     
     @property
     def num_bodies(self):
-        return len(self.body_names_mjc)
+        return len(self.body_names)
     
     @property
     def data(self):
@@ -295,6 +306,7 @@ class MJArticulation:
         self.mj_data.qpos[:3] = root_state[0, :3]
         self.mj_data.qpos[3:7] = root_state[0, 3:7]
         self.mj_data.qvel[:6] = 0.
+        self.write_joint_state_to_sim(self.data.default_joint_pos, self.data.default_joint_vel, slice(None))
         mujoco.mj_forward(self.mj_model, self.mj_data)
     
     def set_joint_position_target(self, target: ArrayType, joint_ids: ArrayType=None):
@@ -315,7 +327,8 @@ class MJArticulation:
         
         torque = (self._data.joint_stiffness * pos_error + self._data.joint_damping * vel_error)
         self._data.applied_torque = torque.float()
-        self.mj_data.ctrl[:] = torque[0, self._jnt_isaac2mjc]
+
+        self.mj_data.ctrl[self._jnt_mjc2isaac] = torque[0]
 
         if self.has_external_wrench:
             self.mj_data.xfrc_applied[self.body_adrs_write, :3] = quat_rotate(self._data.root_quat_w, self._external_force_b)[0]
@@ -325,11 +338,11 @@ class MJArticulation:
         if joint_pos is not None:
             joint_pos_all = self._data.joint_pos[0].clone()
             joint_pos_all[joint_ids] = joint_pos[0]
-            self.mj_data.qpos[self.joint_qposadr] = joint_pos[0]
+            self.mj_data.qpos[self.joint_qposadr_read] = joint_pos_all
         if joint_vel is not None:
             joint_vel_all = self._data.joint_vel[0].clone()
             joint_vel_all[joint_ids] = joint_vel[0]
-            self.mj_data.qvel[self.joint_qveladr] = joint_vel[0]
+            self.mj_data.qvel[self.joint_qveladr_read] = joint_vel_all
 
     def setup_logger(self, name: str):
         self._log_path = Path.cwd() / f"{name}.pt"

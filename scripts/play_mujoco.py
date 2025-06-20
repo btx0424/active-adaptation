@@ -55,7 +55,7 @@ def main(cfg):
         torch.save(_policy, path)
 
         meta = {}
-        meta["action_scaling"] = dict(cfg.task.action.get("action_scaling"))
+        # meta["action_scaling"] = dict(cfg.task.action.get("action_scaling"))
         export_onnx(_policy, fake_input, path.replace(".pt", ".onnx"), meta)
     
     stats_keys = [

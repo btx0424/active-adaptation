@@ -422,25 +422,26 @@ class Command2(Command):
         return torch.rand(n, device=self.device) < p
     
     def debug_draw(self):
-        self.env.debug_draw.vector(
-            self.robot.data.root_pos_w
-            + torch.tensor([0.0, 0.0, 0.2], device=self.device),
-            self.command_linvel_w,
-            color=(1.0, 1.0, 1.0, 1.0),
-        )
-        self.env.debug_draw.vector(
-            self.robot.data.root_pos_w
-            + torch.tensor([0.0, 0.0, 0.2], device=self.device),
-            torch.stack(
-                [
-                    self.target_yaw.cos(),
-                    self.target_yaw.sin(),
-                    torch.zeros_like(self.target_yaw),
-                ],
-                1,
-            ),
-            color=(0.2, 0.2, 1.0, 1.0),
-        )
+        if self.env.backend == "isaac":
+            self.env.debug_draw.vector(
+                self.robot.data.root_pos_w
+                + torch.tensor([0.0, 0.0, 0.2], device=self.device),
+                self.command_linvel_w,
+                color=(1.0, 1.0, 1.0, 1.0),
+            )
+            self.env.debug_draw.vector(
+                self.robot.data.root_pos_w
+                + torch.tensor([0.0, 0.0, 0.2], device=self.device),
+                torch.stack(
+                    [
+                        self.target_yaw.cos(),
+                        self.target_yaw.sin(),
+                        torch.zeros_like(self.target_yaw),
+                    ],
+                    1,
+                ),
+                color=(0.2, 0.2, 1.0, 1.0),
+            )
         zeros = torch.zeros(self.num_envs, 1, device=self.device)
         # self.env.debug_draw.vector(
         #     self.robot.data.root_pos_w
