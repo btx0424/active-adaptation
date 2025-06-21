@@ -145,6 +145,10 @@ class IndependentNormal(D.Independent):
         super().__init__(base_dist, 1, validate_args=validate_args)
 
     @property
+    def loc(self):
+        return self.base_dist.loc
+
+    @property
     def scale(self):
         return self.base_dist.scale
     

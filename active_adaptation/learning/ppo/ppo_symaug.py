@@ -27,6 +27,7 @@ import torch.nn.functional as F
 import torch.distributions as D
 import warnings
 import functools
+import torch.utils._pytree as pytree
 
 from torchrl.data import CompositeSpec, TensorSpec
 from torchrl.modules import ProbabilisticActor
@@ -92,6 +93,7 @@ class PPOPolicy(TensorDictModuleBase):
 
         self.entropy_coef = self.cfg.entropy_coef
         self.max_grad_norm = 1.0
+        self.desired_kl = 0.01
         self.clip_param = self.cfg.clip_param
         self.critic_loss_fn = nn.MSELoss(reduction="none")
         self.action_dim = action_spec.shape[-1]
@@ -166,13 +168,13 @@ class PPOPolicy(TensorDictModuleBase):
     def get_rollout_policy(self, mode: str="train"):
         policy = TensorDictSequential(self.actor)
         if self.cfg.compile:
-            policy = torch.compile(policy, mode="reduce-overhead")
+            policy = torch.compile(policy)
             # policy = CudaGraphModule(policy)
         return policy
 
     # @torch.compile
     def train_op(self, tensordict: TensorDict):
-        tensordict = tensordict.copy()
+        tensordict = tensordict.exclude("stats")
         infos = []
         self._compute_advantage(tensordict, self.critic, "adv", "ret", update_value_norm=True)
         tensordict["adv"] = normalize(tensordict["adv"], subtract_mean=True)
@@ -180,14 +182,23 @@ class PPOPolicy(TensorDictModuleBase):
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches)
             for minibatch in batch:
-                infos.append(TensorDict(self.update(minibatch), []))
-        
-        out = {}
-        for k, v in sorted(torch.stack(infos).items()):
-            out[k] = v.detach().mean().item()
-        out["critic/value_mean"] = tensordict["ret"].mean().item()
-        out["critic/neg_rew_ratio"] = (tensordict[REWARD_KEY].sum(-1) <= 0.).float().mean().item()
-        return out
+                infos.append(self.update(minibatch))
+                
+                if self.desired_kl is not None: # adaptive learning rate
+                    kl = infos[-1]["actor/kl"]
+                    actor_lr = self.opt.param_groups[0]["lr"]
+                    if kl > self.desired_kl * 2.0:
+                        actor_lr = max(1e-5, actor_lr / 1.5)
+                    elif kl < self.desired_kl / 2.0 and kl > 0.0:
+                        actor_lr = min(1e-2, actor_lr * 1.5)
+                    self.opt.param_groups[0]["lr"] = actor_lr
+                
+        infos = pytree.tree_map(lambda *xs: sum(xs).item() / len(xs), *infos)
+        infos["actor/lr"] = self.opt.param_groups[0]["lr"]
+        infos["critic/value_mean"] = tensordict["ret"].mean().item()
+        infos["critic/value_std"] = tensordict["ret"].std().item()
+        infos["critic/neg_rew_ratio"] = (tensordict[REWARD_KEY].sum(-1) <= 0.).float().mean().item()
+        return dict(sorted(infos.items()))
 
     @torch.no_grad()
     def _compute_advantage(
@@ -225,6 +236,8 @@ class PPOPolicy(TensorDictModuleBase):
 
     def _update(self, tensordict: TensorDict):
         bsize = tensordict.shape[0]
+        loc_old, scale_old = tensordict["loc"], tensordict["scale"]
+
         symmetry = tensordict.empty()
         symmetry[ACTION_KEY] = self.act_transform(tensordict[ACTION_KEY])
         symmetry[OBS_KEY] = self.obs_transform(tensordict[OBS_KEY])
@@ -234,7 +247,7 @@ class PPOPolicy(TensorDictModuleBase):
         symmetry["is_init"] = tensordict["is_init"]
         tensordict = torch.cat([tensordict.select(*symmetry.keys(True, True)), symmetry], dim=0)
 
-        dist = self.actor.get_dist(tensordict)
+        dist: IndependentNormal = self.actor.get_dist(tensordict)
         log_probs = dist.log_prob(tensordict[ACTION_KEY])
         entropy = dist.entropy().mean()
 
@@ -275,15 +288,23 @@ class PPOPolicy(TensorDictModuleBase):
         with torch.no_grad():
             explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
             clipfrac = ((ratio - 1.0).abs() > self.clip_param).float().mean()
+            loc, scale = dist.loc[:bsize], dist.scale[:bsize]
+            kl = torch.sum(
+                torch.log(scale) - torch.log(scale_old)
+                + (torch.square(scale_old) + torch.square(loc_old - loc)) / (2.0 * torch.square(scale))
+                - 0.5,
+                axis=-1,
+            ).mean()
         return {
             "actor/policy_loss": policy_loss.detach(),
             "actor/entropy": entropy.detach(),
             "actor/grad_norm": actor_grad_norm,
             "actor/clamp_ratio": clipfrac,
+            "actor/kl": kl,
+            "actor/symmetry_loss": symmetry_loss.detach(),
             "critic/value_loss": value_loss.detach(),
             "critic/grad_norm": critic_grad_norm,
             "critic/explained_var": explained_var,
-            "actor/symmetry_loss": symmetry_loss.detach(),
         }
 
     def state_dict(self):
