@@ -533,7 +533,7 @@ class joint_vel_multistep(Observation):
             self.joint_vel_substep = torch.zeros(shape, device=self.device)
     
     def reset(self, env_ids: torch.Tensor):
-        self.noise_std[env_ids] = torch.rand(len(env_ids), self.asset.num_joints, device=self.device) * self.noise_std_max
+        self.noise_std[env_ids] = torch.rand(len(env_ids), self.num_joints, device=self.device) * self.noise_std_max
 
     def post_step(self, substep):
         if self.from_pos:
