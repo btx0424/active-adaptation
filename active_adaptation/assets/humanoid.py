@@ -474,6 +474,119 @@ G1_WAIST_UNLOCKED_CFG = ArticulationCfg( # no wrist pitch and yaw
     })
 )
 
+G1_29DOF_CFG = ArticulationCfg( # no wrist pitch and yaw
+    spawn=sim_utils.UsdFileCfg(
+        # usd_path=f"{ASSET_PATH}/G1/g1_29dof_nohand/g1_29dof_nohand.usd",
+        usd_path=f"{ASSET_PATH}/G1/g1_29dof_nohand/g1_29dof_nohand-feet_sphere.usd",
+        activate_contact_sensors=True,
+        rigid_props=sim_utils.RigidBodyPropertiesCfg(
+            disable_gravity=False,
+            retain_accelerations=False,
+            linear_damping=0.0,
+            angular_damping=0.0,
+            max_linear_velocity=1000.0,
+            max_angular_velocity=1000.0,
+            max_depenetration_velocity=1.0,
+        ),
+        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+            enabled_self_collisions=True, 
+            solver_position_iteration_count=6,
+            solver_velocity_iteration_count=1
+        ),
+    ),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, 0.78),
+        joint_pos={
+            ".*_hip_pitch_joint": -0.1,
+            ".*_knee_joint": 0.6,
+            ".*_ankle_pitch_joint": -0.2,
+            ".*_elbow_joint": 1.0,
+        },
+        joint_vel={".*": 0.0},
+    ),
+    soft_joint_pos_limit_factor=0.9,
+    actuators={
+        "base_legs": ImplicitActuatorCfg(
+            joint_names_expr=".*",
+            effort_limit=300,
+            velocity_limit=100.0,
+            stiffness={
+                ".*_hip_yaw_joint": 150.0,
+                ".*_hip_roll_joint": 150.0,
+                ".*_hip_pitch_joint": 200.0,
+                ".*_knee_joint": 200.0,
+                "waist_yaw_joint": 150.0, # unitree_ros
+                "waist_roll_joint": 150.0, # unitree_ros
+                "waist_pitch_joint": 150.0, # unitree_ros
+                ".*ankle_pitch_joint": 20.0,
+                ".*ankle_roll_joint": 20.0,
+                ".*_shoulder_.*": 40.0,
+                ".*_elbow_joint": 40.0,
+            },
+            damping={
+                "waist_yaw_joint": 5.0, # unitree_ros
+                "waist_roll_joint": 5.0, # unitree_ros
+                "waist_pitch_joint": 5.0, # unitree_ros
+                ".*_shoulder_.*": 2.0,
+                ".*_elbow_joint": 2.0,
+                ".*_hip_yaw_joint": 6.0,
+                ".*_hip_roll_joint": 6.0,
+                ".*_hip_pitch_joint": 6.0,
+                ".*_knee_joint": 6.0,
+                ".*ankle_pitch_joint": 1.0,
+                ".*ankle_roll_joint": 1.0,
+            },
+            armature=0.01,
+            friction=0.01,
+        ),
+    },
+    joint_symmetry_mapping=symmetry_utils.mirrored({
+        "left_hip_pitch_joint": (1, "right_hip_pitch_joint"),
+        "left_hip_roll_joint": (-1, "right_hip_roll_joint"),
+        "left_hip_yaw_joint": (-1, "right_hip_yaw_joint"),
+        "left_knee_joint": (1, "right_knee_joint"),
+        "left_ankle_pitch_joint": (1, "right_ankle_pitch_joint"),
+        "left_ankle_roll_joint": (-1, "right_ankle_roll_joint"),
+        "waist_yaw_joint": (-1, "waist_yaw_joint"),
+        "waist_roll_joint": (-1, "waist_roll_joint"),
+        "waist_pitch_joint": (1, "waist_pitch_joint"),
+        "left_shoulder_pitch_joint": (1, "right_shoulder_pitch_joint"),
+        "left_shoulder_roll_joint": (-1, "right_shoulder_roll_joint"),
+        "left_shoulder_yaw_joint": (-1, "right_shoulder_yaw_joint"),
+        "left_elbow_joint": (1, "right_elbow_joint"),
+        "left_wrist_yaw_joint": (-1, "right_wrist_yaw_joint"),
+        "left_wrist_roll_joint": (-1, "right_wrist_roll_joint"),
+        "left_wrist_pitch_joint": (1, "right_wrist_pitch_joint"),
+        
+    }),
+    spatial_symmetry_mapping=symmetry_utils.mirrored({
+        "left_hip_pitch_link": "right_hip_pitch_link",
+        "left_hip_roll_link": "right_hip_roll_link",
+        "left_hip_yaw_link": "right_hip_yaw_link",
+        "left_knee_link": "right_knee_link",
+        "left_ankle_pitch_link": "right_ankle_pitch_link",
+        "left_ankle_roll_link": "right_ankle_roll_link",
+        "pelvis": "pelvis",
+        "torso_link": "torso_link",
+        "waist_yaw_link": "waist_yaw_link",
+        "waist_roll_link": "waist_roll_link",
+        "left_shoulder_pitch_link": "right_shoulder_pitch_link",
+        "left_shoulder_roll_link": "right_shoulder_roll_link",
+        "left_shoulder_yaw_link": "right_shoulder_yaw_link",
+        "left_elbow_link": "right_elbow_link",
+        "left_wrist_yaw_link": "right_wrist_yaw_link",
+        "left_wrist_roll_link": "right_wrist_roll_link",
+        "left_wrist_pitch_link": "right_wrist_pitch_link",
+        "pelvis_contour_link": "pelvis_contour_link",
+        "imu_link": "imu_link",
+        "d435_link": "d435_link",
+        "head_link": "head_link",
+        "logo_link": "logo_link",
+        "mid360_link": "mid360_link",
+        "waist_support_link": "waist_support_link",
+        "left_hand_marker": "right_hand_marker",
+    })
+)
 
 G1_LeggedLab_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(

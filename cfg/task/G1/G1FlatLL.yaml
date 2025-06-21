@@ -27,15 +27,15 @@ action:
     .*hip.*: 0.5
     .*knee.*: 0.5
     waist_yaw_joint: 0.25
-    waist_roll_joint: 0.25
-    waist_pitch_joint: 0.25
+    # waist_roll_joint: 0.25
+    # waist_pitch_joint: 0.25
     .*ankle.*: 0.25
   max_delay: 1
   alpha: [0.6, 0.8]
-  custom_command:
-    .*wrist_roll_joint: 0.
-    .*wrist_pitch_joint: 0.
-    .*wrist_yaw_joint: 0.
+  # custom_command:
+  #   .*wrist_roll_joint: 0.
+  #   .*wrist_pitch_joint: 0.
+  #   .*wrist_yaw_joint: 0.
 
 command:
   _target_: active_adaptation.envs.mdp.commands.locomotion.Command2
@@ -70,8 +70,8 @@ observation:
     command:
     root_angvel_b:  {noise_std: 0.05}
     gravity_multistep: {steps: 3, noise_std: 0.05}
-    joint_pos_multistep: {steps: 3, noise_std: 0.05}
-    joint_vel_multistep: {steps: 3, noise_std: 0.2}
+    joint_pos_multistep: {joint_names: "(?!(.*wrist.*|waist_(roll|pitch)_joint)).*", steps: 3, noise_std: 0.05}
+    joint_vel_multistep: {joint_names: "(?!(.*wrist.*|waist_(roll|pitch)_joint)).*", steps: 3, noise_std: 0.2}
     prev_actions: {steps: 3, permute: true}
   # priv:
     applied_action:   {}
@@ -79,7 +79,7 @@ observation:
     # feet_pos_b:       {feet_names: .*ankle_roll_link}
     # feet_vel_b:       {feet_names: .*ankle_roll_link}
     body_height:  {body_names: .*ankle_roll_link}
-    applied_torque:   {}
+    applied_torque:   {joint_names: "(?!(.*wrist.*|waist_(roll|pitch)_joint)).*"}
 
 reward:
   loco:
