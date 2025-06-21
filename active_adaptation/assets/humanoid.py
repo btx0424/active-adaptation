@@ -402,8 +402,15 @@ G1_WAIST_UNLOCKED_CFG = ArticulationCfg( # no wrist pitch and yaw
     actuators={
         "base_legs": ImplicitActuatorCfg(
             joint_names_expr=".*",
-            effort_limit=300,
-            velocity_limit=100.0,
+            effort_limit_sim={
+                ".*_hip.*": 88.0,
+                ".*_knee.*": 139.0,
+                ".*_ankle.*": 50,
+                ".*_shoulder.*": 25,
+                ".*_elbow.*": 25,
+                "waist.*": 50,
+            },
+            velocity_limit_sim=100.0,
             stiffness={
                 ".*_hip_yaw_joint": 150.0,
                 ".*_hip_roll_joint": 150.0,

@@ -89,7 +89,7 @@ class PPOPolicy(TensorDictModuleBase):
         env=None,
     ):
         super().__init__()
-        self.cfg = cfg
+        self.cfg = PPOConfig(**cfg)
         self.device = device
 
         self.entropy_coef = self.cfg.entropy_coef

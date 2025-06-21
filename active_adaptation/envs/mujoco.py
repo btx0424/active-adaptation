@@ -271,8 +271,8 @@ class MJArticulation:
         body_vel_w = self.mj_data.cvel[self.body_adrs_read]
         body_quat_w = self.mj_data.xquat[self.body_adrs_read] # wxyz
         
-        # rot = sRot.from_quat(body_quat_w[0], scalar_first=True)
-        rot = sRot.from_quat(self.mj_data.qpos[3:7], scalar_first=True)
+        # rot = sRot.from_quat(self.mj_data.qpos[3:7], scalar_first=True)
+        rot = sRot.from_quat(body_quat_w[0], scalar_first=True)
         projected_gravity_b = rot \
             .inv() \
             .apply(np.array([0., 0., -1.]))
