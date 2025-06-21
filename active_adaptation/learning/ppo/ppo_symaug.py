@@ -42,7 +42,7 @@ from tensordict.nn import (
 
 from hydra.core.config_store import ConfigStore
 from dataclasses import dataclass, field
-from typing import Union, List
+from typing import Union, Tuple
 from collections import OrderedDict
 
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
@@ -63,6 +63,7 @@ class PPOConfig:
     ppo_epochs: int = 4
     num_minibatches: int = 8
     lr: float = 5e-4
+    desired_kl: Union[float, None] = None
     clip_param: float = 0.2
     entropy_coef: float = 0.01
     layer_norm: Union[str, None] = "before"
@@ -70,7 +71,7 @@ class PPOConfig:
     compile: bool = True
 
     checkpoint_path: Union[str, None] = None
-    in_keys: List[str] = field(default_factory=lambda: [OBS_KEY])
+    in_keys: Tuple[str, ...] = (OBS_KEY,)
 
 cs = ConfigStore.instance()
 cs.store("ppo_symaug", node=PPOConfig, group="algo")
@@ -93,7 +94,7 @@ class PPOPolicy(TensorDictModuleBase):
 
         self.entropy_coef = self.cfg.entropy_coef
         self.max_grad_norm = 1.0
-        self.desired_kl = 0.01
+        self.desired_kl = self.cfg.desired_kl
         self.clip_param = self.cfg.clip_param
         self.critic_loss_fn = nn.MSELoss(reduction="none")
         self.action_dim = action_spec.shape[-1]
