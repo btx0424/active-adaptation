@@ -63,7 +63,11 @@ def joint_space_symmetry(asset: "Articulation", joint_names: Sequence[str]):
     symmetry_mapping = asset.cfg.joint_symmetry_mapping
     if not len(symmetry_mapping) == len(asset.joint_names):
         diff = set(asset.joint_names) - set(symmetry_mapping.keys())
-        raise ValueError(f"Joint symmetry mapping must contain all joint names. Missing: {diff}")
+        raise ValueError(
+            f"Joint symmetry mapping must contain all joint names\n"
+            f"\tAll Joints - Specified: {set(asset.joint_names) - set(symmetry_mapping.keys())}\n"
+            f"\tSpecified - All Joints: {set(symmetry_mapping.keys()) - set(asset.joint_names)}"
+        )
         
     ids = torch.zeros(len(joint_names), dtype=torch.long)
     signs = torch.zeros(len(joint_names), dtype=torch.float32)
@@ -84,8 +88,11 @@ def cartesian_space_symmetry(asset: "Articulation", body_names: Sequence[str], s
         raise ValueError("Asset does not have a spatial symmetry mapping config.")
     symmetry_mapping = asset.cfg.spatial_symmetry_mapping
     if not len(symmetry_mapping) == len(asset.body_names):
-        diff = set(asset.body_names) - set(symmetry_mapping.keys())
-        raise ValueError(f"Spatial symmetry mapping must contain all body names. Missing: {diff}")
+        raise ValueError(
+            "Spatial symmetry mapping must contain all body names\n"
+            f"\tAll Bodies - Specified: {set(asset.body_names) - set(symmetry_mapping.keys())}\n"
+            f"\tSpecified - All Bodies: {set(symmetry_mapping.keys()) - set(asset.body_names)}"
+        )
         
     ids = torch.zeros(len(body_names), len(sign), dtype=torch.long)
     signs = torch.zeros(len(body_names), len(sign), dtype=torch.float32)
