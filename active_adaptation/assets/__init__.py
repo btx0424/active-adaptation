@@ -24,6 +24,7 @@ ROBOTS = {
     "b1z1": UNITREE_B1Z1_CFG,
     "g1_waist_unlocked": G1_WAIST_UNLOCKED_CFG,
     "gr1": GR1_CFG,
+    "g1_leggedlab": G1_LeggedLab_CFG,
 }
 
 
