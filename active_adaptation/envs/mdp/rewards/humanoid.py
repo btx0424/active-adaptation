@@ -243,8 +243,8 @@ class body_upright(Reward):
             self.asset.data.body_quat_w[:, self.body_id],
             down.expand(self.num_envs, len(self.body_id), 3)
         )
-        r = dot(g, down).mean(1)
-        return r.reshape(self.num_envs, 1)
+        rew = 1. - g[:, :, :2].square().sum(-1)
+        return rew.mean(1, True)
 
 
 class arm_swing(Reward):

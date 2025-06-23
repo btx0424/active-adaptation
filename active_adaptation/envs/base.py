@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import hydra
 import inspect
+import re
 
 from tensordict.tensordict import TensorDictBase, TensorDict
 from torchrl.envs import EnvBase
@@ -26,6 +27,16 @@ if active_adaptation.get_backend() == "isaac":
     from isaaclab.scene import InteractiveScene
     from isaaclab.utils.warp import convert_to_warp_mesh, raycast_mesh
     from pxr import UsdGeom, UsdPhysics
+
+
+def parse_name_and_class(s: str):
+    pattern = r'^(\w+)\((\w+)\)$'
+    match = re.match(pattern, s)
+    if match:
+        name, cls = match.groups()
+        return name, cls
+    return s, s
+
 
 class ObsGroup:
     
@@ -220,18 +231,19 @@ class _Env(EnvBase):
             funcs = OrderedDict()
             self._stats_ema[group_name] = {}
 
-            for key, params in func_specs.items():
-                rew_cls = mdp.Reward.registry[key]
+            for rew_spec, params in func_specs.items():
+                rew_name, cls_name = parse_name_and_class(rew_spec)
+                rew_cls = mdp.Reward.registry[cls_name]
                 reward: mdp.Reward = rew_cls(self, **params)
-                funcs[key] = reward
-                reward_spec["stats", group_name, key] = UnboundedContinuous(1, device=self.device)
+                funcs[rew_name] = reward
+                reward_spec["stats", group_name, rew_name] = UnboundedContinuous(1, device=self.device)
                 self._update_callbacks.append(reward.update)
                 self._reset_callbacks.append(reward.reset)
                 self._debug_draw_callbacks.append(reward.debug_draw)
                 self._pre_step_callbacks.append(reward.step)
                 self._post_step_callbacks.append(reward.post_step)
-                print(f"\t{key}: \t{reward.weight:.2f}, \t{reward.enabled}")
-                self._stats_ema[group_name][key] = (torch.tensor(0., device=self.device), torch.tensor(0., device=self.device))
+                print(f"\t{rew_name}: \t{reward.weight:.2f}, \t{reward.enabled}")
+                self._stats_ema[group_name][rew_name] = (torch.tensor(0., device=self.device), torch.tensor(0., device=self.device))
 
             self.reward_groups[group_name] = RewardGroup(self, group_name, funcs)
             reward_spec["stats", group_name, "return"] = UnboundedContinuous(1, device=self.device)
