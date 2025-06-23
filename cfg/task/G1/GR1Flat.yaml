@@ -67,21 +67,22 @@ reward:
     linvel_exp:         {weight: 1.5, enabled: true, dim: 2, gamma: 0.8}
     linvel_projection:  {weight: 0.5, enabled: true}
     angvel_z_exp:       {weight: 1.2, enabled: true, gamma: 0.8}
-    angvel_xy_l2:       {weight: 0.01, enabled: true, body_names: ["base_link"]}
+    angvel_xy_l2:       {weight: 0.01, enabled: true, body_names: ["base_link", "waist_roll_link"]}
     linvel_z_l2:        {weight: 0.5, enabled: true}
     tracking_base_height: {weight: 2.0, enabled: true, target_height: 0.74}
     single_foot_contact: {weight: 0.75, enabled: true, body_names: .*foot_roll_link, margin: 0.2}
-
+    body_upright:       {weight: 1.0, enabled: true, body_name: ["base_link", "waist_roll_link"]}
+  reg:
     energy_l1:          {weight: 2.0e-4, enabled: true}
     joint_acc_l2:       {weight: 1.0e-7, enabled: true}
-    # joint_torques_l2:   {weight: 5.0e-7, enabled: true}
-    body_upright:       {weight: 1.0, enabled: true, body_name: "base_link"}
+    joint_torques_l2:   {weight: 5.0e-7, enabled: true}
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.005, enabled: true}
     action_rate2_l2:    {weight: 0.005, enabled: true}
     feet_air_time:      {weight: 2.0, enabled: true, body_names: .*foot_roll_link, thres: 0.5}
-    joint_vel_l2:       {weight: 1.0e-3, enabled: true, joint_names: [.*shoulder.*]}
-    joint_deviation_l2: {weight: 0.1, enabled: true, joint_names: [.*shoulder.*, .*hip_roll_joint, .*elbow.*]}
+    joint_vel_l2:       {weight: 0.02, enabled: true, joint_names: [.*waist.*, .*head.*]}
+    arm_dev_l2(joint_deviation_l2): {weight: 0.1, enabled: true, joint_names: [.*shoulder.*, .*elbow.*]}
+    hip_dev_l2(joint_deviation_l2): {weight: 0.1, enabled: true, joint_names: [.*hip_(roll|yaw)_joint]}
   debug:
     feet_slip:          {weight: 0.5, enabled: false, body_names: .*foot_roll_link}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*foot_roll_link}
@@ -106,9 +107,10 @@ randomization:
       .*: [-0.1, 0.1]
     rel: true
   # impulse: {}
-  # constant_force:
-  #   force_range: [50, 50, 15]
-  #   offset_range: [0.1, 0.1, 0.1]
+  constant_force:
+    force_range: [50, 50, 15]
+    offset_range: [0.1, 0.1, 0.1]
+    body_names: ["base_link", ".*upper_arm.*"]
 
 termination:
   crash: 

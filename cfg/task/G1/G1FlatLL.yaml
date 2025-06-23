@@ -100,6 +100,7 @@ reward:
     action_rate2_l2:    {weight: 0.005, enabled: true}
     feet_parallel:      {weight: 0.5, enabled: true, body_names: .*ankle_roll_link}
     feet_air_time:      {weight: 2.0, enabled: true, body_names: .*ankle_roll_link, thres: 0.5}
+    joint_vel_l2:       {weight: 0.01, enabled: true, joint_names: [waist_yaw_joint]}
     arm_dev_l2(joint_deviation_l2): {weight: 0.1, enabled: true, joint_names: [.*shoulder.*, .*elbow_joint]}
     hip_dev_l2(joint_deviation_l2): {weight: 0.2, enabled: true, joint_names: [.*hip_(roll|yaw)_joint]}
   debug:
@@ -127,9 +128,10 @@ randomization:
       .*: [-0.1, 0.1]
     rel: true
   # impulse: {}
-  # constant_force:
-  #   force_range: [50, 50, 15]
-  #   offset_range: [0.1, 0.1, 0.1]
+  constant_force:
+    force_range: [50, 50, 15]
+    offset_range: [0.1, 0.1, 0.1]
+    body_names: ["pelvis", ".*shoulder.*"]
 
 termination:
   crash: 

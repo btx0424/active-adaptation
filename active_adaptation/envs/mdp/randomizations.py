@@ -867,11 +867,17 @@ class impulse(Randomization):
 
 
 class constant_force(Randomization):
-    def __init__(self, env, force_range, offset_range):
+    def __init__(self, env, force_range, offset_range, body_names = None):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
+        if body_names is None:
+            self.all_body_ids = torch.tensor([0], device=self.device)
+        else:
+            self.all_body_ids = torch.tensor(self.asset.find_bodies(body_names)[0], device=self.device)
+        
         self.force = ConstantForce.sample(self.num_envs, device=self.device)
         self.force.duration.zero_()
+        self.body_id = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
 
         self.resample_interval = 50
         self.resample_prob = 0.2
@@ -880,9 +886,14 @@ class constant_force(Randomization):
         self.offset_range = torch.tensor(offset_range, device=self.device)
         
     def step(self, substep):
-        forces_b = quat_rotate_inverse(self.asset.data.root_quat_w, self.force.get_force())
-        self.asset._external_force_b[:, 0] += forces_b
-        self.asset._external_torque_b[:, 0] += self.force.offset.cross(forces_b, dim=-1)
+        arange = torch.arange(self.num_envs, device=self.device)
+        quat = self.asset.data.body_quat_w[arange, self.body_id]
+        forces_b = quat_rotate_inverse(
+            quat.reshape(self.num_envs, 4),
+            self.force.get_force()
+        )
+        self.asset._external_force_b[arange, self.body_id] += forces_b
+        self.asset._external_torque_b[arange, self.body_id] += self.force.offset.cross(forces_b, dim=-1)
         self.asset.has_external_wrench = True
     
     def reset(self, env_ids: torch.Tensor):
@@ -895,10 +906,12 @@ class constant_force(Randomization):
         force = ConstantForce.sample(self.num_envs, self.force_range, self.offset_range, self.device)
         self.force.time.add_(self.env.step_dt)
         self.force = force.where(resample, self.force)
+        body_id = self.all_body_ids[torch.randint(0, len(self.all_body_ids), (self.num_envs,), device=self.device)]
+        self.body_id = torch.where(resample, body_id, self.body_id)
     
     def debug_draw(self):
         self.env.debug_draw.vector(
-            self.asset.data.root_pos_w,
+            self.asset.data.body_pos_w[torch.arange(self.num_envs, device=self.device), self.body_id],
             self.force.get_force() /  9.81,
             color=(1.0, 0.6, 0.0, 1.0),
             size=3.0,
