@@ -26,8 +26,39 @@ def attach_payload(parent_path):
     joint.GetAttribute("drive:linear:physics:damping").Set(10.0)
     joint.GetAttribute("drive:linear:physics:stiffness").Set(10000.0)
 
-def add_force_sensor(prim_path):
-    prim = prim_utils.get_prim_at_path(prim_path)
-    api = PhysxSchema.PhysxArticulationForceSensorAPI.Apply(prim)
-    return api
 
+import carb
+import omni
+import weakref
+from collections import defaultdict
+
+
+class IsaacCameraControl:
+    def __init__(self, env):
+        self.env = env
+        self._appwindow = omni.appwindow.get_default_app_window()
+        self._input = carb.input.acquire_input_interface()
+        self._keyboard = self._appwindow.get_keyboard()
+        # note: Use weakref on callbacks to ensure that this object can be deleted when its destructor is called.
+        self._keyboard_sub = self._input.subscribe_to_keyboard_events(
+            self._keyboard,
+            lambda event, *args, obj=weakref.proxy(self): obj._on_keyboard_event(event, *args),
+        )
+        self.key_pressed = defaultdict(lambda: False)
+        self.focus = False
+        self.lookat_env_i = self.env.num_envs // 2
+        self.distance = 2.0
+    
+    def _on_keyboard_event(self, event, *args, **kwargs):
+        if event.type == carb.input.KeyboardEventType.KEY_PRESS:
+            if event.input.name == "F" and not self.focus:
+                self.focus = not self.focus
+            elif event.input.name == "TAB":
+                self.lookat_env_i = (self.lookat_env_i + 1) % self.env.num_envs
+    
+    def update(self):
+        if self.focus:
+            self.env.sim.set_camera_view(
+                eye=self.robot.data.root_pos_w[self.lookat_env_i].cpu() + torch.ones(3) * self.distance,
+                target=self.robot.data.root_pos_w[self.lookat_env_i].cpu(),
+            )

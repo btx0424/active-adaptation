@@ -11,16 +11,18 @@ class SimpleEnv(_Env):
     def __init__(self, cfg):
         super().__init__(cfg)
         self.robot = self.scene.articulations["robot"]
-        self.init_root_state = self.robot.data.default_root_state.clone()
-        self.init_joint_pos = self.robot.data.default_joint_pos.clone()
-        self.init_joint_vel = self.robot.data.default_joint_vel.clone()
-        self.default_joint_pos = self.init_joint_pos.clone()
         
-        if self.backend == "isaac":
-            self.lookat_env_i = (
-                self.scene._default_env_origins.cpu() 
-                - torch.tensor(self.cfg.viewer.lookat)
-            ).norm(dim=-1).argmin()
+        if self.backend == "isaac" and self.sim.has_gui():
+            from isaaclab.envs.ui import BaseEnvWindow, ViewportCameraController
+            from isaaclab.envs import ViewerCfg
+            # hacks to make IsaacLab happy. we don't use them.
+            self.cfg.viewer.env_index = 0
+            self.manager_visualizers = {}
+            self.window = BaseEnvWindow(self, window_name="IsaacLab")
+            self.viewport_camera_controller = ViewportCameraController(
+                self,
+                ViewerCfg(self.cfg.viewer.eye, self.cfg.viewer.lookat, origin_type="env")
+            )
 
         self.action_buf: torch.Tensor = self.action_manager.action_buf
         self.last_action: torch.Tensor = self.action_manager.applied_action
