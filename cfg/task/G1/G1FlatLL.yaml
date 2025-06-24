@@ -92,7 +92,7 @@ reward:
     tracking_base_height: {weight: 2.0, enabled: true, target_height: 0.74}
     single_foot_contact: {weight: 0.75, enabled: true, body_names: .*ankle_roll_link, margin: 0.2}
     body_upright:       {weight: 1.5, enabled: true, body_name: ["pelvis", "torso_link"]}
-    feet_clearance_height:  {weight: 0.5, enabled: true, body_names: [.*ankle_roll_link], height_target: 0.02, relative_height: 0.64}
+    feet_clearance_simple:  {weight: 0.5, enabled: true, body_names: [.*ankle_roll_link]}
   reg:
     energy_l1:          {weight: 2.0e-4, enabled: true}
     joint_acc_l2:       {weight: 1.0e-7, enabled: true}
