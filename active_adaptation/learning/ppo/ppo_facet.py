@@ -70,7 +70,7 @@ class PPOConfig:
 
     grad_pen: bool = False
 
-    symaug: bool = False
+    symaug: bool = True
     phase: str = "train"
     short_history: int = 0
     vecnorm: Union[str, None] = None
@@ -474,7 +474,7 @@ class PPODICPolicy(TensorDictModuleBase):
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
 
-        adv, ret = self.gae(rewards, terms, dones, values, next_values)
+        adv, ret = self.gae(rewards, terms, dones, values, next_values, discount)
         if update_value_norm:
             self.value_norm.update(ret)
         ret = self.value_norm.normalize(ret)
@@ -529,7 +529,7 @@ class PPODICPolicy(TensorDictModuleBase):
         
         loss = policy_loss + entropy_loss + value_loss + reg_loss + 0.002 * gradient_penalty
         
-        opt.zero_grad()
+        opt.zero_grad(set_to_none=True)
         loss.backward()
         actor_grad_norm = nn.utils.clip_grad_norm_(policy_inference.actor.parameters(), self.max_grad_norm)
         critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
