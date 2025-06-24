@@ -49,6 +49,10 @@ def quat_rotate_inverse(quat: torch.Tensor, vec: torch.Tensor):
     return (vec - quat[..., 0:1] * t + xyz.cross(t, dim=-1))
 
 
+def normalize(x: torch.Tensor):
+    return x / x.norm(dim=-1, keepdim=True).clamp(1e-6)
+
+
 def clamp_norm(x: torch.Tensor, min: float=0., max: float=torch.inf):
     x_norm = x.norm(dim=-1, keepdim=True).clamp(1e-6)
     x = torch.where(x_norm < min, x / x_norm * min, x)

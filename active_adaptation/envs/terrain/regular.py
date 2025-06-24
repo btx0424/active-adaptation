@@ -54,42 +54,6 @@ class HfRandomGridTerrainCfg(HfTerrainBaseCfg):
     """The minimum and maximum height of the grid cells (in m)."""
 
 
-ORCA_LOCO = TerrainGeneratorCfg(
-    seed=0,
-    size=(8.0, 8.0),
-    border_width=65.0,
-    num_rows=10,
-    num_cols=10,
-    horizontal_scale=0.1,
-    vertical_scale=0.005,
-    slope_threshold=0.75,
-    use_cache=False,
-    sub_terrains={
-        "flat": MeshPlaneTerrainCfg(
-            proportion=0.3,
-        ),
-        "random_rough_easy": HfRandomUniformTerrainCfg(
-            proportion=0.3,
-            noise_range=(0.0, 0.06),
-            noise_step=0.02,
-            border_width=0.5,
-            downsampled_scale=0.15,
-        ),
-        "pyramid_slope_inv": HfPyramidSlopedTerrainCfg(
-            proportion=0.2,
-            slope_range=(0.10, 0.20),
-            platform_width=1.0,
-            border_width=0.25
-        ),
-        "hf_pyramid_slope_inv": HfInvertedPyramidSlopedTerrainCfg(
-            proportion=0.2,
-            slope_range=(0.10, 0.20),
-            platform_width=1.0,
-            border_width=0.25
-        ),
-    },
-)
-
 ROUGH_MEDIUM = TerrainGeneratorCfg(
     seed=0,
     size=(8.0, 8.0),
@@ -481,8 +445,6 @@ TERRAINS = {
     "stairs": ROUGH_TERRAIN_BASE_CFG.replace(terrain_generator=STAIRS),
     "stairs_test": ROUGH_TERRAIN_BASE_CFG.replace(terrain_generator=STAIRS_TEST),
     "stairs_easy": ROUGH_TERRAIN_BASE_CFG.replace(terrain_generator=STAIRS_EASY),
-    "dic": DIC,
-    "orca_loco": ORCA_LOCO,
 }
 
 
