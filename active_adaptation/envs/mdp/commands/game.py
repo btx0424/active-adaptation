@@ -73,8 +73,8 @@ class chase_distance(Reward[Game]):
     def compute(self) -> tuple[torch.Tensor, torch.Tensor]:
         rew = torch.where(
             self.command_manager.role[:, None] == 0,
-            self.distance_change,
-            -self.distance_change,
+            -self.distance_change, # closer is better
+            self.distance_change, # further is better
         )
         return rew.reshape(self.num_envs, 1)
 
