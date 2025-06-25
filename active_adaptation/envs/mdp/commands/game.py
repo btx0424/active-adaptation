@@ -16,6 +16,14 @@ class Game(Command):
         with torch.device(self.device):
             self.role = torch.arange(self.num_envs, device=self.device) % 2
         
+        if self.env.sim.has_gui() and self.env.backend == "isaac":
+            from isaaclab.markers import RED_ARROW_X_MARKER_CFG, VisualizationMarkers
+            self.frame_marker = VisualizationMarkers(
+                RED_ARROW_X_MARKER_CFG.replace(
+                    prim_path="/Visuals/Command/frame",
+                )
+            )
+            self.frame_marker.set_visibility(True)
         self.update()
     
     @property
@@ -41,22 +49,28 @@ class Game(Command):
         return super().reset(env_ids)
     
     def update(self):
-        self.target_pos_w = torch.cat([
+        self.target_pos_w = torch.stack([
             self.asset.data.root_pos_w[1::2],
             self.asset.data.root_pos_w[::2],
-        ])
+        ], 1).reshape(self.num_envs, 3)
         self.target_lin_vel_w = torch.cat([
             self.asset.data.root_lin_vel_w[1::2],
             self.asset.data.root_lin_vel_w[::2],
-        ])
+        ], 1).reshape(self.num_envs, 3)
         self.target_diff = self.target_pos_w - self.asset.data.root_pos_w
         self.distance = self.target_diff[:, :2].norm(dim=-1, keepdim=True)
     
     def debug_draw(self):
         self.env.debug_draw.vector(
             self.asset.data.root_pos_w[::2],
-            self.asset.data.root_pos_w[1::2] - self.asset.data.root_pos_w[::2],
+            self.target_diff[::2],
+            # self.asset.data.root_pos_w[1::2] - self.asset.data.root_pos_w[::2],
             color=(1, 0, 0, 1),
+        )
+        self.frame_marker.visualize(
+            self.asset.data.root_pos_w[::2] + torch.tensor([0.0, 0.0, 0.2], device=self.device),
+            self.asset.data.root_quat_w[::2],
+            scales=torch.tensor([[4., 1., 0.1]]).expand(self.num_envs // 2, 3),
         )
     
 
