@@ -7,6 +7,7 @@ from active_adaptation.utils.math import (
     quat_rotate,
     normalize,
 )
+from active_adaptation.utils.symmetry import SymmetryTransform
 
 
 class Game(Command):
@@ -14,6 +15,8 @@ class Game(Command):
         super().__init__(env)
         with torch.device(self.device):
             self.role = torch.arange(self.num_envs, device=self.device) % 2
+        
+        self.update()
     
     @property
     def command(self):
@@ -25,6 +28,12 @@ class Game(Command):
             (arange % 2 == 1).reshape(self.num_envs, 1),
         ], dim=-1)
     
+    def symmetry_transforms(self):
+        return SymmetryTransform(
+            perm=torch.arange(8),
+            signs=torch.tensor([1, -1, 1, 1, -1, 1, 1, 1])
+        )
+    
     def sample_init(self, env_ids: torch.Tensor) -> torch.Tensor:
         return super().sample_init(env_ids)
 
@@ -35,19 +44,23 @@ class Game(Command):
         self.target_pos_w = torch.cat([
             self.asset.data.root_pos_w[1::2],
             self.asset.data.root_pos_w[::2],
-        ], dim=-1)
+        ])
         self.target_lin_vel_w = torch.cat([
             self.asset.data.root_lin_vel_w[1::2],
             self.asset.data.root_lin_vel_w[::2],
-        ], dim=-1)
+        ])
         self.target_diff = self.target_pos_w - self.asset.data.root_pos_w
         self.distance = self.target_diff[:, :2].norm(dim=-1)
     
     def debug_draw(self):
-        return super().debug_draw()
+        self.env.debug_draw.vector(
+            self.asset.data.root_pos_w[::2],
+            self.asset.data.root_pos_w[1::2] - self.asset.data.root_pos_w[::2],
+            color=(1, 0, 0, 1),
+        )
     
 
-class chase(Reward[Game]):
+class chase_distance(Reward[Game]):
     def __init__(self, env, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
         self.last_distance = torch.zeros(self.num_envs, device=self.device)
@@ -60,7 +73,20 @@ class chase(Reward[Game]):
     def compute(self) -> tuple[torch.Tensor, torch.Tensor]:
         is_active = torch.arange(self.num_envs, device=self.device) % 2 == 0
         rew = self.distance_change.reshape(self.num_envs, 1)
-        return rew, is_active
+        return rew.reshape(self.num_envs, 1), is_active.reshape(self.num_envs, 1)
+
+
+class chase_velocity(Reward[Game]):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset = self.command_manager.asset
+
+    def compute(self) -> tuple[torch.Tensor, torch.Tensor]:
+        is_active = torch.arange(self.num_envs, device=self.device) % 2 == 0
+        direction = normalize(self.command_manager.target_diff[:, :2])
+        velocity = self.asset.data.root_lin_vel_w[:, :2]
+        rew = torch.sum(direction * velocity, dim=1, keepdim=True).log1p()
+        return rew.reshape(self.num_envs, 1), is_active.reshape(self.num_envs, 1)
 
 
 class evade(Reward[Game]):
@@ -70,7 +96,7 @@ class evade(Reward[Game]):
     def compute(self) -> tuple[torch.Tensor, torch.Tensor]:
         is_active = torch.arange(self.num_envs, device=self.device) % 2 == 1
         rew = 1 - torch.exp(-self.command_manager.distance).reshape(self.num_envs, 1)
-        return rew, is_active
+        return rew.reshape(self.num_envs, 1), is_active.reshape(self.num_envs, 1)
 
 
 class target_in_sight(Reward[Game]):
@@ -85,6 +111,6 @@ class target_in_sight(Reward[Game]):
         )
         diff = normalize(self.command_manager.target_diff)
         rew = torch.sum(forward_vec[:, :2] * diff[:, :2], dim=1, keepdim=True)
-        rew = torch.where(self.command_manager.role == 0, rew, -rew)
-        return rew
+        rew = torch.where(self.command_manager.role[:, None] == 0, rew, -rew)
+        return rew.reshape(self.num_envs, 1)
 
