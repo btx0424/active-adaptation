@@ -3,27 +3,13 @@ import carb
 import omni
 import weakref
 
-from isaaclab.utils.math import quat_mul
+from active_adaptation.utils.math import quat_mul, sample_quat_yaw
 from typing import Sequence, TYPE_CHECKING
 from collections import defaultdict
 
 if TYPE_CHECKING:
     from isaaclab.assets import Articulation
     from active_adaptation.envs.base import _Env
-
-
-def sample_quat_yaw(size, yaw_range=(0, torch.pi * 2), device: torch.device = "cpu"):
-    yaw = torch.rand(size, device=device).uniform_(*yaw_range)
-    quat = torch.cat(
-        [
-            torch.cos(yaw / 2).unsqueeze(-1),
-            torch.zeros_like(yaw).unsqueeze(-1),
-            torch.zeros_like(yaw).unsqueeze(-1),
-            torch.sin(yaw / 2).unsqueeze(-1),
-        ],
-        dim=-1,
-    )
-    return quat
 
 
 class Command:

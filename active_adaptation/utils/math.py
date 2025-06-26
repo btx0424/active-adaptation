@@ -121,6 +121,20 @@ def quat_from_view(eyes: torch.Tensor, lookat: torch.Tensor):
     return quat
 
 
+def sample_quat_yaw(size, yaw_range=(0, torch.pi * 2), device: torch.device = "cpu"):
+    yaw = torch.rand(size, device=device).uniform_(*yaw_range)
+    quat = torch.cat(
+        [
+            torch.cos(yaw / 2).unsqueeze(-1),
+            torch.zeros_like(yaw).unsqueeze(-1),
+            torch.zeros_like(yaw).unsqueeze(-1),
+            torch.sin(yaw / 2).unsqueeze(-1),
+        ],
+        dim=-1,
+    )
+    return quat
+
+
 class MultiUniform(D.Distribution):
     """
     A distribution over the union of multiple disjoint intervals.
