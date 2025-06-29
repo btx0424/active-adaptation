@@ -1537,24 +1537,28 @@ class action_rate_l2(Reward):
     """Penalize the rate of change of the action"""
     def __init__(self, env, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
-
+        self.action_manager = self.env.action_manager
+    
     def compute(self) -> torch.Tensor:
-        self.action_buf = self.env.action_buf # TODO: fix this
-        action_diff = self.action_buf[:, :, 0] - self.action_buf[:, :, 1]
-        return - action_diff.square().sum(dim=-1, keepdim=True)
+        action_buf = self.action_manager.action_buf
+        action_diff = action_buf[:, :, 0] - action_buf[:, :, 1]
+        rew = - action_diff.square().sum(dim=-1, keepdim=True)
+        return rew
 
 
 class action_rate2_l2(Reward):
     """Penalize the second order rate of change of the action"""
     def __init__(self, env, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
-
+        self.action_manager = self.env.action_manager
+    
     def compute(self) -> torch.Tensor:
-        self.action_buf = self.env.action_buf # TODO: fix this
+        action_buf = self.action_manager.action_buf
         action_diff = (
-            self.action_buf[:, :, 0] - 2 * self.action_buf[:, :, 1] + self.action_buf[:, :, 2]
+            action_buf[:, :, 0] - 2 * action_buf[:, :, 1] + action_buf[:, :, 2]
         )
-        return - action_diff.square().sum(dim=-1, keepdim=True)
+        rew = - action_diff.square().sum(dim=-1, keepdim=True)
+        return rew
     
 
 def normalize(x: torch.Tensor):
