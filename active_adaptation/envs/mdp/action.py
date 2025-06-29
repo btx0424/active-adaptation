@@ -208,7 +208,41 @@ class LegWheel(ActionManager):
             symmetry_utils.joint_space_symmetry(self.asset, self.leg_names),
             symmetry_utils.joint_space_symmetry(self.asset, self.wheel_names),
         ])
+
+
+class DecapAction(ActionManager):
+    """
+    Decaying Action Prior as described in https://arxiv.org/pdf/2310.05714
+    """
+    def __init__(self, env, action_scaling: Dict[str, float] = 8.0):
+        super().__init__(env)
+        self.joint_ids, self.joint_names, self.action_scaling = (
+            string_utils.resolve_matching_names_values(
+                dict(action_scaling), self.asset.joint_names
+            )
+        )
+        self.action_scaling = torch.tensor(self.action_scaling, device=self.device)
+        self.action_dim = len(self.joint_ids)
+
+        self.action_buf = torch.zeros(self.num_envs, self.action_dim, 4, device=self.device)
+        self.applied_action = torch.zeros(self.num_envs, self.action_dim, device=self.device)
     
+    def symmetry_transforms(self):
+        transform = symmetry_utils.joint_space_symmetry(self.asset, self.joint_names)
+        return transform
+    
+    def __call__(self, tensordict: TensorDictBase, substep: int):
+        if substep == 0:
+            if isinstance(tensordict, TensorDictBase):
+                action = tensordict["action"]
+            action = action.clamp(-10, 10)
+            self.action_buf[:, :, 1:] = self.action_buf[:, :, :-1]
+            self.action_buf[:, :, 0] = action
+            self.applied_action = self.applied_action.lerp(action, 0.8)
+        torque = self.applied_action * self.action_scaling
+        self.asset.set_joint_effort_target(torque, self.joint_ids)
+    
+
 def clamp_norm(x: torch.Tensor, max_norm: float):
     norm = x.norm(dim=-1, keepdim=True)
     return x * (max_norm / norm.clamp(min=1e-6)).clamp(max=1.0)
