@@ -48,20 +48,20 @@ observation:
     # projected_gravity_b: {noise_std: 0.05}
     # joint_pos:    {noise_std: 0.05, subtract_offset: true}
     # joint_vel:    {noise_std: 0.2}
-    gravity_multistep:  {steps: 3, noise_std: 0.05}
-    joint_pos_multistep: {steps: 3, noise_std: 0.05}
-    joint_vel_multistep: {steps: 3, noise_std: 0.2}
+    gravity_multistep:  {steps: 6, noise_std: 0.05}
+    joint_pos_multistep: {steps: 6, noise_std: 0.05}
+    joint_vel_multistep: {steps: 6, noise_std: 0.2}
     prev_actions: {steps: 1, permute: true}
   priv:
     command_hidden:
     applied_action:
     root_linvel_b:    {yaw_only: true}
     root_angvel_b:
-    applied_torque:   {}
     contact_indicator: {body_names: [".*_foot"], timing: false}
-  ext:
     external_forces:  {body_names: ["base"]}
     external_torques: {body_names: ["base"]}
+  aux_target_:
+    root_linvel_b:  {yaw_only: true}
 
 reward:
   loco:

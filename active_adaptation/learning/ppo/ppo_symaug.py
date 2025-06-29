@@ -226,7 +226,7 @@ class PPOPolicy(TensorDictModuleBase):
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
 
-        adv, ret = self.gae(rewards, terms, dones, values, next_values)
+        adv, ret = self.gae(rewards, terms, dones, values, next_values, discount)
         if update_value_norm:
             self.value_norm.update(ret)
         ret = self.value_norm.normalize(ret)
