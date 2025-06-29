@@ -1,11 +1,13 @@
 import torch
 
-from active_adaptation.envs.mdp.base import Reward
+from active_adaptation.envs.mdp.base import Reward, termination
 from active_adaptation.envs.mdp.commands.base import Command
 from active_adaptation.utils.math import (
     quat_rotate_inverse,
     quat_rotate,
     normalize,
+    quat_mul,
+    sample_quat_yaw,
 )
 from active_adaptation.utils.symmetry import SymmetryTransform
 
@@ -44,6 +46,18 @@ class Game(Command):
     
     def sample_init(self, env_ids: torch.Tensor) -> torch.Tensor:
         return super().sample_init(env_ids)
+        chase = env_ids % 2 == 0
+        init_root_state = self.init_root_state[env_ids]
+        if self.terrain_type == "plane":
+            origins = self.env.scene.env_origins[env_ids]
+        else:
+            idx = torch.randint(0, len(self._origins), (len(env_ids),), device=self.device)
+            origins = self._origins[idx]
+        init_root_state[~chase, :3] = origins[~chase] + init_root_state[~chase, :3]
+        init_root_state[chase, :3] = self.asset.data.root_pos_w[env_ids[chase]+1]
+        quat = sample_quat_yaw(len(env_ids), device=self.device)
+        init_root_state[:, 3:7] = quat
+        return init_root_state
 
     def reset(self, env_ids: torch.Tensor):
         return super().reset(env_ids)

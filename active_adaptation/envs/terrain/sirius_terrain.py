@@ -88,17 +88,17 @@ ROUGH_EASY = TerrainGeneratorCfg(
         #     grid_height_range=(0.02, 0.05), 
         #     platform_width=2.0
         # ),
-        # "boxes": MeshBoxTerrainCfg(
-        #     proportion=0.20,
-        #     box_height_range=(0.1, 0.2),
-        #     platform_width=2.0,
-        #     double_box=True
-        # ),
+        "boxes": MeshBoxTerrainCfg(
+            proportion=0.20,
+            box_height_range=(0.1, 0.2),
+            platform_width=2.0,
+            double_box=True
+        ),
         "ring": MeshFloatingRingTerrainCfg(
             proportion=0.20,
             ring_width_range=(0.1, 0.2),
             ring_height_range=(0.0, 0.2),
-            ring_thickness=0.2,
+            ring_thickness=0.1,
             platform_width=4.0,
         ),
         "ramp": RampTerrainCfg(

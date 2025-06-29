@@ -8,7 +8,7 @@ viewer:
 
 robot:
   name: sirius_wheel
-terrain: plane
+terrain: sirius_easy
 
 # common
 num_envs: 4096
