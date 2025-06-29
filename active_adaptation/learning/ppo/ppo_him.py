@@ -54,7 +54,7 @@ class PPOConfig:
     name: str = "ppo_him"
     train_every: int = 32
     ppo_epochs: int = 4
-    num_minibatches: int = 16
+    num_minibatches: int = 8
     lr: float = 5e-4
     clip_param: float = 0.2
     entropy_coef: float = 0.002
@@ -85,7 +85,8 @@ class PPOHIMPolicy(TensorDictModuleBase):
         observation_spec: CompositeSpec, 
         action_spec: CompositeSpec, 
         reward_spec: TensorSpec,
-        device
+        device,
+        env
     ):
         super().__init__()
         self.cfg = cfg
@@ -113,10 +114,10 @@ class PPOHIMPolicy(TensorDictModuleBase):
         fake_input = observation_spec.zero()
         print(fake_input)
         
-        actor_keys = [CMD_KEY, OBS_KEY, "aux_pred", "latent"]
+        actor_in_keys = [CMD_KEY, OBS_KEY, "aux_pred", "latent"]
         actor_module=Seq(
-            CatTensors(actor_keys, "_actor_input", del_keys=False, sort=False),
-            Mod(make_mlp([512, 256, 256]), ["_actor_input"], ["_actor_feature"]),
+            CatTensors(actor_in_keys, "_actor_input", del_keys=False, sort=False),
+            Mod(make_mlp([256, 256, 256]), ["_actor_input"], ["_actor_feature"]),
             Mod(Actor(self.action_dim), ["_actor_feature"], ["loc", "scale"])
         )
         self.actor: ProbabilisticActor = ProbabilisticActor(
@@ -127,9 +128,10 @@ class PPOHIMPolicy(TensorDictModuleBase):
             return_log_prob=True
         ).to(self.device)
         
+        critic_in_keys = [CMD_KEY, OBS_KEY, OBS_PRIV_KEY]
         _critic = nn.Sequential(make_mlp([512, 256, 128]), nn.LazyLinear(1))
         self.critic = Seq(
-            CatTensors([CMD_KEY, OBS_KEY, OBS_PRIV_KEY], "_critic_input", del_keys=False),
+            CatTensors(critic_in_keys, "_critic_input", del_keys=False, sort=False),
             Mod(_critic, ["_critic_input"], ["state_value"])
         ).to(self.device)
 
@@ -143,7 +145,7 @@ class PPOHIMPolicy(TensorDictModuleBase):
                 _make_mlp([128, 64, latent_dim + self.aux_target_dim]),
                 Split([latent_dim, self.aux_target_dim])
             ),
-            [OBS_HIST_KEY], ["latent", "aux_pred"]
+            [OBS_KEY], ["latent", "aux_pred"]
         ).to(self.device)
 
         self._target = _make_mlp([128, 64, latent_dim]).to(self.device)
@@ -216,16 +218,23 @@ class PPOHIMPolicy(TensorDictModuleBase):
         ret_key: str="ret",
         update_value_norm: bool=True,
     ):
-        values = critic(tensordict)["state_value"]
-        next_values = critic(tensordict["next"])["state_value"]
+        keys = tensordict.keys(True, True)
+        if not ("state_value" in keys and ("next", "state_value") in keys):
+            with tensordict.view(-1) as tensordict_flat:
+                critic(tensordict_flat)
+                critic(tensordict_flat["next"])
 
-        rewards = tensordict[REWARD_KEY]
+        values = tensordict["state_value"]
+        next_values = tensordict["next", "state_value"]
+
+        rewards = tensordict[REWARD_KEY].sum(-1, keepdim=True).clamp_min(0.)
+        discount = tensordict["next", "discount"]
         terms = tensordict[TERM_KEY]
         dones = tensordict[DONE_KEY]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
 
-        adv, ret = self.gae(rewards, terms, dones, values, next_values)
+        adv, ret = self.gae(rewards, terms, dones, values, next_values, discount)
         if update_value_norm:
             self.value_norm.update(ret)
         ret = self.value_norm.normalize(ret)

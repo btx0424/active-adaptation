@@ -13,7 +13,6 @@ from active_adaptation.utils.math import (
     yaw_quat,
     EMA
 )
-from active_adaptation.envs.mdp import reward
 from active_adaptation.envs.mdp.utils.forces import ConstantForce, ImpulseForce, SpringForce
 import active_adaptation.utils.symmetry as symmetry_utils
 
@@ -225,47 +224,47 @@ class Impedance(Command):
         # currently only used for smoothing the rewards
         return self.asset.data.body_lin_vel_w[:, self.body_ids].mean(1)
 
-    @reward
-    def impedance_pos(self):
-        diff = self.surrogate_pos_target - self.get_pos_w().unsqueeze(1)
-        error_l2 = diff[:, :, :2].square().sum(dim=-1, keepdim=True)
-        r = (- error_l2 / 0.25).exp().mean(1)
-        return r
+    # @reward
+    # def impedance_pos(self):
+    #     diff = self.surrogate_pos_target - self.get_pos_w().unsqueeze(1)
+    #     error_l2 = diff[:, :, :2].square().sum(dim=-1, keepdim=True)
+    #     r = (- error_l2 / 0.25).exp().mean(1)
+    #     return r
     
-    @reward
-    def impedance_vel(self):
-        diff = einops.rearrange(self.surrogate_lin_vel_target, "n t1 d -> n t1 1 d") \
-            - einops.rearrange(self.lin_vel_ema.ema, "n t2 d-> n 1 t2 d")
-        error_l2 = (diff * self.dim_weights).square().sum(dim=-1, keepdim=True)
-        r = ((- error_l2 / 0.25).exp() - 0.25 * error_l2).mean(1)
-        return r.max(dim=1).values
+    # @reward
+    # def impedance_vel(self):
+    #     diff = einops.rearrange(self.surrogate_lin_vel_target, "n t1 d -> n t1 1 d") \
+    #         - einops.rearrange(self.lin_vel_ema.ema, "n t2 d-> n 1 t2 d")
+    #     error_l2 = (diff * self.dim_weights).square().sum(dim=-1, keepdim=True)
+    #     r = ((- error_l2 / 0.25).exp() - 0.25 * error_l2).mean(1)
+    #     return r.max(dim=1).values
     
-    # evaluation metrics
-    @reward
-    def impedance_pos_error(self):
-        diff = self.ref_pos_w[:, [*self.surr_steps, -1]] - self.get_pos_w().unsqueeze(1)
-        error_l2 = diff[:, :, :2].square().sum(dim=-1, keepdim=True)
-        return error_l2.mean(1)
+    # # evaluation metrics
+    # @reward
+    # def impedance_pos_error(self):
+    #     diff = self.ref_pos_w[:, [*self.surr_steps, -1]] - self.get_pos_w().unsqueeze(1)
+    #     error_l2 = diff[:, :, :2].square().sum(dim=-1, keepdim=True)
+    #     return error_l2.mean(1)
     
-    @reward
-    def impedance_vel_error(self):
-        diff = self.ref_lin_vel_w[:, [*self.surr_steps, -1]] - self.get_lin_vel_w().unsqueeze(1)
-        error_l2 = diff[:, :, :2].square().sum(dim=-1, keepdim=True)
-        return error_l2.mean(1)
+    # @reward
+    # def impedance_vel_error(self):
+    #     diff = self.ref_lin_vel_w[:, [*self.surr_steps, -1]] - self.get_lin_vel_w().unsqueeze(1)
+    #     error_l2 = diff[:, :, :2].square().sum(dim=-1, keepdim=True)
+    #     return error_l2.mean(1)
     
-    @reward
-    def impedance_acc_error(self):
-        diff = self.ref_lin_acc_w[:, 0] - self.asset.data.body_acc_w[:, 0, :3]
-        error_l2 = diff[:, :2].square().sum(dim=-1, keepdim=True)
-        return error_l2
+    # @reward
+    # def impedance_acc_error(self):
+    #     diff = self.ref_lin_acc_w[:, 0] - self.asset.data.body_acc_w[:, 0, :3]
+    #     error_l2 = diff[:, :2].square().sum(dim=-1, keepdim=True)
+    #     return error_l2
 
-    @reward
-    def impedance_yaw_vel(self):
-        diff = einops.rearrange(self.surrogate_yaw_vel_target, "n t1 d -> n t1 1 d") \
-            - einops.rearrange(self.ang_vel_ema.ema[:, :, 2:3], "n t2 d-> n 1 t2 d")
-        error_l2 = diff.square().sum(dim=-1, keepdim=True)
-        r = ((- error_l2 / 0.25).exp() - 0.25 * error_l2).mean(1)
-        return r.max(dim=1).values
+    # @reward
+    # def impedance_yaw_vel(self):
+    #     diff = einops.rearrange(self.surrogate_yaw_vel_target, "n t1 d -> n t1 1 d") \
+    #         - einops.rearrange(self.ang_vel_ema.ema[:, :, 2:3], "n t2 d-> n 1 t2 d")
+    #     error_l2 = diff.square().sum(dim=-1, keepdim=True)
+    #     r = ((- error_l2 / 0.25).exp() - 0.25 * error_l2).mean(1)
+    #     return r.max(dim=1).values
 
     def reset(self, env_ids: torch.Tensor):
         self.sample_command_world(env_ids)

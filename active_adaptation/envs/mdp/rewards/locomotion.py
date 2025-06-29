@@ -1049,34 +1049,6 @@ class joint_vel_l2(Reward):
 
 
 
-class impedance_acc(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True):
-        super().__init__(env, weight, enabled)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: Impedance = self.env.command_manager
-
-    def compute(self) -> torch.Tensor:
-        lin_acc_w = self.asset.data.body_acc_w[:, 0, :2]
-        error_l2 = (self.command_manager.ref_lin_acc_w[:, 0, :2] - lin_acc_w).square().sum(1, True)
-        return torch.exp(- error_l2 / 2.0)
-
-
-class impedance_yaw_pos(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True):
-        super().__init__(env, weight, enabled)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: Impedance = self.env.command_manager
-
-    def compute(self) -> torch.Tensor:
-        target_yaw = self.command_manager.surrogate_yaw_target 
-        diff = target_yaw - self.asset.data.heading_w.reshape(-1, 1, 1)
-        diff = wrap_to_pi(diff)
-        error_l2 = diff.square()
-        r = torch.exp(-error_l2 / 0.25).mean(1)
-        return r
-
-
-
 class feet_swing_height(Reward):
     def __init__(self, env, target_height: float, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
