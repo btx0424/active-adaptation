@@ -29,6 +29,7 @@ import warnings
 import functools
 import einops
 import copy
+import torch.utils._pytree as pytree
 
 from torchrl.data import CompositeSpec, TensorSpec, Unbounded
 from torchrl.modules import ProbabilisticActor
@@ -41,7 +42,7 @@ from tensordict.nn import (
 )
 from hydra.core.config_store import ConfigStore
 from dataclasses import dataclass, field
-from typing import Union, List
+from typing import Union, Tuple
 from collections import OrderedDict
 
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
@@ -56,15 +57,15 @@ class PPOConfig:
     _target_: str = "active_adaptation.learning.ppo.ppo_facet.PPODICPolicy"
     name: str = "ppo_facet"
     train_every: int = 32
-    ppo_epochs: int = 5
-    num_minibatches: int = 4
+    ppo_epochs: int = 4
+    num_minibatches: int = 8
     lr: float = 5e-4
     clip_param: float = 0.2
     entropy_coef_start: float = 0.006
     entropy_coef_end: float = 0.000
+    compile: bool = False
 
     reg_lambda: float = 0.0
-    rec_weight: float = 0.0
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
@@ -75,7 +76,7 @@ class PPOConfig:
     short_history: int = 0
     vecnorm: Union[str, None] = None
     checkpoint_path: Union[str, None] = None
-    in_keys: List[str] = ("command", OBS_KEY, OBS_PRIV_KEY, "ext", "ext_")
+    in_keys: Tuple[str, ...] = ("command", OBS_KEY, OBS_PRIV_KEY, "ext", "ext_")
 
 cs = ConfigStore.instance()
 cs.store("ppo_facet_train", node=PPOConfig(phase="train", vecnorm="train"), group="algo")
@@ -252,7 +253,7 @@ class PPODICPolicy(TensorDictModuleBase):
         fake_input = observation_spec.zero()
         
         self.encoder_priv = Seq(
-            Mod(nn.Sequential(make_mlp([128]), nn.LazyLinear(128)), [OBS_PRIV_KEY], ["priv_feature"]),
+            Mod(nn.Sequential(make_mlp([128]), nn.LazyLinear(128)), [OBS_PRIV_KEY], ["_priv_feature"]),
             Mod(nn.Sequential(make_mlp([32]), nn.LazyLinear(32)), ["ext"], ["ext_feature"]),
         ).to(self.device)
 
@@ -272,10 +273,10 @@ class PPODICPolicy(TensorDictModuleBase):
         self.adapt_module =  Mod(
             GRUModule(128 + 32 + ext_dim, split=[128, 32, ext_dim]), 
             [OBS_KEY, "is_init", "adapt_hx"], 
-            ["priv_pred", "ext_pred", ("info", "ext_rec"), ("next", "adapt_hx")]
+            ["_priv_pred", "ext_pred", ("info", "ext_rec"), ("next", "adapt_hx")]
         ).to(self.device)
         
-        in_keys = [CMD_KEY, OBS_KEY, "priv_feature", "ext_feature"]
+        in_keys = [CMD_KEY, OBS_KEY, "_priv_feature", "ext_feature"]
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=Seq(
                 CatTensors(in_keys, "_actor_inp", del_keys=False, sort=False),
@@ -289,7 +290,7 @@ class PPODICPolicy(TensorDictModuleBase):
             return_log_prob=True
         ).to(self.device)
 
-        in_keys = [CMD_KEY, OBS_KEY, "priv_pred", "ext_pred"]
+        in_keys = [CMD_KEY, OBS_KEY, "_priv_pred", "ext_pred"]
         self.actor_adapt: ProbabilisticActor = ProbabilisticActor(
             module=Seq(
                 CatTensors(in_keys, "_actor_inp", del_keys=False, sort=False),
@@ -360,6 +361,10 @@ class PPODICPolicy(TensorDictModuleBase):
         self.critic.apply(init_)
         self.encoder_priv.apply(init_)
         self.adapt_module.apply(init_)
+
+        self.update = self._update
+        if self.cfg.compile:
+            self.update = torch.compile(self.update)
         
         self.num_updates = 0
     
@@ -392,9 +397,11 @@ class PPODICPolicy(TensorDictModuleBase):
 
     def train_op(self, tensordict: TensorDict):
         info = {}
+        tensordict = tensordict.exclude(("next", "stats"))
         if self.cfg.phase == "train":
             info.update(self.train_policy(tensordict.copy()))
-            info.update(self.train_adapt(tensordict.copy()))
+            if self.num_updates % 2 == 0:
+                info.update(self.train_adapt(tensordict.copy()))
         elif self.cfg.phase == "adapt":
             info.update(self.train_adapt(tensordict.copy()))
         elif self.cfg.phase == "finetune":
@@ -417,12 +424,13 @@ class PPODICPolicy(TensorDictModuleBase):
             batch = make_batch(tensordict, self.cfg.num_minibatches)
             for minibatch in batch:
                 info = self._update(minibatch, policy_inference, opt)
-                infos.append(TensorDict(info, []))
+                infos.append(info)
 
-        infos = {k: v.mean().item() for k, v in torch.stack(infos).items()}
+        infos = pytree.tree_map(lambda *xs: sum(xs).item() / len(xs), *infos)
         infos["critic/value_mean"] = tensordict["ret"].mean().item()
+        infos["critic/value_std"] = tensordict["ret"].std().item()
         infos["critic/neg_rew_ratio"] = (reward_sum <= 0.).float().mean().item()
-        return infos
+        return dict(sorted(infos.items()))
     
     @set_recurrent_mode(True)
     def train_adapt(self, tensordict: TensorDict):
@@ -434,7 +442,7 @@ class PPODICPolicy(TensorDictModuleBase):
         for epoch in range(2):
             for minibatch in make_batch(tensordict, self.cfg.num_minibatches, self.cfg.train_every):
                 self.adapt_module(minibatch)
-                priv_loss = self.adapt_loss_fn(minibatch["priv_pred"], minibatch["priv_feature"])
+                priv_loss = self.adapt_loss_fn(minibatch["_priv_pred"], minibatch["_priv_feature"])
                 priv_loss = (priv_loss * (~minibatch["is_init"])).mean()
                 ext_loss = self.adapt_loss_fn(minibatch["ext_pred"], minibatch["ext_feature"])
                 ext_loss = (ext_loss * (~minibatch["is_init"])).mean()
@@ -522,10 +530,10 @@ class PPODICPolicy(TensorDictModuleBase):
         value_loss = (value_loss * (~tensordict["is_init"])).mean()
 
         if self.cfg.phase == "train" and self.reg_lambda > 0:
-            reg_loss = self.adapt_loss_fn(tensordict["priv_feature"], tensordict["priv_pred"])
+            reg_loss = self.adapt_loss_fn(tensordict["_priv_feature"], tensordict["_priv_pred"])
             reg_loss = self.reg_lambda * (reg_loss * (~tensordict["is_init"])).mean()
         else:
-            reg_loss = 0.
+            reg_loss = torch.tensor(0., device=self.device)
         
         loss = policy_loss + entropy_loss + value_loss + reg_loss + 0.002 * gradient_penalty
         
