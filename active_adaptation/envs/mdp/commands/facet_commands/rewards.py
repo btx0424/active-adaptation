@@ -15,7 +15,8 @@ class impedance_pos(Reward[Impedance]):
     def compute(self) -> torch.Tensor:
         diff = self.impedance.surrogate_pos_target - self.impedance.get_pos_w().unsqueeze(1)
         error_l2 = diff[:, :, :2].square().sum(dim=-1, keepdim=True)
-        return error_l2.mean(1)
+        r = (- error_l2 / 0.25).exp().mean(1)
+        return r
 
 
 class impedance_vel(Reward[Impedance]):
