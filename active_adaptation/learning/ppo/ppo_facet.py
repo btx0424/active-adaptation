@@ -363,8 +363,8 @@ class PPODICPolicy(TensorDictModuleBase):
         self.adapt_module.apply(init_)
 
         self.update = self._update
-        if self.cfg.compile:
-            self.update = torch.compile(self.update)
+        # if self.cfg.compile:
+        #     self.update = torch.compile(self.update)
         
         self.num_updates = 0
     

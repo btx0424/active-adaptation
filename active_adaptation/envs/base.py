@@ -197,14 +197,12 @@ class _Env(EnvBase):
             self._update_callbacks.append(rand.update)
 
         for group_key, params in self.cfg.observation.items():
-            max_delay = params.pop("_max_delay_", 0)
-            if max_delay > 1e-6:
-                raise NotImplementedError
             funcs = OrderedDict()            
-            for key, kwargs in params.items():
-                obs_cls= mdp.Observation.registry[key]
-                obs = obs_cls(self, **(kwargs if kwargs is not None else {}))
-                funcs[key] = obs
+            for obs_spec, kwargs in params.items():
+                obs_name, obs_cls_name = parse_name_and_class(obs_spec)
+                obs_cls = mdp.Observation.registry[obs_cls_name]
+                obs: mdp.Observation = obs_cls(self, **(kwargs if kwargs is not None else {}))
+                funcs[obs_name] = obs
 
                 self._startup_callbacks.append(obs.startup)
                 self._update_callbacks.append(obs.update)

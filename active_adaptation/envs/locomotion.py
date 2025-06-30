@@ -139,12 +139,4 @@ class SimpleEnv(_Env):
             target=self.robot.data.root_pos_w[0].cpu()
         )
         return super().render(mode)
-        
-    class feet_pos_b(mdp.body_pos_b):
-        def __init__(self, env, feet_names, yaw_only: bool=False):
-            super().__init__(env, feet_names, yaw_only=yaw_only)
-    
-    class feet_vel_b(mdp.body_vel_b):
-        def __init__(self, env, feet_names, yaw_only: bool=False):
-            super().__init__(env, feet_names, yaw_only=yaw_only)
 

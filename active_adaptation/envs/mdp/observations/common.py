@@ -451,6 +451,25 @@ class root_linvel_b(Observation):
     #         )
 
 
+class joint_pos(Observation):
+    def __init__(self, env, joint_names: str=".*", noise_std: float=0.):
+        super().__init__(env)
+        self.noise_std = noise_std
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids, self.joint_names = self.asset.find_joints(joint_names)
+        self.num_joints = len(self.joint_ids)
+        
+    def compute(self):
+        joint_pos = self.asset.data.joint_pos[:, self.joint_ids]
+        if self.noise_std > 0:
+            joint_pos = random_noise(joint_pos, self.noise_std)
+        return joint_pos.reshape(self.num_envs, -1)
+    
+    def symmetry_transforms(self):
+        transform = sym_utils.joint_space_symmetry(self.asset, self.joint_names)
+        return transform
+
+
 class joint_pos_substep(Observation):
     def __init__(self, env):
         super().__init__(env)

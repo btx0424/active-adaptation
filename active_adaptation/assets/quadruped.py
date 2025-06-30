@@ -6,7 +6,6 @@ import isaaclab.sim as sim_utils
 
 from isaaclab.actuators import DCMotorCfg, ImplicitActuatorCfg, ImplicitActuator
 from isaaclab.assets import Articulation
-from isaaclab.utils.math import quat_rotate_inverse
 from isaaclab.sensors import ContactSensor
 from typing import TYPE_CHECKING
 
