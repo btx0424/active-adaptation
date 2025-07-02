@@ -1566,7 +1566,7 @@ class support_polygon(Reward):
         super().__init__(env, weight, enabled)
         self.asset: Articulation = self.env.scene["robot"]
         self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
-        self.feet_ids = self.asset.find_bodies(".*_foot")[0]
+        self.feet_ids, self.feet_names = self.asset.find_bodies(".*_foot")
         self.feet_ids_contact = self.contact_sensor.find_bodies(".*_foot")[0]
 
         body_masses = self.asset.data.default_mass.to(self.device)
@@ -1582,10 +1582,9 @@ class support_polygon(Reward):
         feet_pos_b = quat_rotate_inverse(
             self.asset.data.root_quat_w.unsqueeze(1),
             self.feet_pos_w - self.com_pos_w.unsqueeze(1)
-        )
-        feet_pos_b = feet_pos_b[:, :, :2] * torch.tensor([1., -1.], device=self.device)
+        )        
         in_contact = self.contact_sensor.data.net_forces_w[:, self.feet_ids_contact].norm(dim=-1, keepdim=True) > 0.1
-        rew = ((feet_pos_b - 0.08).clamp_max(0.) * in_contact).sum(-1)
+        rew = ((feet_pos_b.abs() - 0.08).clamp_max(0.) * in_contact).sum(-1)
         rew = rew.min(dim=1).values
         return rew.reshape(self.num_envs, 1)
     
