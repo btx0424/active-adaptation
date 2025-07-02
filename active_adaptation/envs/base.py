@@ -279,6 +279,9 @@ class _Env(EnvBase):
     
         self.input_tensordict = None
         self.extra = {}
+        self.observation_time = 0.
+        self.reward_time = 0.
+        self.ema_cnt = 0.
 
     @property
     def action_dim(self) -> int:
@@ -296,6 +299,8 @@ class _Env(EnvBase):
             result[group_key] = {}
             for rew_key, (sum, cnt) in group.items():
                 result[group_key][rew_key] = (sum / cnt).item()
+        result["performance/observation_time"] = self.observation_time / self.ema_cnt
+        result["performance/reward_time"] = self.reward_time / self.ema_cnt
         return result
     
     def setup_scene(self):
@@ -327,11 +332,15 @@ class _Env(EnvBase):
         self.input_tensordict = tensordict
         self.action_manager(tensordict, substep)
 
-    def _compute_observation(self, tensordict: TensorDictBase):    
+    def _compute_observation(self, tensordict: TensorDictBase):
+        start = time.perf_counter()
         for group_key, obs_group in self.observation_funcs.items():
             obs_group.compute(tensordict, self.timestamp)
+        end = time.perf_counter()
+        self.observation_time = self.observation_time * self._stats_ema_decay + (end - start)
             
     def _compute_reward(self) -> TensorDictBase:
+        start = time.perf_counter()
         if not self.reward_groups:
             return {"reward": torch.ones((self.num_envs, 1), device=self.device)}
         
@@ -347,6 +356,8 @@ class _Env(EnvBase):
 
         self.stats["episode_len"][:] = self.episode_length_buf.unsqueeze(1)
         self.stats["success"][:] = (self.episode_length_buf >= self.max_episode_length * 0.9).unsqueeze(1).float()
+        end = time.perf_counter()
+        self.reward_time = self.reward_time * self._stats_ema_decay + (end - start)
         return {"reward": rewards}
     
     def _compute_termination(self) -> TensorDictBase:
@@ -409,7 +420,8 @@ class _Env(EnvBase):
                 self.debug_draw.clear()
             for callback in self._debug_draw_callbacks:
                 callback()
-            
+        
+        self.ema_cnt = self.ema_cnt * self._stats_ema_decay + 1.
         return tensordict
     
     @property
