@@ -1574,7 +1574,8 @@ class support_polygon(Reward):
         self.body_mass_ratio = body_masses / mass_total.unsqueeze(-1)
     
     def update(self):
-        self.com_pos_w = (self.asset.data.body_com_pos_w * self.body_mass_ratio.unsqueeze(-1)).sum(dim=1)
+        # self.com_pos_w = (self.asset.data.body_com_pos_w * self.body_mass_ratio.unsqueeze(-1)).sum(dim=1)
+        self.com_pos_w = self.asset.data.root_com_pos_w
         self.feet_pos_w = self.asset.data.body_pos_w[:, self.feet_ids]
     
     def compute(self):
