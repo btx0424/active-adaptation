@@ -86,6 +86,7 @@ reward:
     feet_slip:          {weight: 0.2, enabled: true, body_names: .*_foot}
     feet_air_time:      {weight: 0.2, enabled: true, body_names: .*_foot, thres: 0.3}
     undesired_contact:  {body_names: [Head.*, .*_calf, .*thigh], weight: 2.0, enabled: true}
+    support_polygon:    {weight: 2.0, enabled: true}
   debug:
     feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}

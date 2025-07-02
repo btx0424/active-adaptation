@@ -1559,7 +1559,43 @@ class action_rate2_l2(Reward):
         )
         rew = - action_diff.square().sum(dim=-1, keepdim=True)
         return rew
+
+
+class support_polygon(Reward):
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+        self.feet_ids = self.asset.find_bodies(".*_foot")[0]
+        self.feet_ids_contact = self.contact_sensor.find_bodies(".*_foot")[0]
+
+        body_masses = self.asset.data.default_mass.to(self.device)
+        mass_total = body_masses.sum(dim=1)
+        self.body_mass_ratio = body_masses / mass_total.unsqueeze(-1)
     
+    def update(self):
+        self.com_pos_w = (self.asset.data.body_com_pos_w * self.body_mass_ratio.unsqueeze(-1)).sum(dim=1)
+        self.feet_pos_w = self.asset.data.body_pos_w[:, self.feet_ids]
+    
+    def compute(self):
+        feet_pos_b = quat_rotate_inverse(
+            self.asset.data.root_quat_w.unsqueeze(1),
+            self.feet_pos_w - self.com_pos_w.unsqueeze(1)
+        )
+        feet_pos_b = feet_pos_b[:, :, :2] * torch.tensor([1., -1.], device=self.device)
+        in_contact = self.contact_sensor.data.net_forces_w[:, self.feet_ids_contact].norm(dim=-1, keepdim=True) > 0.1
+        rew = ((feet_pos_b - 0.08).clamp_max(0.) * in_contact).sum(-1)
+        rew = rew.min(dim=1).values
+        return rew.reshape(self.num_envs, 1)
+    
+    def debug_draw(self):
+        if self.env.backend == "isaac":
+            self.env.debug_draw.vector(
+                self.com_pos_w,
+                torch.tensor([0.0, 0.0, -1.0], device=self.device).expand(self.num_envs, 3),
+                color=(1.0, 0.0, 0.0, 1.0),
+            )
+
 
 def normalize(x: torch.Tensor):
     return x / x.norm(dim=-1, keepdim=True).clamp_min(1e-6)
