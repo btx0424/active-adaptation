@@ -131,7 +131,6 @@ class SimpleEnv(_Env):
                 env_ids=env_ids
             )
         self.stats[env_ids] = 0.
-        self.scene.reset(env_ids)
 
     def render(self, mode: str="human"):
         self.sim.set_camera_view(

@@ -310,13 +310,13 @@ class _Env(EnvBase):
             env_ids = torch.arange(self.num_envs, device=self.device)
         if len(env_ids):
             self._reset_idx(env_ids)
+            self.scene.reset(env_ids)
         self.episode_length_buf[env_ids] = 0
-        self.scene.update(self.step_dt)
         for callback in self._reset_callbacks:
             callback(env_ids)
         tensordict = TensorDict({}, self.num_envs, device=self.device)
-        # tensordict.update(self.observation_spec.zero())
-        self._compute_observation(tensordict)
+        tensordict.update(self.observation_spec.zero())
+        # self._compute_observation(tensordict)
         return tensordict
 
     @abstractmethod
