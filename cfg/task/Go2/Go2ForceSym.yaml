@@ -61,9 +61,6 @@ observation:
   ext:
     external_forces:  {body_names: ["base"]}
     external_torques: {body_names: ["base"]}
-  ext_:
-    external_forces:  {body_names: ["base"], divide_by_mass: false}
-    external_torques: {body_names: ["base"], divide_by_mass: false, scale: 0.2}
 
 reward:
   loco:
@@ -88,16 +85,18 @@ reward:
     feet_slip:          {weight: 0.2, enabled: true, body_names: .*_foot}
     feet_air_time:      {weight: 0.2, enabled: true, body_names: .*_foot, thres: 0.3}
     undesired_contact:  {body_names: [Head.*, .*_calf, .*thigh], weight: 2.0, enabled: true}
-  metrics:
+  debug:
     feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_foot}
+  metrics:
     impedance_acc_error: {weight: 1.0, enabled: false}
     impedance_vel_error: {weight: 1.0, enabled: false}
     impedance_pos_error: {weight: 1.0, enabled: false}
 
 termination:
-  crash: {body_names_expr: [Head.*, base, .*_calf], t_thres: 0.06}
+  crash: {body_names_expr: [Head.*, base, .*_calf], t_thres: 0.1}
   fall_over: {xy_thres: 0.9}
+  soft_contact: {body_names: [Head.*, .*_calf]}
 
 randomization:
   perturb_body_mass:

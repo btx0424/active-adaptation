@@ -517,8 +517,12 @@ class Impedance(Command):
         offset = torch.zeros(len(env_ids), 3, device=self.device)
         offset[:, 0].uniform_(0.6, 1.2)
         offset[:, 1].uniform_(0.6, 1.2)
+        offset[:, 2] = 10.0
+        root_pos_w = self.asset.data.root_pos_w[env_ids]
+        setpos_w = root_pos_w + offset
+        setpos_w[:, 2] = self.env.get_ground_height_at(setpos_w) + root_pos_w[:, 2] - self.env.get_ground_height_at(root_pos_w)
         self.set_linvel[env_ids] = 0.
-        self.command_setpos_w[env_ids] = self.asset.data.root_pos_w[env_ids] + offset
+        self.command_setpos_w[env_ids] = setpos_w
         target_yaw = self.asset.data.heading_w[env_ids, None] + scalar.uniform_(-torch.pi/2, torch.pi/2)
         self.command_setrpy_w[env_ids, 2:3] = math_utils.wrap_to_pi(target_yaw)
         self.sample_virtual_mass(env_ids)
