@@ -279,10 +279,12 @@ class _Env(EnvBase):
     
         self.input_tensordict = None
         self.extra = {}
+        self.simulation_time = 0.
         self.observation_time = 0.
         self.reward_time = 0.
+        self.command_time = 0.
         self.ema_cnt = 0.
-
+    
     @property
     def action_dim(self) -> int:
         return self.action_manager.action_dim
@@ -301,6 +303,8 @@ class _Env(EnvBase):
                 result[group_key][rew_key] = (sum / cnt).item()
         result["performance/observation_time"] = self.observation_time / self.ema_cnt
         result["performance/reward_time"] = self.reward_time / self.ema_cnt
+        result["performance/simulation_time"] = self.simulation_time / self.ema_cnt
+        result["performance/command_time"] = self.command_time / self.ema_cnt
         return result
     
     def setup_scene(self):
@@ -381,7 +385,7 @@ class _Env(EnvBase):
         self.timestamp += 1
 
     def _step(self, tensordict: TensorDictBase) -> TensorDictBase:
-        # start = time.perf_counter()
+        start = time.perf_counter()
         for substep in range(self.decimation):
             for asset in self.scene.articulations.values():
                 if asset.has_external_wrench:
@@ -396,8 +400,8 @@ class _Env(EnvBase):
             self.scene.update(self.physics_dt)
             for callback in self._post_step_callbacks:
                 callback(substep)
-        # end = time.perf_counter()
-        # print(end - start, self.cfg.decimation)
+        end = time.perf_counter()
+        self.simulation_time = self.simulation_time * self._stats_ema_decay + (end - start)
         self.discount.fill_(1.0)
         self._update()
         
@@ -405,7 +409,11 @@ class _Env(EnvBase):
         tensordict.update(self._compute_reward())
         # Note that command update is a special case
         # it should take place after reward computation
+        start = time.perf_counter()
         self.command_manager.update()
+        end = time.perf_counter()
+
+        self.command_time = self.command_time * self._stats_ema_decay + (end - start)
         self._compute_observation(tensordict)
         terminated = self._compute_termination()
         truncated = (self.episode_length_buf >= self.max_episode_length).unsqueeze(1)
