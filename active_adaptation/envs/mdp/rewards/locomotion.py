@@ -1562,8 +1562,9 @@ class action_rate2_l2(Reward):
 
 
 class support_polygon(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True):
+    def __init__(self, env, margin: float, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
+        self.margin = margin
         self.asset: Articulation = self.env.scene["robot"]
         self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
         self.feet_ids, self.feet_names = self.asset.find_bodies(".*_foot")
@@ -1584,7 +1585,7 @@ class support_polygon(Reward):
             self.feet_pos_w - self.com_pos_w.unsqueeze(1)
         )        
         in_contact = self.contact_sensor.data.net_forces_w[:, self.feet_ids_contact].norm(dim=-1, keepdim=True) > 0.1
-        rew = ((feet_pos_b.abs() - 0.08).clamp_max(0.) * in_contact).sum(-1)
+        rew = ((feet_pos_b.abs() - self.margin).clamp_max(0.) * in_contact).sum(-1)
         rew = rew.min(dim=1).values
         return rew.reshape(self.num_envs, 1)
     
