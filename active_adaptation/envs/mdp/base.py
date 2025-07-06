@@ -208,7 +208,7 @@ class Reward(Generic[CT], _RegistryMixin):
         elif isinstance(result, tuple):
             rew, is_active = result
             rew = rew * is_active.float()
-            count = is_active.sum().item()
+            count = is_active.sum()
         return self.weight * rew, count 
 
     @abc.abstractmethod

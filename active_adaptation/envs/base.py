@@ -334,7 +334,7 @@ class _Env(EnvBase):
     
     def apply_action(self, tensordict: TensorDictBase, substep: int):
         self.input_tensordict = tensordict
-        self.action_manager(tensordict, substep)
+        self.action_manager.apply_action(tensordict, substep)
 
     def _compute_observation(self, tensordict: TensorDictBase):
         start = time.perf_counter()
