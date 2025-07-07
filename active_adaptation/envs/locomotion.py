@@ -69,9 +69,9 @@ class SimpleEnv(_Env):
             # slightly reduces GPU memory usage
             # sim_cfg.physx.gpu_max_rigid_contact_count = 2**21
             # sim_cfg.physx.gpu_max_rigid_patch_count = 2**21
-            sim_cfg.physx.gpu_found_lost_pairs_capacity = 2538320 # 2**20
-            sim_cfg.physx.gpu_found_lost_aggregate_pairs_capacity = 61999079 # 2**26
-            sim_cfg.physx.gpu_total_aggregate_pairs_capacity = 2**23
+            # sim_cfg.physx.gpu_found_lost_pairs_capacity = 2538320 # 2**20
+            # sim_cfg.physx.gpu_found_lost_aggregate_pairs_capacity = 61999079 # 2**26
+            # sim_cfg.physx.gpu_total_aggregate_pairs_capacity = 2**23
             # sim_cfg.physx.gpu_collision_stack_size = 2**25
             # sim_cfg.physx.gpu_heap_capacity = 2**24
             
