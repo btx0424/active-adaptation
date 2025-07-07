@@ -84,8 +84,9 @@ class SiriusCommandManager(Command):
         lin_vel_y_range,
         ang_vel_z_range = (-2.0, 2.0),
         transitions = None,
+        teleop = False,
     ):
-        super().__init__(env)
+        super().__init__(env, teleop)
         self.lin_vel_x_range = lin_vel_x_range
         self.lin_vel_y_range = lin_vel_y_range
         self.ang_vel_z_range = ang_vel_z_range
@@ -240,6 +241,14 @@ class SiriusCommandManager(Command):
         self.target_base_height[env_ids] = 0.4
 
     def update(self):
+        if self.teleop:
+            # print(self.key_pressed)
+            self._command.mode[:] = self.CMD_WALK
+            self._command.des_contact[:] = torch.zeros(4, device=self.device)
+            self._command.cmd_lin_vel[:, 0] = self.key_pressed["W"] - self.key_pressed["S"]
+            self._command.cmd_lin_vel[:, 1] = self.key_pressed["A"] - self.key_pressed["D"]
+            self._command.cmd_ang_vel[:, 2] = self.key_pressed["LEFT"] - self.key_pressed["RIGHT"]
+            return
         r, p, y = euler_from_quat(self.asset.data.root_quat_w).unbind(-1)
         self.pitch_error_l2 = torch.square( wrap_to_pi(self._command.cmd_rpy[:, 1:2] - p.unsqueeze(1)) )
 
