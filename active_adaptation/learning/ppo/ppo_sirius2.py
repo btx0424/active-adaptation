@@ -190,7 +190,7 @@ class PPOPolicy(ModBase):
 
         self.encoder = Mod(
             Encoder(),
-            [OBS_PRIV_KEY, "terrain"], ["_priv_feature"]
+            [OBS_PRIV_KEY, "terrain", "terrain_mask"], ["_priv_feature"]
         ).to(self.device)
 
         self.adapt_module = Mod(
@@ -228,7 +228,7 @@ class PPOPolicy(ModBase):
         critic_in_keys = [CMD_KEY, OBS_KEY, "_critic_priv_feature"]
         critic_module = nn.Sequential(make_mlp([256, 256, 256]), nn.LazyLinear(1))
         self.critic = Seq(
-            Mod(Encoder(), [OBS_PRIV_KEY, "terrain"], ["_critic_priv_feature"]),
+            Mod(Encoder(), [OBS_PRIV_KEY, "terrain", "terrain_mask"], ["_critic_priv_feature"]),
             CatTensors(critic_in_keys, "_policy_priv", del_keys=False, sort=False),
             Mod(critic_module, ["_policy_priv"], ["state_value"])
         ).to(self.device)
