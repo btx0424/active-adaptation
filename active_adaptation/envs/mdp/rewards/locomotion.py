@@ -1049,34 +1049,6 @@ class joint_vel_l2(Reward):
 
 
 
-class impedance_acc(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True):
-        super().__init__(env, weight, enabled)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: Impedance = self.env.command_manager
-
-    def compute(self) -> torch.Tensor:
-        lin_acc_w = self.asset.data.body_acc_w[:, 0, :2]
-        error_l2 = (self.command_manager.ref_lin_acc_w[:, 0, :2] - lin_acc_w).square().sum(1, True)
-        return torch.exp(- error_l2 / 2.0)
-
-
-class impedance_yaw_pos(Reward):
-    def __init__(self, env, weight: float, enabled: bool = True):
-        super().__init__(env, weight, enabled)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.command_manager: Impedance = self.env.command_manager
-
-    def compute(self) -> torch.Tensor:
-        target_yaw = self.command_manager.surrogate_yaw_target 
-        diff = target_yaw - self.asset.data.heading_w.reshape(-1, 1, 1)
-        diff = wrap_to_pi(diff)
-        error_l2 = diff.square()
-        r = torch.exp(-error_l2 / 0.25).mean(1)
-        return r
-
-
-
 class feet_swing_height(Reward):
     def __init__(self, env, target_height: float, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
@@ -1565,25 +1537,66 @@ class action_rate_l2(Reward):
     """Penalize the rate of change of the action"""
     def __init__(self, env, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
-
+        self.action_manager = self.env.action_manager
+    
     def compute(self) -> torch.Tensor:
-        self.action_buf = self.env.action_buf # TODO: fix this
-        action_diff = self.action_buf[:, :, 0] - self.action_buf[:, :, 1]
-        return - action_diff.square().sum(dim=-1, keepdim=True)
+        action_buf = self.action_manager.action_buf
+        action_diff = action_buf[:, :, 0] - action_buf[:, :, 1]
+        rew = - action_diff.square().sum(dim=-1, keepdim=True)
+        return rew
 
 
 class action_rate2_l2(Reward):
     """Penalize the second order rate of change of the action"""
     def __init__(self, env, weight: float, enabled: bool = True):
         super().__init__(env, weight, enabled)
-
-    def compute(self) -> torch.Tensor:
-        self.action_buf = self.env.action_buf # TODO: fix this
-        action_diff = (
-            self.action_buf[:, :, 0] - 2 * self.action_buf[:, :, 1] + self.action_buf[:, :, 2]
-        )
-        return - action_diff.square().sum(dim=-1, keepdim=True)
+        self.action_manager = self.env.action_manager
     
+    def compute(self) -> torch.Tensor:
+        action_buf = self.action_manager.action_buf
+        action_diff = (
+            action_buf[:, :, 0] - 2 * action_buf[:, :, 1] + action_buf[:, :, 2]
+        )
+        rew = - action_diff.square().sum(dim=-1, keepdim=True)
+        return rew
+
+
+class support_polygon(Reward):
+    def __init__(self, env, margin: float, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.margin = margin
+        self.asset: Articulation = self.env.scene["robot"]
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+        self.feet_ids, self.feet_names = self.asset.find_bodies(".*_foot")
+        self.feet_ids_contact = self.contact_sensor.find_bodies(".*_foot")[0]
+
+        body_masses = self.asset.data.default_mass.to(self.device)
+        mass_total = body_masses.sum(dim=1)
+        self.body_mass_ratio = body_masses / mass_total.unsqueeze(-1)
+    
+    def update(self):
+        # self.com_pos_w = (self.asset.data.body_com_pos_w * self.body_mass_ratio.unsqueeze(-1)).sum(dim=1)
+        self.com_pos_w = self.asset.data.root_com_pos_w
+        self.feet_pos_w = self.asset.data.body_pos_w[:, self.feet_ids]
+    
+    def compute(self):
+        feet_pos_b = quat_rotate_inverse(
+            self.asset.data.root_quat_w.unsqueeze(1),
+            self.feet_pos_w - self.com_pos_w.unsqueeze(1)
+        )        
+        in_contact = self.contact_sensor.data.net_forces_w[:, self.feet_ids_contact].norm(dim=-1, keepdim=True) > 0.1
+        rew = ((feet_pos_b.abs() - self.margin).clamp_max(0.) * in_contact).sum(-1)
+        rew = rew.min(dim=1).values
+        return rew.reshape(self.num_envs, 1)
+    
+    def debug_draw(self):
+        if self.env.backend == "isaac":
+            self.env.debug_draw.vector(
+                self.com_pos_w,
+                torch.tensor([0.0, 0.0, -1.0], device=self.device).expand(self.num_envs, 3),
+                color=(1.0, 0.0, 0.0, 1.0),
+            )
+
 
 def normalize(x: torch.Tensor):
     return x / x.norm(dim=-1, keepdim=True).clamp_min(1e-6)

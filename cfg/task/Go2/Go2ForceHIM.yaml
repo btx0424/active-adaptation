@@ -23,10 +23,10 @@ action:
   _target_: active_adaptation.envs.mdp.action.JointPosition
   action_scaling: {.*_joint: 0.5}
   max_delay: 1
-  alpha: [0.5, 0.8]
+  alpha: [0.5, 1.0]
 
 command:
-  _target_: active_adaptation.envs.mdp.commands.impedance.Impedance
+  _target_: active_adaptation.envs.mdp.commands.facet_commands.Impedance
   body_names: base
   virtual_mass_range: [1., 2., 4.] # base mass: 6.921
   force_saturate: 120.0
@@ -40,27 +40,28 @@ command:
   angular_kp_range: [4.0, 24.0]
 
 observation:
-  # command:
-    # oscillator: {history: false}
-  policy:
+  command:
     command:
+  policy:
+    # _max_delay_: 0.5
     # root_angvel_b: {noise_std: 0.2}
-    gravity_multistep:  {steps: 3, noise_std: 0.05}
-    joint_pos_multistep: {steps: 3, noise_std: 0.05}
-    joint_vel_multistep: {steps: 3, noise_std: 0.2}
+    # projected_gravity_b: {noise_std: 0.05}
+    # joint_pos:    {noise_std: 0.05, subtract_offset: true}
+    # joint_vel:    {noise_std: 0.2}
+    gravity_multistep:  {steps: 6, noise_std: 0.05}
+    joint_pos_multistep: {steps: 6, noise_std: 0.05}
+    joint_vel_multistep: {steps: 6, noise_std: 0.2}
     prev_actions: {steps: 1, permute: true}
-  # priv:
+  priv:
     command_hidden:
     applied_action:
     root_linvel_b:    {yaw_only: true}
     root_angvel_b:
-    applied_torque:   {}
-    contact_indicator: {body_names: [".*foot"], timing: false}
-  flag_:
-    is_standing:      {}
-  ext:
+    contact_indicator: {body_names: [".*_foot"], timing: false}
     external_forces:  {body_names: ["base"]}
     external_torques: {body_names: ["base"]}
+  aux_target_:
+    root_linvel_b:  {yaw_only: true}
 
 reward:
   loco:
@@ -81,7 +82,7 @@ reward:
     # quadruped_stand:    {weight: 0.2, enabled: false}
     survival:           {weight: 1.0, enabled: true}
     action_rate_l2:     {weight: 0.01, enabled: true}
-    action_rate2_l2:    {weight: 0.005, enabled: true}
+    action_rate2_l2:    {weight: 0.005, enabled: false}
     feet_slip:          {weight: 0.2, enabled: true, body_names: .*_foot}
     feet_air_time:      {weight: 0.2, enabled: true, body_names: .*_foot, thres: 0.3}
     undesired_contact:  {body_names: [Head.*, .*_calf, .*thigh], weight: 2.0, enabled: true}

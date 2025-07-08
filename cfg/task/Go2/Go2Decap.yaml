@@ -1,5 +1,5 @@
 # @package task
-name: Go2Flat
+name: Go2Decap
 
 viewer:
   resolution: [1280, 720]
@@ -21,11 +21,15 @@ sim:
   isaac_physics_dt: 0.005
   mujoco_physics_dt: 0.002
 
+# action:
+#   _target_: active_adaptation.envs.mdp.action.JointPosition
+#   action_scaling: {.*_joint: 0.5}
+#   max_delay: 1
+#   alpha: [0.5, 1.0]
+
 action:
-  _target_: active_adaptation.envs.mdp.action.JointPosition
-  action_scaling: {.*_joint: 0.5}
-  max_delay: 1
-  alpha: [0.5, 1.0]
+  _target_: active_adaptation.envs.mdp.action.DecapAction
+  action_scaling: {.*_joint: 8.0}
 
 command:
   _target_: active_adaptation.envs.mdp.commands.locomotion.Command2
@@ -61,9 +65,8 @@ command:
 #   adaptive: false
 
 observation:
-  command: # won't be normalized
+  policy: # won't be normalized
     command:
-  policy:
     gravity_multistep: {steps: 3, noise_std: 0.05}
     joint_pos_multistep: {steps: 3, noise_std: 0.05}
     joint_vel_multistep: {steps: 3, noise_std: 0.2}
@@ -74,21 +77,13 @@ observation:
     root_angvel_b:
     body_height:      {body_names: .*_foot}
     applied_torque:   {}
-    contact_indicator:  {body_names: [".*_foot", ".*_calf"], timing: false}
-  ext:
-    external_forces:  {body_names: ["base"]}
-    external_torques: {body_names: ["base"]}
-  aux_target_:
-    root_linvel_b:
-    root_angvel_b:
-    # rewards: {}
+    contact_indicator:  {body_names: [".*_foot", ".*_calf"]}
 
 reward:
   loco:
     linvel_exp:         {weight: 1.5, enabled: true, dim: 3, yaw_only: true}
     angvel_z_exp:       {weight: 0.8, enabled: true}
-    # quadruped_stand:    {weight: 0.5, enabled: true}
-  # reg:
+
     angvel_xy_l2:       {weight: 0.02, enabled: true}
     linvel_z_l2:        {weight: 2.0, enabled: true}
     base_height_l1:     {weight: 2.0, enabled: true, target_height: 0.35}
@@ -96,11 +91,10 @@ reward:
     joint_acc_l2:       {weight: 2.5e-7, enabled: true}
     joint_torques_l2:   {weight: 2.0e-4, enabled: true}
     survival:           {weight: 1.0, enabled: true}
-    action_rate_l2:     {weight: 0.01, enabled: true}
-    action_rate2_l2:    {weight: 0.002, enabled: true}
+    action_rate_l2:     {weight: 0.001, enabled: true}
+    action_rate2_l2:    {weight: 0.001, enabled: true}
     feet_air_time:      {weight: 0.2, enabled: true, body_names: .*_foot, thres: 0.4}
     undesired_contact:  {body_names: [.*_calf, .*thigh, Head.*], weight: 0.25, enabled: true}
-    support_polygon:    {weight: 4.0, enabled: true, margin: 0.1}
   debug:
     linvel_projection:  {weight: 0.5, enabled: false, yaw_only: true}
     feet_slip:          {weight: 1.0, enabled: false, body_names: .*_foot}
@@ -108,9 +102,8 @@ reward:
     feet_swing_height:  {weight: 0.1, enabled: false, target_height: 0.1}
 
 termination:
-  crash: {body_names_expr: [Head.*, base], t_thres: 0.06}
+  crash: {body_names_expr: [Head.*, base, .*_calf], t_thres: 0.04}
   fall_over: {xy_thres: 0.9}
-  soft_contact: {body_names: [Head.*, .*_calf]}
 
 randomization:
   # random_scale: [1.0, 1.2]
@@ -147,11 +140,6 @@ randomization:
   reset_joint_states_scale:
     pos_scales:
       .*: [0.8, 1.2]
-  random_joint_offset:
-    .*hip_joint: [-0.05, 0.05]
-    F[L,R]_thigh_joint: [-0.05, 0.05]
-    R[L,R]_thigh_joint: [-0.05, 0.05]
-    .*calf_joint: [-0.05, 0.05]
   # impulse: {}
   constant_force:
     force_range: [50, 50, 15]

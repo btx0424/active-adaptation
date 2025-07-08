@@ -69,9 +69,9 @@ class SimpleEnv(_Env):
             # slightly reduces GPU memory usage
             # sim_cfg.physx.gpu_max_rigid_contact_count = 2**21
             # sim_cfg.physx.gpu_max_rigid_patch_count = 2**21
-            sim_cfg.physx.gpu_found_lost_pairs_capacity = 2538320 # 2**20
-            sim_cfg.physx.gpu_found_lost_aggregate_pairs_capacity = 61999079 # 2**26
-            sim_cfg.physx.gpu_total_aggregate_pairs_capacity = 2**23
+            # sim_cfg.physx.gpu_found_lost_pairs_capacity = 2538320 # 2**20
+            # sim_cfg.physx.gpu_found_lost_aggregate_pairs_capacity = 61999079 # 2**26
+            # sim_cfg.physx.gpu_total_aggregate_pairs_capacity = 2**23
             # sim_cfg.physx.gpu_collision_stack_size = 2**25
             # sim_cfg.physx.gpu_heap_capacity = 2**24
             
@@ -131,7 +131,6 @@ class SimpleEnv(_Env):
                 env_ids=env_ids
             )
         self.stats[env_ids] = 0.
-        self.scene.reset(env_ids)
 
     def render(self, mode: str="human"):
         self.sim.set_camera_view(
@@ -139,12 +138,4 @@ class SimpleEnv(_Env):
             target=self.robot.data.root_pos_w[0].cpu()
         )
         return super().render(mode)
-        
-    class feet_pos_b(mdp.body_pos_b):
-        def __init__(self, env, feet_names, yaw_only: bool=False):
-            super().__init__(env, feet_names, yaw_only=yaw_only)
-    
-    class feet_vel_b(mdp.body_vel_b):
-        def __init__(self, env, feet_names, yaw_only: bool=False):
-            super().__init__(env, feet_names, yaw_only=yaw_only)
 

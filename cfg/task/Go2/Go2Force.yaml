@@ -26,7 +26,7 @@ action:
   alpha: [0.5, 1.0]
 
 command:
-  _target_: active_adaptation.envs.mdp.commands.impedance.Impedance
+  _target_: active_adaptation.envs.mdp.commands.facet_commands.Impedance
   body_names: base
   virtual_mass_range: [1., 2., 4.] # base mass: 6.921
   force_saturate: 120.0

@@ -122,6 +122,10 @@ def main(cfg: DictConfig):
                 carry = rollout_policy(carry)
                 td, carry = env.step_and_maybe_reset(carry)
                 td["next"] = td["next"].exclude(*rollout_policy.in_keys)
+
+                private_keys = [key for key in td.keys(True, True) if isinstance(key, str) and key.startswith('_')]
+                td = td.exclude(*private_keys)
+                
                 data.append(td.to(policy.device))
             data = torch.stack(data, dim=1)
             

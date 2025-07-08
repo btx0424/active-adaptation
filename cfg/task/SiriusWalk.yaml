@@ -34,6 +34,7 @@ command:
     - [1.0, 0.0, 0.0, 0.0]
     - [1.0, 0.0, 0.0, 0.0]
     - [1.0, 0.0, 0.0, 0.0]
+  teleop: false
 
 observation:
   command_mode_: # won't be normalized
@@ -41,7 +42,7 @@ observation:
   command:
     command:
   policy:
-    root_angvel_b:
+    # root_angvel_b:
     projected_gravity_b: {noise_std: 0.05}
     joint_pos_multistep: {steps: 4, noise_std: 0.05, joint_names: .*_(HAA|HFE|KFE)}
     joint_vel_multistep: {steps: 4, noise_std: 0.2, joint_names: .*}
