@@ -136,9 +136,11 @@ class Encoder(nn.Module):
             data_dim=3
         )
     
-    def forward(self, priv: torch.Tensor, terrain: torch.Tensor):
+    def forward(self, priv: torch.Tensor, terrain: torch.Tensor, terrain_mask=None):
         priv = self.priv_encoder(priv)
         terrain = self.terrain_encoder(terrain)
+        if terrain_mask is not None:
+            terrain = terrain * terrain_mask
         return torch.cat([priv, terrain], dim=-1)
 
 
@@ -275,6 +277,9 @@ class PPOPolicy(ModBase):
             if isinstance(module, nn.Linear):
                 nn.init.orthogonal_(module.weight, 0.01)
                 nn.init.constant_(module.bias, 0.)
+            if isinstance(module, nn.Conv2d):
+                nn.init.orthogonal_(module.weight, 0.01)
+                nn.init.constant_(module.bias, 0.)
 
         if self.cfg.orthogonal_init:
             self.encoder.apply(init_)
@@ -367,6 +372,18 @@ class PPOPolicy(ModBase):
                 infos.append(self.update_teacher(minibatch))
         
         infos = pytree.tree_map(lambda *xs: sum(xs).item() / len(xs), *infos)
+        with torch.no_grad(), torch.device(self.device):
+            a = self.critic(tensordict.replace(terrain_mask=torch.zeros(*tensordict.shape, 1)))
+            b = self.critic(tensordict.replace(terrain_mask=torch.ones(*tensordict.shape, 1)))
+            value_diff = F.mse_loss(a["state_value"], b["state_value"])
+            infos["critic/value_diff"] = value_diff.item()
+            a = self.actor_teacher.get_dist(
+                self.encoder(tensordict.replace(terrain_mask=torch.zeros(*tensordict.shape, 1))))
+            b = self.actor_teacher.get_dist(
+                self.encoder(tensordict.replace(terrain_mask=torch.ones(*tensordict.shape, 1))))
+            policy_diff = F.mse_loss(a.mean, b.mean)
+            infos["actor/policy_diff"] = policy_diff.item()
+        
         infos["critic/value_mode_0"] = tensordict["ret"][mode_0].mean().item()
         infos["critic/value_mode_1"] = tensordict["ret"][mode_1].mean().item()
         infos["critic/value_mode_2"] = tensordict["ret"][mode_2].mean().item()
