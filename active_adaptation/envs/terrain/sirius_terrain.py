@@ -96,7 +96,7 @@ ROUGH_EASY = TerrainGeneratorCfg(
         ),
         "ring": MeshFloatingRingTerrainCfg(
             proportion=0.20,
-            ring_width_range=(0.1, 0.2),
+            ring_width_range=(0.2, 0.3),
             ring_height_range=(0.0, 0.2),
             ring_thickness=0.1,
             platform_width=4.0,

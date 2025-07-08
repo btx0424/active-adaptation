@@ -224,6 +224,10 @@ class SiriusCommandManager(Command):
             self._command.des_contact,
         ], dim=-1)
         return result
+    
+    @property
+    def des_height(self):
+        return self._command.des_height + self.env.get_ground_height_at(self.asset.data.root_pos_w).unsqueeze(1)
 
     def symmetry_transforms(self):
         return SymmetryTransform.cat([
@@ -387,12 +391,13 @@ class SiriusCommandManager(Command):
                 quat_rotate(quat, torch.tensor([0., 0., 1.], device=self.device).expand(self.num_envs, 3))
             )
 
+            des_height = self.des_height
             point = self.asset.data.body_pos_w[:, self.fore_hip_ids].mean(dim=1)
-            point[:, 2] = self._command.des_height[:, 0]
+            point[:, 2] = des_height[:, 0]
             self.env.debug_draw.point(point, color=(0, 0, 1, 1))
 
             point = self.asset.data.body_pos_w[:, self.hind_hip_ids].mean(dim=1)
-            point[:, 2] = self._command.des_height[:, 1]
+            point[:, 2] = des_height[:, 1]
             self.env.debug_draw.point(point, color=(0, 1, 0, 1))
 
             # start = self.asset.data.body_pos_w[self.stand_fore_legs.squeeze(1)][:, self.back_body_id]

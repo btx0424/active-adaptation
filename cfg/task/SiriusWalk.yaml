@@ -55,6 +55,8 @@ observation:
     external_forces:  {body_names: ["trunk"]}
     body_height:      {body_names: [.*hip, .*_FOOT]}
     contact_indicator:  {body_names: [".*_FOOT"], timing: false}
+  terrain:
+    height_scan: {x_range: [-1.2, 1.2], y_range: [-1.0, 1.0], x_resolution: 0.2, y_resolution: 0.2}
 
 reward:
   loco:

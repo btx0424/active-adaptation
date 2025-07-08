@@ -1094,7 +1094,7 @@ class height_scan(Observation):
     def compute(self):
         root_pos_w = self.asset.data.root_pos_w.reshape(self.num_envs, 1, 1, 3)
         root_quat = yaw_quat(self.asset.data.root_quat_w).reshape(self.num_envs, 1, 1, 4)
-        self.offset = quat_rotate(root_quat, self.pos)
+        self.offset = quat_rotate(root_quat, self.pos.unsqueeze(0))
         self.height_map_w = self.env.get_ground_height_at(root_pos_w + self.offset)
         height_map = self.height_map_w - root_pos_w[:, :, :, 2]
         if self.flatten:
