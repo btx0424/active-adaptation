@@ -223,11 +223,12 @@ class PPOPolicy(ModBase):
             return_log_prob=True
         ).to(self.device)
         
-        critic_in_keys = [CMD_KEY, OBS_KEY, OBS_PRIV_KEY]
-        critic_module = nn.Sequential(make_mlp([512, 256, 256]), nn.LazyLinear(1))
+        critic_in_keys = [CMD_KEY, OBS_KEY, "_critic_priv_feature"]
+        critic_module = nn.Sequential(make_mlp([256, 256, 256]), nn.LazyLinear(1))
         self.critic = Seq(
-            CatTensors(critic_in_keys, "policy_priv", del_keys=False, sort=False),
-            Mod(critic_module, ["policy_priv"], ["state_value"])
+            Mod(Encoder(), [OBS_PRIV_KEY, "terrain"], ["_critic_priv_feature"]),
+            CatTensors(critic_in_keys, "_policy_priv", del_keys=False, sort=False),
+            Mod(critic_module, ["_policy_priv"], ["state_value"])
         ).to(self.device)
 
         observation_dim = observation_spec[OBS_KEY].shape[-1]
