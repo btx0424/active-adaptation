@@ -162,6 +162,17 @@ class Actor(nn.Module):
         return loc, scale
 
 
+class ActorSoftplus(nn.Module):
+    def __init__(self, action_dim: int) -> None:
+        super().__init__()
+        self.actor_loc_scale = nn.LazyLinear(action_dim * 2)
+    
+    def forward(self, features: torch.Tensor):
+        loc, scale = self.actor_loc_scale(features).chunk(2, dim=-1)
+        scale = F.softplus(scale)
+        return loc, scale
+
+
 class ActorCov(nn.Module):
     """
     Predicts state-dependent covariance between a_t and a_{t-1}.

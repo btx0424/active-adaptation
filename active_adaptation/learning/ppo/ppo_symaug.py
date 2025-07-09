@@ -248,23 +248,24 @@ class PPOPolicy(TensorDictModuleBase):
         symmetry["is_init"] = tensordict["is_init"]
         tensordict = torch.cat([tensordict.select(*symmetry.keys(True, True)), symmetry], dim=0)
 
+        valid = (~tensordict["is_init"]).float()
+        valid_cnt = valid.sum()
         dist: IndependentNormal = self.actor.get_dist(tensordict)
         log_probs = dist.log_prob(tensordict[ACTION_KEY])
-        entropy = dist.entropy().mean()
+        entropy = (dist.entropy() * valid).sum() / valid_cnt
 
-        valid = (~tensordict["is_init"]).float()
         adv = tensordict["adv"]
         log_ratio = (log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
         ratio = torch.exp(log_ratio)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
-        policy_loss = - (torch.min(surr1, surr2) * valid).mean()
+        policy_loss = - (torch.min(surr1, surr2) * valid).sum() / valid_cnt
         entropy_loss = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
         values = self.critic(tensordict)["state_value"]
         value_loss = self.critic_loss_fn(b_returns, values)
-        value_loss = (value_loss * valid).mean()
+        value_loss = (value_loss * valid).sum() / valid_cnt
         
         symmetry_loss = F.mse_loss(
             self.actor.get_dist(symmetry).mean, 
