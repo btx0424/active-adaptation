@@ -19,7 +19,7 @@ class Termination:
         pass
     
     @abc.abstractmethod
-    def __call__(self) -> torch.Tensor:
+    def compute(self, termination: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
     
     @property
@@ -29,14 +29,14 @@ class Termination:
 
 def termination_func(func):
     class TermFunc(Termination):
-        def __call__(self):
+        def compute(self, termination: torch.Tensor):
             return func(self.env)
     return TermFunc
 
 
 def termination_wrapper(func):
     class TerminationWrapper(Termination):
-        def __call__(self):
+        def compute(self, termination: torch.Tensor):
             return func()
     return TerminationWrapper
 
@@ -68,7 +68,7 @@ class crash(Termination):
         in_contact = self.contact_sensor.data.net_forces_w[:, self.body_indices].norm(dim=-1) > 1.0
         self.count.add_(in_contact.float()).mul_(self._decay)
         
-    def __call__(self):
+    def compute(self, termination: torch.Tensor):
         valid = (self.env.episode_length_buf > self.min_steps)
         undesired_contact = (self.count > self._thres).any(-1)
         return (undesired_contact & valid).reshape(self.num_envs, 1)
@@ -84,7 +84,7 @@ class soft_contact(Termination):
         in_contact = (forces > 1.0).sum(dim=1)
         self.env.discount.mul_(0.4 ** in_contact)
 
-    def __call__(self):
+    def compute(self, termination: torch.Tensor):
         return torch.zeros(self.num_envs, 1, device=self.env.device, dtype=bool)
     
 
@@ -98,7 +98,7 @@ class fall_over(Termination):
         self.asset: Articulation = self.env.scene["robot"]
         self.xy_thres = xy_thres
     
-    def __call__(self):
+    def compute(self, termination: torch.Tensor):
         gravity_xy: torch.Tensor = self.asset.data.projected_gravity_b[:, :2]
         fall_over = gravity_xy.norm(dim=1, keepdim=True) >= self.xy_thres
         return fall_over
@@ -110,7 +110,7 @@ class tracking_error(Termination):
         self.tracking_error_threshold = tracking_error_threshold
         self.asset: Articulation = self.env.scene["robot"]
     
-    def __call__(self) -> torch.Tensor:
+    def compute(self, termination: torch.Tensor) -> torch.Tensor:
         return self.asset.data._tracking_error > self.tracking_error_threshold
 
 
@@ -131,7 +131,7 @@ class cum_error(Termination):
         self.error_exceeded_count[error_exceeded] += 1
         self.error_exceeded_count[~error_exceeded] = 0
     
-    def __call__(self) -> torch.Tensor:
+    def compute(self, termination: torch.Tensor) -> torch.Tensor:
         return (self.error_exceeded_count > self.min_steps).reshape(-1, 1)
 
 class ee_cum_error(Termination):
@@ -142,7 +142,7 @@ class ee_cum_error(Termination):
         self.min_steps = min_steps
         self.command_manager: CommandEEPose_Cont = self.env.command_manager
     
-    def __call__(self) -> torch.Tensor:
+    def compute(self, termination: torch.Tensor) -> torch.Tensor:
         a = (self.command_manager._cum_error > self.thres).any(-1)
         b = self.env.episode_length_buf > self.min_steps
         return (a & b).reshape(-1, 1)
@@ -154,7 +154,7 @@ class joint_acc_exceeds(Termination):
         self.thres = thres
         self.asset: Articulation = self.env.scene["robot"]
     
-    def __call__(self) -> torch.Tensor:
+    def compute(self, termination: torch.Tensor) -> torch.Tensor:
         valid = (self.env.episode_length_buf > 2).unsqueeze(-1)
         return (
             valid & 
@@ -170,7 +170,7 @@ class impact_exceeds(Termination):
 
         self.body_ids = self.contact_sensor.find_bodies(body_names)[0]
     
-    def __call__(self) -> torch.Tensor:
+    def compute(self, termination: torch.Tensor) -> torch.Tensor:
         impact_force = self.contact_sensor.data.net_forces_w_history[:, :, self.body_ids]
         return (impact_force.norm(dim=-1).mean(1) > self.thres).any(1, True)
 
@@ -182,6 +182,6 @@ class impedance_pos_error(Termination):
         self.command_manger = self.env.command_manager
         self.asset: Articulation = self.env.scene["robot"]
 
-    def __call__(self):
+    def compute(self, termination: torch.Tensor):
         error = (self.asset.data.root_pos_w-self.command_manger.des_pos_w)[:, :2].norm(dim=-1, keepdim=True)
         return error > self.thres

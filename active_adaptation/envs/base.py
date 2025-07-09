@@ -370,13 +370,12 @@ class _Env(EnvBase):
         if not self.termination_funcs:
             return torch.zeros((self.num_envs, 1), dtype=bool, device=self.device)
         
-        flags = []
+        termination = torch.zeros((self.num_envs, 1), dtype=bool, device=self.device)
         for key, func in self.termination_funcs.items():
-            flag = func()
-            self.stats["termination", key][:] = flag.float()
-            flags.append(flag)
-        flags = torch.cat(flags, dim=-1)
-        return flags.any(dim=-1, keepdim=True)
+            t = func.compute(termination)
+            termination |= t
+            self.stats["termination", key] = t.float()
+        return termination
 
     def _update(self):
         for callback in self._update_callbacks:
