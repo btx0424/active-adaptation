@@ -270,7 +270,7 @@ class _Env(EnvBase):
             self.termination_funcs[term_name] = term
             self._update_callbacks.append(term.update)
             self._reset_callbacks.append(term.reset)
-            self.reward_spec["stats", "termination", key] = UnboundedContinuous((self.num_envs, 1), device=self.device)
+            self.reward_spec["stats", "termination", term_name] = UnboundedContinuous((self.num_envs, 1), device=self.device)
         
         self.timestamp = 0
 

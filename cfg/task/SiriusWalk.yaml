@@ -89,7 +89,8 @@ reward:
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_FOOT}
 
 termination:
-  crash: {body_names_expr: ["trunk", "(front|back)", ".*hip", ".*thigh"], t_thres: 0.01}
+  crash_leg(crash): {body_names_expr: [".*thigh"], t_thres: 0.03}
+  crash_body(crash): {body_names_expr: ["trunk", ".*hip"], t_thres: 0.03}
   # stand_error_exceeds: {}
 
 randomization:
