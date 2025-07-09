@@ -54,6 +54,7 @@ reward:
     chase_velocity:     {weight: 1.0, enabled: true}
     evade:             {weight: 1.0, enabled: true}
     target_in_sight:   {weight: 1.0, enabled: true}
+    caught_reward:     {weight: 5.0, enabled: true}
     angvel_xy_l2:       {weight: 0.01, enabled: true}
     linvel_z_l2:        {weight: 0.5, enabled: true}
   reg:
@@ -79,6 +80,7 @@ termination:
   crash_leg(crash): {body_names_expr: [".*thigh"], t_thres: 0.03}
   crash_body(crash): {body_names_expr: ["trunk", ".*hip"], t_thres: 0.03}
   root_height_below: {thres_world: -0.5}
+  caught_termination: {}
   both_terminate: {}
 
 randomization:
