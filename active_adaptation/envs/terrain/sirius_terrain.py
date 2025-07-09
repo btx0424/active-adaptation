@@ -18,7 +18,9 @@ from isaaclab.terrains import (
     MeshGapTerrainCfg,
     MeshPitTerrainCfg,
     MeshRailsTerrainCfg,
+    MeshStarTerrainCfg,
     SubTerrainBaseCfg,
+    FlatPatchSamplingCfg
 )
 from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG as ROUGH_HARD
 from isaaclab.utils import configclass
@@ -70,7 +72,7 @@ class RampTerrainCfg(SubTerrainBaseCfg):
 
 ROUGH_EASY = TerrainGeneratorCfg(
     seed=0,
-    size=(8.0, 8.0),
+    size=(9.0, 9.0),
     border_width=65.0,
     num_rows=10,
     num_cols=20,
@@ -94,23 +96,30 @@ ROUGH_EASY = TerrainGeneratorCfg(
             platform_width=2.0,
             double_box=True
         ),
-        "ring": MeshFloatingRingTerrainCfg(
-            proportion=0.20,
-            ring_width_range=(0.2, 0.3),
-            ring_height_range=(0.0, 0.2),
-            ring_thickness=0.1,
-            platform_width=4.0,
-        ),
         "ramp": RampTerrainCfg(
             proportion=0.20,
             height_range=(0.2, 0.4),
         ),
-        # "rails": MeshRailsTerrainCfg(
-        #     proportion=0.20,
-        #     rail_height_range=(0.05, 0.2),
-        #     rail_thickness_range=(0.2, 0.4),
-        #     platform_width=2.0,
-        # )
+        "rails": MeshRailsTerrainCfg(
+            proportion=0.20,
+            rail_height_range=(0.05, 0.25),
+            rail_thickness_range=(0.2, 0.4),
+            platform_width=2.0,
+        ),
+        "star": MeshStarTerrainCfg(
+            proportion=0.20,
+            num_bars=5,
+            bar_width_range=(0.8, 1.0),
+            bar_height_range=(1.0, 1.0),
+            platform_width=4.0,
+            flat_patch_sampling={
+                "star": FlatPatchSamplingCfg(
+                    num_patches=5,
+                    patch_radius=0.5,
+                    max_height_diff=0.2,
+                )
+            }
+        ),
     },
 )
 

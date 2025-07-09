@@ -77,6 +77,7 @@ reward:
 termination:
   crash_leg(crash): {body_names_expr: [".*thigh"], t_thres: 0.03}
   crash_body(crash): {body_names_expr: ["trunk", ".*hip"], t_thres: 0.03}
+  root_height_below: {thres_world: -0.5}
   both_terminate: {}
 
 randomization:

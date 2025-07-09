@@ -167,3 +167,13 @@ class impedance_pos_error(Termination):
     def compute(self, termination: torch.Tensor):
         error = (self.asset.data.root_pos_w-self.command_manger.des_pos_w)[:, :2].norm(dim=-1, keepdim=True)
         return error > self.thres
+
+
+class root_height_below(Termination):
+    def __init__(self, env, thres_world: float):
+        super().__init__(env)
+        self.thres_world = thres_world
+        self.asset: Articulation = self.env.scene["robot"]
+    
+    def compute(self, termination: torch.Tensor) -> torch.Tensor:
+        return self.asset.data.root_pos_w[:, 2, None] < self.thres_world

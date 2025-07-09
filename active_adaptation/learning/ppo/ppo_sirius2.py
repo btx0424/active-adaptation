@@ -121,27 +121,51 @@ class GRUModule(nn.Module):
         return x, hx.contiguous()
 
 
+class ResidualFC(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.linear = nn.LazyLinear(dim)
+        self.linear_skip = nn.LazyLinear(dim)
+        self.act = nn.Mish()
+        self.ln = nn.LayerNorm(dim)
+    
+    def forward(self, x):
+        return self.ln(self.act(self.linear(x)) + self.linear_skip(x))
+
+
 class Encoder(nn.Module):
     def __init__(self):
         super().__init__()
-        self.priv_encoder = nn.Sequential(make_mlp([128]), nn.LazyLinear(64))
-        self.terrain_encoder = FlattenBatch(
-            nn.Sequential(
-                nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1), nn.Mish(),
-                nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1), nn.Mish(),               
-                nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1), nn.Mish(),
-                nn.Flatten(),
-                nn.LazyLinear(64),
-            ),
-            data_dim=3
+        # self.priv_encoder = nn.Sequential(make_mlp([128]), nn.LazyLinear(128))
+        self.priv_encoder = nn.Sequential(
+            nn.LazyLinear(128),
+            nn.Mish(),
+            nn.LayerNorm(128),
+            nn.LazyLinear(128)
         )
+        self.terrain_encoder = nn.Sequential(
+            FlattenBatch(
+                nn.Sequential(
+                    nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1), nn.Mish(),
+                    nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1), nn.Mish(),
+                    # nn.LazyConv2d(8, kernel_size=3, stride=2, padding=1), nn.Mish(),
+                    nn.Flatten(),
+                ),
+                data_dim=3
+            ),
+            nn.LazyLinear(32),
+            nn.Mish(),
+            nn.LayerNorm(32),
+            nn.LazyLinear(128)
+        )
+        self.out = nn.Mish()
     
     def forward(self, priv: torch.Tensor, terrain: torch.Tensor, terrain_mask=None):
         priv = self.priv_encoder(priv)
         terrain = self.terrain_encoder(terrain)
         if terrain_mask is not None:
             terrain = terrain * terrain_mask
-        return torch.cat([priv, terrain], dim=-1)
+        return self.out(priv + terrain)
 
 
 class PPOPolicy(ModBase):
@@ -188,50 +212,54 @@ class PPOPolicy(ModBase):
         self.terrain_transform = env.observation_funcs["terrain"].symmetry_transforms().to(self.device)
         self.act_transform = env.action_manager.symmetry_transforms().to(self.device)
 
-        self.encoder = Mod(
-            Encoder(),
-            [OBS_PRIV_KEY, "terrain", "terrain_mask"], ["_priv_feature"]
-        ).to(self.device)
-
         self.adapt_module = Mod(
             GRUModule(128),
             [OBS_KEY, "is_init", "hx"],
             ["_priv_feature_est", ("next", "hx")]
         ).to(self.device)
 
-        actor_mlp = make_mlp([256, 256, 128])
-        self._actor = Actor(self.action_dim)
+        # actor_mlp = make_mlp([256, 256, 128], norm="after")
+        actor = nn.Sequential(
+            ResidualFC(256),
+            ResidualFC(256),
+            Actor(self.action_dim)
+        )
         self.actor_teacher: ProbabilisticActor = ProbabilisticActor(
             module=Seq(
-                CatTensors(self.teacher_in_keys, "actor_input", del_keys=False, sort=False),
-                Mod(actor_mlp, ["actor_input"], ["actor_input"]),
-                Mod(self._actor, ["actor_input"], ["loc", "scale"]),
+                CatTensors([CMD_KEY, OBS_KEY, OBS_PRIV_KEY], "actor_input", del_keys=False, sort=False),
+                Mod(Encoder(), ["actor_input", "terrain", "terrain_mask"], ["actor_feature"]),
+                Mod(actor, ["actor_feature"], ["loc", "scale"]),
             ),
             in_keys=["loc", "scale"],
             out_keys=[ACTION_KEY],
             distribution_class=IndependentNormal,
             return_log_prob=True
         ).to(self.device)
+        self.actor_teacher = self.actor_teacher.select_out_keys(ACTION_KEY, "loc", "scale", "sample_log_prob")
 
-        self.actor_student: ProbabilisticActor = ProbabilisticActor(
-            module=Seq(
-                CatTensors(self.student_in_keys, "actor_input", del_keys=False, sort=False),
-                Mod(actor_mlp, ["actor_input"], ["actor_input"]),
-                Mod(Actor(self.action_dim), ["actor_input"], ["loc", "scale"]),
-            ),
-            in_keys=["loc", "scale"],
-            out_keys=[ACTION_KEY],
-            distribution_class=IndependentNormal,
-            return_log_prob=True
-        ).to(self.device)
+        # self.actor_student: ProbabilisticActor = ProbabilisticActor(
+        #     module=Seq(
+        #         # CatTensors(self.student_in_keys, "actor_input", del_keys=False, sort=False),
+        #         Mod(actor_mlp, ["actor_input"], ["actor_input"]),
+        #         Mod(Actor(self.action_dim), ["actor_input"], ["loc", "scale"]),
+        #     ),
+        #     in_keys=["loc", "scale"],
+        #     out_keys=[ACTION_KEY],
+        #     distribution_class=IndependentNormal,
+        #     return_log_prob=True
+        # ).to(self.device)
         
-        critic_in_keys = [CMD_KEY, OBS_KEY, "_critic_priv_feature"]
-        critic_module = nn.Sequential(make_mlp([256, 256, 256]), nn.LazyLinear(1))
+        critic_module = nn.Sequential(
+            ResidualFC(256),
+            ResidualFC(256),
+            nn.LazyLinear(1)
+        )
         self.critic = Seq(
-            Mod(Encoder(), [OBS_PRIV_KEY, "terrain", "terrain_mask"], ["_critic_priv_feature"]),
-            CatTensors(critic_in_keys, "_policy_priv", del_keys=False, sort=False),
-            Mod(critic_module, ["_policy_priv"], ["state_value"])
+            CatTensors([CMD_KEY, OBS_KEY, OBS_PRIV_KEY], "critic_input", del_keys=False, sort=False),
+            Mod(Encoder(), ["critic_input", "terrain", "terrain_mask"], ["critic_feature"]),
+            Mod(critic_module, ["critic_feature"], ["state_value"])
         ).to(self.device)
+        self.critic = self.critic.select_out_keys("state_value")
 
         observation_dim = observation_spec[OBS_KEY].shape[-1]
         self.dynamics = Seq(
@@ -245,28 +273,26 @@ class PPOPolicy(ModBase):
             fake_input["is_init"] = torch.ones(fake_input.shape[0], 1, dtype=torch.bool)
             fake_input["hx"] = torch.zeros(fake_input.shape[0], 128)
 
-        self.encoder(fake_input)
         self.actor_teacher(fake_input)
         self.adapt_module(fake_input)
-        self.actor_student(fake_input)
+        # self.actor_student(fake_input)
         self.critic(fake_input)
-        self.dynamics(fake_input)
+        # self.dynamics(fake_input)
 
-        self.opt_teacher = torch.optim.AdamW(
+        self.opt_teacher = torch.optim.Adam(
             [
-                {"params": self.encoder.parameters()},
                 {"params": self.actor_teacher.parameters()},
                 {"params": self.critic.parameters()},
             ],
             lr=cfg.lr,
-            weight_decay=0.1,
+            # weight_decay=0.1,
             # fused=True
         )
         self.opt_model = torch.optim.Adam(self.dynamics.parameters(), lr=cfg.lr)
         self.opt_adapt = torch.optim.Adam(self.adapt_module.parameters(), lr=cfg.lr)
         self.opt_student = torch.optim.Adam(
             [
-                {"params": self.actor_student.parameters()},
+                # {"params": self.actor_student.parameters()},
                 {"params": self.critic.parameters()},
             ],
             lr=cfg.lr,
@@ -282,26 +308,26 @@ class PPOPolicy(ModBase):
                 nn.init.constant_(module.bias, 0.)
 
         if self.cfg.orthogonal_init:
-            self.encoder.apply(init_)
+            # self.encoder.apply(init_)
             self.actor_teacher.apply(init_)
             self.critic.apply(init_)
             self.adapt_module.apply(init_)
-            self.dynamics.apply(init_)
+            # self.dynamics.apply(init_)
         
         self.update_teacher = functools.partial(
             self._update, 
-            encoder=self.encoder,
+            encoder=None,
             actor=self.actor_teacher,
             critic=self.critic,
             opt=self.opt_teacher
         )
-        self.update_student = functools.partial(
-            self._update, 
-            encoder=None,
-            actor=self.actor_student, 
-            critic=self.critic, 
-            opt=self.opt_student
-        )
+        # self.update_student = functools.partial(
+        #     self._update, 
+        #     encoder=None,
+        #     actor=self.actor_student, 
+        #     critic=self.critic, 
+        #     opt=self.opt_student
+        # )
         self.iter_count = 0
         
         if self.cfg.compile:
@@ -319,11 +345,11 @@ class PPOPolicy(ModBase):
     def get_rollout_policy(self, mode: str="train"):
         modules = []
         if self.cfg.phase == "train":
-            modules.append(self.encoder)
+            # modules.append(self.encoder)
             modules.append(self.actor_teacher)
         else:
             modules.append(self.adapt_module)
-            modules.append(self.actor_student) 
+            # modules.append(self.actor_student) 
         policy = Seq(modules)
         return policy
 
@@ -331,8 +357,8 @@ class PPOPolicy(ModBase):
         info = {}
         if self.cfg.phase == "train":
             info.update(self.train_policy(tensordict.copy()))
-            if self.iter_count % 2 == 0:
-                info.update(self.train_adapt(tensordict.copy()))
+            # if self.iter_count % 2 == 0:
+            #     info.update(self.train_adapt(tensordict.copy()))
         elif self.cfg.phase == "adapt":
             info.update(self.train_adapt(tensordict.copy()))
         elif self.cfg.phase == "finetune":
@@ -353,17 +379,21 @@ class PPOPolicy(ModBase):
         
         self._compute_advantage(tensordict, self.critic, "adv", "ret")
         adv = tensordict["adv"]
-        mode_0 = tensordict["command_mode_"] == 0
-        mode_1 = tensordict["command_mode_"] == 1
-        mode_2 = tensordict["command_mode_"] == 2
-        mode_3 = tensordict["command_mode_"] == 3
-        if False:
+        
+        if tensordict.get("command_mode_", None) is None:
             adv[:] = normalize(adv, subtract_mean=True)
+            has_command_mode = False
         else:
+            mode_0 = tensordict["command_mode_"] == 0
+            mode_1 = tensordict["command_mode_"] == 1
+            mode_2 = tensordict["command_mode_"] == 2
+            mode_3 = tensordict["command_mode_"] == 3
             adv[mode_0] = normalize(adv[mode_0], subtract_mean=True)
             adv[mode_1] = normalize(adv[mode_1], subtract_mean=True)
             adv[mode_2] = normalize(adv[mode_2], subtract_mean=True)
             adv[mode_3] = normalize(adv[mode_3], subtract_mean=True)
+            has_command_mode = True
+        reward = tensordict[REWARD_KEY].sum(-1)
         tensordict = tensordict.select(*self.train_in_keys)
         
         for epoch in range(self.cfg.ppo_epochs):
@@ -373,21 +403,25 @@ class PPOPolicy(ModBase):
         
         infos = pytree.tree_map(lambda *xs: sum(xs).item() / len(xs), *infos)
         with torch.no_grad(), torch.device(self.device):
-            a = self.critic(tensordict.replace(terrain_mask=torch.zeros(*tensordict.shape, 1)))
-            b = self.critic(tensordict.replace(terrain_mask=torch.ones(*tensordict.shape, 1)))
-            value_diff = F.mse_loss(a["state_value"], b["state_value"])
-            infos["critic/value_diff"] = value_diff.item()
+            # a = self.critic(tensordict.replace(terrain_mask=torch.zeros(*tensordict.shape, 1)))
+            # b = self.critic(tensordict.replace(terrain_mask=torch.ones(*tensordict.shape, 1)))
+            # value_diff = F.mse_loss(a["state_value"], b["state_value"])
+            # infos["critic/value_diff"] = value_diff.item()
             a = self.actor_teacher.get_dist(
-                self.encoder(tensordict.replace(terrain_mask=torch.zeros(*tensordict.shape, 1))))
+                tensordict.replace(terrain_mask=torch.zeros(*tensordict.shape, 1)))
             b = self.actor_teacher.get_dist(
-                self.encoder(tensordict.replace(terrain_mask=torch.ones(*tensordict.shape, 1))))
+                tensordict.replace(terrain_mask=torch.ones(*tensordict.shape, 1)))
             policy_diff = F.mse_loss(a.mean, b.mean)
             infos["actor/policy_diff"] = policy_diff.item()
         
-        infos["critic/value_mode_0"] = tensordict["ret"][mode_0].mean().item()
-        infos["critic/value_mode_1"] = tensordict["ret"][mode_1].mean().item()
-        infos["critic/value_mode_2"] = tensordict["ret"][mode_2].mean().item()
-        infos["critic/value_mode_3"] = tensordict["ret"][mode_3].mean().item()
+        if has_command_mode:
+            infos["critic/value_mode_0"] = tensordict["ret"][mode_0].mean().item()
+            infos["critic/value_mode_1"] = tensordict["ret"][mode_1].mean().item()
+            infos["critic/value_mode_2"] = tensordict["ret"][mode_2].mean().item()
+            infos["critic/value_mode_3"] = tensordict["ret"][mode_3].mean().item()
+        else:
+            infos["critic/value_mode_0"] = tensordict["ret"].mean().item()
+        infos["critic/neg_rew_ratio"] = (reward <= 0.).float().mean().item()
         self.num_frames += tensordict.numel()
         self.num_updates += 1
         return dict(sorted(infos.items()))
@@ -441,15 +475,16 @@ class PPOPolicy(ModBase):
         values = tensordict["state_value"]
         next_values = tensordict["next", "state_value"]
 
-        cmd_mode = tensordict["command_mode_"]
-        next_cmd_mode = tensordict["next", "command_mode_"]
-        
-        cmd_changed = (cmd_mode != next_cmd_mode)
-        next_values = torch.where(cmd_changed, values, next_values)
-
         rewards = tensordict[REWARD_KEY].sum(-1, keepdim=True).clamp_min(0.)
-        terms = tensordict[TERM_KEY] # | terminated
-        dones = tensordict[DONE_KEY] | cmd_changed
+        terms = tensordict[TERM_KEY]
+        dones = tensordict[DONE_KEY]
+        if tensordict.get("command_mode_", None) is not None:
+            cmd_mode = tensordict["command_mode_"]
+            next_cmd_mode = tensordict["next", "command_mode_"]
+            cmd_changed = (cmd_mode != next_cmd_mode)
+            next_values = torch.where(cmd_changed, values, next_values)
+            dones = dones | cmd_changed
+
         discounts = tensordict["next", "discount"]
         values = self.value_norm.denormalize(values)
         next_values = self.value_norm.denormalize(next_values)
@@ -499,6 +534,10 @@ class PPOPolicy(ModBase):
         loss = policy_loss + entropy_loss + value_loss
         opt.zero_grad(set_to_none=True)
         loss.backward()
+        if encoder is not None:
+            encoder_grad_norm = nn.utils.clip_grad_norm_(encoder.parameters(), 2.)
+        else:
+            encoder_grad_norm = torch.tensor(0.)
         actor_grad_norm = nn.utils.clip_grad_norm_(actor.parameters(), 2.)
         critic_grad_norm = nn.utils.clip_grad_norm_(critic.parameters(), 2.)
         opt.step()
@@ -514,6 +553,7 @@ class PPOPolicy(ModBase):
             "actor/policy_loss": policy_loss.detach(),
             "actor/entropy": entropy.detach(),
             "actor/grad_norm": actor_grad_norm,
+            "encoder/grad_norm": encoder_grad_norm,
             "critic/value_loss": value_loss.detach(),
             "critic/grad_norm": critic_grad_norm,
             # "dynamics/loss": loss_dynamics.detach(),
@@ -565,9 +605,9 @@ class PPOPolicy(ModBase):
                 warnings.warn(f"Failed to load state dict for {name}: {str(e)}")
                 failed_keys.append(name)
         print(f"Successfully loaded {succeed_keys}.")
-        if state_dict.get("last_phase", "train") == "train":
-            # only copy to initialize the actor once
-            hard_copy_(self.actor_teacher, self.actor_student)
+        # if state_dict.get("last_phase", "train") == "train":
+        #     # only copy to initialize the actor once
+        #     hard_copy_(self.actor_teacher, self.actor_student)
         return failed_keys
 
 

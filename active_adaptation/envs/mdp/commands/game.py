@@ -54,8 +54,7 @@ class Game(Command):
             origins = self._origins[idx]
         init_pos_even = origins[chase]
         offset = torch.zeros_like(init_pos_even)
-        offset[:, 0].uniform_(-2.5, 2.5)
-        offset[:, 1].uniform_(-2.5, 2.5)
+        offset[:, 0].uniform_(1.0, 3.0).mul_(torch.randn(offset.shape[0], device=self.device).sign())
         init_pos_odd = init_pos_even + offset
         init_root_state[chase, :3] += init_pos_even
         init_root_state[~chase, :3] += init_pos_odd
