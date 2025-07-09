@@ -36,6 +36,7 @@ observation:
     joint_pos_multistep: {steps: 4, noise_std: 0.05, joint_names: .*_(HAA|HFE|KFE)}
     joint_vel_multistep: {steps: 4, noise_std: 0.2, joint_names: .*}
     prev_actions: {steps: 2, permute: true}
+    forward_scan: {hfov: [-0.52, 0.52], vfov: [-0.52, 0.], resolution: [5, 4], max_range: 5.0, flatten: true}
     # wheel_trans_vel:    {}
   priv:
     applied_action:

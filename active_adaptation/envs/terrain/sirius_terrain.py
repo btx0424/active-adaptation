@@ -23,6 +23,7 @@ from isaaclab.terrains import (
     FlatPatchSamplingCfg
 )
 from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG as ROUGH_HARD
+from isaaclab.terrains.trimesh.mesh_terrains import flat_terrain
 from isaaclab.utils import configclass
 from dataclasses import MISSING
 import numpy as np
@@ -68,6 +69,31 @@ def ramp_terrain(difficulty: float, cfg: "RampTerrainCfg"):
 class RampTerrainCfg(SubTerrainBaseCfg):
     function = ramp_terrain
     height_range: tuple[float, float] = MISSING
+
+
+def room_terrain(difficulty: float, cfg: "RoomTerrainCfg"):
+    mesh_list, origin = flat_terrain(difficulty, cfg)
+    wall_0 = trimesh.creation.box(extents=(4.0, 0.4, 1.0))
+    wall_0.apply_translation(np.array([2.0, 0.2, 0.5]))
+   
+    wall_1 = wall_0.copy()
+    wall_1.apply_transform(
+        trimesh.transformations.transform_around(
+            matrix=trimesh.transformations.rotation_matrix(
+                angle=np.pi / 2,
+                direction=np.array([0.0, 0.0, 1.0]),
+            ),
+            point=np.array([cfg.size[0] / 2, cfg.size[1] / 2, 0.0]),
+        )
+    )
+    mesh_list.append(wall_0)
+    mesh_list.append(wall_1)
+    return mesh_list, origin
+
+
+@configclass
+class RoomTerrainCfg(SubTerrainBaseCfg):
+    function = room_terrain
 
 
 ROUGH_EASY = TerrainGeneratorCfg(
@@ -119,6 +145,9 @@ ROUGH_EASY = TerrainGeneratorCfg(
                     max_height_diff=0.2,
                 )
             }
+        ),
+        "room": RoomTerrainCfg(
+            proportion=0.20,
         ),
     },
 )
