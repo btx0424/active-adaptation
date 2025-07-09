@@ -219,6 +219,26 @@ class Reward(Generic[CT], _RegistryMixin):
         pass
 
 
+class Termination(Generic[CT], _RegistryMixin):
+    def __init__(self, env):
+        self.env: _Env = env
+        self.command_manager: CT = env.command_manager
+    
+    def update(self):
+        pass
+
+    def reset(self, env_ids):
+        pass
+    
+    @abc.abstractmethod
+    def compute(self, termination: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError
+    
+    @property
+    def num_envs(self) -> int:
+        return self.env.num_envs
+
+
 def reward(func):
     func.is_reward = True
     return func

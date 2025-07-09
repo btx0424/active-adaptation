@@ -1,6 +1,6 @@
 import torch
 
-from active_adaptation.envs.mdp.base import Reward, termination
+from active_adaptation.envs.mdp.base import Reward, Termination
 from active_adaptation.envs.mdp.commands.base import Command
 from active_adaptation.utils.math import (
     quat_rotate_inverse,
@@ -45,7 +45,6 @@ class Game(Command):
         )
     
     def sample_init(self, env_ids: torch.Tensor) -> torch.Tensor:
-        return super().sample_init(env_ids)
         chase = env_ids % 2 == 0
         init_root_state = self.init_root_state[env_ids]
         if self.terrain_type == "plane":
@@ -53,8 +52,13 @@ class Game(Command):
         else:
             idx = torch.randint(0, len(self._origins), (len(env_ids),), device=self.device)
             origins = self._origins[idx]
-        init_root_state[~chase, :3] = origins[~chase] + init_root_state[~chase, :3]
-        init_root_state[chase, :3] = self.asset.data.root_pos_w[env_ids[chase]+1]
+        init_pos_even = origins[chase]
+        offset = torch.zeros_like(init_pos_even)
+        offset[:, 0].uniform_(-2.5, 2.5)
+        offset[:, 1].uniform_(-2.5, 2.5)
+        init_pos_odd = init_pos_even + offset
+        init_root_state[chase, :3] += init_pos_even
+        init_root_state[~chase, :3] += init_pos_odd
         quat = sample_quat_yaw(len(env_ids), device=self.device)
         init_root_state[:, 3:7] = quat
         return init_root_state
@@ -145,4 +149,14 @@ class target_in_sight(Reward[Game]):
         rew = torch.sum(forward_vec[:, :2] * diff[:, :2], dim=1, keepdim=True)
         rew = torch.where(self.command_manager.role[:, None] == 0, rew, -rew)
         return rew.reshape(self.num_envs, 1)
+
+
+class both_terminate(Termination[Game]):
+    """
+    Terminate odd envs if even envs terminate, and vice versa.
+    """
+    def compute(self, termination: torch.Tensor) -> torch.Tensor:
+        termination = termination.reshape(-1, 2)
+        termination = termination | termination.flip(1)
+        return termination.reshape(self.num_envs, 1)
 

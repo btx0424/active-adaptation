@@ -7,25 +7,7 @@ if TYPE_CHECKING:
     from isaaclab.assets import Articulation
     from isaaclab.sensors import ContactSensor
 
-
-class Termination:
-    def __init__(self, env):
-        self.env = env
-    
-    def update(self):
-        pass
-
-    def reset(self, env_ids):
-        pass
-    
-    @abc.abstractmethod
-    def compute(self, termination: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError
-    
-    @property
-    def num_envs(self) -> int:
-        return self.env.num_envs
-
+from .base import Termination
 
 def termination_func(func):
     class TermFunc(Termination):

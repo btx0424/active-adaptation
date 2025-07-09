@@ -44,6 +44,8 @@ observation:
     external_forces:  {body_names: ["trunk"]}
     body_height:      {body_names: [.*hip, .*_FOOT]}
     contact_indicator:  {body_names: [".*_FOOT"], timing: false}
+  terrain:
+    height_scan: {x_range: [-1.2, 1.2], y_range: [-1.0, 1.0], x_resolution: 0.2, y_resolution: 0.2}
 
 reward:
   loco:
@@ -73,8 +75,9 @@ reward:
     feet_contact_count: {weight: 1.0, enabled: false, body_names: .*_FOOT}
 
 termination:
-  crash: {body_names_expr: ["trunk", "(front|back)", ".*hip", ".*thigh"], t_thres: 0.01}
-  # stand_error_exceeds: {}
+  crash_leg(crash): {body_names_expr: [".*thigh"], t_thres: 0.03}
+  crash_body(crash): {body_names_expr: ["trunk", ".*hip"], t_thres: 0.03}
+  both_terminate: {}
 
 randomization:
   perturb_body_mass:
