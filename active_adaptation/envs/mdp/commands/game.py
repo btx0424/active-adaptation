@@ -18,8 +18,9 @@ class Game(Command):
         self.catch_radius = catch_radius
 
         with torch.device(self.device):
-            self.role = torch.arange(self.num_envs, device=self.device) % 2
-            self.target_caught_time = torch.zeros(self.num_envs, 1, device=self.device)
+            self.role = torch.arange(self.num_envs) % 2
+            self.target_caught_time = torch.zeros(self.num_envs, 1)
+            self.is_standing_env = torch.zeros(self.num_envs, 1, dtype=bool)
         
         if self.env.sim.has_gui() and self.env.backend == "isaac":
             from isaaclab.markers import RED_ARROW_X_MARKER_CFG, VisualizationMarkers
