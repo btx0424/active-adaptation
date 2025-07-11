@@ -46,7 +46,7 @@ SIRIUS_WHEEL_CFG = ArticulationCfg(
                 ".*_HAA": 40.,
                 ".*_HFE": 40.,
                 ".*_KFE": 80.,
-                ".*_WHEEL": 40.
+                ".*_WHEEL": 80.
             },
             velocity_limit=40.,
             velocity_limit_sim=40.,
@@ -61,7 +61,7 @@ SIRIUS_WHEEL_CFG = ArticulationCfg(
                 ".*_HAA": 1.,
                 ".*_HFE": 1.,
                 ".*_HFE": 1.,
-                ".*_WHEEL": 5.
+                ".*_WHEEL": 10.
             },
             armature=0.01,
             friction=0.01

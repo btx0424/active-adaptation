@@ -452,10 +452,8 @@ class _Env(EnvBase):
                 mesh=self.ground_mesh,
                 return_distance=False,
             )[0]
-            ray_distance = 10. - (ray_hits - ray_starts).norm(dim=-1)
-            ray_distance = ray_distance.nan_to_num(10.)
-            assert not ray_distance.isnan().any()
-            return ray_distance.reshape(*bshape)
+            ray_distance = (ray_hits - ray_starts).norm(dim=-1).nan_to_num(posinf=100.)
+            return (10. - ray_distance).reshape(*bshape)
         elif self.backend == "mujoco":
             return torch.zeros(pos.shape[:-1], device=self.device)
     
