@@ -50,6 +50,7 @@ from ..modules.distributions import IndependentNormal
 from .common import *
 
 torch.set_float32_matmul_precision('high')
+USE_DDP = True
 
 import active_adaptation
 import torch.distributed as distr
@@ -68,7 +69,7 @@ class PPOConfig:
     entropy_coef: float = 0.01
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
-    compile: bool = True
+    compile: bool = False
 
     checkpoint_path: Union[str, None] = None
     in_keys: Tuple[str, ...] = (OBS_KEY,)
@@ -155,14 +156,19 @@ class PPOPolicy(TensorDictModuleBase):
                 world_size=active_adaptation.get_world_size(),
                 rank=active_adaptation.get_local_rank()
             )
-            for param in self.actor.parameters():
-                distr.broadcast(param, src=0)
-            for param in self.critic.parameters():
-                distr.broadcast(param, src=0)
+            if USE_DDP:
+                self.actor = DDP(self.actor)
+                self.critic = DDP(self.critic)
+            else:
+                for param in self.actor.parameters():
+                    distr.broadcast(param, src=0)
+                for param in self.critic.parameters():
+                    distr.broadcast(param, src=0)
             self.world_size = active_adaptation.get_world_size()
             
         self.update = self._update
-        if self.cfg.compile:
+        if self.cfg.compile and not active_adaptation.is_distributed():
+            # TODO: compile for multi-gpu training?
             self.update = torch.compile(self.update, fullgraph=True)
             # self.update = CudaGraphModule(self.update)
     
@@ -173,7 +179,6 @@ class PPOPolicy(TensorDictModuleBase):
             # policy = CudaGraphModule(policy)
         return policy
 
-    # @torch.compile
     def train_op(self, tensordict: TensorDict):
         tensordict = tensordict.exclude("stats")
         infos = []
@@ -242,7 +247,7 @@ class PPOPolicy(TensorDictModuleBase):
         symmetry = tensordict.empty()
         symmetry[ACTION_KEY] = self.act_transform(tensordict[ACTION_KEY])
         symmetry[OBS_KEY] = self.obs_transform(tensordict[OBS_KEY])
-        symmetry["sample_log_prob"] = tensordict["sample_log_prob"]
+        symmetry["action_log_prob"] = tensordict["action_log_prob"]
         symmetry["adv"] = tensordict["adv"]
         symmetry["ret"] = tensordict["ret"]
         symmetry["is_init"] = tensordict["is_init"]
@@ -250,12 +255,16 @@ class PPOPolicy(TensorDictModuleBase):
 
         valid = (~tensordict["is_init"]).float()
         valid_cnt = valid.sum()
-        dist: IndependentNormal = self.actor.get_dist(tensordict)
-        log_probs = dist.log_prob(tensordict[ACTION_KEY])
+        action_data = tensordict[ACTION_KEY]
+        log_probs_data = tensordict["action_log_prob"]
+        self.actor(tensordict)
+        dist = IndependentNormal(tensordict["loc"], tensordict["scale"])
+        # dist: IndependentNormal = self.actor.get_dist(tensordict)
+        log_probs = dist.log_prob(action_data)
         entropy = (dist.entropy().reshape_as(valid) * valid).sum() / valid_cnt
 
         adv = tensordict["adv"]
-        log_ratio = (log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
+        log_ratio = (log_probs - log_probs_data).unsqueeze(-1)
         ratio = torch.exp(log_ratio)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
@@ -266,17 +275,12 @@ class PPOPolicy(TensorDictModuleBase):
         values = self.critic(tensordict)["state_value"]
         value_loss = self.critic_loss_fn(b_returns, values)
         value_loss = (value_loss.reshape_as(valid) * valid).sum() / valid_cnt
-        
-        symmetry_loss = F.mse_loss(
-            self.actor.get_dist(symmetry).mean, 
-            self.act_transform(dist.mean[:bsize].detach())
-        )
 
-        loss = policy_loss + entropy_loss + value_loss + 0.0 * symmetry_loss
+        loss = policy_loss + entropy_loss + value_loss
         self.opt.zero_grad()
         loss.backward()
 
-        if active_adaptation.is_distributed():
+        if active_adaptation.is_distributed() and not USE_DDP:
             for param in self.actor.parameters():
                 distr.all_reduce(param.grad, op=distr.ReduceOp.SUM)
                 param.grad /= self.world_size
@@ -298,6 +302,7 @@ class PPOPolicy(TensorDictModuleBase):
                 - 0.5,
                 axis=-1,
             ).mean()
+            symmetry_loss = F.mse_loss(dist.mean[bsize:], self.act_transform(dist.mean[:bsize]))
         return {
             "actor/policy_loss": policy_loss.detach(),
             "actor/entropy": entropy.detach(),

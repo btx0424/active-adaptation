@@ -67,6 +67,7 @@ class PPOConfig:
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
 
+    compile: bool = False
     checkpoint_path: Union[str, None] = None
     in_keys: List[str] = field(default_factory=lambda: [OBS_KEY])
 
@@ -157,16 +158,16 @@ class PPOPolicy(TensorDictModuleBase):
         )
 
         self.update = self._update
-        # self.update = torch.compile(self.update)
-        # self.update = CudaGraphModule(self.update)
+        if self.cfg.compile and not active_adaptation.is_distributed():
+            self.update = torch.compile(self.update, fullgraph=True)
+            # self.update = CudaGraphModule(self.update)
     
     def get_rollout_policy(self, mode: str="train"):
-        policy = TensorDictSequential(self.actor)
-        # policy = torch.compile(policy, mode="reduce-overhead")
-        # policy = CudaGraphModule(policy)
+        policy = self.actor
+        if self.cfg.compile:
+            policy = torch.compile(policy, fullgraph=True)
         return policy
 
-    # @torch.compile
     def train_op(self, tensordict: TensorDict):
         tensordict = tensordict.copy()
         infos = []
@@ -243,7 +244,7 @@ class PPOPolicy(TensorDictModuleBase):
         value_loss = (value_loss * (~tensordict["is_init"])).mean()
         
         loss = policy_loss + entropy_loss + value_loss
-        self.opt.zero_grad(set_to_none=True)
+        self.opt.zero_grad()
         loss.backward()
 
         if active_adaptation.is_distributed() and not USE_DDP:
