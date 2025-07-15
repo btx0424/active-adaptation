@@ -53,6 +53,7 @@ def main(cfg: DictConfig):
             tags=cfg.wandb.tags,
         )
         run.config.update(OmegaConf.to_container(cfg))
+        run.config["world_size"] = aa.get_world_size()
         
         default_run_name = f"{cfg.exp_name}-{datetime.datetime.now().strftime('%Y-%m-%d-%H-%M')}"
         run_idx = run.name.split("-")[-1]
@@ -156,9 +157,9 @@ def main(cfg: DictConfig):
         if hasattr(policy, "step_schedule"):
             policy.step_schedule(i / total_iters)
         
-        info["env_frames"] = env_frames
-        info["rollout_fps"] = data.numel() / rollout_time
-        info["training_time"] = training_time
+        info["env_frames"] = env_frames * aa.get_world_size()
+        info["performance/rollout_fps"] = data.numel() / rollout_time * aa.get_world_size()
+        info["performance/training_time"] = training_time
         
         if should_save(i):
             save(policy, f"checkpoint_{i}")
@@ -170,13 +171,15 @@ def main(cfg: DictConfig):
     if aa.is_main_process():
         save(policy, "checkpoint_final")
 
-    policy_eval = policy.get_rollout_policy("eval")
-    info, trajs, stats = evaluate(env, policy_eval, render=cfg.eval_render, seed=cfg.seed)
-    run.log(info)
+        policy_eval = policy.get_rollout_policy("eval")
+        info, trajs, stats = evaluate(env, policy_eval, render=cfg.eval_render, seed=cfg.seed)
+        run.log(info)
 
     wandb.finish()
-    simulation_app.close()
     exit(0)
+    
+    env.close()
+    simulation_app.close()
 
 
 if __name__ == "__main__":

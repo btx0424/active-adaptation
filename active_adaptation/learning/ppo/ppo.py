@@ -49,6 +49,10 @@ from .common import *
 
 torch.set_float32_matmul_precision('high')
 
+import active_adaptation
+import torch.distributed as distr
+from torch.nn.parallel import DistributedDataParallel as DDP
+
 @dataclass
 class PPOConfig:
     _target_: str = "active_adaptation.learning.ppo.ppo.PPOPolicy"
@@ -119,14 +123,6 @@ class PPOPolicy(TensorDictModuleBase):
         self.actor(fake_input)
         self.critic(fake_input)
 
-        self.opt = torch.optim.Adam(
-            [
-                {"params": self.actor.parameters()},
-                {"params": self.critic.parameters()},
-            ],
-            lr=cfg.lr
-        )
-        
         def init_(module):
             if isinstance(module, nn.Linear):
                 nn.init.orthogonal_(module.weight, 0.01)
@@ -134,6 +130,26 @@ class PPOPolicy(TensorDictModuleBase):
         
         self.actor.apply(init_)
         self.critic.apply(init_)
+
+        if active_adaptation.is_distributed():
+            distr.init_process_group(
+                backend="nccl",
+                world_size=active_adaptation.get_world_size(),
+                rank=active_adaptation.get_local_rank()
+            )
+            for param in self.actor.parameters():
+                distr.broadcast(param, src=0)
+            for param in self.critic.parameters():
+                distr.broadcast(param, src=0)
+            self.world_size = active_adaptation.get_world_size()
+        
+        self.opt = torch.optim.Adam(
+            [
+                {"params": self.actor.parameters()},
+                {"params": self.critic.parameters()},
+            ],
+            lr=cfg.lr
+        )
 
         self.update = self._update
         # self.update = torch.compile(self.update)
@@ -200,8 +216,9 @@ class PPOPolicy(TensorDictModuleBase):
         return tensordict
 
     def _update(self, tensordict: TensorDict):
+        action = tensordict[ACTION_KEY]
         dist = self.actor.get_dist(tensordict)
-        log_probs = dist.log_prob(tensordict[ACTION_KEY])
+        log_probs = dist.log_prob(action)
         entropy = dist.entropy().mean()
 
         adv = tensordict["adv"]
@@ -220,6 +237,15 @@ class PPOPolicy(TensorDictModuleBase):
         loss = policy_loss + entropy_loss + value_loss
         self.opt.zero_grad()
         loss.backward()
+
+        if active_adaptation.is_distributed():
+            for param in self.actor.parameters():
+                distr.all_reduce(param.grad.data, op=distr.ReduceOp.SUM)
+                param.grad.data /= self.world_size
+            for param in self.critic.parameters():
+                distr.all_reduce(param.grad.data, op=distr.ReduceOp.SUM)
+                param.grad.data /= self.world_size
+        
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
         critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
         self.opt.step()
@@ -227,11 +253,13 @@ class PPOPolicy(TensorDictModuleBase):
         with torch.no_grad():
             explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
             clipfrac = ((ratio - 1.0).abs() > self.clip_param).float().mean()
+            approx_kl = ((ratio - 1.0) - log_ratio).mean()
         return {
             "actor/policy_loss": policy_loss.detach(),
             "actor/entropy": entropy.detach(),
             "actor/grad_norm": actor_grad_norm,
             "actor/clamp_ratio": clipfrac,
+            "actor/approx_kl": approx_kl,
             "critic/value_loss": value_loss.detach(),
             "critic/grad_norm": critic_grad_norm,
             "critic/explained_var": explained_var,

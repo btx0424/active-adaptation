@@ -22,6 +22,7 @@ import active_adaptation.envs.mdp as mdp
 import active_adaptation.utils.symmetry as symmetry_utils
 
 if active_adaptation.get_backend() == "isaac":
+    import isaacsim.core.utils.torch as torch_utils
     import isaaclab.sim as sim_utils
     from isaaclab.terrains.trimesh.utils import make_plane
     from isaaclab.scene import InteractiveScene
@@ -103,6 +104,7 @@ class _Env(EnvBase):
     def __init__(self, cfg):
         self.cfg = cfg
         self.backend = active_adaptation.get_backend()
+        # self._set_seed(cfg.seed)
 
         self.scene: InteractiveScene
         self.setup_scene()
@@ -458,9 +460,15 @@ class _Env(EnvBase):
             return torch.zeros(pos.shape[:-1], device=self.device)
     
     def _set_seed(self, seed: int = -1):
-        # import omni.replicator.core as rep
-        # rep.set_global_seed(seed)
-        torch.manual_seed(seed)
+        # set seed for replicator
+        try:
+            import omni.replicator.core as rep
+
+            rep.set_global_seed(seed)
+        except ModuleNotFoundError:
+            pass
+        # set seed for torch and other libraries
+        return torch_utils.set_seed(seed)
 
     def render(self, mode: str = "human"):
         self.sim.render()

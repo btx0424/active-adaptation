@@ -97,6 +97,8 @@ class EpisodeStats:
 
 def make_env_policy(cfg: DictConfig):
     OmegaConf.set_struct(cfg, False)
+    cfg.seed = cfg.seed + active_adaptation.get_local_rank()
+    
     from active_adaptation.envs import SimpleEnv
     from torchrl.envs.transforms import TransformedEnv, Compose, InitTracker, VecNorm, StepCounter
     
