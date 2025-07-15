@@ -48,6 +48,7 @@ from ..modules.distributions import IndependentNormal
 from .common import *
 
 torch.set_float32_matmul_precision('high')
+USE_DDP = True
 
 import active_adaptation
 import torch.distributed as distr
@@ -137,11 +138,15 @@ class PPOPolicy(TensorDictModuleBase):
                 world_size=active_adaptation.get_world_size(),
                 rank=active_adaptation.get_local_rank()
             )
-            for param in self.actor.parameters():
-                distr.broadcast(param, src=0)
-            for param in self.critic.parameters():
-                distr.broadcast(param, src=0)
             self.world_size = active_adaptation.get_world_size()
+            if USE_DDP:
+                self.actor = DDP(self.actor)
+                self.critic = DDP(self.critic)
+            else:
+                for param in self.actor.parameters():
+                    distr.broadcast(param, src=0)
+                for param in self.critic.parameters():
+                    distr.broadcast(param, src=0)
         
         self.opt = torch.optim.Adam(
             [
@@ -216,13 +221,16 @@ class PPOPolicy(TensorDictModuleBase):
         return tensordict
 
     def _update(self, tensordict: TensorDict):
-        action = tensordict[ACTION_KEY]
-        dist = self.actor.get_dist(tensordict)
-        log_probs = dist.log_prob(action)
+        action_data = tensordict[ACTION_KEY]
+        log_probs_data = tensordict["action_log_prob"]
+        self.actor(tensordict)
+        dist = IndependentNormal(tensordict["loc"], tensordict["scale"])
+        # dist = self.actor.get_dist(tensordict)
+        log_probs = dist.log_prob(action_data)
         entropy = dist.entropy().mean()
 
         adv = tensordict["adv"]
-        log_ratio = (log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
+        log_ratio = (log_probs - log_probs_data).unsqueeze(-1)
         ratio = torch.exp(log_ratio)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
@@ -235,10 +243,10 @@ class PPOPolicy(TensorDictModuleBase):
         value_loss = (value_loss * (~tensordict["is_init"])).mean()
         
         loss = policy_loss + entropy_loss + value_loss
-        self.opt.zero_grad()
+        self.opt.zero_grad(set_to_none=True)
         loss.backward()
 
-        if active_adaptation.is_distributed():
+        if active_adaptation.is_distributed() and not USE_DDP:
             for param in self.actor.parameters():
                 distr.all_reduce(param.grad.data, op=distr.ReduceOp.SUM)
                 param.grad.data /= self.world_size
