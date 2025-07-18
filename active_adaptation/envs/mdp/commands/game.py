@@ -42,6 +42,10 @@ class Game(Command):
             (arange % 2 == 1).reshape(self.num_envs, 1),
         ], dim=-1)
     
+    @property
+    def command_mode(self):
+        return self.role.reshape(self.num_envs, 1)
+    
     def symmetry_transforms(self):
         return SymmetryTransform(
             perm=torch.arange(8),

@@ -116,12 +116,12 @@ ROUGH_EASY = TerrainGeneratorCfg(
         #     grid_height_range=(0.02, 0.05), 
         #     platform_width=2.0
         # ),
-        "boxes": MeshBoxTerrainCfg(
-            proportion=0.20,
-            box_height_range=(0.1, 0.2),
-            platform_width=2.0,
-            double_box=True
-        ),
+        # "boxes": MeshBoxTerrainCfg(
+        #     proportion=0.20,
+        #     box_height_range=(0.1, 0.2),
+        #     platform_width=2.0,
+        #     double_box=True
+        # ),
         "ramp": RampTerrainCfg(
             proportion=0.20,
             height_range=(0.2, 0.4),
@@ -148,6 +148,10 @@ ROUGH_EASY = TerrainGeneratorCfg(
         ),
         "room": RoomTerrainCfg(
             proportion=0.20,
+        ),
+        "gap": MeshGapTerrainCfg(
+            proportion=0.20,
+            gap_width_range=(0.2, 0.4),
         ),
     },
 )

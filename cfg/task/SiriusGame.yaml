@@ -28,6 +28,8 @@ command:
   _target_: active_adaptation.envs.mdp.commands.game.Game
 
 observation:
+  command_mode_: # won't be normalized
+    command_mode:
   command:
     command:
   policy:
