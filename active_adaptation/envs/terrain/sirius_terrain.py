@@ -152,6 +152,7 @@ ROUGH_EASY = TerrainGeneratorCfg(
         "gap": MeshGapTerrainCfg(
             proportion=0.20,
             gap_width_range=(0.2, 0.4),
+            platform_width=4.0,
         ),
     },
 )

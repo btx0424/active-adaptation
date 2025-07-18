@@ -63,7 +63,7 @@ class PPOConfig:
     num_minibatches: int = 8
     lr: float = 5e-4
     clip_param: float = 0.2
-    entropy_coef: float = 0.003
+    entropy_coef: float = 0.01
 
     orthogonal_init: bool = True
     phase: str = "train"
@@ -73,7 +73,7 @@ class PPOConfig:
     checkpoint_path: Union[str, None] = None
     in_keys: Tuple[str, ...] = ("command_mode_", CMD_KEY, OBS_KEY, OBS_PRIV_KEY, "terrain", "ext")
     compile: bool = False
-    use_ddp: bool = False
+    use_ddp: bool = True
 
 cs = ConfigStore.instance()
 cs.store("ppo_sirius2_train", node=PPOConfig(phase="train"), group="algo")
@@ -407,12 +407,12 @@ class PPOPolicy(ModBase):
         else:
             mode_0 = tensordict["command_mode_"] == 0
             mode_1 = tensordict["command_mode_"] == 1
-            mode_2 = tensordict["command_mode_"] == 2
-            mode_3 = tensordict["command_mode_"] == 3
+            # mode_2 = tensordict["command_mode_"] == 2
+            # mode_3 = tensordict["command_mode_"] == 3
             adv[mode_0] = normalize(adv[mode_0], subtract_mean=True)
             adv[mode_1] = normalize(adv[mode_1], subtract_mean=True)
-            adv[mode_2] = normalize(adv[mode_2], subtract_mean=True)
-            adv[mode_3] = normalize(adv[mode_3], subtract_mean=True)
+            # adv[mode_2] = normalize(adv[mode_2], subtract_mean=True)
+            # adv[mode_3] = normalize(adv[mode_3], subtract_mean=True)
             has_command_mode = True
         reward = tensordict[REWARD_KEY].sum(-1)
         tensordict = tensordict.select(*self.train_in_keys)
@@ -428,18 +428,18 @@ class PPOPolicy(ModBase):
             # b = self.critic(tensordict.replace(terrain_mask=torch.ones(*tensordict.shape, 1)))
             # value_diff = F.mse_loss(a["state_value"], b["state_value"])
             # infos["critic/value_diff"] = value_diff.item()
-            a = self.actor_teacher.get_dist(
-                tensordict.replace(terrain_mask=torch.zeros(*tensordict.shape, 1)))
-            b = self.actor_teacher.get_dist(
-                tensordict.replace(terrain_mask=torch.ones(*tensordict.shape, 1)))
-            policy_diff = F.mse_loss(a.mean, b.mean)
+            a = self.actor_teacher(
+                tensordict.replace(terrain_mask=torch.zeros(*tensordict.shape, 1)))["loc"]
+            b = self.actor_teacher(
+                tensordict.replace(terrain_mask=torch.ones(*tensordict.shape, 1)))["loc"]
+            policy_diff = F.mse_loss(a, b)
             infos["actor/policy_diff"] = policy_diff.item()
         
         if has_command_mode:
             infos["critic/value_mode_0"] = tensordict["ret"][mode_0].mean().item()
             infos["critic/value_mode_1"] = tensordict["ret"][mode_1].mean().item()
-            infos["critic/value_mode_2"] = tensordict["ret"][mode_2].mean().item()
-            infos["critic/value_mode_3"] = tensordict["ret"][mode_3].mean().item()
+            # infos["critic/value_mode_2"] = tensordict["ret"][mode_2].mean().item()
+            # infos["critic/value_mode_3"] = tensordict["ret"][mode_3].mean().item()
         else:
             infos["critic/value_mode_0"] = tensordict["ret"].mean().item()
         infos["critic/neg_rew_ratio"] = (reward <= 0.).float().mean().item()
@@ -613,6 +613,8 @@ class PPOPolicy(ModBase):
     def state_dict(self):
         state_dict = OrderedDict()
         for name, module in self.named_children():
+            if isinstance(module, DDP):
+                module = module.module
             state_dict[name] = module.state_dict()
         state_dict["last_phase"] = self.cfg.phase
         return state_dict
@@ -623,6 +625,8 @@ class PPOPolicy(ModBase):
         for name, module in self.named_children():
             _state_dict = state_dict.get(name, {})
             try:
+                if isinstance(module, DDP):
+                    module = module.module
                 module.load_state_dict(_state_dict, strict=strict)
                 succeed_keys.append(name)
             except Exception as e:
