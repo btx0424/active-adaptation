@@ -226,6 +226,10 @@ class SiriusCommandManager(Command):
         return result
     
     @property
+    def command_mode(self):
+        return self._command.mode.reshape(-1, 1)
+    
+    @property
     def des_height(self):
         return self._command.des_height + self.env.get_ground_height_at(self.asset.data.root_pos_w).unsqueeze(1)
 
@@ -414,12 +418,6 @@ class SiriusCommandManager(Command):
             from_ = self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2])
             self.arrow_marker_0.from_to(from_, from_ + self._cmd_lin_vel_w)
             self.arrow_marker_1.from_to(from_, from_ + self.asset.data.root_lin_vel_w)
-
-
-class command_mode(Observation[SiriusCommandManager]):
-
-    def compute(self) -> torch.Tensor:
-        return self.command_manager._command.mode.reshape(self.num_envs, 1)
 
 
 class no_drift(Reward[SiriusCommandManager]):

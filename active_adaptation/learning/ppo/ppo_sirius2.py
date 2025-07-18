@@ -50,6 +50,9 @@ from ..modules.distributions import IndependentNormal
 from ..modules.rnn import set_recurrent_mode, recurrent_mode
 from .common import *
 
+import active_adaptation
+import torch.distributed as distr
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 @dataclass
 class PPOConfig:
@@ -70,6 +73,7 @@ class PPOConfig:
     checkpoint_path: Union[str, None] = None
     in_keys: Tuple[str, ...] = ("command_mode_", CMD_KEY, OBS_KEY, OBS_PRIV_KEY, "terrain", "ext")
     compile: bool = False
+    use_ddp: bool = False
 
 cs = ConfigStore.instance()
 cs.store("ppo_sirius2_train", node=PPOConfig(phase="train"), group="algo")
@@ -171,7 +175,7 @@ class Encoder(nn.Module):
 class PPOPolicy(ModBase):
     
     train_in_keys = [CMD_KEY, OBS_KEY, "terrain", OBS_PRIV_KEY, ACTION_KEY, 
-                     "adv", "ret", "is_init", "sample_log_prob"]
+                     "adv", "ret", "is_init", "action_log_prob"]
     
     teacher_in_keys = [CMD_KEY, OBS_KEY, "_priv_feature"]
     student_in_keys = [CMD_KEY, OBS_KEY, "_priv_feature_est"]
@@ -235,7 +239,7 @@ class PPOPolicy(ModBase):
             distribution_class=IndependentNormal,
             return_log_prob=True
         ).to(self.device)
-        self.actor_teacher = self.actor_teacher.select_out_keys(ACTION_KEY, "loc", "scale", "sample_log_prob")
+        self.actor_teacher = self.actor_teacher.select_out_keys(ACTION_KEY, "loc", "scale", "action_log_prob")
 
         # self.actor_student: ProbabilisticActor = ProbabilisticActor(
         #     module=Seq(
@@ -261,12 +265,12 @@ class PPOPolicy(ModBase):
         ).to(self.device)
         self.critic = self.critic.select_out_keys("state_value")
 
-        observation_dim = observation_spec[OBS_KEY].shape[-1]
-        self.dynamics = Seq(
-            CatTensors([OBS_KEY, ACTION_KEY], "dyn_input", del_keys=False, sort=False),
-            Mod(make_mlp([256, 256, 128]), ["dyn_input"], ["dyn_input"]),
-            Mod(nn.LazyLinear(observation_dim), ["dyn_input"], [f"next_{OBS_KEY}"]),
-        ).to(self.device)
+        # observation_dim = observation_spec[OBS_KEY].shape[-1]
+        # self.dynamics = Seq(
+        #     CatTensors([OBS_KEY, ACTION_KEY], "dyn_input", del_keys=False, sort=False),
+        #     Mod(make_mlp([256, 256, 128]), ["dyn_input"], ["dyn_input"]),
+        #     Mod(nn.LazyLinear(observation_dim), ["dyn_input"], [f"next_{OBS_KEY}"]),
+        # ).to(self.device)
 
         # lazy initialization
         with torch.device(self.device):
@@ -279,25 +283,16 @@ class PPOPolicy(ModBase):
         self.critic(fake_input)
         # self.dynamics(fake_input)
 
-        self.opt_teacher = torch.optim.Adam(
-            [
-                {"params": self.actor_teacher.parameters()},
-                {"params": self.critic.parameters()},
-            ],
-            lr=cfg.lr,
-            # weight_decay=0.1,
-            # fused=True
-        )
-        self.opt_model = torch.optim.Adam(self.dynamics.parameters(), lr=cfg.lr)
-        self.opt_adapt = torch.optim.Adam(self.adapt_module.parameters(), lr=cfg.lr)
-        self.opt_student = torch.optim.Adam(
-            [
-                # {"params": self.actor_student.parameters()},
-                {"params": self.critic.parameters()},
-            ],
-            lr=cfg.lr,
-            # fused=True
-        )
+        # self.opt_model = torch.optim.Adam(self.dynamics.parameters(), lr=cfg.lr)
+        # self.opt_adapt = torch.optim.Adam(self.adapt_module.parameters(), lr=cfg.lr)
+        # self.opt_student = torch.optim.Adam(
+        #     [
+        #         # {"params": self.actor_student.parameters()},
+        #         {"params": self.critic.parameters()},
+        #     ],
+        #     lr=cfg.lr,
+        #     # fused=True
+        # )
         
         def init_(module):
             if isinstance(module, nn.Linear):
@@ -314,6 +309,32 @@ class PPOPolicy(ModBase):
             self.adapt_module.apply(init_)
             # self.dynamics.apply(init_)
         
+        if active_adaptation.is_distributed():
+            distr.init_process_group(
+                backend="nccl",
+                world_size=active_adaptation.get_world_size(),
+                rank=active_adaptation.get_local_rank()
+            )
+            if self.cfg.use_ddp:
+                self.actor_teacher = DDP(self.actor_teacher)
+                self.critic = DDP(self.critic)
+            else:
+                for param in self.actor_teacher.parameters():
+                    distr.broadcast(param, src=0)
+                for param in self.critic.parameters():
+                    distr.broadcast(param, src=0)
+            self.world_size = active_adaptation.get_world_size()
+        
+        self.opt_teacher = torch.optim.Adam(
+            [
+                {"params": self.actor_teacher.parameters()},
+                {"params": self.critic.parameters()},
+            ],
+            lr=cfg.lr,
+            # weight_decay=0.1,
+            # fused=True
+        )
+
         self.update_teacher = functools.partial(
             self._update, 
             encoder=None,
@@ -330,7 +351,7 @@ class PPOPolicy(ModBase):
         # )
         self.iter_count = 0
         
-        if self.cfg.compile:
+        if self.cfg.compile and not active_adaptation.is_distributed():
             self.update_teacher = torch.compile(self.update_teacher)
             # self.update_student = torch.compile(self.update_student)
     
@@ -500,27 +521,30 @@ class PPOPolicy(ModBase):
 
     def _update(self, tensordict: TensorDict, encoder: Mod, actor: ProbabilisticActor, critic: Mod, opt: torch.optim.Optimizer):
         bsize = tensordict.shape[0]
-        symmetry = tensordict.empty()
-        symmetry[CMD_KEY] = self.cmd_transform(tensordict[CMD_KEY])
-        symmetry[OBS_KEY] = self.obs_transform(tensordict[OBS_KEY])
-        symmetry[OBS_PRIV_KEY] = self.priv_transform(tensordict[OBS_PRIV_KEY])
-        symmetry["terrain"] = self.terrain_transform(tensordict["terrain"])
-        symmetry[ACTION_KEY] = self.act_transform(tensordict[ACTION_KEY])
-        symmetry["sample_log_prob"] = tensordict["sample_log_prob"]
-        symmetry["adv"] = tensordict["adv"]
-        symmetry["ret"] = tensordict["ret"]
-        symmetry["is_init"] = tensordict["is_init"]
         if self.symaug:
+            symmetry = tensordict.empty()
+            symmetry[CMD_KEY] = self.cmd_transform(tensordict[CMD_KEY])
+            symmetry[OBS_KEY] = self.obs_transform(tensordict[OBS_KEY])
+            symmetry[OBS_PRIV_KEY] = self.priv_transform(tensordict[OBS_PRIV_KEY])
+            symmetry["terrain"] = self.terrain_transform(tensordict["terrain"])
+            symmetry[ACTION_KEY] = self.act_transform(tensordict[ACTION_KEY])
+            symmetry["action_log_prob"] = tensordict["action_log_prob"]
+            symmetry["adv"] = tensordict["adv"]
+            symmetry["ret"] = tensordict["ret"]
+            symmetry["is_init"] = tensordict["is_init"]
             tensordict = torch.cat([tensordict, symmetry], dim=0)
         
+        action_data = tensordict[ACTION_KEY]
+        log_probs_data = tensordict["action_log_prob"]
         if encoder is not None:
             tensordict = encoder(tensordict)
-        dist = actor.get_dist(tensordict)
-        log_probs = dist.log_prob(tensordict[ACTION_KEY])
+        tensordict = actor(tensordict)
+        dist = IndependentNormal(tensordict["loc"], tensordict["scale"])
+        log_probs = dist.log_prob(action_data)
         entropy = dist.entropy().mean()
 
         adv = tensordict["adv"]
-        ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
+        ratio = torch.exp(log_probs - log_probs_data).unsqueeze(-1)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
         policy_loss = - torch.mean(torch.min(surr1, surr2))

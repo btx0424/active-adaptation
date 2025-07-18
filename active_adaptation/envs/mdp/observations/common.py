@@ -709,17 +709,6 @@ class motor_params(Observation):
         return torch.cat([stiffness, damping], dim=-1)
 
 
-class motor_failure(Observation):
-    def __init__(self, env, actuator_name: str):
-        super().__init__(env)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.motors = self.asset.actuators[actuator_name]
-        self.motor_failure = self.motors.motor_failure
-    
-    def compute(self) -> torch.Tensor:
-        return self.motor_failure
-
-
 class external_forces(Observation):
     def __init__(self, env, body_names, divide_by_mass: bool=True, scale: float = 1.0):
         super().__init__(env)
@@ -1291,27 +1280,6 @@ class dummy(Observation):
         return self.obs.expand(self.num_envs, -1)
 
 
-class camera(Observation):
-    def __init__(self, env, name: str, key: str="depth"):
-        super().__init__(env)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.camera: TiledCamera = self.env.scene[name]
-        self.key = key
-        self.offset = torch.tensor([1.25, 0.0, 0.75], device=self.device)
-        self.frame_count = 0
-    
-    def update(self):
-        self.camera.set_world_poses_from_view(
-            eyes=self.asset.data.root_pos_w + self.offset,
-            targets=self.asset.data.root_pos_w,
-        )
-
-    def compute(self):
-        img = self.camera.data.output[self.key]
-        img = einops.rearrange(img, "n h w c -> n c h w")
-        return img
-
-
 def symlog(x: torch.Tensor, a: float=1.):
     return x.sign() * torch.log(x.abs() * a + 1.) / a
 
@@ -1382,29 +1350,6 @@ class feet_orientation(Observation):
         self.quat_feet = yaw_quat(self.asset.data.body_quat_w[:, self.feet_id])
         feet_fwd = quat_rotate(self.quat_feet, self.heading_feet)
         return feet_fwd.reshape(self.num_envs, -1)
-
-
-class symmetry_quad(Observation):
-    def __init__(self, env):
-        super().__init__(env)
-        self.asset: Articulation = self.env.scene["robot"]
-        self.flip_y = torch.tensor([1., -1., 1.], device=self.device)
-        self.flip_ry = torch.tensor([-1., 1., -1.], device=self.device)
-    
-    def compute(self):
-        jpos = self.asset.data.joint_pos
-        jvel = self.asset.data.joint_vel
-        
-        gravity = self.asset.data.projected_gravity_b
-        linvel = self.asset.data.root_lin_vel_b
-        angvel = self.asset.data.root_ang_vel_b
-
-        left = torch.cat([jpos, linvel , gravity], dim=1)
-        right = torch.cat([self.mirror(jpos), linvel * self.flip_y, gravity * self.flip_y], dim=1)
-        return torch.stack([left, right], dim=1)
-    
-    def mirror(self, jnt: torch.Tensor):
-        return jnt.reshape(self.num_envs, 4, 3)[:, [1, 0, 3, 2]].reshape(self.num_envs, -1)
 
 
 class oscillator(Observation):
@@ -1544,3 +1489,10 @@ class body_height(Observation):
 
     def symmetry_transforms(self):
         return sym_utils.cartesian_space_symmetry(self.asset, self.body_names, sign=(1,))
+
+
+class command_mode(Observation):
+
+    def compute(self) -> torch.Tensor:
+        return self.command_manager.command_mode
+
