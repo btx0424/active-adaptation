@@ -48,7 +48,6 @@ from ..modules.distributions import IndependentNormal
 from .common import *
 
 torch.set_float32_matmul_precision('high')
-USE_DDP = True
 
 import active_adaptation
 import torch.distributed as distr
@@ -68,6 +67,7 @@ class PPOConfig:
     value_norm: bool = False
 
     compile: bool = False
+    use_ddp: bool = True
     checkpoint_path: Union[str, None] = None
     in_keys: List[str] = field(default_factory=lambda: [OBS_KEY])
 
@@ -140,7 +140,7 @@ class PPOPolicy(TensorDictModuleBase):
                 rank=active_adaptation.get_local_rank()
             )
             self.world_size = active_adaptation.get_world_size()
-            if USE_DDP:
+            if self.cfg.use_ddp:
                 self.actor = DDP(self.actor)
                 self.critic = DDP(self.critic)
             else:
@@ -163,7 +163,7 @@ class PPOPolicy(TensorDictModuleBase):
             # self.update = CudaGraphModule(self.update)
     
     def get_rollout_policy(self, mode: str="train"):
-        policy = self.actor
+        policy = TensorDictSequential(self.actor)
         if self.cfg.compile:
             policy = torch.compile(policy, fullgraph=True)
         return policy
@@ -247,7 +247,7 @@ class PPOPolicy(TensorDictModuleBase):
         self.opt.zero_grad()
         loss.backward()
 
-        if active_adaptation.is_distributed() and not USE_DDP:
+        if active_adaptation.is_distributed() and not self.cfg.use_ddp:
             for param in self.actor.parameters():
                 distr.all_reduce(param.grad.data, op=distr.ReduceOp.SUM)
                 param.grad.data /= self.world_size

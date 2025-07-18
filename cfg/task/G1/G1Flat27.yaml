@@ -69,10 +69,10 @@ observation:
   policy:
     command:
     root_angvel_b:  {noise_std: 0.05}
-    gravity_multistep: {steps: 3, noise_std: 0.05}
-    joint_pos_multistep: {joint_names: "(?!(.*wrist.*|waist_(roll|pitch)_joint)).*", steps: 3, noise_std: 0.05}
-    joint_vel_multistep: {joint_names: "(?!(.*wrist.*|waist_(roll|pitch)_joint)).*", steps: 3, noise_std: 0.2}
-    prev_actions: {steps: 3, permute: true}
+    gravity_multistep: {steps: 4, noise_std: 0.05}
+    joint_pos_multistep: {joint_names: "(?!(.*wrist.*|waist_(roll|pitch)_joint)).*", steps: 4, noise_std: 0.05}
+    joint_vel_multistep: {joint_names: "(?!(.*wrist.*|waist_(roll|pitch)_joint)).*", steps: 4, noise_std: 0.2}
+    prev_actions: {steps: 2, permute: true}
   # priv:
     applied_action:   {}
     root_linvel_b:    {}
