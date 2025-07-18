@@ -52,9 +52,9 @@ reward:
   loco:
     chase_distance:     {weight: 2.0, enabled: true}
     chase_velocity:     {weight: 1.0, enabled: true}
-    evade:             {weight: 1.0, enabled: true}
+    evade:             {weight: 2.0, enabled: true}
     target_in_sight:   {weight: 1.0, enabled: true}
-    caught_reward:     {weight: 5.0, enabled: true}
+    caught_reward:     {weight: 10.0, enabled: true}
     angvel_xy_l2:       {weight: 0.01, enabled: true}
     linvel_z_l2:        {weight: 0.5, enabled: true}
   reg:
