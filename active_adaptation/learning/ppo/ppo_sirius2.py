@@ -371,6 +371,8 @@ class PPOPolicy(ModBase):
         else:
             modules.append(self.adapt_module)
             # modules.append(self.actor_student) 
+        if mode == "eval":
+            modules.append(self.critic)
         policy = Seq(modules)
         return policy
 
@@ -386,17 +388,11 @@ class PPOPolicy(ModBase):
             info.update(self.train_adapt(tensordict.copy()))
             info.update(self.train_finetune(tensordict.copy()))
         self.iter_count += 1
+        self.last_tensordict = tensordict.copy()
         return info
 
     def train_policy(self, tensordict: TensorDict):
         infos = []
-
-        # exploration bonus
-        # if self.iter_count > 20:
-        #     with torch.no_grad():
-        #         self.dynamics(tensordict)
-        #         error = (tensordict["next", OBS_KEY] - tensordict[f"next_{OBS_KEY}"]).square().mean(-1)
-        #         tensordict[REWARD_KEY] = tensordict[REWARD_KEY].sum(-1, True) + 0.1 * error.reshape(*tensordict.shape, 1)
         
         self._compute_advantage(tensordict, self.critic, "adv", "ret")
         adv = tensordict["adv"]
