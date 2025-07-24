@@ -114,7 +114,7 @@ class energy_l1(Reward):
     def update(self):
         torques = self.asset.data.applied_torque[:, self.joint_ids]
         joint_vel = self.asset.data.joint_vel[:, self.joint_ids]
-        self.power[:] = (torques * joint_vel).abs()
+        self.power = (torques * joint_vel).abs()
 
         self.energy.add_(self.power).mul_(self.decay)
         self.count.add_(1.0).mul_(self.decay)
@@ -122,6 +122,29 @@ class energy_l1(Reward):
 
     def compute(self) -> torch.Tensor:
         return -(self.power * self.a).sum(1, keepdim=True)
+
+
+class energy_l2(Reward):
+    """
+    Penalize the energy of the joints. This is less commonly used than energy_l1 because it is much
+    larger and therefore imposes a much stronger regularization.
+    """
+    def __init__(self, env, weight: float, enabled: bool = True, a={".*": 1.0}):
+        super().__init__(env, weight, enabled)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.joint_ids, _, self.a = string_utils.resolve_matching_names_values(
+            dict(a), self.asset.joint_names
+        )
+        self.joint_ids = torch.tensor(self.joint_ids, device=self.device)
+        self.a = torch.tensor(self.a, device=self.device)
+
+    def update(self):
+        self.torques = self.asset.data.applied_torque[:, self.joint_ids]
+        self.joint_vel = self.asset.data.joint_vel[:, self.joint_ids]
+
+    def compute(self) -> torch.Tensor:
+        self.power_l2 = (self.torques * self.joint_vel).square()
+        return -(self.power_l2 * self.a).sum(1, keepdim=True)
 
 
 class energy_dist_lr(Reward):

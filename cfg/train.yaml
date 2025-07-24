@@ -1,4 +1,6 @@
 hydra:
+  searchpath:
+    - pkg://active_adaptation_projects
   run:
     dir: ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}-${task.name}-${algo.name}
   job:

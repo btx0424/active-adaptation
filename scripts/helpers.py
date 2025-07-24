@@ -23,6 +23,8 @@ from active_adaptation.utils.wandb import parse_checkpoint_path
 import active_adaptation
 import active_adaptation_projects
 
+active_adaptation_projects.import_projects()
+
 
 class Every:
     def __init__(self, func, steps):
