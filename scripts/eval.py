@@ -4,15 +4,9 @@ import numpy as np
 import einops
 import time
 import sys
-from tqdm import tqdm
 from omegaconf import OmegaConf
 
 from isaaclab.app import AppLauncher
-
-import wandb
-import logging
-from tqdm import tqdm
-from scripts.helpers import make_env_policy, evaluate
 
 import os
 import datetime
@@ -26,6 +20,7 @@ def main(cfg):
     app_launcher = AppLauncher(OmegaConf.to_container(cfg.app))
     simulation_app = app_launcher.app
 
+    from scripts.helpers import make_env_policy, evaluate
     env, agent, vecnorm = make_env_policy(cfg)
     
     keys = [

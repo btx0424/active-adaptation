@@ -11,6 +11,7 @@ setup(
     packages=[
         "active_adaptation",
         "active_adaptation_projects",
+        "scripts",
     ],
     version="0.1.2",
     install_requires=[

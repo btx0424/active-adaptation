@@ -277,6 +277,8 @@ class PPOPolicy(TensorDictModuleBase):
     def state_dict(self):
         state_dict = OrderedDict()
         for name, module in self.named_children():
+            if isinstance(module, DDP):
+                module = module.module
             state_dict[name] = module.state_dict()
         return state_dict
     
@@ -286,6 +288,8 @@ class PPOPolicy(TensorDictModuleBase):
         for name, module in self.named_children():
             _state_dict = state_dict.get(name, {})
             try:
+                if isinstance(module, DDP):
+                    module = module.module
                 module.load_state_dict(_state_dict, strict=strict)
                 succeed_keys.append(name)
             except Exception as e:
