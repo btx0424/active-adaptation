@@ -145,7 +145,12 @@ class _Env(EnvBase):
         ).to(self.device)
 
         members = dict(inspect.getmembers(self.__class__, inspect.isclass))
-        self.command_manager: mdp.Command = hydra.utils.instantiate(self.cfg.command, env=self)
+        if self.cfg.command.get("_target_") is not None:
+            self.command_manager: mdp.Command = hydra.utils.instantiate(self.cfg.command, env=self)
+        else:
+            command_cfg = dict(self.cfg.command)
+            class_name = command_cfg.pop("class")
+            self.command_manager: mdp.Command = mdp.Command.registry[class_name](self, **command_cfg)
 
         RAND_FUNCS = mdp.RAND_FUNCS
         RAND_FUNCS.update(mdp.get_obj_by_class(members, mdp.Randomization))

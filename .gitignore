@@ -190,3 +190,9 @@ scripts/images
 checkpoint*.pt
 test/
 *.csv
+
+# contrib projects
+# ignore all but `__init__.py` and `README.md`
+projects/*
+!projects/__init__.py
+!projects/README.md

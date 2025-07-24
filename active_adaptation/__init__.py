@@ -1,5 +1,6 @@
 import os
 import active_adaptation.learning
+import builtins
 
 _BACKEND = "isaac"
 
@@ -22,10 +23,16 @@ def get_local_rank():
 def get_world_size():
     return _WORLD_SIZE
 
-_print = print
-def print(*args, **kwargs):
-    _print(f"[RANK {_LOCAL_RANK}/{_WORLD_SIZE}]:", *args, **kwargs)
+# Save original print function
+_original_print = builtins.print
 
+def _ranked_print(*args, **kwargs):
+    """Print function with rank information prefix."""
+    _original_print(f"[RANK {_LOCAL_RANK}/{_WORLD_SIZE}]:", *args, **kwargs)
+
+# Override builtins.print for global effect
+if is_distributed():
+    builtins.print = _ranked_print
 
 ASSET_PATH = os.path.join(os.path.dirname(__file__), "assets")
 

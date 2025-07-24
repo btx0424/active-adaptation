@@ -28,7 +28,25 @@ def sample_quat_yaw(size, yaw_range=(0, torch.pi * 2), device: torch.device = "c
     return quat
 
 
-class Command:
+class _RegistryMixin:
+    
+    def __init_subclass__(cls) -> None:
+        """Put the subclass in the global registry"""
+        if not hasattr(cls, 'registry'):
+            cls.registry = {}
+            
+        cls_name = cls.__name__
+        cls._file = inspect.getfile(cls)
+        cls._line = inspect.getsourcelines(cls)[1]
+        if cls_name not in cls.registry:
+            cls.registry[cls_name] = cls    
+        else:
+            conflicting_cls = cls.registry[cls_name]
+            location = f"{conflicting_cls._file}:{conflicting_cls._line}"
+            raise ValueError(f"Term {cls_name} already registered in {location}")
+
+
+class Command(_RegistryMixin):
     def __init__(self, env, teleop: bool=False) -> None:
         self.env: _Env = env
         self.asset: Articulation = env.scene["robot"]
@@ -101,24 +119,6 @@ class Command:
             self.key_pressed[event.input.name] = True
         if event.type == carb.input.KeyboardEventType.KEY_RELEASE:
             self.key_pressed[event.input.name] = False
-
-
-class _RegistryMixin:
-    
-    def __init_subclass__(cls) -> None:
-        """Put the subclass in the global registry"""
-        if not hasattr(cls, 'registry'):
-            cls.registry = {}
-            
-        cls_name = cls.__name__
-        cls._file = inspect.getfile(cls)
-        cls._line = inspect.getsourcelines(cls)[1]
-        if cls_name not in cls.registry:
-            cls.registry[cls_name] = cls    
-        else:
-            conflicting_cls = cls.registry[cls_name]
-            location = f"{conflicting_cls._file}:{conflicting_cls._line}"
-            raise ValueError(f"Term {cls_name} already registered in {location}")
 
 
 CT = TypeVar('CT', bound=Command)

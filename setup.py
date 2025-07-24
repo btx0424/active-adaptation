@@ -4,7 +4,15 @@ setup(
     name="active_adaptation",
     author="btx0424@SUSTech",
     keywords=["robotics", "rl"],
-    packages=find_packages("."),
+    package_dir={
+        "active_adaptation": "active_adaptation",
+        "active_adaptation_projects": "projects",
+    },
+    packages=[
+        "active_adaptation",
+        "active_adaptation_projects",
+    ],
+    version="0.1.2",
     install_requires=[
         "hydra-core",
         "omegaconf",

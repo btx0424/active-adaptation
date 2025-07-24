@@ -18,10 +18,6 @@ from isaaclab.app import AppLauncher
 from torchrl.envs.utils import set_exploration_type, ExplorationType
 from tensordict.nn import TensorDictModuleBase
 
-# local import
-from scripts.helpers import make_env_policy, EpisodeStats, evaluate
-
-
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
@@ -65,6 +61,7 @@ def main(cfg: DictConfig):
         run.save(cfg_save_path, policy="now")
         run.save(os.path.join(run.dir, "config.yaml"), policy="now")
 
+    from helpers import make_env_policy, EpisodeStats, evaluate
     env, policy, vecnorm = make_env_policy(cfg)
 
     frames_per_batch = env.num_envs * cfg.algo.train_every

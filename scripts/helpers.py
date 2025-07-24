@@ -19,7 +19,10 @@ from torchvision.io import write_video
 from omegaconf import OmegaConf, DictConfig
 import active_adaptation.learning
 from active_adaptation.utils.wandb import parse_checkpoint_path
+
 import active_adaptation
+import active_adaptation_projects
+
 
 class Every:
     def __init__(self, func, steps):
@@ -31,41 +34,6 @@ class Every:
         if self.i % self.steps == 0:
             self.func(*args, **kwargs)
         self.i += 1
-
-
-class ObsNorm(ModBase):
-    def __init__(self, in_keys, out_keys, locs, scales):
-        super().__init__()
-        self.in_keys = in_keys
-        self.out_keys = out_keys
-        
-        self.loc = nn.ParameterDict({k: nn.Parameter(locs[k]) for k in in_keys})
-        self.scale = nn.ParameterDict({k: nn.Parameter(scales[k]) for k in out_keys})
-        self.requires_grad_(False)
-
-    def forward(self, tensordict: TensorDictBase):
-        for in_key, out_key in zip(self.in_keys, self.out_keys):
-            obs = tensordict.get(in_key, None)
-            if obs is not None:
-                loc = self.loc[in_key]
-                scale = self.scale[out_key]
-                tensordict.set(out_key, (obs - loc) / scale)
-        return tensordict
-    
-    @classmethod
-    def from_vecnorm(cls, vecnorm: VecNorm, keys):
-        in_keys = []
-        out_keys = []
-        for in_key, out_key in zip(vecnorm.in_keys, vecnorm.out_keys):
-            if in_key in keys:
-                in_keys.append(in_key)
-                out_keys.append(out_key)
-        return cls(
-            in_keys=in_keys,
-            out_keys=out_keys,
-            locs=vecnorm.loc,
-            scales=vecnorm.scale
-        )
 
 
 class EpisodeStats:
@@ -148,7 +116,7 @@ def make_env_policy(cfg: DictConfig):
     
     # setup policy
     policy_cls = hydra.utils.get_class(cfg.algo._target_)
-    active_adaptation.print(f"Creating policy {policy_cls} on device {base_env.device}")
+    print(f"Creating policy {policy_cls} on device {base_env.device}")
     policy = policy_cls(
         cfg.algo,
         env.observation_spec, 

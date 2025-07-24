@@ -22,13 +22,18 @@
 
 
 import torch
+import torch.nn as nn
 import time
+from typing import Iterator
+
+from tensordict.nn import TensorDictModuleBase as ModBase
+from torchrl.envs.transforms import VecNorm
+from tensordict.tensordict import TensorDictBase
 from torchrl.collectors import SyncDataCollector as _SyncDataCollector
 from torchrl.collectors.utils import split_trajectories
 from torchrl.envs.utils import _replace_last, step_mdp
 from tensordict.tensordict import TensorDictBase
 
-from typing import Iterator
 
 class SyncDataCollector(_SyncDataCollector):
 
@@ -212,3 +217,42 @@ class StackFrames(Transform):
             stacked[_reset.squeeze()] = torch.cat([padding_val, val.unsqueeze(-1)], dim=-1)
             tensordict_reset.set(out_key, stacked)
         return tensordict_reset
+
+
+class ObsNorm(ModBase):
+    """
+    Used to replace the `VecNorm` transform in the env when exporting to ONNX.
+    The original `VecNorm` is not supported by ONNX.
+    """
+    def __init__(self, in_keys, out_keys, locs, scales):
+        super().__init__()
+        self.in_keys = in_keys
+        self.out_keys = out_keys
+        
+        self.loc = nn.ParameterDict({k: nn.Parameter(locs[k]) for k in in_keys})
+        self.scale = nn.ParameterDict({k: nn.Parameter(scales[k]) for k in out_keys})
+        self.requires_grad_(False)
+
+    def forward(self, tensordict: TensorDictBase):
+        for in_key, out_key in zip(self.in_keys, self.out_keys):
+            obs = tensordict.get(in_key, None)
+            if obs is not None:
+                loc = self.loc[in_key]
+                scale = self.scale[out_key]
+                tensordict.set(out_key, (obs - loc) / scale)
+        return tensordict
+    
+    @classmethod
+    def from_vecnorm(cls, vecnorm: VecNorm, keys):
+        in_keys = []
+        out_keys = []
+        for in_key, out_key in zip(vecnorm.in_keys, vecnorm.out_keys):
+            if in_key in keys:
+                in_keys.append(in_key)
+                out_keys.append(out_key)
+        return cls(
+            in_keys=in_keys,
+            out_keys=out_keys,
+            locs=vecnorm.loc,
+            scales=vecnorm.scale
+        )

@@ -13,6 +13,7 @@ from torchrl.envs.utils import set_exploration_type, ExplorationType
 from tensordict.nn import TensorDictSequential
 
 from active_adaptation.utils.export import export_onnx
+from active_adaptation.utils.torchrl import ObsNorm
 
 
 @hydra.main(config_path="../cfg", config_name="play", version_base=None)
@@ -23,7 +24,7 @@ def main(cfg):
     app_launcher = AppLauncher(cfg.app)
     simulation_app = app_launcher.app
 
-    from scripts.helpers import EpisodeStats, make_env_policy, ObsNorm
+    from helpers import EpisodeStats, make_env_policy
     env, policy, vecnorm = make_env_policy(cfg)
     
     if cfg.export_policy:
