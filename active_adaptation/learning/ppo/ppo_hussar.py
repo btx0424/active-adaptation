@@ -56,17 +56,18 @@ torch.set_float32_matmul_precision('high')
 class PPOConfig:
     _target_: str = "active_adaptation.learning.ppo.ppo_hussar.PPOPolicy"
     name: str = "ppo_hussar"
-    train_every: int = 32
-    ppo_epochs: int = 5
+    train_every: int = 48
+    ppo_epochs: int = 4
     num_minibatches: int = 8
     lr: float = 5e-4
     clip_param: float = 0.2
-    entropy_coef: float = 0.01
+    entropy_coef: float = 0.003
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
+    compile: bool = False
 
     checkpoint_path: Union[str, None] = None
-    in_keys: Tuple[str] = (OBS_KEY, "height_scan", "grid_map", "base_height", "base_height_targ")
+    in_keys: Tuple[str] = (OBS_KEY, "height_scan", "grid_map_", "base_height", "base_height_targ")
 
 cs = ConfigStore.instance()
 cs.store("ppo_hussar", node=PPOConfig, group="algo")
@@ -110,7 +111,7 @@ class MixedEncoder(nn.Module):
         self.out = nn.Sequential(nn.Mish(), nn.LazyLinear(256), nn.Mish())
 
     def forward(self, mlp_inp, cnn_inp, mask_cnn=None):
-        cnn_feature = self.cnn_encoder(cnn_inp)
+        cnn_feature = self.cnn_encoder(cnn_inp.float())
         mlp_feature = self.mlp_encoder(mlp_inp)
         if mask_cnn is not None:
             cnn_feature = cnn_feature * mask_cnn
@@ -149,7 +150,7 @@ class PPOPolicy(TensorDictModuleBase):
             self.terrain_key = "height_scan"
             use_grid_map = False
         else:
-            self.terrain_key = "grid_map"
+            self.terrain_key = "grid_map_"
             use_grid_map = True
         
         self.obs_transform = env.observation_funcs[OBS_KEY].symmetry_transforms().to(self.device)
@@ -159,7 +160,6 @@ class PPOPolicy(TensorDictModuleBase):
         actor_module = TensorDictSequential(
             Mod(MixedEncoder(grid_map=use_grid_map), [OBS_KEY, self.terrain_key, "mask"], ["_actor_feature"]),
             Mod(Actor(self.action_dim), ["_actor_feature"], ["loc", "scale"]),
-            Mod(nn.LazyLinear(1), ["_actor_feature"], [("next", "base_height_targ")])
         )
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=actor_module,
@@ -205,7 +205,10 @@ class PPOPolicy(TensorDictModuleBase):
                 distr.broadcast(param, src=0)
             self.world_size = active_adaptation.get_world_size()
 
-        self.update_batch = self._update_batch
+        if self.cfg.compile:
+            self.update_batch = torch.compile(self._update_batch)
+        else:
+            self.update_batch = self._update_batch
     
     def make_tensordict_primer(self):
         num_envs = self.observation_spec.shape[0]
@@ -216,6 +219,8 @@ class PPOPolicy(TensorDictModuleBase):
     
     def get_rollout_policy(self, mode: str="train"):
         policy = TensorDictSequential(self.actor)
+        if self.cfg.compile:
+            policy = torch.compile(policy)
         return policy
 
     def compute_custom_reward(self, tensordict: TensorDict):
@@ -294,6 +299,7 @@ class PPOPolicy(TensorDictModuleBase):
         return tensordict
 
     def _update_batch(self, tensordict: TensorDict):
+        
         bsize = tensordict.shape[0]
         symmetry = tensordict.empty()
         symmetry[OBS_KEY] = self.obs_transform(tensordict[OBS_KEY])
