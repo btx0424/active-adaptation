@@ -12,6 +12,7 @@ from tensordict.nn import TensorDictSequential
 
 import active_adaptation
 from active_adaptation.utils.export import export_onnx
+from active_adaptation.utils.torchrl import ObsNorm
 
 
 @hydra.main(config_path="../cfg", config_name="play", version_base=None)
@@ -20,7 +21,7 @@ def main(cfg):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
 
-    from scripts.helpers import EpisodeStats, make_env_policy, ObsNorm
+    from scripts.helpers import EpisodeStats, make_env_policy
     # TODO: maybe implement these
     cfg.task.randomization = {}
     cfg.task.reward = {}

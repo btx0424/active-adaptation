@@ -465,15 +465,20 @@ class _Env(EnvBase):
             return torch.zeros(pos.shape[:-1], device=self.device)
     
     def _set_seed(self, seed: int = -1):
-        # set seed for replicator
-        try:
-            import omni.replicator.core as rep
+        if self.backend == "isaac":
+            # set seed for replicator
+            try:
+                import omni.replicator.core as rep
 
-            rep.set_global_seed(seed)
-        except ModuleNotFoundError:
-            pass
-        # set seed for torch and other libraries
-        return torch_utils.set_seed(seed)
+                rep.set_global_seed(seed)
+            except ModuleNotFoundError:
+                pass
+            # set seed for torch and other libraries
+            return torch_utils.set_seed(seed)
+        elif self.backend == "mujoco":
+            torch.manual_seed(seed)
+            np.random.seed(seed)
+            return seed
 
     def render(self, mode: str = "human"):
         self.sim.render()
