@@ -106,34 +106,36 @@ def main(cfg: DictConfig):
         return i > 0 and i % save_interval == 0
     
     carry = env.reset()
-
     rollout_policy: TensorDictModuleBase = policy.get_rollout_policy("train")
+
+    @torch.inference_mode()
+    @set_exploration_type(ExplorationType.RANDOM)
+    def collect(carry):
+        data = []
+        torch.compiler.cudagraph_mark_step_begin() # for compiled policy
+        for _ in range(cfg.algo.train_every):
+            carry = rollout_policy(carry)
+            td, carry = env.step_and_maybe_reset(carry)
+            td["next"] = td["next"].exclude(*rollout_policy.in_keys)
+
+            private_keys = [key for key in td.keys(True, True) if isinstance(key, str) and key.startswith('_')]
+            td = td.exclude(*private_keys)
+            
+            data.append(td.to(policy.device))
+        data = torch.stack(data, dim=1)
+        policy.critic(data)
+        values = data["state_value"]
+        data["next", "state_value"] = torch.where(
+            data["next", "done"],
+            values, # a walkaround to avoid storing the next states
+            torch.cat([values[:, 1:], policy.critic(carry.copy())["state_value"].unsqueeze(1)], dim=1)
+        )
+        return data
     
     env_frames = 0
     for i in progress:
-
-        data = []
         rollout_start = time.perf_counter()
-        with torch.inference_mode(), set_exploration_type(ExplorationType.RANDOM):
-            torch.compiler.cudagraph_mark_step_begin() # for compiled policy
-            for _ in range(cfg.algo.train_every):
-                carry = rollout_policy(carry)
-                td, carry = env.step_and_maybe_reset(carry)
-                td["next"] = td["next"].exclude(*rollout_policy.in_keys)
-
-                private_keys = [key for key in td.keys(True, True) if isinstance(key, str) and key.startswith('_')]
-                td = td.exclude(*private_keys)
-                
-                data.append(td.to(policy.device))
-            data = torch.stack(data, dim=1)
-            
-            policy.critic(data)
-            values = data["state_value"]
-            data["next", "state_value"] = torch.where(
-                data["next", "done"],
-                values, # a walkaround to avoid storing the next states
-                torch.cat([values[:, 1:], policy.critic(carry.copy())["state_value"].unsqueeze(1)], dim=1)
-            )
+        data = collect(carry)
         rollout_time = time.perf_counter() - rollout_start
 
         episode_stats.add(data)

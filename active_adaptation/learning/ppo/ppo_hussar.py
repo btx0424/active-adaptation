@@ -257,9 +257,9 @@ class PPOPolicy(TensorDictModuleBase):
             b = self.critic(tensordict.replace(mask=torch.ones(*tensordict.shape, 1)))
             value_diff = F.mse_loss(a["state_value"], b["state_value"])
             a = self.actor(
-                tensordict.replace(mask_cnn=torch.zeros(*tensordict.shape, 1)))["loc"]
+                tensordict.replace(mask=torch.zeros(*tensordict.shape, 1)))["loc"]
             b = self.actor(
-                tensordict.replace(mask_cnn=torch.ones(*tensordict.shape, 1)))["loc"]
+                tensordict.replace(mask=torch.ones(*tensordict.shape, 1)))["loc"]
             policy_diff = F.mse_loss(a, b)
 
         out = {}
