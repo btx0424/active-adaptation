@@ -178,14 +178,6 @@ class PPOPolicy(TensorDictModuleBase):
 
         self.actor(fake_input)
         self.critic(fake_input)
-
-        self.opt = torch.optim.Adam(
-            [
-                {"params": self.actor.parameters()},
-                {"params": self.critic.parameters()},
-            ],
-            lr=cfg.lr
-        )
         
         def init_(module):
             if isinstance(module, nn.Linear):
@@ -210,6 +202,14 @@ class PPOPolicy(TensorDictModuleBase):
                     distr.broadcast(param, src=0)
                 for param in self.critic.parameters():
                     distr.broadcast(param, src=0)
+        
+        self.opt = torch.optim.Adam(
+            [
+                {"params": self.actor.parameters()},
+                {"params": self.critic.parameters()},
+            ],
+            lr=cfg.lr
+        )
 
         if self.cfg.compile and not active_adaptation.is_distributed():
             self.update_batch = torch.compile(self._update_batch)
@@ -256,10 +256,10 @@ class PPOPolicy(TensorDictModuleBase):
             a = self.critic(tensordict.replace(mask=torch.zeros(*tensordict.shape, 1)))
             b = self.critic(tensordict.replace(mask=torch.ones(*tensordict.shape, 1)))
             value_diff = F.mse_loss(a["state_value"], b["state_value"])
-            a = self.actor_teacher(
-                tensordict.replace(terrain_mask=torch.zeros(*tensordict.shape, 1)))["loc"]
-            b = self.actor_teacher(
-                tensordict.replace(terrain_mask=torch.ones(*tensordict.shape, 1)))["loc"]
+            a = self.actor(
+                tensordict.replace(mask_cnn=torch.zeros(*tensordict.shape, 1)))["loc"]
+            b = self.actor(
+                tensordict.replace(mask_cnn=torch.ones(*tensordict.shape, 1)))["loc"]
             policy_diff = F.mse_loss(a, b)
 
         out = {}
