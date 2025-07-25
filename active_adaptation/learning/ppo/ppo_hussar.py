@@ -74,7 +74,7 @@ cs.store("ppo_hussar", node=PPOConfig, group="algo")
 
 
 class MixedEncoder(nn.Module):
-    def __init__(self, mlp_out=256, cnn_out=32, grid_map: bool=False):
+    def __init__(self, mlp_out=256, cnn_out=32, conv3d: bool=False):
         super().__init__()
         self.mlp_out = mlp_out
         self.cnn_out = cnn_out
@@ -83,7 +83,7 @@ class MixedEncoder(nn.Module):
             nn.LazyLinear(256)
         )
 
-        if grid_map:
+        if conv3d:
             cnn_cls = nn.LazyConv3d
             data_dim = 4 # [C, X, Z, Y]
         else:
@@ -148,17 +148,16 @@ class PPOPolicy(TensorDictModuleBase):
         
         if "height_scan" in observation_spec.keys(True, True):
             self.terrain_key = "height_scan"
-            use_grid_map = False
         else:
             self.terrain_key = "grid_map_"
-            use_grid_map = True
+        conv3d = len(observation_spec[self.terrain_key].shape) == 5 # [N, 1, D, H, W]
         
         self.obs_transform = env.observation_funcs[OBS_KEY].symmetry_transforms().to(self.device)
         self.hsc_transform = env.observation_funcs[self.terrain_key].symmetry_transforms().to(self.device)
         self.act_transform = env.action_manager.symmetry_transforms().to(self.device)
 
         actor_module = TensorDictSequential(
-            Mod(MixedEncoder(grid_map=use_grid_map), [OBS_KEY, self.terrain_key, "mask"], ["_actor_feature"]),
+            Mod(MixedEncoder(conv3d=conv3d), [OBS_KEY, self.terrain_key, "mask"], ["_actor_feature"]),
             Mod(Actor(self.action_dim), ["_actor_feature"], ["loc", "scale"]),
         )
         self.actor: ProbabilisticActor = ProbabilisticActor(
@@ -170,7 +169,7 @@ class PPOPolicy(TensorDictModuleBase):
         ).to(self.device)
         
         self.critic = TensorDictSequential(
-            Mod(MixedEncoder(grid_map=use_grid_map), [OBS_KEY, self.terrain_key, "mask"], ["_critic_feature"]),
+            Mod(MixedEncoder(conv3d=conv3d), [OBS_KEY, self.terrain_key, "mask"], ["_critic_feature"]),
             Mod(nn.LazyLinear(1), ["_critic_feature"], ["state_value"])
         ).to(self.device)
 
@@ -210,12 +209,12 @@ class PPOPolicy(TensorDictModuleBase):
         else:
             self.update_batch = self._update_batch
     
-    def make_tensordict_primer(self):
-        num_envs = self.observation_spec.shape[0]
-        spec = {
-            "base_height_targ": UnboundedContinuous((num_envs, 1), device=self.device),
-        }
-        return TensorDictPrimer(spec, reset_key="done", default_value=0.74)
+    # def make_tensordict_primer(self):
+    #     num_envs = self.observation_spec.shape[0]
+    #     spec = {
+    #         "base_height_targ": UnboundedContinuous((num_envs, 1), device=self.device),
+    #     }
+    #     return TensorDictPrimer(spec, reset_key="done", default_value=0.74)
     
     def get_rollout_policy(self, mode: str="train"):
         policy = TensorDictSequential(self.actor)
@@ -305,7 +304,7 @@ class PPOPolicy(TensorDictModuleBase):
         symmetry[OBS_KEY] = self.obs_transform(tensordict[OBS_KEY])
         symmetry[ACTION_KEY] = self.act_transform(tensordict[ACTION_KEY])
         symmetry[self.terrain_key] = self.hsc_transform(tensordict[self.terrain_key])
-        symmetry["sample_log_prob"] = tensordict["sample_log_prob"]
+        symmetry["action_log_prob"] = tensordict["action_log_prob"]
         symmetry["is_init"] = tensordict["is_init"]
         symmetry["adv"] = tensordict["adv"]
         symmetry["ret"] = tensordict["ret"]
@@ -316,7 +315,7 @@ class PPOPolicy(TensorDictModuleBase):
         entropy = dist.entropy().mean()
 
         adv = tensordict["adv"]
-        log_ratio = (log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
+        log_ratio = (log_probs - tensordict["action_log_prob"]).unsqueeze(-1)
         ratio = torch.exp(log_ratio)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
