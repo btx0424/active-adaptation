@@ -159,6 +159,7 @@ def main(cfg: DictConfig):
         info["env_frames"] = env_frames * aa.get_world_size()
         info["performance/rollout_fps"] = data.numel() / rollout_time * aa.get_world_size()
         info["performance/training_time"] = training_time
+        info["performance/iter_time"] = (time.perf_counter() - rollout_start)
         
         if should_save(i):
             save(policy, f"checkpoint_{i}")
