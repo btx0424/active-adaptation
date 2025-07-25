@@ -25,7 +25,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as D
-import torch.distributed as distr
 import warnings
 import functools
 
@@ -45,12 +44,15 @@ from dataclasses import dataclass, field
 from typing import Union, Tuple
 from collections import OrderedDict
 
-import active_adaptation
 from ..utils.valuenorm import ValueNorm1, ValueNormFake
 from ..modules.distributions import IndependentNormal
 from .common import *
 
 torch.set_float32_matmul_precision('high')
+
+import active_adaptation
+import torch.distributed as distr
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 @dataclass
 class PPOConfig:
@@ -65,6 +67,7 @@ class PPOConfig:
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
     compile: bool = False
+    use_ddp: bool = True
 
     checkpoint_path: Union[str, None] = None
     in_keys: Tuple[str] = (OBS_KEY, "height_scan", "grid_map_", "base_height", "base_height_targ")
@@ -198,13 +201,17 @@ class PPOPolicy(TensorDictModuleBase):
                 world_size=active_adaptation.get_world_size(),
                 rank=active_adaptation.get_local_rank()
             )
-            for param in self.actor.parameters():
-                distr.broadcast(param, src=0)
-            for param in self.critic.parameters():
-                distr.broadcast(param, src=0)
             self.world_size = active_adaptation.get_world_size()
+            if self.cfg.use_ddp:
+                self.actor = DDP(self.actor)
+                self.critic = DDP(self.critic)
+            else:
+                for param in self.actor.parameters():
+                    distr.broadcast(param, src=0)
+                for param in self.critic.parameters():
+                    distr.broadcast(param, src=0)
 
-        if self.cfg.compile:
+        if self.cfg.compile and not active_adaptation.is_distributed():
             self.update_batch = torch.compile(self._update_batch)
         else:
             self.update_batch = self._update_batch
@@ -310,12 +317,16 @@ class PPOPolicy(TensorDictModuleBase):
         symmetry["ret"] = tensordict["ret"]
         tensordict = torch.cat([tensordict.select(*symmetry.keys(True, True)), symmetry], dim=0)
 
-        dist = self.actor.get_dist(tensordict)
-        log_probs = dist.log_prob(tensordict[ACTION_KEY])
+        action_data = tensordict[ACTION_KEY]
+        log_probs_data = tensordict["action_log_prob"]
+        self.actor(tensordict)
+        dist = IndependentNormal(tensordict["loc"], tensordict["scale"])
+        # dist = self.actor.get_dist(tensordict)
+        log_probs = dist.log_prob(action_data)
         entropy = dist.entropy().mean()
 
         adv = tensordict["adv"]
-        log_ratio = (log_probs - tensordict["action_log_prob"]).unsqueeze(-1)
+        log_ratio = (log_probs - log_probs_data).unsqueeze(-1)
         ratio = torch.exp(log_ratio)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
@@ -331,7 +342,7 @@ class PPOPolicy(TensorDictModuleBase):
         self.opt.zero_grad()
         loss.backward()
 
-        if active_adaptation.is_distributed():
+        if active_adaptation.is_distributed() and not self.cfg.use_ddp:
             for param in self.actor.parameters():
                 distr.all_reduce(param.grad, op=distr.ReduceOp.SUM)
                 param.grad /= self.world_size
@@ -346,10 +357,7 @@ class PPOPolicy(TensorDictModuleBase):
         with torch.no_grad():
             explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
             clipfrac = ((ratio - 1.0).abs() > self.clip_param).float().mean()
-            symmetry_loss = F.mse_loss(
-                self.actor.get_dist(symmetry).mean, 
-                self.act_transform(dist.mean[:bsize].detach())
-            )
+            symmetry_loss = F.mse_loss(dist.mean[bsize:], self.act_transform(dist.mean[:bsize]))
         return {
             "actor/policy_loss": policy_loss.detach(),
             "actor/entropy": entropy.detach(),
@@ -364,6 +372,8 @@ class PPOPolicy(TensorDictModuleBase):
     def state_dict(self):
         state_dict = OrderedDict()
         for name, module in self.named_children():
+            if isinstance(module, DDP):
+                module = module.module
             state_dict[name] = module.state_dict()
         return state_dict
     
@@ -373,6 +383,8 @@ class PPOPolicy(TensorDictModuleBase):
         for name, module in self.named_children():
             _state_dict = state_dict.get(name, {})
             try:
+                if isinstance(module, DDP):
+                    module = module.module
                 module.load_state_dict(_state_dict, strict=strict)
                 succeed_keys.append(name)
             except Exception as e:
