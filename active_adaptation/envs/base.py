@@ -450,7 +450,6 @@ class _Env(EnvBase):
         if self.backend == "isaac":
             bshape = pos.shape[:-1]
             ray_starts = pos.clone().reshape(-1, 3)
-            ray_starts[:, 2] = 10.
             ray_directions = torch.tensor([0., 0., -1.], device=self.device)
             ray_hits = raycast_mesh(
                 ray_starts=ray_starts.reshape(-1, 3),
@@ -460,7 +459,7 @@ class _Env(EnvBase):
                 return_distance=False,
             )[0]
             ray_distance = (ray_hits - ray_starts).norm(dim=-1).nan_to_num(posinf=100.)
-            return (10. - ray_distance).reshape(*bshape)
+            return (ray_starts[:, 2] - ray_distance).reshape(*bshape)
         elif self.backend == "mujoco":
             return torch.zeros(pos.shape[:-1], device=self.device)
     
