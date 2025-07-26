@@ -3,6 +3,7 @@ import numpy as np
 import hydra
 import inspect
 import re
+import warp as wp
 
 from tensordict.tensordict import TensorDictBase, TensorDict
 from torchrl.envs import EnvBase
@@ -439,12 +440,17 @@ class _Env(EnvBase):
     
     @property
     def ground_mesh(self):
-        if self.backend == "isaac":
-            if self._ground_mesh is None:
+        if self._ground_mesh is not None:
+            if self.backend == "isaac":
                 self._ground_mesh = _initialize_warp_meshes("/World/ground", self.device.type)
-            return self._ground_mesh
-        else:
-            raise NotImplementedError
+            elif self.backend == "mujoco":
+                self._ground_mesh = wp.Mesh(
+                    points=wp.array(self.scene.ground_mesh.vertices, dtype=wp.vec3, device=self.device),
+                    indices=wp.array(self.scene.ground_mesh.faces, dtype=wp.int32, device=self.device),
+                )
+            else:
+                raise NotImplementedError
+        return self._ground_mesh
         
     def get_ground_height_at(self, pos: torch.Tensor) -> torch.Tensor:
         if self.backend == "isaac":
@@ -513,10 +519,6 @@ class _Env(EnvBase):
                 self.sim.clear_instance()
                 # update closing status
             super().close()
-
-    def dump(self):
-        if self.backend == "mujoco":
-            self.scene.close()
 
 
 class RewardGroup:

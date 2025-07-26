@@ -4,13 +4,16 @@ import mujoco
 import mujoco.viewer
 import time
 import warnings
+import trimesh
+
 from pathlib import Path
-from typing import Sequence, Union, Any, Dict
+from typing import Sequence, Union, Any, Dict, Optional
 from dataclasses import dataclass, replace
 
 from isaaclab.utils import string as string_utils
 from scipy.spatial.transform import Rotation as sRot
 
+import active_adaptation
 from active_adaptation.envs.base import _Env
 from active_adaptation.utils.math import quat_rotate_inverse, quat_rotate
 from tensordict import TensorClass
@@ -28,6 +31,12 @@ class MJArticulationCfg:
     joint_names_isaac: Sequence[str]
     joint_symmetry_mapping: Dict=None
     spatial_symmetry_mapping: Dict=None
+
+
+@dataclass
+class MjTerrainCfg:
+    # type: str = "plane" # "plane" or "mjcf"
+    mjcf_path: Optional[str] = None
 
 
 @dataclass
@@ -103,10 +112,13 @@ class MJArticulation:
 
     def __init__(self, cfg: MJArticulationCfg):
         self.cfg = cfg
-        self.mj_model = mujoco.MjModel.from_xml_path(cfg.mjcf_path)
-        self.mj_data = mujoco.MjData(self.mj_model)
+        self.spec = mujoco.MjSpec.from_file(cfg.mjcf_path)
+    
+    def _initialize(self, mj_model: mujoco.MjModel, mj_data: mujoco.MjData):
+        self.mj_model = mj_model
+        self.mj_data = mj_data
         
-        self.body_names_isaac = list(cfg.body_names_isaac)
+        self.body_names_isaac = list(self.cfg.body_names_isaac)
         self.body_names_mjc = []
         body_adrs = []
         for i in range(1, self.mj_model.nbody): # skip the world body
@@ -123,7 +135,7 @@ class MJArticulation:
             )
 
         # find only the actuated joints
-        self.joint_names_isaac = list(cfg.joint_names_isaac)
+        self.joint_names_isaac = list(self.cfg.joint_names_isaac)
         self.joint_names_mjc = []
 
         joint_qposadr = []
@@ -185,7 +197,7 @@ class MJArticulation:
         self._data = MJArticulationData(
             default_joint_pos=default_joint_pos[None],
             default_joint_vel=default_joint_vel[None],
-            default_root_state=torch.tensor([[*cfg.init_state["pos"], 1., 0., 0., 0.]]),
+            default_root_state=torch.tensor([[*self.cfg.init_state["pos"], 1., 0., 0., 0.]]),
             default_mass=torch.as_tensor(self.mj_model.body_mass[self.body_adrs], dtype=torch.float32)[None],
             default_inertia=diag_inertia.diag_embed().flatten(1)[None],
             joint_stiffness=joint_stiffness[None],
@@ -357,6 +369,8 @@ class MjContactData:
 class MjContactSensor:
     def __init__(self, articulation: MJArticulation):
         self.articulation = articulation
+    
+    def _initialize(self):
         self.body_names = self.articulation.body_names
         self.body_adrs_read = self.articulation.body_adrs_read
         self._data = MjContactData(
@@ -380,18 +394,44 @@ class MJScene:
 
     def __init__(self, cfg):
         self.cfg = cfg
-        self.articulations = {}
+        self.articulations: dict[str, MJArticulation] = {}
         self.sensors = {}
         
+        self.spec = mujoco.MjSpec()
+        frame = self.spec.worldbody.add_frame()
+        ground_meshes = []
+
         for asset_name, asset_cfg in self.cfg.__dict__.items():
             print(asset_name, asset_cfg)
             if isinstance(asset_cfg, MJArticulationCfg):
                 articulation = MJArticulation(asset_cfg)
-                articulation.setup_logger(asset_name)
                 self.articulations[asset_name] = articulation
+                self.spec.attach(articulation.spec, frame=frame)
             elif isinstance(asset_cfg, str):
                 sensor = MjContactSensor(self.articulations[asset_cfg])
                 self.sensors[asset_name] = sensor
+            elif isinstance(asset_cfg, MjTerrainCfg):
+                terrain_spec = mujoco.MjSpec.from_file(asset_cfg.mjcf_path)
+                geom = terrain_spec.worldbody.first_geom()
+                while geom is not None:
+                    if geom.type == mujoco.mjtGeom.mjGEOM_MESH:
+                        mjc_mesh = [mesh for mesh in terrain_spec.meshes if mesh.name == geom.meshname][0]
+                        mesh = trimesh.Trimesh(vertices=mjc_mesh.uservert, faces=mjc_mesh.userface)
+                    elif geom.type == mujoco.mjtGeom.mjGEOM_PLANE:
+                        mesh = trimesh.creation.box(extents=[100, 100, 0.1])
+                        mesh.apply_translation([0, 0, -0.05])
+                    ground_meshes.append(mesh)
+                    geom = terrain_spec.worldbody.next_geom(geom)
+                self.spec.attach(terrain_spec, frame=frame)
+
+        self.mj_model = self.spec.compile()
+        self.mj_data = mujoco.MjData(self.mj_model)
+        self.ground_mesh = trimesh.util.concatenate(ground_meshes)
+
+        for articulation in self.articulations.values():
+            articulation._initialize(self.mj_model, self.mj_data)
+        for sensor in self.sensors.values():
+            sensor._initialize()
 
         self.viewer = mujoco.viewer.launch_passive(self.articulations["robot"].mj_model, self.articulations["robot"].mj_data)
         self.viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
@@ -446,13 +486,6 @@ class MJScene:
             rgba=np.array(rgba, dtype=np.float64),
         )
         return MjvGeom(scene.geoms[scene.ngeom - 1])
-
-
-    def close(self):
-        for articulation in self.articulations.values():
-            path = articulation._log_path
-            states = torch.stack(articulation._log_states)
-            torch.save(states.__dict__, path)
 
 
 class MJSim:

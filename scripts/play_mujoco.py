@@ -83,7 +83,6 @@ def main(cfg):
             except KeyboardInterrupt:
                 break
     
-    env.dump()    
     env.close()
 
 

@@ -41,7 +41,7 @@ class SimpleEnv(_Env):
         from isaaclab.sensors import ContactSensorCfg
         from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
         from active_adaptation.assets import ROBOTS, get_asset_meta
-        from active_adaptation.envs.terrain import TERRAINS
+        from active_adaptation.envs.terrain import TERRAINS_ISAAC
         
         scene_cfg = InteractiveSceneCfg(num_envs=self.cfg.num_envs, env_spacing=2.5)
         scene_cfg.sky_light = AssetBaseCfg(
@@ -53,7 +53,7 @@ class SimpleEnv(_Env):
         )
         scene_cfg.robot = ROBOTS[self.cfg.robot.name]
         scene_cfg.robot.prim_path = "{ENV_REGEX_NS}/Robot"
-        scene_cfg.terrain = TERRAINS[self.cfg.terrain]
+        scene_cfg.terrain = TERRAINS_ISAAC[self.cfg.terrain]
         scene_cfg.contact_forces = ContactSensorCfg(
             prim_path="{ENV_REGEX_NS}/Robot/.*", 
             history_length=3,
@@ -118,11 +118,13 @@ class SimpleEnv(_Env):
     def setup_scene_mujoco(self):
         from active_adaptation.envs.mujoco import MJScene, MJSim
         from active_adaptation.assets_mjcf import ROBOTS
+        from active_adaptation.envs.terrain import TERRAINS_MUJOCO
 
         @configclass
         class SceneCfg:
             robot = ROBOTS[self.cfg.robot.name]
             contact_forces = "robot"
+            terrain = TERRAINS_MUJOCO[self.cfg.terrain]
         
         self.scene = MJScene(SceneCfg())
         self.sim = MJSim(self.scene)
