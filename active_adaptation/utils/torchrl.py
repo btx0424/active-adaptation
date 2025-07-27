@@ -23,16 +23,17 @@
 
 import torch
 import torch.nn as nn
+import copy
 import time
-from typing import Iterator
+from typing import Iterator, Optional, Callable
 
-from tensordict.nn import TensorDictModuleBase as ModBase
+from tensordict.tensordict import TensorDict, TensorDictBase
+from tensordict.nn import TensorDictModuleBase as ModBase, TensorDictParams
 from torchrl.envs.transforms import VecNorm
 from tensordict.tensordict import TensorDictBase
 from torchrl.collectors import SyncDataCollector as _SyncDataCollector
 from torchrl.collectors.utils import split_trajectories
 from torchrl.envs.utils import _replace_last, step_mdp
-from tensordict.tensordict import TensorDictBase
 
 
 class SyncDataCollector(_SyncDataCollector):
@@ -256,3 +257,49 @@ class ObsNorm(ModBase):
             locs=vecnorm.loc,
             scales=vecnorm.scale
         )
+
+
+class EnsembleModule(ModBase):
+    def __init__(self, module: ModBase, num_copies: int, init_: Optional[Callable]=None):
+        super().__init__()
+        self.in_keys = module.in_keys
+        self.out_keys = module.out_keys
+
+        if init_ is None:
+            def init_(m: nn.Module):
+                if hasattr(m, "reset_parameters"):
+                    m.reset_parameters()
+
+        modules = [copy.deepcopy(module).apply(init_) for _ in range(num_copies)]
+        params_td = TensorDict.from_modules(*modules)
+
+        self.module = module
+        self.vmapped_forward = torch.vmap(self._func_module_call, in_dims=(None, 0))
+        self.params_td = TensorDictParams(params_td)
+    
+    def _func_module_call(self, input, params: TensorDictParams):
+        with params.to_module(self.module):
+            return self.module(input)
+        
+    def forward(self, td: TensorDict) -> TensorDict:
+        td_out = self.vmapped_forward(td, self.params_td)
+        for k in self.out_keys:
+            tensor: torch.Tensor = td_out[k]
+            dims = tuple(range(tensor.ndim))
+            td[k] = tensor.permute(*dims[1:1+td.batch_dims], 0, *dims[1+td.batch_dims:])
+        return td
+
+
+class EnsembleCritic(EnsembleModule):
+    """
+    A special case of `EnsembleModule` where `module` is a critic whose output is of shape [*, 1].
+    The output of the ensemble critic is then [*, num_rewards].
+    """
+    def forward(self, td: TensorDict) -> TensorDict:
+        td_out = self.vmapped_forward(td, self.params_td)
+        for k in self.out_keys:
+            tensor: torch.Tensor = td_out[k]
+            dims = tuple(range(tensor.ndim))
+            td[k] = tensor.permute(*dims[1:1+td.batch_dims], 0, td.batch_dims+1).flatten(-2)
+        return td
+

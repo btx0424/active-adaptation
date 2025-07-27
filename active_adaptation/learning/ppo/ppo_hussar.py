@@ -53,6 +53,7 @@ torch.set_float32_matmul_precision('high')
 import active_adaptation
 import torch.distributed as distr
 from torch.nn.parallel import DistributedDataParallel as DDP
+from active_adaptation.utils.torchrl import EnsembleCritic
 
 @dataclass
 class PPOConfig:
@@ -66,6 +67,8 @@ class PPOConfig:
     entropy_coef: float = 0.003
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
+    multi_critic: bool = False
+    
     compile: bool = False
     use_ddp: bool = True
 
@@ -137,6 +140,7 @@ class PPOPolicy(TensorDictModuleBase):
         self.cfg = cfg
         self.device = device
         self.observation_spec = observation_spec
+        self.num_rewards = reward_spec["reward"].shape[-1]
 
         self.entropy_coef = self.cfg.entropy_coef
         self.max_grad_norm = 1.0
@@ -186,6 +190,9 @@ class PPOPolicy(TensorDictModuleBase):
         
         self.actor.apply(init_)
         self.critic.apply(init_)
+
+        if self.cfg.multi_critic:
+            self.critic = EnsembleCritic(self.critic, num_copies=self.num_rewards, init_=init_)
 
         if active_adaptation.is_distributed():
             distr.init_process_group(
@@ -290,7 +297,7 @@ class PPOPolicy(TensorDictModuleBase):
         values = tensordict["state_value"]
         next_values = tensordict["next", "state_value"]
 
-        rewards = tensordict[REWARD_KEY].sum(-1, keepdim=True).clamp_min(0.)
+        rewards = tensordict[REWARD_KEY]
         discount = tensordict["next", "discount"]
         terms = tensordict[TERM_KEY]
         dones = tensordict[DONE_KEY]
@@ -336,7 +343,8 @@ class PPOPolicy(TensorDictModuleBase):
         entropy_loss = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
-        values = self.critic(tensordict)["state_value"]
+        values = self.critic(tensordict)["state_value"].reshape(tensordict.shape + (self.num_rewards,))
+        assert values.shape == b_returns.shape
         value_loss = self.critic_loss_fn(b_returns, values)
         value_loss = (value_loss * (~tensordict["is_init"])).mean()
         
