@@ -5,6 +5,7 @@ import mujoco.viewer
 import time
 import warnings
 import trimesh
+import coacd
 
 from pathlib import Path
 from typing import Sequence, Union, Any, Dict, Optional
@@ -49,6 +50,7 @@ class MJArticulationData:
     
     joint_stiffness: ArrayType = None
     joint_damping: ArrayType = None
+    joint_pos_limits: ArrayType = None
 
     body_pos_w: ArrayType = None
     body_quat_w: ArrayType = None
@@ -137,6 +139,7 @@ class MJArticulation:
         # find only the actuated joints
         self.joint_names_isaac = list(self.cfg.joint_names_isaac)
         self.joint_names_mjc = []
+        self.joint_pos_limits_mjc = []
 
         joint_qposadr = []
         joint_qveladr = []
@@ -146,6 +149,7 @@ class MJArticulation:
                 joint_id = actuator.trnid[0]
                 joint = self.mj_model.joint(actuator.trnid[0])
                 self.joint_names_mjc.append(joint.name)
+                self.joint_pos_limits_mjc.append(joint.range)
                 joint_qposadr.append(self.mj_model.jnt_qposadr[joint_id])
                 joint_qveladr.append(self.mj_model.jnt_dofadr[joint_id])
         
@@ -166,6 +170,8 @@ class MJArticulation:
         self.body_adrs = np.array(body_adrs)
         self.joint_qposadr = np.array(joint_qposadr)
         self.joint_qveladr = np.array(joint_qveladr)
+        self.joint_pos_limits_mjc = np.array(self.joint_pos_limits_mjc)
+        self.joint_pos_limits = self.joint_pos_limits_mjc[self._jnt_mjc2isaac]
         
         # read/write mujoco data in isaac order
         self.body_adrs_read = self.body_adrs[self._body_mjc2isaac]
@@ -202,6 +208,7 @@ class MJArticulation:
             default_inertia=diag_inertia.diag_embed().flatten(1)[None],
             joint_stiffness=joint_stiffness[None],
             joint_damping=joint_damping[None],
+            joint_pos_limits=self.joint_pos_limits[None],
             applied_torque=torch.zeros(1, self.num_joints),
             # batch_size=[1]
         )
@@ -412,16 +419,33 @@ class MJScene:
                 self.sensors[asset_name] = sensor
             elif isinstance(asset_cfg, MjTerrainCfg):
                 terrain_spec = mujoco.MjSpec.from_file(asset_cfg.mjcf_path)
-                geom = terrain_spec.worldbody.first_geom()
-                while geom is not None:
+                geoms = terrain_spec.worldbody.find_all(mujoco.mjtObj.mjOBJ_GEOM)
+                for geom in geoms:
                     if geom.type == mujoco.mjtGeom.mjGEOM_MESH:
+                        # make the geom visual only
+                        # geom.contype = 0
+                        # geom.conaffinity = 0
                         mjc_mesh = [mesh for mesh in terrain_spec.meshes if mesh.name == geom.meshname][0]
-                        mesh = trimesh.Trimesh(vertices=mjc_mesh.uservert, faces=mjc_mesh.userface)
+                        mesh = trimesh.load(str(Path(asset_cfg.mjcf_path).parent / terrain_spec.meshdir / mjc_mesh.file))
+                        # parts = coacd.run_coacd(coacd.Mesh(mesh.vertices, mesh.faces), threshold=0.01)
+                        # for i, (vertices, faces) in enumerate(parts):
+                        #     submesh = terrain_spec.add_mesh(
+                        #         name=f"{geom.meshname}-part-{i}",
+                        #         uservert=vertices.flatten(),
+                        #         userface=faces.flatten(),
+                        #         scale=mjc_mesh.scale,
+                        #     )
+                        #     submesh.scale = mjc_mesh.scale
+                        #     terrain_spec.worldbody.add_geom(
+                        #         type=mujoco.mjtGeom.mjGEOM_MESH,
+                        #         meshname=f"{geom.meshname}-part-{i}",
+                        #         pos=geom.pos,
+                        #         quat=geom.quat,
+                        #     )
                     elif geom.type == mujoco.mjtGeom.mjGEOM_PLANE:
                         mesh = trimesh.creation.box(extents=[100, 100, 0.1])
                         mesh.apply_translation([0, 0, -0.05])
                     ground_meshes.append(mesh)
-                    geom = terrain_spec.worldbody.next_geom(geom)
                 self.spec.attach(terrain_spec, frame=frame)
 
         self.mj_model = self.spec.compile()

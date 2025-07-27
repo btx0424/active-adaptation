@@ -21,13 +21,13 @@ import time
 import active_adaptation
 import active_adaptation.envs.mdp as mdp
 import active_adaptation.utils.symmetry as symmetry_utils
+from isaaclab.utils.warp import convert_to_warp_mesh, raycast_mesh
 
 if active_adaptation.get_backend() == "isaac":
     import isaacsim.core.utils.torch as torch_utils
     import isaaclab.sim as sim_utils
     from isaaclab.terrains.trimesh.utils import make_plane
     from isaaclab.scene import InteractiveScene
-    from isaaclab.utils.warp import convert_to_warp_mesh, raycast_mesh
     from pxr import UsdGeom, UsdPhysics
 
 
@@ -440,34 +440,31 @@ class _Env(EnvBase):
     
     @property
     def ground_mesh(self):
-        if self._ground_mesh is not None:
+        if self._ground_mesh is None:
             if self.backend == "isaac":
                 self._ground_mesh = _initialize_warp_meshes("/World/ground", self.device.type)
             elif self.backend == "mujoco":
                 self._ground_mesh = wp.Mesh(
-                    points=wp.array(self.scene.ground_mesh.vertices, dtype=wp.vec3, device=self.device),
-                    indices=wp.array(self.scene.ground_mesh.faces, dtype=wp.int32, device=self.device),
+                    points=wp.array(self.scene.ground_mesh.vertices, dtype=wp.vec3, device=self.device.type),
+                    indices=wp.array(self.scene.ground_mesh.faces.flatten(), dtype=wp.int32, device=self.device.type),
                 )
             else:
                 raise NotImplementedError
         return self._ground_mesh
         
     def get_ground_height_at(self, pos: torch.Tensor) -> torch.Tensor:
-        if self.backend == "isaac":
-            bshape = pos.shape[:-1]
-            ray_starts = pos.clone().reshape(-1, 3)
-            ray_directions = torch.tensor([0., 0., -1.], device=self.device)
-            ray_hits = raycast_mesh(
-                ray_starts=ray_starts.reshape(-1, 3),
-                ray_directions=ray_directions.expand(bshape.numel(), 3),
-                max_dist=100.,
-                mesh=self.ground_mesh,
-                return_distance=False,
-            )[0]
-            ray_distance = (ray_hits - ray_starts).norm(dim=-1).nan_to_num(posinf=100.)
-            return (ray_starts[:, 2] - ray_distance).reshape(*bshape)
-        elif self.backend == "mujoco":
-            return torch.zeros(pos.shape[:-1], device=self.device)
+        bshape = pos.shape[:-1]
+        ray_starts = pos.reshape(-1, 3)
+        ray_directions = torch.tensor([0., 0., -1.], device=self.device)
+        ray_hits = raycast_mesh(
+            ray_starts=ray_starts.reshape(-1, 3),
+            ray_directions=ray_directions.expand(bshape.numel(), 3),
+            max_dist=100.,
+            mesh=self.ground_mesh,
+            return_distance=False,
+        )[0]
+        ray_distance = (ray_hits - ray_starts).norm(dim=-1).nan_to_num(posinf=100.)
+        return (ray_starts[:, 2] - ray_distance).to(pos.device).reshape(*bshape)
     
     def _set_seed(self, seed: int = -1):
         if self.backend == "isaac":

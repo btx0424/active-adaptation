@@ -17,7 +17,6 @@ from isaaclab.utils.math import (
 
 from .helpers import batchify
 
-@torch.jit.script
 def quat_rotate(quat: torch.Tensor, vec: torch.Tensor):
     """Apply a quaternion rotation to a vector.
 
@@ -33,7 +32,6 @@ def quat_rotate(quat: torch.Tensor, vec: torch.Tensor):
     return (vec + quat[..., 0:1] * t + xyz.cross(t, dim=-1))
 
 
-@torch.jit.script
 def quat_rotate_inverse(quat: torch.Tensor, vec: torch.Tensor):
     """Apply an inverse quaternion rotation to a vector.
 
