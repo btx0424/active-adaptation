@@ -273,13 +273,14 @@ class EnsembleModule(ModBase):
         modules = [copy.deepcopy(module).apply(init_) for _ in range(num_copies)]
         params_td = TensorDict.from_modules(*modules)
 
-        self.module = module
+        self.module = (module,)
         self.vmapped_forward = torch.vmap(self._func_module_call, in_dims=(None, 0))
         self.params_td = TensorDictParams(params_td)
     
     def _func_module_call(self, input, params: TensorDictParams):
-        with params.to_module(self.module):
-            return self.module(input)
+        module = self.module[0]
+        with params.to_module(module):
+            return module(input)
         
     def forward(self, td: TensorDict) -> TensorDict:
         td_out = self.vmapped_forward(td, self.params_td)

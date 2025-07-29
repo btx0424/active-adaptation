@@ -203,7 +203,7 @@ class PPOPolicy(TensorDictModuleBase):
             self.world_size = active_adaptation.get_world_size()
             if self.cfg.use_ddp:
                 self.actor = DDP(self.actor)
-                self.critic = DDP(self.critic)
+                self.critic = DDP(self.critic, static_graph=True)
             else:
                 for param in self.actor.parameters():
                     distr.broadcast(param, src=0)
