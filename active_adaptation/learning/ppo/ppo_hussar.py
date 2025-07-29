@@ -353,7 +353,7 @@ class PPOPolicy(TensorDictModuleBase):
         entropy_loss = - self.entropy_coef * entropy
 
         b_returns = tensordict["ret"]
-        values = self.critic(tensordict)["state_value"].reshape(tensordict.shape + (self.num_rewards,))
+        values = self.critic(tensordict)["state_value"]
         assert values.shape == b_returns.shape
         value_loss = self.critic_loss_fn(b_returns, values)
         value_loss = (value_loss * (~tensordict["is_init"])).mean()
