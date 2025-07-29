@@ -140,6 +140,9 @@ class PPOPolicy(TensorDictModuleBase):
         self.cfg = cfg
         self.device = device
         self.observation_spec = observation_spec
+
+        # when multi_critic is False, aggregate (sum and clip) the rewards BEFORE computing the advantage
+        self.multi_critic = self.cfg.multi_critic
         self.num_rewards = reward_spec["reward"].shape[-1]
 
         self.entropy_coef = self.cfg.entropy_coef
@@ -251,8 +254,15 @@ class PPOPolicy(TensorDictModuleBase):
         # self.compute_custom_reward(tensordict)
 
         infos = []
-        self._compute_advantage(tensordict, self.critic, "adv", "ret", update_value_norm=True)
-        tensordict["adv"] = normalize(tensordict["adv"], subtract_mean=True)
+        if self.multi_critic:
+            # aggregate the rewards AFTER computing the advantage
+            self._compute_advantage(tensordict, self.critic, "adv", "ret")
+            tensordict["adv"] = normalize(tensordict["adv"].sum(-1, True), subtract_mean=True)
+        else:
+            # aggregate the rewards BEFORE computing the advantage
+            tensordict[REWARD_KEY] = tensordict[REWARD_KEY].sum(-1, True).clip(min=0.)
+            self._compute_advantage(tensordict, self.critic, "adv", "ret")
+            tensordict["adv"] = normalize(tensordict["adv"], subtract_mean=True)
 
         for epoch in range(self.cfg.ppo_epochs):
             batch = make_batch(tensordict, self.cfg.num_minibatches)

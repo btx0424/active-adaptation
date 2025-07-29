@@ -10,6 +10,9 @@ _WORLD_SIZE = os.getenv("WORLD_SIZE", "1")
 _WORLD_SIZE = int(_WORLD_SIZE)
 _MAIN_PROCESS = _LOCAL_RANK == 0
 
+_OMP_NUM_THREADS = os.getenv("OMP_NUM_THREADS", "1")
+_OMP_NUM_THREADS = int(_OMP_NUM_THREADS)
+
 
 def is_main_process():
     return _MAIN_PROCESS
@@ -33,6 +36,10 @@ def _ranked_print(*args, **kwargs):
 # Override builtins.print for global effect
 if is_distributed():
     builtins.print = _ranked_print
+
+if is_distributed() and _OMP_NUM_THREADS <= 1:
+    raise ValueError("Please set OMP_NUM_THREADS to a value greater than 1 when using distributed training.")
+
 
 ASSET_PATH = os.path.join(os.path.dirname(__file__), "assets")
 
