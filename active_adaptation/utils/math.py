@@ -52,9 +52,9 @@ def normalize(x: torch.Tensor):
 
 
 def clamp_norm(x: torch.Tensor, min: float=0., max: float=torch.inf):
-    x_norm = x.norm(dim=-1, keepdim=True).clamp(1e-6)
-    x = torch.where(x_norm < min, x / x_norm * min, x)
-    x = torch.where(x_norm > max, x / x_norm * max, x)
+    unit = x / (x_norm := x.norm(dim=-1, keepdim=True)).clamp(1e-6)
+    x = torch.where(x_norm < min, unit * min, x)
+    x = torch.where(x_norm > max, unit * max, x)
     return x
 
 def clamp_along(x: torch.Tensor, axis: torch.Tensor, min: float, max: float):

@@ -12,6 +12,9 @@ import os
 import datetime
 import termcolor
 
+import active_adaptation.learning
+
+
 @hydra.main(config_path="../cfg", config_name="eval", version_base=None)
 def main(cfg):
     OmegaConf.resolve(cfg)
