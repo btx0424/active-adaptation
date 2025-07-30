@@ -113,15 +113,16 @@ def main(cfg: DictConfig):
     def collect(carry):
         data = []
         torch.compiler.cudagraph_mark_step_begin() # for compiled policy
-        for _ in range(cfg.algo.train_every):
-            carry = rollout_policy(carry)
-            td, carry = env.step_and_maybe_reset(carry)
-            td["next"] = td["next"].exclude(*rollout_policy.in_keys)
+        with torch.autocast("cuda"):
+            for _ in range(cfg.algo.train_every):
+                carry = rollout_policy(carry)
+                td, carry = env.step_and_maybe_reset(carry)
+                td["next"] = td["next"].exclude(*rollout_policy.in_keys)
 
-            private_keys = [key for key in td.keys(True, True) if isinstance(key, str) and key.startswith('_')]
-            td = td.exclude(*private_keys)
-            
-            data.append(td.to(policy.device))
+                private_keys = [key for key in td.keys(True, True) if isinstance(key, str) and key.startswith('_')]
+                td = td.exclude(*private_keys)
+                
+                data.append(td.to(policy.device))
         data = torch.stack(data, dim=1)
         policy.critic(data)
         values = data["state_value"]
