@@ -12,6 +12,8 @@ import isaaclab.sim as sim_utils
 class TerrainGenerator(_TerrainGenerator):
     def __init__(self, cfg: TerrainGeneratorCfg, device: str = "cpu"):
         super().__init__(cfg, device)
+        self.num_cols = self.cfg.num_cols
+        self.num_rows = self.cfg.num_rows
         warnings.warn("Hacking TerrainGenerator. Check IsaacLab regularly for updates and compatibility.")
         
     def _generate_random_terrains(self):

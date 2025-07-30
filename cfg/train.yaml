@@ -18,7 +18,7 @@ total_frames: 150_000_000
 max_iters: -1
 eval_interval: -1
 eval_render: false
-save_interval: 150
+save_interval: 100
 render_interval: -1
 render_decimation: 4
 seed: 42
