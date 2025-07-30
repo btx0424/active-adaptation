@@ -128,7 +128,7 @@ class GRUModule(nn.Module):
 class PPOPolicy(ModBase):
     
     train_in_keys = [CMD_KEY, OBS_KEY, OBS_PRIV_KEY, ACTION_KEY, 
-                     "adv", "ret", "is_init", "sample_log_prob", ("next", "policy")]
+                     "adv", "ret", "is_init", "action_log_prob", ("next", "policy")]
     
     teacher_in_keys = [CMD_KEY, OBS_KEY, "priv_feature"]
     student_in_keys = [CMD_KEY, OBS_KEY, "priv_feature_est"]
@@ -433,7 +433,7 @@ class PPOPolicy(ModBase):
         symmetry["next", OBS_KEY] = self.obs_transform(tensordict["next", OBS_KEY])
         symmetry[OBS_PRIV_KEY] = self.priv_transform(tensordict[OBS_PRIV_KEY])
         symmetry[ACTION_KEY] = self.act_transform(tensordict[ACTION_KEY])
-        symmetry["sample_log_prob"] = tensordict["sample_log_prob"]
+        symmetry["action_log_prob"] = tensordict["action_log_prob"]
         symmetry["adv"] = tensordict["adv"]
         symmetry["ret"] = tensordict["ret"]
         symmetry["is_init"] = tensordict["is_init"]
@@ -447,7 +447,7 @@ class PPOPolicy(ModBase):
         entropy = dist.entropy().mean()
 
         adv = tensordict["adv"]
-        ratio = torch.exp(log_probs - tensordict["sample_log_prob"]).unsqueeze(-1)
+        ratio = torch.exp(log_probs - tensordict["action_log_prob"]).unsqueeze(-1)
         surr1 = adv * ratio
         surr2 = adv * ratio.clamp(1.-self.clip_param, 1.+self.clip_param)
         policy_loss = - torch.mean(torch.min(surr1, surr2))
