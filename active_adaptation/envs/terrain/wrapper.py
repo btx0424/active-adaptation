@@ -9,6 +9,7 @@ from isaaclab.terrains import (
 )
 import isaaclab.sim as sim_utils
 
+
 class TerrainGenerator(_TerrainGenerator):
     def __init__(self, cfg: TerrainGeneratorCfg, device: str = "cpu"):
         super().__init__(cfg, device)
