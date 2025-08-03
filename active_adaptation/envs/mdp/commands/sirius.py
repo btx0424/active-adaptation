@@ -9,7 +9,8 @@ from active_adaptation.utils.math import (
     wrap_to_pi,
     quat_rotate,
     quat_rotate_inverse,
-    yaw_quat
+    yaw_quat,
+    clamp_norm
 )
 from active_adaptation.envs.mdp import reward, termination
 from active_adaptation.envs.mdp.base import Observation, Reward
@@ -20,7 +21,7 @@ if TYPE_CHECKING:
 from .base import Command
 
 
-JUMP_PREPARE_TIME = 0.3
+JUMP_PREPARE_TIME = 0.4
 JUMP_LANDING_TIME = 0.3
 
 class SiriusCommand(TensorClass):
@@ -369,9 +370,9 @@ class SiriusCommandManager(Command):
     
     def sample_command_jump(self, size):
         command = SiriusCommand.zero(size, self.device)
-        command.cmd_lin_vel[:, 0] = self._command.cmd_lin_vel[:, 0] * 0.8
+        command.cmd_lin_vel[:] = clamp_norm(self._command.cmd_lin_vel * torch.tensor([1., 0., 0.], device=self.device), min=0.6)
         command.des_rpy[:, 2] = self.asset.data.heading_w
-        command.duration.uniform_(0.9, 1.1)
+        command.duration.uniform_(0.9, 1.2)
         command.des_height[:] = 0.45
         command.mode[:] = self.CMD_JUMP
         return command
@@ -391,8 +392,15 @@ class SiriusCommandManager(Command):
             )
 
             self.env.debug_draw.vector(
-                self.asset.data.root_pos_w,
-                quat_rotate(quat, torch.tensor([0., 0., 1.], device=self.device).expand(self.num_envs, 3))
+                self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
+                quat_rotate(quat, self._command.cmd_lin_vel),
+                color=(1., 1., 1., 1.)
+            )
+
+            self.env.debug_draw.vector(
+                self.asset.data.root_pos_w + torch.tensor([0., 0., 0.2], device=self.device),
+                self.asset.data.root_lin_vel_w,
+                color=(1., 0., 0., 1.)
             )
 
             des_height = self.des_height
@@ -442,6 +450,7 @@ class sirius_base_height(Reward[SiriusCommandManager]):
         self.hind_hip_ids = self.asset.find_bodies("[L,R]H_hip")[0]
 
     def compute(self) -> torch.Tensor:
+        is_active = self.command_manager._command.mode == self.command_manager.CMD_WALK
         fore_height = self.asset.data.body_pos_w[:, self.fore_hip_ids, 2].mean(dim=1)
         hind_height = self.asset.data.body_pos_w[:, self.hind_hip_ids, 2].mean(dim=1)
         des_height = self.command_manager._command.des_height
@@ -449,7 +458,7 @@ class sirius_base_height(Reward[SiriusCommandManager]):
             torch.exp( - (fore_height - des_height[:, 0]).square() / 0.1)
             + torch.exp( - (hind_height - des_height[:, 1]).square() / 0.1)
         )
-        return rew.reshape(self.num_envs, 1)
+        return rew.reshape(self.num_envs, 1), is_active.reshape(self.num_envs, 1)
 
 
 class wheel_contact_direction(Reward[SiriusCommandManager]):
@@ -515,3 +524,44 @@ class sirius_joint_deviation(Reward[SiriusCommandManager]):
         joint_dev = (joint_pos - self.asset.data.default_joint_pos[:, self.joint_ids]).square().sum(1, True)
         return -joint_dev, is_active.reshape(self.num_envs, 1)
 
+
+class ground_impact(Reward[SiriusCommandManager]):
+    """
+    Penalize ground impact when landing from a jump.
+    """
+    def __init__(self, env, weight: float, enabled: bool = True):
+        super().__init__(env, weight, enabled)
+        self.asset = self.command_manager.asset
+        self.calf_ids = self.asset.find_bodies(".*hip")[0]
+        self.data = []
+        self.command_mode = []
+
+    def update(self):
+        self.data.append(self.asset.data.body_incoming_joint_wrench_b[0, :, :3].norm(dim=-1).cpu())
+        self.command_mode.append(self.command_manager._command.mode[0].cpu())
+
+    def compute(self) -> torch.Tensor:
+        if self.env.timestamp == 999:
+            import matplotlib.pyplot as plt
+            print(len(self.asset.body_names), self.asset.body_names)
+            data = torch.stack(self.data)
+            mode = torch.stack(self.command_mode)
+            fig, axes = plt.subplots(4, 5, figsize=(10, 8))
+            axes = axes.flatten()
+            for i, name in zip(range(data.shape[1]), self.asset.body_names):
+                ax = axes[i]
+                ax.set_title(name)
+                ax.plot(data[:, i])
+            axes[-1].plot(mode)
+            plt.show()
+
+        return torch.zeros(self.num_envs, 1, device=self.device)
+
+    def debug_draw(self):
+        body_pos_w = self.asset.data.body_pos_w[0, self.calf_ids]
+        incoming_joint_force_b = self.asset.data.body_incoming_joint_wrench_b[0, self.calf_ids, :3]
+        incoming_joint_force_w = quat_rotate(
+            self.asset.data.body_quat_w[0, self.calf_ids],
+            incoming_joint_force_b,
+        )
+        self.env.debug_draw.vector(body_pos_w, incoming_joint_force_w * 0.2, color=(1, 0, 0, 1))

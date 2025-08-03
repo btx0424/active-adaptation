@@ -19,9 +19,6 @@ import active_adaptation as aa
 from isaaclab.app import AppLauncher
 from active_adaptation.utils.torchrl import SyncDataCollector
 
-# local import
-from scripts.helpers import make_env_policy, EpisodeStats, evaluate
-
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
@@ -61,14 +58,8 @@ def main(cfg: DictConfig):
     run.save(cfg_save_path, policy="now")
     run.save(os.path.join(run.dir, "config.yaml"), policy="now")
 
+    from helpers import make_env_policy, EpisodeStats, evaluate
     env, policy, vecnorm = make_env_policy(cfg)
-
-    import inspect
-    import shutil
-    source_path = inspect.getfile(policy.__class__)
-    target_path = os.path.join(run.dir, source_path.split("/")[-1])
-    shutil.copy(source_path, target_path)
-    wandb.save(target_path, policy="now")
 
     frames_per_batch = env.num_envs * cfg.algo.train_every
     total_frames = cfg.get("total_frames", -1) // aa.get_world_size()

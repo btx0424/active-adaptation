@@ -17,6 +17,7 @@ from scipy.spatial.transform import Rotation as sRot
 import active_adaptation
 from active_adaptation.envs.base import _Env
 from active_adaptation.utils.math import quat_rotate_inverse, quat_rotate
+from active_adaptation.utils.timerfd import Timer
 from tensordict import TensorClass
 
 
@@ -520,7 +521,8 @@ class MJSim:
         self.scene = scene
         self.mj_model = scene.mj_model
         self.mj_data = scene.mj_data
-    
+        self.timer = Timer(self.get_physics_dt())
+
     def render(self):
         self.scene.viewer.sync()
 
@@ -533,7 +535,7 @@ class MJSim:
     def step(self, render: bool=False):
         mujoco.mj_step(self.mj_model, self.mj_data)
         mujoco.mj_rnePostConstraint(self.mj_model, self.mj_data)
-        time.sleep(self.get_physics_dt())
+        self.timer.sleep()
 
 
 class MjvGeom:
