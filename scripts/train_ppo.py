@@ -147,7 +147,6 @@ def main(cfg: DictConfig):
             for k, v in sorted(episode_stats.pop().items(True, True)):
                 key = "train/" + ("/".join(k) if isinstance(k, tuple) else k)
                 info[key] = torch.mean(v.float()).item()
-        
         training_start = time.perf_counter()
         info.update(policy.train_op(data))
         training_time = time.perf_counter() - training_start
