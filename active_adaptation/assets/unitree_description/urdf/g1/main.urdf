@@ -189,45 +189,9 @@
             </material>
         </visual>
         <collision>
-            <origin xyz="0.075 -0.026 -0.025" rpy="0 1.5708 0"/>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <cylinder radius="0.01" length="0.05"/>
-            </geometry>
-        </collision>
-        <collision>
-            <origin xyz="0.0395 -0.018 -0.025" rpy="0 -1.5708 0"/>
-            <geometry>
-                <cylinder radius="0.008" length="0.167"/>
-            </geometry>
-        </collision>
-        <collision>
-            <origin xyz="0.039 -0.01 -0.025" rpy="0 -1.5708 0"/>
-            <geometry>
-                <cylinder radius="0.01" length="0.182"/>
-            </geometry>
-        </collision>
-        <collision>
-            <origin xyz="0.039 0 -0.025" rpy="0 -1.5708 0"/>
-            <geometry>
-                <cylinder radius="0.01" length="0.186"/>
-            </geometry>
-        </collision>
-        <collision>
-            <origin xyz="0.039 0.01 -0.025" rpy="0 -1.5708 0"/>
-            <geometry>
-                <cylinder radius="0.01" length="0.182"/>
-            </geometry>
-        </collision>
-        <collision>
-            <origin xyz="0.0395 0.018 -0.025" rpy="0 -1.5708 0"/>
-            <geometry>
-                <cylinder radius="0.008" length="0.167"/>
-            </geometry>
-        </collision>
-        <collision>
-            <origin xyz="0.075 0.026 -0.025" rpy="0 1.5708 0"/>
-            <geometry>
-                <cylinder radius="0.01" length="0.05"/>
+                <mesh filename="/home/pjlab/active-adaptation/active_adaptation/assets/unitree_description/meshes/g1/left_ankle_roll_link.STL"/>
             </geometry>
         </collision>
     </link>
@@ -381,47 +345,12 @@
             </material>
         </visual>
         <collision>
-            <origin xyz="0.075 -0.026 -0.025" rpy="0 1.5708 0"/>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
             <geometry>
-                <cylinder radius="0.01" length="0.05"/>
+                <mesh filename="/home/pjlab/active-adaptation/active_adaptation/assets/unitree_description/meshes/g1/right_ankle_roll_link.STL"/>
             </geometry>
         </collision>
-        <collision>
-            <origin xyz="0.0395 -0.018 -0.025" rpy="0 -1.5708 0"/>
-            <geometry>
-                <cylinder radius="0.008" length="0.167"/>
-            </geometry>
-        </collision>
-        <collision>
-            <origin xyz="0.039 -0.01 -0.025" rpy="0 -1.5708 0"/>
-            <geometry>
-                <cylinder radius="0.01" length="0.182"/>
-            </geometry>
-        </collision>
-        <collision>
-            <origin xyz="0.039 0 -0.025" rpy="0 -1.5708 0"/>
-            <geometry>
-                <cylinder radius="0.01" length="0.186"/>
-            </geometry>
-        </collision>
-        <collision>
-            <origin xyz="0.039 0.01 -0.025" rpy="0 -1.5708 0"/>
-            <geometry>
-                <cylinder radius="0.01" length="0.182"/>
-            </geometry>
-        </collision>
-        <collision>
-            <origin xyz="0.0395 0.018 -0.025" rpy="0 -1.5708 0"/>
-            <geometry>
-                <cylinder radius="0.008" length="0.167"/>
-            </geometry>
-        </collision>
-        <collision>
-            <origin xyz="0.075 0.026 -0.025" rpy="0 1.5708 0"/>
-            <geometry>
-                <cylinder radius="0.01" length="0.05"/>
-            </geometry>
-        </collision>
+        
     </link>
     <joint name="right_ankle_roll_joint" type="revolute">
         <origin xyz="0 0 -0.017558" rpy="0 0 0"/>
@@ -495,27 +424,16 @@
             </material>
         </visual>
         <collision>
-            <origin xyz="0.005 0 0.22" rpy="1.5708 0 0"/>
+            <origin xyz="0.005 0 0.16" rpy="0 0 0"/>
             <geometry>
-                <cylinder radius="0.073" length="0.064"/>
+                <cylinder radius="0.1" length="0.26"/>
             </geometry>
         </collision>
-        <collision>
-            <origin xyz="0.005 0 0.13" rpy="1.5708 0 0"/>
-            <geometry>
-                <cylinder radius="0.07" length="0.056"/>
-            </geometry>
-        </collision>
-        <collision>
-            <origin xyz="0.005 0 0.06" rpy="1.5708 0 0"/>
-            <geometry>
-                <cylinder radius="0.065" length="0.04"/>
-            </geometry>
-        </collision>
+        
         <collision>
             <origin xyz="0.01 0 0.415" rpy="3.1416 0 0"/>
             <geometry>
-                <cylinder radius="0.068" length="0.01"/>
+                <sphere radius="0.08" length="0.15"/>
             </geometry>
         </collision>
     </link>
@@ -775,9 +693,9 @@
             </material>
         </visual>
         <collision>
-            <origin xyz="0.075 0 0" rpy="0 -1.5708 0"/>
+            <origin xyz="0.01 0 0" rpy="0 -1.5708 0"/>
             <geometry>
-                <cylinder radius="0.05" length="0.05"/>
+                <cylinder radius="0.035" length="0.05"/>
             </geometry>
         </collision>
     </link>
@@ -802,6 +720,12 @@
                 <color rgba="0.7 0.7 0.7 1"/>
             </material>
         </visual>
+        <collision>
+            <origin xyz="0.08 0.012 0" rpy="0 -1.5708 0"/>
+            <geometry>
+                <cylinder radius="0.04" length="0.12"/>
+            </geometry>
+        </collision>
     </link>
     <link name="right_shoulder_pitch_link">
         <inertial>
@@ -979,9 +903,9 @@
             </material>
         </visual>
         <collision>
-            <origin xyz="0.075 0 0" rpy="0 -1.5708 0"/>
+            <origin xyz="0.01 0 0" rpy="0 -1.5708 0"/>
             <geometry>
-                <cylinder radius="0.05" length="0.05"/>
+                <cylinder radius="0.035" length="0.05"/>
             </geometry>
         </collision>
     </link>
@@ -1006,6 +930,12 @@
                 <color rgba="0.7 0.7 0.7 1"/>
             </material>
         </visual>
+        <collision>
+            <origin xyz="0.08 0.012 0" rpy="0 -1.5708 0"/>
+            <geometry>
+                <cylinder radius="0.04" length="0.12"/>
+            </geometry>
+        </collision>
     </link>
 
     <link name="LL_FOOT">
