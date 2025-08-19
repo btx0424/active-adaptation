@@ -381,10 +381,8 @@ G1_23DOF_CFG = ArticulationCfg( # no wrist pitch and yaw
 
 
 G1_WAIST_UNLOCKED_CFG = ArticulationCfg( # no wrist pitch and yaw
-    spawn=sim_utils.UrdfFileCfg(
-        fix_base=False,
-        replace_cylinders_with_capsules=True,
-        asset_path=f"{ASSET_PATH}/unitree_description/urdf/g1/main.urdf",
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ASSET_PATH}/unitree_description/urdf/g1/main/main.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
@@ -399,9 +397,6 @@ G1_WAIST_UNLOCKED_CFG = ArticulationCfg( # no wrist pitch and yaw
             enabled_self_collisions=True, 
             solver_position_iteration_count=8,
             solver_velocity_iteration_count=4
-        ),
-        joint_drive=sim_utils.UrdfConverterCfg.JointDriveCfg(
-            gains=sim_utils.UrdfConverterCfg.JointDriveCfg.PDGainsCfg(stiffness=0, damping=0)
         ),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
