@@ -3,3 +3,5 @@ linuxfd
 shapely
 triangle
 ipdb
+setproctitle
+coacd
