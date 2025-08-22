@@ -56,11 +56,11 @@ class crash(Termination):
         return (undesired_contact & valid).reshape(self.num_envs, 1)
 
 class soft_contact(Termination):
-    def __init__(self, env, body_names: str):
+    def __init__(self, env, body_names: str, threshold: float):
         super().__init__(env)
         self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
         self.body_indices, self.body_names = self.contact_sensor.find_bodies(body_names)
-    
+        self.threshold = threshold
     def update(self):
         forces = self.contact_sensor.data.net_forces_w[:, self.body_indices].norm(dim=-1, keepdim=True)
         in_contact = (forces > 1.0).sum(dim=1)
@@ -69,6 +69,23 @@ class soft_contact(Termination):
     def compute(self, termination: torch.Tensor):
         return torch.zeros(self.num_envs, 1, device=self.env.device, dtype=bool)
     
+
+class force_contact(Termination):
+    def __init__(
+        self, 
+        env, 
+        body_names: str,
+        threshold: float
+    ):
+        super().__init__(env)
+        self.contact_sensor: ContactSensor = self.env.scene["contact_forces"]
+        self.body_indices, self.body_names = self.contact_sensor.find_bodies(body_names)
+        self.threshold = threshold
+    
+    def compute(self, termination: torch.Tensor):
+        forces = self.contact_sensor.data.net_forces_w[:, self.body_indices].norm(dim=-1)
+        in_contact = forces.sum(dim=1, keepdim=True) > self.threshold
+        return in_contact
 
 class fall_over(Termination):
     def __init__(
