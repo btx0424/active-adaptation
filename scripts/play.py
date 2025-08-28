@@ -34,6 +34,7 @@ def main(cfg):
         fake_input = env.observation_spec[0].rand().cpu()
         fake_input["is_init"] = torch.tensor(1, dtype=bool)
         fake_input["context_adapt_hx"] = torch.zeros(128)
+        fake_input["mask"] = torch.ones(1, dtype=bool)
         fake_input = fake_input.unsqueeze(0)
 
         def test(m, x):

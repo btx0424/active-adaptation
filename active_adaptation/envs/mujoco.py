@@ -447,7 +447,7 @@ class MJScene:
                         mesh = trimesh.creation.box(extents=[100, 100, 0.1])
                         mesh.apply_translation([0, 0, -0.05])
                     ground_meshes.append(mesh)
-                self.spec.attach(terrain_spec, frame=frame)
+                # self.spec.attach(terrain_spec, frame=frame)
 
         self.mj_model = self.spec.compile()
         self.mj_data = mujoco.MjData(self.mj_model)

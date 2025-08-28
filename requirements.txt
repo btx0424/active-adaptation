@@ -5,3 +5,5 @@ triangle
 ipdb
 setproctitle
 coacd
+onnxruntime
+onnxscript
