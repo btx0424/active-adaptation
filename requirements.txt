@@ -1,7 +1,7 @@
 mujoco
-linuxfd
 shapely
 triangle
 ipdb
 setproctitle
 coacd
+wandb==0.18.3
