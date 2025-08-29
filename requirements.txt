@@ -1,5 +1,4 @@
 mujoco
-linuxfd
 shapely
 triangle
 ipdb
@@ -7,3 +6,4 @@ setproctitle
 coacd
 onnxruntime
 onnxscript
+wandb==0.18.3
