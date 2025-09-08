@@ -1038,8 +1038,6 @@ class path_integrator(Observation):
                     color=(1., 0., 1., 1.)
                 )
 
-
-
 class prev_actions(Observation):
     def __init__(self, env, steps: int=1, flatten: bool=True, permute: bool=False):
         super().__init__(env)
