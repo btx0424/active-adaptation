@@ -2,6 +2,7 @@ import torch
 import inspect
 import abc
 import weakref
+from isaacsim import SimulationApp
 import carb
 import omni
 from typing import Tuple, TYPE_CHECKING, Generic, TypeVar
