@@ -394,7 +394,7 @@ G1_WAIST_UNLOCKED_CFG = ArticulationCfg( # no wrist pitch and yaw
             max_depenetration_velocity=1.0,
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=True, 
+            enabled_self_collisions=False, 
             solver_position_iteration_count=8,
             solver_velocity_iteration_count=4
         ),

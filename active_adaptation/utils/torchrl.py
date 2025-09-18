@@ -304,3 +304,48 @@ class EnsembleCritic(EnsembleModule):
             td[k] = tensor.permute(*dims[1:1+td.batch_dims], 0, td.batch_dims+1).flatten(-2)
         return td
 
+class PerEnvMultiHeadCritic(ModBase):
+
+    def __init__(self, base_critic: ModBase, num_env_groups: int, env_id_key: str = "env_id", out_key: str = "state_value", init_: Optional[Callable]=None):
+        super().__init__()
+        self.env_id_key = env_id_key
+        self.out_key = out_key
+        self.in_keys = base_critic.in_keys
+        self.out_keys = base_critic.out_keys
+
+        if init_ is None:
+            def init_(m: nn.Module):
+                if hasattr(m, "reset_parameters"):
+                    m.reset_parameters()
+
+        self.heads = nn.ModuleList([copy.deepcopy(base_critic).apply(init_) for _ in range(int(num_env_groups))])
+
+    def forward(self, td: TensorDict) -> TensorDict:
+        if self.env_id_key not in td.keys():
+            raise KeyError(f"Missing env id key '{self.env_id_key}' in TensorDict.")
+        env_bits = td.get(self.env_id_key).long()
+        env_bits = (env_bits > 0.5).long()
+        weights = torch.tensor([4, 2, 1], device=env_bits.device, dtype=env_bits.dtype)
+        env_ids = (env_bits * weights).sum(dim=-1).long()
+
+        all_vals = []
+        for head in self.heads:
+            td_tmp = td.clone(False)
+            td_tmp = head(td_tmp)
+            v = td_tmp.get(self.out_key)
+            if v is None:
+                raise KeyError(f"Base critic didn't set '{self.out_key}'.")
+            all_vals.append(v)            # [..., 1]
+        all_vals = torch.cat(all_vals, dim=-1)  # [..., G]
+
+        td.set(self.out_key + "_all", all_vals)
+
+        gather_idx = env_ids
+        while gather_idx.ndim < all_vals.ndim:
+            gather_idx = gather_idx.unsqueeze(-1)
+        picked = all_vals.gather(-1, gather_idx)
+        td.set(self.out_key, picked)
+        return td
+
+    def parameters_per_head(self):
+        return [list(h.parameters()) for h in self.heads]
