@@ -394,7 +394,7 @@ G1_WAIST_UNLOCKED_CFG = ArticulationCfg( # no wrist pitch and yaw
             max_depenetration_velocity=1.0,
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=True, 
+            enabled_self_collisions=False, 
             solver_position_iteration_count=8,
             solver_velocity_iteration_count=4
         ),
@@ -402,9 +402,12 @@ G1_WAIST_UNLOCKED_CFG = ArticulationCfg( # no wrist pitch and yaw
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 0.76),
         joint_pos={
-            ".*_hip_pitch_joint": -0.28,
-            ".*_knee_joint": 0.669,
-            ".*_ankle_pitch_joint": -0.363,
+            ".*_hip_pitch_joint": -0.1,
+            ".*_knee_joint": 0.3,
+            ".*_ankle_pitch_joint": -0.2,
+            # ".*_hip_pitch_joint": -0.28,
+            # ".*_knee_joint": 0.669,
+            # ".*_ankle_pitch_joint": -0.363,
             ".*_elbow_joint": 0.6,
             "left_shoulder_roll_joint": 0.2,
             "left_shoulder_pitch_joint": 0.2,
