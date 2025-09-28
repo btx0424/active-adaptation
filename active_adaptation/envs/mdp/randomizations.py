@@ -406,7 +406,7 @@ class JointFriction(Randomization):
 
 
 class reset_joint_states_uniform(Randomization):
-    def __init__(self, env, pos_ranges: Dict[str, tuple], rel: bool=False):
+    def __init__(self, env, pos_ranges: Dict[str, tuple], vel_ranges: Dict[str, tuple]=None, rel: bool=False):
         super().__init__(env)
         self.asset: Articulation = self.env.scene["robot"]
         self.rel = rel
@@ -415,6 +415,11 @@ class reset_joint_states_uniform(Randomization):
             dict(pos_ranges), self.asset.joint_names
         )
         self.pos_ranges = torch.as_tensor(self.pos_ranges, device=self.device).unbind(-1)
+        if vel_ranges is not None:
+            _, _, self.vel_ranges = string_utils.resolve_matching_names_values(
+                dict(vel_ranges), self.asset.joint_names
+            )
+            self.vel_ranges = torch.as_tensor(self.vel_ranges, device=self.device).unbind(-1)
         self.default_joint_pos = self.asset.data.default_joint_pos[:, self.joint_ids]
         self.default_joint_vel = self.asset.data.default_joint_vel[:, self.joint_ids]
         self.joint_limits = self.asset.data.joint_limits[0, self.joint_ids].unbind(-1)
@@ -424,7 +429,11 @@ class reset_joint_states_uniform(Randomization):
         init_pos = sample_uniform(shape, *self.pos_ranges, self.device)
         if self.rel:
             init_pos += self.default_joint_pos[env_ids]
-        init_vel = self.default_joint_vel[env_ids]
+        if self.vel_ranges is not None:
+            init_vel = sample_uniform(shape, *self.vel_ranges, self.device)
+        else:
+            init_vel = torch.zeros(shape, device=self.device)
+        init_vel += self.default_joint_vel[env_ids]
         self.asset.write_joint_state_to_sim(
             init_pos.clamp(*self.joint_limits), 
             init_vel, self.joint_ids, env_ids #.unsqueeze(1)
