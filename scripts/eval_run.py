@@ -101,7 +101,6 @@ def main():
             cfg["task"]["terrain"] = _cfg.task.terrain
         if args.command:
             cfg["task"]["command"] = _cfg.task.command
-    
     assert not (args.play and args.play_mujoco), "Cannot play and play_mujoco at the same time"
     if args.play:
         cfg["app"]["headless"] = False

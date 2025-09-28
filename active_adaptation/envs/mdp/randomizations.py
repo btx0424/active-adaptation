@@ -383,6 +383,65 @@ class perturb_body_mass(Randomization):
         self.asset.root_physx_view.set_masses(masses, indices)
         self.asset.root_physx_view.set_inertias(inertias, indices)
         assert torch.allclose(self.asset.root_physx_view.get_masses(), masses)
+        
+class perturb_body_com(Randomization):
+    def __init__(
+        self, env, body_names, pos_range = (-0.05, 0.05)
+    ):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+
+        self.body_ids, self.body_names = self.asset.find_bodies(body_names)
+        
+        self.pos_ranges = torch.tensor(pos_range)
+        print(self.body_names)
+
+    def startup(self):
+        logging.info(f"Randomize body CoM of {self.body_names} upon startup.")
+        rand_sample = torch.zeros(self.num_envs, len(self.body_ids), 3, device=self.device)
+        coms = self.asset.root_physx_view.get_coms().clone()
+        rand_sample[:, :, :] = uniform(
+            self.pos_ranges[0].expand_as(coms[:, self.body_ids, :3]),
+            self.pos_ranges[1].expand_as(coms[:, self.body_ids, :3])
+        )
+        rand_sample[:, :, 0] *= 0.5
+        coms[:, self.body_ids, :3] += rand_sample.to('cpu')
+        indices = torch.arange(self.asset.num_instances)
+        self.asset.root_physx_view.set_coms(coms, indices)
+        assert torch.allclose(self.asset.root_physx_view.get_coms(), coms)
+
+class push_by_setting_velocity(Randomization):
+    def __init__(self, env, velocity_range=(-0.5, 0.5), min_interval=200):
+        super().__init__(env)
+        self.asset: Articulation = self.env.scene["robot"]
+        self.default_mass_total = self.asset.root_physx_view.get_masses()[0].sum() * 9.81
+        self.velocity_range = velocity_range
+        self.min_interval = min_interval
+        
+        with torch.device(self.env.device):
+            self.last_push = torch.zeros(self.env.num_envs, 1)
+            self.push_velocity = torch.zeros(self.env.num_envs, 6)
+    
+    def reset(self, env_ids: torch.Tensor):
+        self.push_velocity[env_ids] = 0.
+        self.last_push[env_ids] = 0.
+    
+    def step(self, substep):
+        if substep == 0:
+            t = self.env.episode_length_buf.view(self.env.num_envs, 1)
+            i = torch.rand(self.env.num_envs, 1, device=self.env.device) < 0.02
+            i = i & ((t - self.last_push) > self.min_interval)
+            self.last_push = torch.where(i, t, self.last_push)
+            vel_w = self.asset.data.root_vel_w
+            push_velocity = torch.zeros_like(self.push_velocity)
+            push_velocity[:, 0].uniform_(*self.velocity_range) * 0.5
+            push_velocity[:, 1].uniform_(*self.velocity_range) * 0.5
+            push_velocity[:, 2].uniform_(*self.velocity_range) * 0.2
+            push_velocity[:, 3].uniform_(*self.velocity_range) * 0.52
+            push_velocity[:, 4].uniform_(*self.velocity_range) * 0.52
+            push_velocity[:, 5].uniform_(*self.velocity_range) * 0.78
+            self.push_velocity = torch.where(i, vel_w + push_velocity, vel_w)
+        self.asset.write_root_velocity_to_sim(self.push_velocity)
 
 
 class JointFriction(Randomization):

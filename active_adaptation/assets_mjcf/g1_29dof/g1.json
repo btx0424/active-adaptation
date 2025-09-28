@@ -3,7 +3,7 @@
         "pos": [
             0.0,
             0.0,
-            0.76
+            0.74
         ],
         "rot": [
             1.0,
@@ -22,9 +22,9 @@
             0.0
         ],
         "joint_pos": {
-            ".*_hip_pitch_joint": -0.28,
-            ".*_knee_joint": 0.669,
-            ".*_ankle_pitch_joint": -0.363,
+            ".*_hip_pitch_joint": -0.1,
+            ".*_knee_joint": 0.3,
+            ".*_ankle_pitch_joint": -0.2,
             ".*_elbow_joint": 0.6,
             "left_shoulder_roll_joint": 0.2,
             "left_shoulder_pitch_joint": 0.2,
