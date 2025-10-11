@@ -83,16 +83,32 @@ def make_conv(num_channels, activation=nn.LeakyReLU, kernel_sizes=3, flatten: bo
     return FlattenBatch(nn.Sequential(*layers), data_dim=3)
 
 
+# class FlattenBatch(nn.Module):
+#     def __init__(self, module, data_dim: int=1):
+#         super().__init__()
+#         self.module = module
+#         self.data_dim = data_dim
+
+#     def forward(self, input: torch.Tensor):
+#         batch_shape = input.shape[:-self.data_dim]
+#         output = self.module(input.flatten(0, len(batch_shape)-1))
+#         return output.unflatten(0, batch_shape)
+
 class FlattenBatch(nn.Module):
     def __init__(self, module, data_dim: int=1):
         super().__init__()
         self.module = module
         self.data_dim = data_dim
 
-    def forward(self, input: torch.Tensor):
-        batch_shape = input.shape[:-self.data_dim]
-        output = self.module(input.flatten(0, len(batch_shape)-1))
-        return output.unflatten(0, batch_shape)
+    def forward(self, *args: torch.Tensor):
+        batch_shape = args[0].shape[:-self.data_dim]
+        args_flattened = (arg.flatten(0, len(batch_shape)-1) for arg in args)
+        output_flattened = self.module(*args_flattened)
+        if isinstance(output_flattened, tuple):
+            output = tuple(arg.unflatten(0, batch_shape) for arg in output_flattened)
+        else:
+            output = output_flattened.unflatten(0, batch_shape)
+        return output
 
 
 def make_batch(tensordict: TensorDict, num_minibatches: int, seq_len: int = -1):

@@ -155,6 +155,16 @@ class IndependentNormal(D.Independent):
     @property
     def deterministic_sample(self):
         return self.base_dist.mean
+    
+    @staticmethod
+    def kl(q_loc, q_scale, p_loc, p_scale):
+        """Directly compute the KL divergence to save the overhead of class construction."""
+        return torch.sum(
+            torch.log(p_scale) - torch.log(q_scale)
+            + (torch.square(q_scale) + torch.square(p_loc - q_loc)) / (2.0 * torch.square(p_scale))
+            - 0.5,
+            axis=-1,
+        )
 
 
 class IndependentBeta(D.Independent):
