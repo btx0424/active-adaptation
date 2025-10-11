@@ -100,7 +100,7 @@ class MixedEncoder(nn.Module):
             nn.LazyLinear(256)
         )
         Z, X, Y = cnn_input_shape[-3:]
-        self.pos_emb = PositionEmbedding1D(embed_dim=32, seq_len=16)
+        self.pos_emb = PositionEmbedding1D(embed_dim=32, seq_len=25)
 
         if conv3d:
             cnn_cls = nn.LazyConv3d
@@ -130,7 +130,6 @@ class MixedEncoder(nn.Module):
 
     def forward(self, mlp_inp, cnn_inp, mask_cnn=None):
         # CNN input is [N, Z, X, Y]
-        
         cnn_feature = self.cnn_encoder(cnn_inp.float())
         cnn_feature = cnn_feature + self.pos_emb()
 
@@ -187,7 +186,6 @@ class PPOPolicy(TensorDictModuleBase):
         self.hsc_transform = env.observation_funcs[self.terrain_key].symmetry_transforms().to(self.device)
         self.act_transform = env.action_manager.symmetry_transforms().to(self.device)
         terrain_shape = observation_spec[self.terrain_key].shape[-3:]
-
         actor_module = TensorDictSequential(
             Mod(MixedEncoder(terrain_shape), [OBS_KEY, self.terrain_key, "mask"], ["_actor_feature"]),
             Mod(Actor(self.action_dim), ["_actor_feature"], ["loc", "scale"]),
@@ -301,31 +299,31 @@ class PPOPolicy(TensorDictModuleBase):
                         actor_lr = min(self.init_lr, actor_lr * 1.1)
                     self.opt.param_groups[0]["lr"] = actor_lr
         
-        with torch.no_grad(), torch.device(self.device):
-            a = self.critic(tensordict.replace(mask=torch.zeros(*tensordict.shape, 1)))
-            b = self.critic(tensordict.replace(mask=torch.ones(*tensordict.shape, 1)))
-            value_diff = F.mse_loss(a["state_value"], b["state_value"])
-            critic_feature_norm = b["_critic_feature"].norm(dim=-1, keepdim=True).mean()
-            a = self.actor(
-                tensordict.replace(mask=torch.zeros(*tensordict.shape, 1)))
-            b = self.actor(
-                tensordict.replace(mask=torch.ones(*tensordict.shape, 1)))
-            policy_diff = F.mse_loss(a["loc"], b["loc"])
-            actor_feature_norm = b["_actor_feature"].norm(dim=-1, keepdim=True).mean()
+        # with torch.no_grad(), torch.device(self.device):
+            # a = self.critic(tensordict.replace(mask=torch.zeros(*tensordict.shape, 1)))
+            # b = self.critic(tensordict.replace(mask=torch.ones(*tensordict.shape, 1)))
+            # value_diff = F.mse_loss(a["state_value"], b["state_value"])
+            # critic_feature_norm = b["_critic_feature"].norm(dim=-1, keepdim=True).mean()
+            # a = self.actor(
+            #     tensordict.replace(mask=torch.zeros(*tensordict.shape, 1)))
+            # b = self.actor(
+            #     tensordict.replace(mask=torch.ones(*tensordict.shape, 1)))
+            # policy_diff = F.mse_loss(a["loc"], b["loc"])
+            # actor_feature_norm = b["_actor_feature"].norm(dim=-1, keepdim=True).mean()
 
         out = {}
         for k, v in sorted(torch.stack(infos).items()):
             out[k] = v.detach().mean().item()
-        out["actor/feature_norm"] = actor_feature_norm.item()
-        out["actor/policy_diff"] = policy_diff.item()
+        # out["actor/feature_norm"] = actor_feature_norm.item()
+        # out["actor/policy_diff"] = policy_diff.item()
         out["actor/kl"] = kl.item()
         out["actor/lr"] = self.opt.param_groups[0]["lr"]
 
         out["critic/value_mean"] = tensordict["ret"].mean().item()
         out["critic/value_std"] = tensordict["ret"].std().item()
         out["critic/neg_rew_ratio"] = (tensordict[REWARD_KEY].sum(-1) <= 0.).float().mean().item()
-        out["critic/feature_norm"] = critic_feature_norm.item()
-        out["critic/value_diff"] = value_diff.item()
+        # out["critic/feature_norm"] = critic_feature_norm.item()
+        # out["critic/value_diff"] = value_diff.item()
         return out
 
     @torch.no_grad()

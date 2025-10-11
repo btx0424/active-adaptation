@@ -94,7 +94,7 @@ if active_adaptation.get_backend() == "isaac":
         else:
             raise RuntimeError("Simulation context already exists. Cannot create a new one.")
         scene = InteractiveScene(scene_cfg)
-        # add_skin_by_tiles(scene, scene_cfg, z_plane=-0.02, thickness=0.02, col_axis='y')
+        add_skin_by_tiles(scene, scene_cfg, z_plane=-0.02, thickness=0.02, col_axis='y')
         if builtins.ISAAC_LAUNCHED_FROM_TERMINAL is False:
             sim.reset()
         sim.step(render=sim.has_gui())
