@@ -282,13 +282,43 @@ class joint_pos_target(Observation):
         return joint_pos_target.reshape(self.num_envs, -1)
 
 
+# class root_angvel_b(Observation):
+#     def __init__(self, env, noise_std: float=0., yaw_only: bool=False):
+#         super().__init__(env)
+#         self.asset: Articulation = self.env.scene["robot"]
+#         self.noise_std = noise_std
+#         self.yaw_only = yaw_only
+#         self.update()
+    
+#     def update(self):
+#         if self.yaw_only:
+#             self.quat = yaw_quat(self.asset.data.root_quat_w)
+#         else:
+#             self.quat = self.asset.data.root_quat_w
+#         self.root_angvel_w = self.asset.data.root_ang_vel_w.clone()
+
+#     def compute(self) -> torch.Tensor:
+#         ang_vel_w = random_noise(self.root_angvel_w, self.noise_std) 
+#         ang_vel_b = quat_rotate_inverse(self.quat, ang_vel_w)
+#         return ang_vel_b.reshape(self.num_envs, -1)
+    
+#     def symmetry_transforms(self):
+#         # left-right symmetry: flip only roll and yaw
+#         transform = sym_utils.SymmetryTransform(perm=torch.arange(3), signs=[-1., 1., -1.])
+#         return transform
+
 class root_angvel_b(Observation):
-    def __init__(self, env, noise_std: float=0., yaw_only: bool=False):
+    def __init__(self, env, steps: int=1, noise_std: float=0., yaw_only: bool=False):
         super().__init__(env)
+        self.steps = steps
         self.asset: Articulation = self.env.scene["robot"]
         self.noise_std = noise_std
         self.yaw_only = yaw_only
+        self.buffer = torch.zeros((self.num_envs, steps, 3), device=self.device)
         self.update()
+    
+    def reset(self, env_ids):
+        self.buffer[env_ids] = 0.0
     
     def update(self):
         if self.yaw_only:
@@ -296,17 +326,18 @@ class root_angvel_b(Observation):
         else:
             self.quat = self.asset.data.root_quat_w
         self.root_angvel_w = self.asset.data.root_ang_vel_w.clone()
-
-    def compute(self) -> torch.Tensor:
         ang_vel_w = random_noise(self.root_angvel_w, self.noise_std) 
         ang_vel_b = quat_rotate_inverse(self.quat, ang_vel_w)
-        return ang_vel_b.reshape(self.num_envs, -1)
+        self.buffer = self.buffer.roll(1, dims=1)
+        self.buffer[:, 0] = ang_vel_b
+
+    def compute(self) -> torch.Tensor:
+        return self.buffer.reshape(self.num_envs, -1)
     
     def symmetry_transforms(self):
         # left-right symmetry: flip only roll and yaw
         transform = sym_utils.SymmetryTransform(perm=torch.arange(3), signs=[-1., 1., -1.])
-        return transform
-
+        return transform.repeat(self.steps)
 
 class root_gyro_substep(Observation):
     def __init__(self, env, steps: int=None,flatten: bool=False):

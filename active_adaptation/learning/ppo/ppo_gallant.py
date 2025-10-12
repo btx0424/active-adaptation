@@ -100,7 +100,7 @@ class MixedEncoder(nn.Module):
             nn.LazyLinear(256)
         )
         Z, X, Y = cnn_input_shape[-3:]
-        self.pos_emb = PositionEmbedding1D(embed_dim=32, seq_len=25)
+        self.pos_emb = PositionEmbedding1D(embed_dim=32, seq_len=16)
 
         if conv3d:
             cnn_cls = nn.LazyConv3d
