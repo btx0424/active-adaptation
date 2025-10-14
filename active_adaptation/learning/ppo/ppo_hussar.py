@@ -64,6 +64,7 @@ class PPOConfig:
     num_minibatches: int = 8
     lr: float = 5e-4
     clip_param: float = 0.2
+    desired_kl: Union[float, None] = 0.02
     entropy_coef: float = 0.003
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
@@ -152,6 +153,9 @@ class PPOPolicy(TensorDictModuleBase):
         self.action_dim = action_spec.shape[-1]
         self.gae = GAE(0.99, 0.95)
         
+        self.desired_kl = self.cfg.desired_kl
+        self.init_lr = self.cfg.lr
+
         self.value_norm = ValueNormFake(input_shape=1).to(self.device)
 
         fake_input = observation_spec.zero()
@@ -268,25 +272,35 @@ class PPOPolicy(TensorDictModuleBase):
             batch = make_batch(tensordict, self.cfg.num_minibatches)
             for minibatch in batch:
                 infos.append(TensorDict(self.update_batch(minibatch), []))
-        
-        with torch.no_grad(), torch.device(self.device):
-            a = self.critic(tensordict.replace(mask=torch.zeros(*tensordict.shape, 1)))
-            b = self.critic(tensordict.replace(mask=torch.ones(*tensordict.shape, 1)))
-            value_diff = F.mse_loss(a["state_value"], b["state_value"])
-            a = self.actor(
-                tensordict.replace(mask=torch.zeros(*tensordict.shape, 1)))["loc"]
-            b = self.actor(
-                tensordict.replace(mask=torch.ones(*tensordict.shape, 1)))["loc"]
-            policy_diff = F.mse_loss(a, b)
+                if self.desired_kl is not None: # adaptive learning rate
+                    kl = infos[-1]["actor/kl"]
+                    actor_lr = self.opt.param_groups[0]["lr"]
+                    if kl > self.desired_kl * 2.0:
+                        actor_lr = max(1e-5, actor_lr / 1.5)
+                    elif kl < self.desired_kl / 2.0 and kl > 0.0:
+                        actor_lr = min(self.init_lr, actor_lr * 1.1)
+                    self.opt.param_groups[0]["lr"] = actor_lr
+
+        # with torch.no_grad(), torch.device(self.device):
+        #     a = self.critic(tensordict.replace(mask=torch.zeros(*tensordict.shape, 1)))
+        #     b = self.critic(tensordict.replace(mask=torch.ones(*tensordict.shape, 1)))
+        #     value_diff = F.mse_loss(a["state_value"], b["state_value"])
+        #     a = self.actor(
+        #         tensordict.replace(mask=torch.zeros(*tensordict.shape, 1)))["loc"]
+        #     b = self.actor(
+        #         tensordict.replace(mask=torch.ones(*tensordict.shape, 1)))["loc"]
+        #     policy_diff = F.mse_loss(a, b)
 
         out = {}
         for k, v in sorted(torch.stack(infos).items()):
             out[k] = v.detach().mean().item()
+        out["actor/kl"] = kl.item()
+        out["actor/lr"] = self.opt.param_groups[0]["lr"]
         out["critic/value_mean"] = tensordict["ret"].mean().item()
         out["critic/value_std"] = tensordict["ret"].std().item()
         out["critic/neg_rew_ratio"] = (tensordict[REWARD_KEY].sum(-1) <= 0.).float().mean().item()
-        out["critic/value_diff"] = value_diff.item()
-        out["actor/policy_diff"] = policy_diff.item()
+        # out["critic/value_diff"] = value_diff.item()
+        # out["actor/policy_diff"] = policy_diff.item()
         return out
 
     @torch.no_grad()
@@ -326,6 +340,7 @@ class PPOPolicy(TensorDictModuleBase):
     def _update_batch(self, tensordict: TensorDict):
         
         bsize = tensordict.shape[0]
+        loc_old, scale_old = tensordict.pop("loc"), tensordict.pop("scale")
         symmetry = tensordict.empty()
         symmetry[OBS_KEY] = self.obs_transform(tensordict[OBS_KEY])
         symmetry[ACTION_KEY] = self.act_transform(tensordict[ACTION_KEY])
@@ -378,6 +393,8 @@ class PPOPolicy(TensorDictModuleBase):
             explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
             clipfrac = ((ratio - 1.0).abs() > self.clip_param).float().mean()
             symmetry_loss = F.mse_loss(dist.mean[bsize:], self.act_transform(dist.mean[:bsize]))
+            loc, scale = dist.loc[:bsize], dist.scale[:bsize]
+            kl = IndependentNormal.kl(loc_old, scale_old, loc, scale).mean()
         return {
             "actor/policy_loss": policy_loss.detach(),
             "actor/entropy": entropy.detach(),
@@ -387,6 +404,7 @@ class PPOPolicy(TensorDictModuleBase):
             "critic/value_loss": value_loss.detach(),
             "critic/grad_norm": critic_grad_norm,
             "critic/explained_var": explained_var,
+            "actor/kl": kl,
         }
 
     def state_dict(self):
