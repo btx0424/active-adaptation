@@ -411,7 +411,7 @@ PLANE_TERRAIN_CFG = TerrainImporterCfg(
         static_friction=1.0,
         dynamic_friction=1.0,
         restitution=1.0,
-        improve_patch_friction=True
+        # improve_patch_friction=True
     ),
 )
 
