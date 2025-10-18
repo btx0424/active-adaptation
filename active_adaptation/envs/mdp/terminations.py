@@ -112,6 +112,18 @@ class tracking_error(Termination):
     def compute(self, termination: torch.Tensor) -> torch.Tensor:
         return self.asset.data._tracking_error > self.tracking_error_threshold
 
+class pillar_fall(Termination):
+    def __init__(self, env, body_names: str, threshold: float=-0.5):
+        super().__init__(env)
+        self.threshold = threshold
+        self.asset: Articulation = self.env.scene["robot"]
+        self.body_names = body_names
+        self.body_ids = self.asset.find_bodies(body_names)[0]
+    
+    def compute(self, termination: torch.Tensor) -> torch.Tensor:
+        con1 = self.command_manager.raw_terrain_types == 5
+        con2 = (self.asset.data.body_pos_w[:, self.body_ids][:, :, 2] < self.threshold).any(1, True)
+        return (con1.reshape(-1, 1) & con2).reshape(-1, 1)
 
 class cum_error(Termination):
     def __init__(self, env, thres: float = 0.85, min_steps: int = 50):
