@@ -662,7 +662,7 @@ class stumble(Randomization):
         self.friction_coef[env_ids] = friction
 
     def step(self, substep):
-        feet_height = self.env.command_manager.feet_ground_height
+        self.feet_height = self.env.command_manager.feet_ground_height
         feet_lin_vel_w = self.asset.data.body_lin_vel_w[:, self.body_ids]
         feet_quat_w = self.asset.data.body_quat_w[:, self.body_ids]
         stumble_prob = ((self.stumble_height - self.feet_height) / self.stumble_height).clamp(0., 1.)
