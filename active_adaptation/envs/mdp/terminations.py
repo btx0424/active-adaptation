@@ -113,7 +113,7 @@ class tracking_error(Termination):
         return self.asset.data._tracking_error > self.tracking_error_threshold
 
 class pillar_fall(Termination):
-    def __init__(self, env, body_names: str, threshold: float=-0.5):
+    def __init__(self, env, body_names: str, threshold: float=-0.05):
         super().__init__(env)
         self.threshold = threshold
         self.asset: Articulation = self.env.scene["robot"]
