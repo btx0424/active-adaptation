@@ -37,7 +37,7 @@ if active_adaptation.get_backend() == "isaac":
         boundaries.append(num_cols)
         key_cols = {k: (boundaries[i], boundaries[i+1]) for i, k in enumerate(keys)}
         c0, c1 = key_cols["hussar_pillar"]                 # [c0, c1) 是 pillar 的列段
-        target_rows = range(0, num_rows // 2)              # 前半行
+        target_rows = range(0, 3)              # 前半行
         target_cols = range(c0, c1)
 
         # 2) 推断地形网格左下角 (x0, y0) 的“块左下角坐标”（不是中心）
@@ -94,7 +94,7 @@ if active_adaptation.get_backend() == "isaac":
         else:
             raise RuntimeError("Simulation context already exists. Cannot create a new one.")
         scene = InteractiveScene(scene_cfg)
-        # add_skin_by_tiles(scene, scene_cfg, z_plane=-0.02, thickness=0.02, col_axis='y')
+        add_skin_by_tiles(scene, scene_cfg, z_plane=-0.02, thickness=0.02, col_axis='y')
         if builtins.ISAAC_LAUNCHED_FROM_TERMINAL is False:
             sim.reset()
         sim.step(render=sim.has_gui())

@@ -125,6 +125,19 @@ class pillar_fall(Termination):
         con2 = (self.asset.data.body_pos_w[:, self.body_ids][:, :, 2] < self.threshold).any(1, True)
         return (con1.reshape(-1, 1) & con2).reshape(-1, 1)
 
+class no_moving(Termination):
+    def __init__(self, env, thres: float = 0.01):
+        super().__init__(env)
+        self.thres = thres
+        self.asset: Articulation = self.env.scene["robot"]
+    
+    def compute(self, termination: torch.Tensor) -> torch.Tensor:
+        root_pos_w = self.asset.data.root_pos_w
+        origin_pos_w = self.command_manager.origin_pos_w.clone()
+        ellapsed_time = self.env.episode_length_buf
+        dist = (root_pos_w - origin_pos_w)[:, :2].norm(dim=-1)
+        return (dist < self.thres).reshape(-1, 1) & (ellapsed_time > 200).reshape(-1, 1)
+
 class cum_error(Termination):
     def __init__(self, env, thres: float = 0.85, min_steps: int = 50):
         super().__init__(env)
