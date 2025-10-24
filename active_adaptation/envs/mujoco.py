@@ -5,7 +5,7 @@ import mujoco.viewer
 import time
 import warnings
 import trimesh
-import coacd
+import zmq
 
 from pathlib import Path
 from typing import Sequence, Union, Any, Dict, Optional
@@ -177,10 +177,8 @@ class MJArticulation:
         # read/write mujoco data in isaac order
         self.body_adrs_read = self.body_adrs[self._body_mjc2isaac]
         self.body_adrs_write = self.body_adrs[self._body_isaac2mjc]
-        self.joint_qposadr_read = self.joint_qposadr[self._jnt_mjc2isaac]
-        self.joint_qveladr_read = self.joint_qveladr[self._jnt_mjc2isaac]
-        self.joint_qposadr_write = self.joint_qposadr[self._jnt_isaac2mjc]
-        self.joint_qveladr_write = self.joint_qveladr[self._jnt_isaac2mjc]
+        self.joint_qposadr = self.joint_qposadr[self._jnt_mjc2isaac]
+        self.joint_qveladr = self.joint_qveladr[self._jnt_mjc2isaac]
 
         joint_ids, joint_names, joint_pos = string_utils.resolve_matching_names_values(self.cfg.init_state["joint_pos"], self.joint_names_isaac)
         if len(joint_names) < len(self.joint_names_isaac):
@@ -193,12 +191,20 @@ class MJArticulation:
 
         joint_stiffness = torch.zeros(self.num_joints)
         joint_damping = torch.zeros(self.num_joints)
+        joint_armature = torch.zeros(self.num_joints)
         
         for actuator_name, actuator_cfg in self.cfg.actuators.items():
-            ids, _, values = string_utils.resolve_matching_names_values(actuator_cfg["stiffness"], self.joint_names_isaac)
+            stiffness_cfg = actuator_cfg.get("stiffness")
+            damping_cfg = actuator_cfg.get("damping")
+            armature_cfg = actuator_cfg.get("armature", {".*": 0.0})
+            ids, _, values = string_utils.resolve_matching_names_values(stiffness_cfg, self.joint_names_isaac)
             joint_stiffness[ids] = torch.as_tensor(values)
-            ids, _, values = string_utils.resolve_matching_names_values(actuator_cfg["damping"], self.joint_names_isaac)
+            ids, _, values = string_utils.resolve_matching_names_values(damping_cfg, self.joint_names_isaac)
             joint_damping[ids] = torch.as_tensor(values)
+            ids, _, values = string_utils.resolve_matching_names_values(armature_cfg, self.joint_names_isaac)
+            joint_armature[ids] = torch.as_tensor(values)
+        
+        self.mj_model.dof_armature[self.joint_qveladr] = joint_armature
 
         diag_inertia = torch.as_tensor(self.mj_model.body_inertia[self.body_adrs], dtype=torch.float32)
         self._data = MJArticulationData(
@@ -282,9 +288,12 @@ class MJArticulation:
         # find joints
         return string_utils.resolve_matching_names(name_keys, joint_subset, preserve_order)
 
+    def reset(self, env_ids: ArrayType=None):
+        self.update(0.0)
+
     def update(self, dt: float):
-        jpos = self.mj_data.qpos[self.joint_qposadr_read]
-        jvel = self.mj_data.qvel[self.joint_qveladr_read]
+        jpos = self.mj_data.qpos[self.joint_qposadr]
+        jvel = self.mj_data.qvel[self.joint_qveladr]
         body_pos_w = self.mj_data.xpos[self.body_adrs_read]
         # body_ang_vel_w = self.mj_data.cvel[self.body_adrs_read, :3]
         # body_lin_vel_w = self.mj_data.cvel[self.body_adrs_read, 3:]
@@ -318,9 +327,6 @@ class MJArticulation:
         self._data.root_ang_vel_w = self._data.body_ang_vel_w[:, 0]
         self._data.root_ang_vel_b = quat_rotate_inverse(self._data.root_quat_w, self._data.root_ang_vel_w)
         self._data.root_lin_vel_b = quat_rotate_inverse(self._data.root_quat_w, self._data.root_lin_vel_w)
-        
-        if hasattr(self, "_log_path"):
-            self._log_states.append(self._data)
 
     def write_root_state_to_sim(self, root_state: ArrayType, env_ids: ArrayType=None):
         self.mj_data.qpos[:3] = root_state[0, :3]
@@ -342,8 +348,8 @@ class MJArticulation:
             self._data.joint_vel_target[0, joint_ids] = target
     
     def write_data_to_sim(self):
-        pos_error = self._data.joint_pos_target - self.mj_data.qpos[None, self.joint_qposadr_read]
-        vel_error = self._data.joint_vel_target - self.mj_data.qvel[None, self.joint_qveladr_read]
+        pos_error = self._data.joint_pos_target - self.mj_data.qpos[None, self.joint_qposadr]
+        vel_error = self._data.joint_vel_target - self.mj_data.qvel[None, self.joint_qveladr]
         
         torque = (self._data.joint_stiffness * pos_error + self._data.joint_damping * vel_error)
         self._data.applied_torque = torque.float()
@@ -358,20 +364,20 @@ class MJArticulation:
         if joint_pos is not None:
             joint_pos_all = self._data.joint_pos[0].clone()
             joint_pos_all[joint_ids] = joint_pos[0]
-            self.mj_data.qpos[self.joint_qposadr_read] = joint_pos_all
+            self.mj_data.qpos[self.joint_qposadr] = joint_pos_all
         if joint_vel is not None:
             joint_vel_all = self._data.joint_vel[0].clone()
             joint_vel_all[joint_ids] = joint_vel[0]
-            self.mj_data.qvel[self.joint_qveladr_read] = joint_vel_all
-
-    def setup_logger(self, name: str):
-        self._log_path = Path.cwd() / f"{name}.pt"
-        self._log_states = []
+            self.mj_data.qvel[self.joint_qveladr] = joint_vel_all
 
 
 @dataclass
 class MjContactData:
     net_forces_w: ArrayType = None
+    last_air_time: ArrayType = None
+    current_air_time: ArrayType = None
+    last_contact_time: ArrayType = None
+    current_contact_time: ArrayType = None
 
 
 class MjContactSensor:
@@ -382,15 +388,52 @@ class MjContactSensor:
         self.body_names = self.articulation.body_names
         self.body_adrs_read = self.articulation.body_adrs_read
         self._data = MjContactData(
-            net_forces_w=torch.zeros(1, self.articulation.num_bodies, 3)
+            net_forces_w=torch.zeros(1, self.articulation.num_bodies, 3),
+            last_air_time=torch.zeros(1, self.articulation.num_bodies),
+            current_air_time=torch.zeros(1, self.articulation.num_bodies),
+            last_contact_time=torch.zeros(1, self.articulation.num_bodies),
+            current_contact_time=torch.zeros(1, self.articulation.num_bodies)
         )
     
     def find_bodies(self, name_keys: str | Sequence[str], preserve_order: bool = False):
         return self.articulation.find_bodies(name_keys, preserve_order)
 
+    def reset(self, env_ids):
+        self._data.current_air_time[env_ids] = 0.0
+        self._data.last_air_time[env_ids] = 0.0
+        self._data.current_contact_time[env_ids] = 0.0
+        self._data.last_contact_time[env_ids] = 0.0
+
     def update(self, dt: float):
+        elapsed_time = torch.tensor(dt)
         cfrc_ext = self.articulation.mj_data.cfrc_ext[self.body_adrs_read, :3]
         self._data.net_forces_w = torch.as_tensor(cfrc_ext, dtype=torch.float32)[None]
+
+        is_contact = torch.norm(self._data.net_forces_w, dim=-1) > 0.1
+        is_first_contact = (self._data.current_air_time > 0) * is_contact
+        is_first_detached = (self._data.current_contact_time > 0) * ~is_contact
+        
+        env_ids = slice(None)
+        # -- update the last contact time if body has just become in contact
+        self._data.last_air_time[env_ids] = torch.where(
+            is_first_contact,
+            self._data.current_air_time[env_ids] + elapsed_time.unsqueeze(-1),
+            self._data.last_air_time[env_ids],
+        )
+        # -- increment time for bodies that are not in contact
+        self._data.current_air_time[env_ids] = torch.where(
+            ~is_contact, self._data.current_air_time[env_ids] + elapsed_time.unsqueeze(-1), 0.0
+        )
+        # -- update the last contact time if body has just detached
+        self._data.last_contact_time[env_ids] = torch.where(
+            is_first_detached,
+            self._data.current_contact_time[env_ids] + elapsed_time.unsqueeze(-1),
+            self._data.last_contact_time[env_ids],
+        )
+        # -- increment time for bodies that are in contact
+        self._data.current_contact_time[env_ids] = torch.where(
+            is_contact, self._data.current_contact_time[env_ids] + elapsed_time.unsqueeze(-1), 0.0
+        )
 
     @property
     def data(self):
@@ -422,32 +465,32 @@ class MJScene:
                 terrain_spec = mujoco.MjSpec.from_file(asset_cfg.mjcf_path)
                 geoms = terrain_spec.worldbody.find_all(mujoco.mjtObj.mjOBJ_GEOM)
                 for geom in geoms:
-                    # if geom.type == mujoco.mjtGeom.mjGEOM_MESH:
-                    #     # make the geom visual only
-                    #     # geom.contype = 0
-                    #     # geom.conaffinity = 0
-                    #     mjc_mesh = [mesh for mesh in terrain_spec.meshes if mesh.name == geom.meshname][0]
-                    #     mesh = trimesh.load(str(Path(asset_cfg.mjcf_path).parent / terrain_spec.meshdir / mjc_mesh.file))
-                    #     # parts = coacd.run_coacd(coacd.Mesh(mesh.vertices, mesh.faces), threshold=0.01)
-                    #     # for i, (vertices, faces) in enumerate(parts):
-                    #     #     submesh = terrain_spec.add_mesh(
-                    #     #         name=f"{geom.meshname}-part-{i}",
-                    #     #         uservert=vertices.flatten(),
-                    #     #         userface=faces.flatten(),
-                    #     #         scale=mjc_mesh.scale,
-                    #     #     )
-                    #     #     submesh.scale = mjc_mesh.scale
-                    #     #     terrain_spec.worldbody.add_geom(
-                    #     #         type=mujoco.mjtGeom.mjGEOM_MESH,
-                    #     #         meshname=f"{geom.meshname}-part-{i}",
-                    #     #         pos=geom.pos,
-                    #     #         quat=geom.quat,
-                    #     #     )
-                    # elif geom.type == mujoco.mjtGeom.mjGEOM_PLANE:
-                    mesh = trimesh.creation.box(extents=[100, 100, 0.1])
-                    mesh.apply_translation([0, 0, -0.05])
+                    if geom.type == mujoco.mjtGeom.mjGEOM_MESH:
+                        # make the geom visual only
+                        # geom.contype = 0
+                        # geom.conaffinity = 0
+                        mjc_mesh = [mesh for mesh in terrain_spec.meshes if mesh.name == geom.meshname][0]
+                        mesh = trimesh.load(str(Path(asset_cfg.mjcf_path).parent / terrain_spec.meshdir / mjc_mesh.file))
+                        # parts = coacd.run_coacd(coacd.Mesh(mesh.vertices, mesh.faces), threshold=0.01)
+                        # for i, (vertices, faces) in enumerate(parts):
+                        #     submesh = terrain_spec.add_mesh(
+                        #         name=f"{geom.meshname}-part-{i}",
+                        #         uservert=vertices.flatten(),
+                        #         userface=faces.flatten(),
+                        #         scale=mjc_mesh.scale,
+                        #     )
+                        #     submesh.scale = mjc_mesh.scale
+                        #     terrain_spec.worldbody.add_geom(
+                        #         type=mujoco.mjtGeom.mjGEOM_MESH,
+                        #         meshname=f"{geom.meshname}-part-{i}",
+                        #         pos=geom.pos,
+                        #         quat=geom.quat,
+                        #     )
+                    elif geom.type == mujoco.mjtGeom.mjGEOM_PLANE:
+                        mesh = trimesh.creation.box(extents=[100, 100, 0.1])
+                        mesh.apply_translation([0, 0, -0.05])
                     ground_meshes.append(mesh)
-                # self.spec.attach(terrain_spec, frame=frame)
+                self.spec.attach(terrain_spec, frame=frame)
 
         self.mj_model = self.spec.compile()
         self.mj_data = mujoco.MjData(self.mj_model)
@@ -466,14 +509,31 @@ class MJScene:
         self.mj_data = self.articulations["robot"].mj_data
         self.env_origins = torch.zeros(1, 3)
 
+        self.zmq_context = zmq.Context()
+        self.zmq_socket = self.zmq_context.socket(zmq.PUB)
+        self.zmq_socket.bind("tcp://*:5555")
+        self.last_publish_time = 0.0
+        self.publish_interval = 0.02
+
     def reset(self, env_ids: torch.Tensor):
         for articulation in self.articulations.values():
-            continue
             articulation.reset(env_ids)
+        for sensor in self.sensors.values():
+            sensor.reset(env_ids)
 
     def update(self, dt: float):
         for articulation in self.articulations.values():
             articulation.update(dt)
+            if self.mj_data.time - self.last_publish_time > self.publish_interval:
+                self.zmq_socket.send_pyobj({
+                    "sim_time": self.mj_data.time,
+                    "joint_names": articulation.joint_names,
+                    "joint_pos": articulation.data.joint_pos[0], # [num_joints]
+                    "joint_vel": articulation.data.joint_vel[0], # [num_joints]
+                    "computed_torque": articulation.data.applied_torque[0],
+                    "applied_torque": articulation.data.applied_torque[0], # [num_joints]
+                })
+                self.last_publish_time = self.mj_data.time
         for sensor in self.sensors.values():
             sensor.update(dt)
     
