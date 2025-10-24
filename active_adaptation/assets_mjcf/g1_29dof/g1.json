@@ -3,7 +3,7 @@
         "pos": [
             0.0,
             0.0,
-            0.76
+            0.85
         ],
         "rot": [
             1.0,
@@ -206,7 +206,9 @@
                 ".*_wrist_pitch_joint": 0.00425,
                 ".*_wrist_yaw_joint": 0.00425
             },
-            "friction": 0.01
+            "friction": 0.01,
+            "dynamic_friction": null,
+            "viscous_friction": null
         }
     }
 }

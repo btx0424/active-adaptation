@@ -369,6 +369,7 @@ class MJArticulation:
             joint_vel_all = self._data.joint_vel[0].clone()
             joint_vel_all[joint_ids] = joint_vel[0]
             self.mj_data.qvel[self.joint_qveladr] = joint_vel_all
+        mujoco.mj_forward(self.mj_model, self.mj_data)
 
 
 @dataclass
@@ -466,29 +467,13 @@ class MJScene:
                 geoms = terrain_spec.worldbody.find_all(mujoco.mjtObj.mjOBJ_GEOM)
                 for geom in geoms:
                     if geom.type == mujoco.mjtGeom.mjGEOM_MESH:
-                        # make the geom visual only
-                        # geom.contype = 0
-                        # geom.conaffinity = 0
-                        mjc_mesh = [mesh for mesh in terrain_spec.meshes if mesh.name == geom.meshname][0]
-                        mesh = trimesh.load(str(Path(asset_cfg.mjcf_path).parent / terrain_spec.meshdir / mjc_mesh.file))
-                        # parts = coacd.run_coacd(coacd.Mesh(mesh.vertices, mesh.faces), threshold=0.01)
-                        # for i, (vertices, faces) in enumerate(parts):
-                        #     submesh = terrain_spec.add_mesh(
-                        #         name=f"{geom.meshname}-part-{i}",
-                        #         uservert=vertices.flatten(),
-                        #         userface=faces.flatten(),
-                        #         scale=mjc_mesh.scale,
-                        #     )
-                        #     submesh.scale = mjc_mesh.scale
-                        #     terrain_spec.worldbody.add_geom(
-                        #         type=mujoco.mjtGeom.mjGEOM_MESH,
-                        #         meshname=f"{geom.meshname}-part-{i}",
-                        #         pos=geom.pos,
-                        #         quat=geom.quat,
-                        #     )
+                        raise NotImplementedError
                     elif geom.type == mujoco.mjtGeom.mjGEOM_PLANE:
-                        mesh = trimesh.creation.box(extents=[100, 100, 0.1])
+                        mesh = trimesh.creation.box(extents=[10, 10, 0.1])
                         mesh.apply_translation([0, 0, -0.05])
+                    elif geom.type == mujoco.mjtGeom.mjGEOM_BOX:
+                        mesh = trimesh.creation.box(extents=[geom.size[0] * 2, geom.size[1] * 2, geom.size[2] * 2])
+                        mesh.apply_translation([geom.pos[0], geom.pos[1], geom.pos[2]])
                     ground_meshes.append(mesh)
                 self.spec.attach(terrain_spec, frame=frame)
 
