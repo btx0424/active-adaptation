@@ -69,6 +69,9 @@ class PPOConfig:
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
     multi_critic: bool = False
+
+    cnn_history: bool = False
+    symmetry: bool = True
     
     compile: bool = False
     use_ddp: bool = True
@@ -126,9 +129,10 @@ class MixedEncoder(nn.Module):
             cnn_feature = cnn_feature * mask_cnn
         if self.cnn_history:
             feature = torch.cat([mlp_feature, cnn_feature, prev_cnn_feature], dim=-1)
+            return self.out(feature), cnn_feature
         else:
             feature = torch.cat([mlp_feature, cnn_feature], dim=-1)
-        return self.out(feature), cnn_feature
+            return self.out(feature)
 
 
 class PPOPolicy(TensorDictModuleBase):
@@ -143,7 +147,7 @@ class PPOPolicy(TensorDictModuleBase):
         env,
     ):
         super().__init__()
-        self.cfg = cfg
+        self.cfg = PPOConfig(**cfg)
         self.device = device
         self.observation_spec = observation_spec
 
@@ -176,9 +180,9 @@ class PPOPolicy(TensorDictModuleBase):
         self.obs_transform = env.observation_funcs[OBS_KEY].symmetry_transforms().to(self.device)
         self.hsc_transform = env.observation_funcs[self.terrain_key].symmetry_transforms().to(self.device)
         self.act_transform = env.action_manager.symmetry_transforms().to(self.device)
-
-        self.cnn_history = True
-        if self.cnn_history:
+        
+        assert not (self.cfg.cnn_history and self.cfg.symmetry), "cnn_history and symmetry cannot be True at the same time"
+        if self.cfg.cnn_history:
             actor_in_keys = [OBS_KEY, self.terrain_key, "actor_cnn_feature", "mask"]
             actor_out_keys = ["_actor_feature", ("next", "actor_cnn_feature")]
             critic_in_keys = [OBS_KEY, self.terrain_key, "critic_cnn_feature", "mask"]
@@ -191,7 +195,7 @@ class PPOPolicy(TensorDictModuleBase):
         
         actor_module = TensorDictSequential(
             Mod(
-                MixedEncoder(cnn_history=self.cnn_history, conv3d=conv3d),
+                MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=conv3d),
                 actor_in_keys,
                 actor_out_keys
             ),
@@ -207,7 +211,7 @@ class PPOPolicy(TensorDictModuleBase):
         
         self.critic = TensorDictSequential(
             Mod(
-                MixedEncoder(cnn_history=self.cnn_history, conv3d=conv3d),
+                MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=conv3d),
                 critic_in_keys,
                 critic_out_keys
             ),
@@ -367,15 +371,16 @@ class PPOPolicy(TensorDictModuleBase):
         
         bsize = tensordict.shape[0]
         loc_old, scale_old = tensordict.pop("loc"), tensordict.pop("scale")
-        # symmetry = tensordict.empty()
-        # symmetry[OBS_KEY] = self.obs_transform(tensordict[OBS_KEY])
-        # symmetry[ACTION_KEY] = self.act_transform(tensordict[ACTION_KEY])
-        # symmetry[self.terrain_key] = self.hsc_transform(tensordict[self.terrain_key])
-        # symmetry["action_log_prob"] = tensordict["action_log_prob"]
-        # symmetry["is_init"] = tensordict["is_init"]
-        # symmetry["adv"] = tensordict["adv"]
-        # symmetry["ret"] = tensordict["ret"]
-        # tensordict = torch.cat([tensordict.select(*symmetry.keys(True, True)), symmetry], dim=0)
+        if self.cfg.symmetry:
+            symmetry = tensordict.empty()
+            symmetry[OBS_KEY] = self.obs_transform(tensordict[OBS_KEY])
+            symmetry[ACTION_KEY] = self.act_transform(tensordict[ACTION_KEY])
+            symmetry[self.terrain_key] = self.hsc_transform(tensordict[self.terrain_key])
+            symmetry["action_log_prob"] = tensordict["action_log_prob"]
+            symmetry["is_init"] = tensordict["is_init"]
+            symmetry["adv"] = tensordict["adv"]
+            symmetry["ret"] = tensordict["ret"]
+            tensordict = torch.cat([tensordict.select(*symmetry.keys(True, True)), symmetry], dim=0)
 
         action_data = tensordict[ACTION_KEY]
         log_probs_data = tensordict["action_log_prob"]
@@ -414,24 +419,22 @@ class PPOPolicy(TensorDictModuleBase):
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
         critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
         self.opt.step()
-        
-        with torch.no_grad():
-            explained_var = 1 - F.mse_loss(values, b_returns) / b_returns.var()
-            clipfrac = ((ratio - 1.0).abs() > self.clip_param).float().mean()
-            # symmetry_loss = F.mse_loss(dist.mean[bsize:], self.act_transform(dist.mean[:bsize]))
-            # loc, scale = dist.loc[:bsize], dist.scale[:bsize]
-            # kl = IndependentNormal.kl(loc_old, scale_old, loc, scale).mean()
-        return {
+
+        info = {
             "actor/policy_loss": policy_loss.detach(),
             "actor/entropy": entropy.detach(),
             "actor/grad_norm": actor_grad_norm,
-            "actor/clamp_ratio": clipfrac,
-            # "actor/symmetry_loss": symmetry_loss.detach(),
             "critic/value_loss": value_loss.detach(),
             "critic/grad_norm": critic_grad_norm,
-            "critic/explained_var": explained_var,
             # "actor/kl": kl,
         }
+        
+        with torch.no_grad():
+            info["critic/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
+            info["actor/clamp_ratio"] = ((ratio - 1.0).abs() > self.clip_param).float().mean()
+            if self.cfg.symmetry:
+                info["actor/symmetry_loss"] = F.mse_loss(dist.mean[bsize:], self.act_transform(dist.mean[:bsize]))
+        return info
 
     def state_dict(self):
         state_dict = OrderedDict()
