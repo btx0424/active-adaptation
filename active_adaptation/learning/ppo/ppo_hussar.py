@@ -419,19 +419,21 @@ class PPOPolicy(TensorDictModuleBase):
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
         critic_grad_norm = nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
         self.opt.step()
-
+        
         info = {
             "actor/policy_loss": policy_loss.detach(),
             "actor/entropy": entropy.detach(),
             "actor/grad_norm": actor_grad_norm,
             "critic/value_loss": value_loss.detach(),
             "critic/grad_norm": critic_grad_norm,
-            # "actor/kl": kl,
         }
         
         with torch.no_grad():
             info["critic/explained_var"] = 1 - F.mse_loss(values, b_returns) / b_returns.var()
             info["actor/clamp_ratio"] = ((ratio - 1.0).abs() > self.clip_param).float().mean()
+            # loc, scale = dist.loc[:bsize], dist.scale[:bsize]
+            # kl = IndependentNormal.kl(loc_old, scale_old, loc, scale).mean()
+            # info["actor/kl"] = kl
             if self.cfg.symmetry:
                 info["actor/symmetry_loss"] = F.mse_loss(dist.mean[bsize:], self.act_transform(dist.mean[:bsize]))
         return info
