@@ -134,9 +134,19 @@ class no_moving(Termination):
     def compute(self, termination: torch.Tensor) -> torch.Tensor:
         root_pos_w = self.asset.data.root_pos_w
         origin_pos_w = self.command_manager.origin_pos_w.clone()
-        ellapsed_time = self.env.episode_length_buf
+        ellapsed_step = self.env.episode_length_buf
         dist = (root_pos_w - origin_pos_w)[:, :2].norm(dim=-1)
-        return (dist < self.thres).reshape(-1, 1) & (ellapsed_time > 200).reshape(-1, 1)
+        return (dist < self.thres).reshape(-1, 1) & ((ellapsed_step > 200.0) & (ellapsed_step < self.command_manager.resample_interval)).reshape(-1, 1)
+
+class no_reach(Termination):
+    def __init__(self, env, thres: float = 0.2):
+        super().__init__(env)
+        self.thres = thres
+        self.asset: Articulation = self.env.scene["robot"]
+    
+    def compute(self, termination: torch.Tensor) -> torch.Tensor:
+        ellapsed_step = self.env.episode_length_buf
+        return (~self.command_manager.target_reached).reshape(-1, 1) & ((ellapsed_step >= self.command_manager.resample_interval - 10) & (ellapsed_step < self.command_manager.resample_interval)).reshape(-1, 1)
 
 class cum_error(Termination):
     def __init__(self, env, thres: float = 0.85, min_steps: int = 50):
