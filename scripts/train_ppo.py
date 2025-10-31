@@ -107,13 +107,14 @@ def main(cfg: DictConfig):
     
     carry = env.reset()
     rollout_policy: TensorDictModuleBase = policy.get_rollout_policy("train")
+    amp_enabled = cfg.get("amp", False)
 
     @torch.inference_mode()
     @set_exploration_type(ExplorationType.RANDOM)
     def collect(carry):
         data = []
         torch.compiler.cudagraph_mark_step_begin() # for compiled policy
-        with torch.autocast("cuda"):
+        with torch.autocast("cuda", enabled=amp_enabled):
             for _ in range(cfg.algo.train_every):
                 carry = rollout_policy(carry)
                 td, carry = env.step_and_maybe_reset(carry)
@@ -123,20 +124,20 @@ def main(cfg: DictConfig):
                 td = td.exclude(*private_keys)
                 
                 data.append(td.to(policy.device))
-        data = torch.stack(data, dim=1)
-        policy.critic(data)
-        values = data["state_value"]
-        data["next", "state_value"] = torch.where(
-            data["next", "done"],
-            values, # a walkaround to avoid storing the next states
-            torch.cat([values[:, 1:], policy.critic(carry.copy())["state_value"].unsqueeze(1)], dim=1)
-        )
-        return data
+            data = torch.stack(data, dim=1)
+            policy.critic(data)
+            values = data["state_value"]
+            data["next", "state_value"] = torch.where(
+                data["next", "done"],
+                values, # a walkaround to avoid storing the next states
+                torch.cat([values[:, 1:], policy.critic(carry.copy())["state_value"].unsqueeze(1)], dim=1)
+            )
+        return data, carry
     
     env_frames = 0
     for i in progress:
         rollout_start = time.perf_counter()
-        data = collect(carry)
+        data, carry = collect(carry)
         rollout_time = time.perf_counter() - rollout_start
 
         episode_stats.add(data)
