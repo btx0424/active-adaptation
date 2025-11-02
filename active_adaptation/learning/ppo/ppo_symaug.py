@@ -60,13 +60,13 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 class PPOConfig:
     _target_: str = "active_adaptation.learning.ppo.ppo_symaug.PPOPolicy"
     name: str = "ppo"
-    train_every: int = 32
+    train_every: int = 48
     ppo_epochs: int = 4
     num_minibatches: int = 8
     lr: float = 5e-4
     desired_kl: Union[float, None] = None
     clip_param: float = 0.2
-    entropy_coef: float = 0.01
+    entropy_coef: float = 0.003
     layer_norm: Union[str, None] = "before"
     value_norm: bool = False
     compile: bool = False
