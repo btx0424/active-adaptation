@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import einops
 from typing import Tuple, TYPE_CHECKING
 
 import active_adaptation
@@ -27,8 +28,8 @@ class height_scan(Observation):
         env,
         x_range: Tuple[float, float],
         y_range: Tuple[float, float],
-        x_resolution: float,
-        y_resolution: float,
+        resolution: Tuple[float, float],
+        include_xy: bool=False,
         flatten: bool=False,
         noise_scale = 0.005
     ):
@@ -36,9 +37,10 @@ class height_scan(Observation):
         self.asset: Articulation = self.env.scene["robot"]
         self.flatten = flatten
         self.noise_scale = noise_scale
+        self.include_xy = include_xy
         
-        x = torch.linspace(x_range[0], x_range[1], int((x_range[1] - x_range[0]) / x_resolution)+1)
-        y = torch.linspace(y_range[0], y_range[1], int((y_range[1] - y_range[0]) / y_resolution)+1)
+        x = torch.linspace(x_range[0], x_range[1], int((x_range[1] - x_range[0]) / resolution[0])+1)
+        y = torch.linspace(y_range[0], y_range[1], int((y_range[1] - y_range[0]) / resolution[1])+1)
         xx, yy = torch.meshgrid(x, y, indexing="ij")
         self.pos = torch.stack([xx, yy, torch.zeros_like(xx)], dim=-1).to(self.device)
         self.shape = self.pos.shape[:2]
@@ -62,11 +64,17 @@ class height_scan(Observation):
         root_quat = yaw_quat(self.asset.data.root_quat_w).reshape(self.num_envs, 1, 1, 4)
         self.offset = quat_rotate(root_quat, self.pos.unsqueeze(0))
         self.height_map_w = self.env.get_ground_height_at(root_pos_w + self.offset)
-        height_map = (self.height_map_w - root_pos_w[:, :, :, 2]).clamp(-1., 1.)
+        height_map = (root_pos_w[:, :, :, 2] - self.height_map_w).clamp(-1., 1.)
+        if self.include_xy:
+            xy = einops.rearrange(self.pos[..., :2], "X Y C -> C X Y")
+            height_map = torch.cat([
+                xy.expand(self.num_envs, *xy.shape),
+                height_map.reshape(self.num_envs, 1, *self.shape)
+            ], dim=1)
         if self.flatten:
             return height_map.reshape(self.num_envs, -1)
         else:
-            return height_map.reshape(self.num_envs, 1, *self.shape)
+            return height_map.reshape(self.num_envs, -1, *self.shape)
     
     def debug_draw(self):
         if self.env.backend == "isaac":
@@ -75,11 +83,14 @@ class height_scan(Observation):
             self.marker.visualize(pos.reshape(-1, 3))
 
     def symmetry_transforms(self):
-        assert not self.flatten
-        return SymmetryTransform(
-            perm=torch.arange(self.shape[1]).flip(0), # (1, H, W), flip W
-            signs=torch.ones(self.shape[1])
-        )
+        if self.flatten:
+            assert not self.include_xy
+            perm = torch.arange(self.shape.numel()).reshape(self.shape).flip((1,)).reshape(-1)
+            signs = torch.ones(self.shape.numel())
+        else:
+            perm = torch.arange(self.shape[1]).flip(0) # (N, C, X, Y), flip Y
+            signs = torch.ones(self.shape[1])
+        return SymmetryTransform(perm=perm, signs=signs)
 
 
 
