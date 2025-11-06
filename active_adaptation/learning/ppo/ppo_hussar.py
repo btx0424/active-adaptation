@@ -135,6 +135,12 @@ class MixedEncoder(nn.Module):
             return self.out(feature)
 
 
+def init_(module):
+    if isinstance(module, nn.Linear):
+        nn.init.orthogonal_(module.weight, 0.01)
+        nn.init.constant_(module.bias, 0.)
+
+
 class PPOPolicy(TensorDictModuleBase):
 
     def __init__(
@@ -221,11 +227,6 @@ class PPOPolicy(TensorDictModuleBase):
         self.actor(fake_input)
         self.critic(fake_input)
         
-        def init_(module):
-            if isinstance(module, nn.Linear):
-                nn.init.orthogonal_(module.weight, 0.01)
-                nn.init.constant_(module.bias, 0.)
-        
         self.actor.apply(init_)
         self.critic.apply(init_)
 
@@ -260,6 +261,7 @@ class PPOPolicy(TensorDictModuleBase):
             self.update_batch = torch.compile(self._update_batch)
         else:
             self.update_batch = self._update_batch
+        self.metric = 0 # maximize
     
     # def make_tensordict_primer(self):
     #     num_envs = self.observation_spec.shape[0]
@@ -331,6 +333,7 @@ class PPOPolicy(TensorDictModuleBase):
         out["critic/neg_rew_ratio"] = (tensordict[REWARD_KEY].sum(-1) <= 0.).float().mean().item()
         # out["critic/value_diff"] = value_diff.item()
         # out["actor/policy_diff"] = policy_diff.item()
+        self.metric = out["critic/value_mean"]
         return out
 
     @torch.no_grad()

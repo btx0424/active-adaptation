@@ -81,8 +81,37 @@ def main(cfg: DictConfig):
 
     rollout_policy = policy.get_rollout_policy("train")
 
-    def save(policy, checkpoint_name: str):
+    def save(checkpoint_name: str, best_ckpt_path: str, best_ckpt_metric: float):
+        """
+        Save the checkpoint and update the best checkpoint if the current metric is better.
+        If the current metric is worse than the best checkpoint by 20%, recover to the best checkpoint.
+        
+        Args:
+            checkpoint_name: The name of the checkpoint.
+            best_ckpt_path: The path of the best checkpoint.
+            best_ckpt_metric: The metric of the best checkpoint.
+
+        Returns:
+            The path of the best checkpoint and the metric of the best checkpoint.
+        """
         ckpt_path = os.path.join(run.dir, f"{checkpoint_name}.pt")
+        metric = getattr(policy, "metric", best_ckpt_metric) # maximize
+
+        if metric < best_ckpt_metric * 0.8 and best_ckpt_path is not None:
+            # recover to the best checkpoint
+            ckpt = torch.load(best_ckpt_path, weights_only=False)
+            policy.load_state_dict(ckpt["policy"])
+            
+            if "vecnorm" in ckpt.keys():
+                vecnorm.load_state_dict(ckpt["vecnorm"])
+            
+            logging.info(f"Recovered to the best checkpoint {best_ckpt_path}")
+            return best_ckpt_path, best_ckpt_metric
+
+        if metric > best_ckpt_metric:
+            best_ckpt_metric = metric
+            best_ckpt_path = ckpt_path
+        
         state_dict = OrderedDict()
         state_dict["wandb"] = {"name": run.name, "id": run.id}
         state_dict["policy"] = policy.state_dict()
@@ -93,6 +122,7 @@ def main(cfg: DictConfig):
         torch.save(state_dict, ckpt_path)
         run.save(ckpt_path, policy="now", base_path=run.dir)
         logging.info(f"Saved checkpoint to {str(ckpt_path)}")
+        return best_ckpt_path, max(metric, best_ckpt_metric)
 
     assert env.training
     if aa.is_main_process():
@@ -134,6 +164,9 @@ def main(cfg: DictConfig):
             )
         return data, carry
     
+    best_ckpt_path = None
+    best_ckpt_metric = 0 # maximize
+
     env_frames = 0
     for i in progress:
         rollout_start = time.perf_counter()
@@ -163,7 +196,7 @@ def main(cfg: DictConfig):
         info["performance/iter_time"] = (time.perf_counter() - rollout_start)
         
         if should_save(i):
-            save(policy, f"checkpoint_{i}")
+            best_ckpt_path, best_ckpt_metric = save(f"checkpoint_{i}", best_ckpt_path, best_ckpt_metric)
 
         if aa.is_main_process():
             print(OmegaConf.to_yaml({k: v for k, v in info.items() if isinstance(v, (float, int))}))
