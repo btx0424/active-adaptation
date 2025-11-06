@@ -76,7 +76,7 @@ class PPOConfig:
     use_ddp: bool = True
 
     checkpoint_path: Union[str, None] = None
-    in_keys: Tuple[str] = (OBS_KEY, "height_scan", "grid_map_", "base_height", "base_height_targ")
+    in_keys: Tuple[str] = (OBS_KEY, OBS_PRIV_KEY, "height_scan", "grid_map_", "base_height", "base_height_targ")
 
 cs = ConfigStore.instance()
 cs.store("ppo_hussar_v2", node=PPOConfig, group="algo")
@@ -169,6 +169,7 @@ class PPOPolicy(TensorDictModuleBase):
         conv3d = len(observation_spec[self.terrain_key].shape) == 5 # [N, 1, D, H, W]
         
         self.obs_transform = env.observation_funcs[OBS_KEY].symmetry_transforms().to(self.device)
+        self.priv_transform = env.observation_funcs[OBS_PRIV_KEY].symmetry_transforms().to(self.device)
         self.hsc_transform = env.observation_funcs[self.terrain_key].symmetry_transforms().to(self.device)
         self.act_transform = env.action_manager.symmetry_transforms().to(self.device)
         
@@ -205,7 +206,6 @@ class PPOPolicy(TensorDictModuleBase):
             Mod(nn.LazyLinear(1), ["_critic_feature"], ["state_value"])
         ).to(self.device)
 
-        self.preprocess(fake_input)
         self.actor(fake_input)
         self.critic(fake_input)
         
@@ -347,6 +347,7 @@ class PPOPolicy(TensorDictModuleBase):
         if self.cfg.symmetry:
             symmetry = tensordict.empty()
             symmetry[OBS_KEY] = self.obs_transform(tensordict[OBS_KEY])
+            symmetry[OBS_PRIV_KEY] = self.priv_transform(tensordict[OBS_PRIV_KEY])
             symmetry[ACTION_KEY] = self.act_transform(tensordict[ACTION_KEY])
             symmetry[self.terrain_key] = self.hsc_transform(tensordict[self.terrain_key])
             symmetry["action_log_prob"] = tensordict["action_log_prob"]

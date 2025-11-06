@@ -1505,8 +1505,9 @@ class cartesian_force(Observation):
 
 
 class body_height(Observation):
-    def __init__(self, env, body_names: str):
+    def __init__(self, env, body_names: str, clamp_max: float=1.0):
         super().__init__(env)
+        self.clamp_max = clamp_max
         self.asset: Articulation = self.env.scene["robot"]
         self.body_ids, self.body_names = self.asset.find_bodies(body_names)
         self.body_ids = torch.as_tensor(self.body_ids, device=self.device)
@@ -1514,7 +1515,7 @@ class body_height(Observation):
     def compute(self):
         body_pos_w = self.asset.data.body_pos_w[:, self.body_ids]
         body_height = body_pos_w[:, :, 2] - self.env.get_ground_height_at(body_pos_w)
-        return body_height.reshape(self.num_envs, -1)
+        return body_height.clamp_max(self.clamp_max).reshape(self.num_envs, -1)
 
     def symmetry_transforms(self):
         return sym_utils.cartesian_space_symmetry(self.asset, self.body_names, sign=(1,))
