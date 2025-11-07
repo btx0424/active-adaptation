@@ -112,8 +112,8 @@ def main(cfg: DictConfig):
     @torch.inference_mode()
     @set_exploration_type(ExplorationType.RANDOM)
     def collect(carry):
+        torch.cuda.empty_cache()
         data = []
-        torch.compiler.cudagraph_mark_step_begin() # for compiled policy
         with torch.autocast("cuda", enabled=amp_enabled):
             for _ in range(cfg.algo.train_every):
                 carry = rollout_policy(carry)
@@ -125,6 +125,7 @@ def main(cfg: DictConfig):
                 
                 data.append(td.to(policy.device))
             data = torch.stack(data, dim=1)
+            # if (values := data.get("state_value")) is None:
             policy.critic(data)
             values = data["state_value"]
             data["next", "state_value"] = torch.where(
@@ -185,4 +186,3 @@ def main(cfg: DictConfig):
 
 if __name__ == "__main__":
     main()
-
