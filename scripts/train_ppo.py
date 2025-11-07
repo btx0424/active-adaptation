@@ -61,7 +61,7 @@ def main(cfg: DictConfig):
         run.save(cfg_save_path, policy="now")
         run.save(os.path.join(run.dir, "config.yaml"), policy="now")
 
-    from helpers import make_env_policy, EpisodeStats, evaluate
+    from helpers import make_env_policy, EpisodeStats, evaluate, check_vecnorm_state
     env, policy, vecnorm = make_env_policy(cfg)
 
     frames_per_batch = env.num_envs * cfg.algo.train_every
@@ -139,6 +139,7 @@ def main(cfg: DictConfig):
     for i in progress:
         rollout_start = time.perf_counter()
         data, carry = collect(carry)
+        loc_diff, scale_diff = check_vecnorm_state(vecnorm)
         rollout_time = time.perf_counter() - rollout_start
 
         episode_stats.add(data)
@@ -162,7 +163,10 @@ def main(cfg: DictConfig):
         info["performance/rollout_fps"] = data.numel() / rollout_time * aa.get_world_size()
         info["performance/training_time"] = training_time
         info["performance/iter_time"] = (time.perf_counter() - rollout_start)
-        
+        info["debug/max_loc_diff"] = max(loc_diff)
+        info["debug/max_scale_diff"] = max(scale_diff)
+        info["debug/mean_loc_diffs"] = sum(loc_diff) / len(loc_diff)
+        info["debug/mean_scale_diffs"] = sum(scale_diff) / len(scale_diff)
         if should_save(i):
             save(policy, f"checkpoint_{i}")
 
