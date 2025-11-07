@@ -125,9 +125,9 @@ def main(cfg: DictConfig):
                 
                 data.append(td.to(policy.device))
             data = torch.stack(data, dim=1)
-            # if (values := data.get("state_value")) is None:
-            policy.critic(data)
-            values = data["state_value"]
+            if (values := data.get("state_value")) is None:
+                policy.critic(data)
+                values = data["state_value"]
             data["next", "state_value"] = torch.where(
                 data["next", "done"],
                 values, # a walkaround to avoid storing the next states
