@@ -248,6 +248,7 @@ class PPOPolicy(TensorDictModuleBase):
             self.update_batch = torch.compile(self._update_batch)
         else:
             self.update_batch = self._update_batch
+        self.metric = 0 # maximize
     
     def get_rollout_policy(self, mode: str="train"):
         policy = TensorDictSequential(self.actor, self.critic)
@@ -304,6 +305,7 @@ class PPOPolicy(TensorDictModuleBase):
         out["critic/neg_rew_ratio"] = (tensordict[REWARD_KEY].sum(-1) <= 0.).float().mean().item()
         # out["critic/value_diff"] = value_diff.item()
         # out["actor/policy_diff"] = policy_diff.item()
+        self.metric = out["critic/value_mean"]
         return out
 
     @torch.no_grad()
