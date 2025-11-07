@@ -12,6 +12,7 @@ from typing import Sequence
 from tensordict import TensorDictBase, TensorDict
 from tensordict.nn import TensorDictModuleBase as ModBase
 from torchrl.envs.transforms import VecNorm
+import torch.distributed as dist
 
 from termcolor import colored
 from collections import OrderedDict
@@ -139,6 +140,60 @@ def make_env_policy(cfg: DictConfig):
         env = TransformedEnv(env.base_env, transform)
 
     return env, policy, vecnorm
+
+
+def check_vecnorm_state(vecnorm: VecNorm):
+    WORLD_SIZE = active_adaptation.get_world_size()
+    LOCAL_RANK = active_adaptation.get_local_rank()
+    device = torch.device(f"cuda:{LOCAL_RANK}")
+
+    keys = vecnorm.in_keys
+    loc, scale = vecnorm._get_loc_scale()
+    loc_tensors = []
+    scale_tensors = []
+    for key in keys:
+        loc_tensors.append(loc[key].flatten().to(device))
+        scale_tensors.append(scale[key].flatten().to(device))
+
+    loc_state = torch.cat(loc_tensors)
+    scale_state = torch.cat(scale_tensors)
+
+    gathered_loc = [torch.empty_like(loc_state) for _ in range(WORLD_SIZE)]
+    gathered_scale = [torch.empty_like(scale_state) for _ in range(WORLD_SIZE)]
+    dist.all_gather(gathered_loc, loc_state)
+    dist.all_gather(gathered_scale, scale_state)
+    
+    diffs_loc = []
+    diffs_scale = []
+    for r, (loc_vec, scale_vec) in enumerate(zip(gathered_loc, gathered_scale)):
+        diffs_loc.append((loc_vec - loc_state).abs().sum().item())
+        diffs_scale.append((scale_vec - scale_state).abs().sum().item())
+    
+    return diffs_loc, diffs_scale
+
+
+def sync_vecnorm_state(vecnorm: VecNorm):
+    # broadcast rank 0's stats to all ranks
+    WORLD_SIZE = active_adaptation.get_world_size()
+    keys = vecnorm.in_keys
+    
+    for key in keys:
+        sum = vecnorm._td[f"{key}_sum"].clone()
+        ssq = vecnorm._td[f"{key}_ssq"].clone()
+        count = vecnorm._td[f"{key}_count"].clone()
+        gathered_sums = [torch.empty_like(sum) for _ in range(WORLD_SIZE)]
+        gathered_ssqs = [torch.empty_like(ssq) for _ in range(WORLD_SIZE)]
+        gathered_counts = [torch.empty_like(count) for _ in range(WORLD_SIZE)]
+        dist.all_gather(gathered_sums, sum)
+        dist.all_gather(gathered_ssqs, ssq)
+        dist.all_gather(gathered_counts, count)
+        sum_new = gathered_sums[0]
+        ssq_new = gathered_ssqs[0]
+        count_new = gathered_counts[0]
+        
+        vecnorm._td[f"{key}_sum"] = sum_new
+        vecnorm._td[f"{key}_ssq"] = ssq_new
+        vecnorm._td[f"{key}_count"] = count_new
 
 
 from torchrl.envs import TransformedEnv, ExplorationType, set_exploration_type

@@ -61,7 +61,7 @@ def main(cfg: DictConfig):
         run.save(cfg_save_path, policy="now")
         run.save(os.path.join(run.dir, "config.yaml"), policy="now")
 
-    from helpers import make_env_policy, EpisodeStats, evaluate
+    from helpers import make_env_policy, EpisodeStats, evaluate, check_vecnorm_state, sync_vecnorm_state
     env, policy, vecnorm = make_env_policy(cfg)
 
     frames_per_batch = env.num_envs * cfg.algo.train_every
@@ -157,6 +157,14 @@ def main(cfg: DictConfig):
         
         if hasattr(policy, "step_schedule"):
             policy.step_schedule(i / total_iters)
+        
+        if aa.is_distributed():
+            loc_diff, scale_diff = check_vecnorm_state(vecnorm)
+            sync_vecnorm_state(vecnorm)
+            info["vecnorm/loc_diff_max"] = max(loc_diff)
+            info["vecnorm/scale_diff_max"] = max(scale_diff)
+            info["vecnorm/loc_diff_mean"] = sum(loc_diff) / len(loc_diff)
+            info["vecnorm/scale_diff_mean"] = sum(scale_diff) / len(scale_diff)
         
         info["env_frames"] = env_frames * aa.get_world_size()
         info["performance/rollout_fps"] = data.numel() / rollout_time * aa.get_world_size()
