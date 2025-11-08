@@ -1451,7 +1451,7 @@ class joint_deviation_l2(Reward):
         dev = self.asset.data.joint_pos[:, self.joint_ids] - self.default_joint_pos
         if self.joint_weights is not None:
             dev = dev * self.joint_weights
-        return - dev.square().sum(1, True) * 0.5
+        return - dev.square().sum(1, True)
 
 
 class pitch_exp(Reward):
