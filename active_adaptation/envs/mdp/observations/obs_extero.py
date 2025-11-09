@@ -58,6 +58,7 @@ class height_scan(Observation):
                 )
             )
             self.marker.set_visibility(True)
+        self.height_map = torch.zeros(self.num_envs, *self.shape, device=self.device)
 
     def compute(self):
         root_pos_w = self.asset.data.root_pos_w.reshape(self.num_envs, 1, 1, 3)
@@ -65,6 +66,10 @@ class height_scan(Observation):
         self.offset = quat_rotate(root_quat, self.pos.unsqueeze(0))
         self.height_map_w = self.env.get_ground_height_at(root_pos_w + self.offset)
         height_map = (root_pos_w[:, :, :, 2] - self.height_map_w).clamp(-1., 1.)
+        step = self.env.episode_length_buf
+        env_ids = (step % 5 == 0).nonzero().squeeze()
+        self.height_map[env_ids] = height_map[env_ids]
+        height_map = torch.randn_like(self.height_map) * self.noise_scale + self.height_map
         if self.include_xy:
             xy = einops.rearrange(self.pos[..., :2], "X Y C -> C X Y")
             height_map = torch.cat([
