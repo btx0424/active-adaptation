@@ -178,6 +178,7 @@ class PPOPolicy(TensorDictModuleBase):
         conv3d = len(observation_spec[self.terrain_key].shape) == 5 # [N, 1, D, H, W]
         
         self.obs_transform = env.observation_funcs[OBS_KEY].symmetry_transforms().to(self.device)
+        self.priv_transform = env.observation_funcs[OBS_PRIV_KEY].symmetry_transforms().to(self.device)
         self.hsc_transform = env.observation_funcs[self.terrain_key].symmetry_transforms().to(self.device)
         self.act_transform = env.action_manager.symmetry_transforms().to(self.device)
         
@@ -190,7 +191,7 @@ class PPOPolicy(TensorDictModuleBase):
         else:
             actor_in_keys = [OBS_KEY, self.terrain_key, "mask"]
             actor_out_keys = ["_actor_feature"]
-            critic_in_keys = [OBS_KEY, self.terrain_key, "mask"]
+            critic_in_keys = ["critic_input", self.terrain_key, "mask"]
             critic_out_keys = ["_critic_feature"]
         
         actor_module = TensorDictSequential(
@@ -210,6 +211,7 @@ class PPOPolicy(TensorDictModuleBase):
         ).to(self.device)
         
         self.critic = TensorDictSequential(
+            CatTensors([OBS_KEY, OBS_PRIV_KEY], "critic_input", del_keys=False),
             Mod(
                 MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=conv3d),
                 critic_in_keys,
@@ -374,6 +376,7 @@ class PPOPolicy(TensorDictModuleBase):
         if self.cfg.symmetry:
             symmetry = tensordict.empty()
             symmetry[OBS_KEY] = self.obs_transform(tensordict[OBS_KEY])
+            symmetry[OBS_PRIV_KEY] = self.priv_transform(tensordict[OBS_PRIV_KEY])
             symmetry[ACTION_KEY] = self.act_transform(tensordict[ACTION_KEY])
             symmetry[self.terrain_key] = self.hsc_transform(tensordict[self.terrain_key])
             symmetry["action_log_prob"] = tensordict["action_log_prob"]
