@@ -84,9 +84,10 @@ cs.store("ppo_hussar", node=PPOConfig, group="algo")
 
 
 class MixedEncoder(nn.Module):
-    def __init__(self, cnn_history: bool=False, conv3d: bool=False):
+    def __init__(self, cnn_history: bool=False, conv3d: bool=False, symmetry_transform=None):
         super().__init__()
         self.cnn_history = cnn_history
+        self.symmetry_transform = symmetry_transform
         self.mlp_encoder = nn.Sequential(
             nn.LazyLinear(256), nn.Mish(), nn.LayerNorm(256), 
             nn.LazyLinear(256)
@@ -129,6 +130,11 @@ class MixedEncoder(nn.Module):
             cnn_feature = cnn_feature * mask_cnn
         if self.cnn_history:
             feature = torch.cat([mlp_feature, cnn_feature, prev_cnn_feature], dim=-1)
+            # If symmetry_transform is provided, also produce a symmetric cnn feature (from transformed voxel)
+            if self.symmetry_transform is not None:
+                cnn_inp_sym = self.symmetry_transform(cnn_inp)
+                cnn_feature_sym = self.cnn_encoder(cnn_inp_sym.float())
+                return self.out(feature), cnn_feature, cnn_feature_sym
             return self.out(feature), cnn_feature
         else:
             feature = torch.cat([mlp_feature, cnn_feature], dim=-1)
@@ -176,31 +182,35 @@ class PPOPolicy(TensorDictModuleBase):
         else:
             self.terrain_key = "grid_map_"
         conv3d = len(observation_spec[self.terrain_key].shape) == 5 # [N, 1, D, H, W]
-        import ipdb; ipdb.set_trace()
+        
         self.obs_transform = env.observation_funcs[OBS_KEY].symmetry_transforms().to(self.device)
-        if OBS_PRIV_KEY in observation_spec.keys(True, True):
-            self.priv_transform = env.observation_funcs[OBS_PRIV_KEY].symmetry_transforms().to(self.device)
+        self.priv_transform = env.observation_funcs[OBS_PRIV_KEY].symmetry_transforms().to(self.device)
         self.hsc_transform = env.observation_funcs[self.terrain_key].symmetry_transforms().to(self.device)
         self.act_transform = env.action_manager.symmetry_transforms().to(self.device)
         
-        assert not (self.cfg.cnn_history and self.cfg.symmetry), "cnn_history and symmetry cannot be True at the same time"
+        # Build I/O keys considering cnn_history and symmetry together
         if self.cfg.cnn_history:
             actor_in_keys = [OBS_KEY, self.terrain_key, "actor_cnn_feature", "mask"]
-            actor_out_keys = ["_actor_feature", ("next", "actor_cnn_feature")]
             critic_in_keys = [OBS_KEY, self.terrain_key, "critic_cnn_feature", "mask"]
-            critic_out_keys = ["_critic_feature", ("next", "critic_cnn_feature")]
+            if self.cfg.symmetry:
+                actor_out_keys = ["_actor_feature", ("next", "actor_cnn_feature"), ("next", "actor_cnn_feature_sym")]
+                critic_out_keys = ["_critic_feature", ("next", "critic_cnn_feature"), ("next", "critic_cnn_feature_sym")]
+            else:
+                actor_out_keys = ["_actor_feature", ("next", "actor_cnn_feature")]
+                critic_out_keys = ["_critic_feature", ("next", "critic_cnn_feature")]
         else:
             actor_in_keys = [OBS_KEY, self.terrain_key, "mask"]
             actor_out_keys = ["_actor_feature"]
-            if OBS_PRIV_KEY in observation_spec.keys(True, True):
-                critic_in_keys = ["critic_input", self.terrain_key, "mask"]
-            else:
-                critic_in_keys = [OBS_KEY, self.terrain_key, "mask"]
+            critic_in_keys = ["critic_input", self.terrain_key, "mask"]
             critic_out_keys = ["_critic_feature"]
         
         actor_module = TensorDictSequential(
             Mod(
-                MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=conv3d),
+                MixedEncoder(
+                    cnn_history=self.cfg.cnn_history, 
+                    conv3d=conv3d, 
+                    symmetry_transform=self.hsc_transform if self.cfg.cnn_history and self.cfg.symmetry else None
+                ),
                 actor_in_keys,
                 actor_out_keys
             ),
@@ -213,26 +223,20 @@ class PPOPolicy(TensorDictModuleBase):
             distribution_class=IndependentNormal,
             return_log_prob=True
         ).to(self.device)
-        if OBS_PRIV_KEY in observation_spec.keys(True, True):
-            critic_module = TensorDictSequential(
-                CatTensors([OBS_KEY, OBS_PRIV_KEY], "critic_input", del_keys=False),
-                Mod(
-                    MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=conv3d),
-                    critic_in_keys,
-                    critic_out_keys
+        
+        self.critic = TensorDictSequential(
+            CatTensors([OBS_KEY, OBS_PRIV_KEY], "critic_input", del_keys=False),
+            Mod(
+                MixedEncoder(
+                    cnn_history=self.cfg.cnn_history, 
+                    conv3d=conv3d, 
+                    symmetry_transform=self.hsc_transform if self.cfg.cnn_history and self.cfg.symmetry else None
                 ),
-                Mod(nn.LazyLinear(1), ["_critic_feature"], ["state_value"])
-            ).to(self.device)
-        else:
-            critic_module = TensorDictSequential(
-                Mod(
-                    MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=conv3d),
-                    critic_in_keys,
-                    critic_out_keys
-                ),
-                Mod(nn.LazyLinear(1), ["_critic_feature"], ["state_value"])
-            ).to(self.device)
-        self.critic = critic_module
+                critic_in_keys,
+                critic_out_keys
+            ),
+            Mod(nn.LazyLinear(1), ["_critic_feature"], ["state_value"])
+        ).to(self.device)
 
         self.actor(fake_input)
         self.critic(fake_input)
@@ -292,10 +296,14 @@ class PPOPolicy(TensorDictModuleBase):
     
     def make_tensordict_primer(self):
         num_envs = self.observation_spec.shape[0]
-        spec = CompositeSpec({
+        spec_dict = {
             "actor_cnn_feature": UnboundedContinuous((num_envs, 64), device=self.device),
             "critic_cnn_feature": UnboundedContinuous((num_envs, 64), device=self.device),
-        }, shape=[num_envs,], device=self.device)
+        }
+        if self.cfg.cnn_history and self.cfg.symmetry:
+            spec_dict["actor_cnn_feature_sym"] = UnboundedContinuous((num_envs, 64), device=self.device)
+            spec_dict["critic_cnn_feature_sym"] = UnboundedContinuous((num_envs, 64), device=self.device)
+        spec = CompositeSpec(spec_dict, shape=[num_envs,], device=self.device)
         return TensorDictPrimer(spec, reset_key="done")
 
     # @torch.compile
@@ -390,14 +398,18 @@ class PPOPolicy(TensorDictModuleBase):
         if self.cfg.symmetry:
             symmetry = tensordict.empty()
             symmetry[OBS_KEY] = self.obs_transform(tensordict[OBS_KEY])
-            if OBS_PRIV_KEY in tensordict.keys(True, True):
-                symmetry[OBS_PRIV_KEY] = self.priv_transform(tensordict[OBS_PRIV_KEY])
+            symmetry[OBS_PRIV_KEY] = self.priv_transform(tensordict[OBS_PRIV_KEY])
             symmetry[ACTION_KEY] = self.act_transform(tensordict[ACTION_KEY])
             symmetry[self.terrain_key] = self.hsc_transform(tensordict[self.terrain_key])
             symmetry["action_log_prob"] = tensordict["action_log_prob"]
             symmetry["is_init"] = tensordict["is_init"]
             symmetry["adv"] = tensordict["adv"]
             symmetry["ret"] = tensordict["ret"]
+            if self.cfg.cnn_history:
+                # Use symmetric previous latents for the symmetry branch
+                if ("actor_cnn_feature_sym" in tensordict.keys()) and ("critic_cnn_feature_sym" in tensordict.keys()):
+                    symmetry["actor_cnn_feature"] = tensordict["actor_cnn_feature_sym"]
+                    symmetry["critic_cnn_feature"] = tensordict["critic_cnn_feature_sym"]
             tensordict = torch.cat([tensordict.select(*symmetry.keys(True, True)), symmetry], dim=0)
 
         action_data = tensordict[ACTION_KEY]

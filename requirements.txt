@@ -7,3 +7,6 @@ coacd
 onnxruntime
 onnxscript
 wandb==0.18.3
+torchrl
+zmq
+linuxfd

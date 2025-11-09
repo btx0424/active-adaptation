@@ -117,7 +117,7 @@ def main():
             cfg["task"]["num_envs"] = 16
             cfg["eval_render"] = True
             cfg["app"]["enable_cameras"] = True
-            cfg["app"]["headless"] = False
+            cfg["app"]["headless"] = True
         eval(cfg)
 
 
