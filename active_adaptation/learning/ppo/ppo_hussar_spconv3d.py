@@ -54,11 +54,12 @@ import active_adaptation
 import torch.distributed as distr
 from torch.nn.parallel import DistributedDataParallel as DDP
 from active_adaptation.utils.torchrl import EnsembleCritic
+import spconv.pytorch as spconv
 
 @dataclass
 class PPOConfig:
-    _target_: str = "active_adaptation.learning.ppo.ppo_hussar.PPOPolicy"
-    name: str = "ppo_hussar"
+    _target_: str = "active_adaptation.learning.ppo.ppo_hussar_spconv3d.PPOPolicy"
+    name: str = "ppo_hussar_spconv3d"
     train_every: int = 48
     ppo_epochs: int = 4
     num_minibatches: int = 8
@@ -72,7 +73,6 @@ class PPOConfig:
 
     cnn_history: bool = False
     symmetry: bool = True
-    actor_rnn: bool = False
     
     compile: bool = False
     use_ddp: bool = True
@@ -81,44 +81,105 @@ class PPOConfig:
     in_keys: Tuple[str] = (OBS_KEY, "height_scan", "grid_map_", "base_height", "base_height_targ")
 
 cs = ConfigStore.instance()
-cs.store("ppo_hussar", node=PPOConfig, group="algo")
+cs.store("ppo_hussar_spconv3d", node=PPOConfig, group="algo")
+
+
+class Spconv3DBackbone(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # 与 2D CNN 参数/层数对齐：3 层卷积、每层 8 通道、3x3 核，仅在 H/W 下采样
+        # 用 3D 核 (1,3,3)、步幅 (1,2,2)、填充 (0,1,1)，避免跨深度维卷积，参数量与 2D 3x3 相当
+        self.net = spconv.SparseSequential(
+            spconv.SparseConv3d(1, 8, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1)),
+            nn.Mish(),
+            spconv.SparseConv3d(8, 8, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1)),
+            nn.Mish(),
+            spconv.SparseConv3d(8, 8, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1)),
+            nn.Mish(),
+            spconv.ToDense()  # -> [B, 8, D, H', W']
+        )
+
+    def forward(self, x):
+        # 仅支持稠密张量输入；自动处理任意批维，并将 4D 输入补为 5D
+        assert not isinstance(x, spconv.SparseConvTensor), "Expect dense tensor, got SparseConvTensor."
+        assert x.dim() >= 4, "CNN input must be at least 4D ([..., C, H, W])."
+        # 确保为 5D: [..., C, D, H, W]
+        if x.dim() == 4:
+            x = x.unsqueeze(1)  # [..., 1, D, H, W]（将原通道 D 作为深度维）
+        # 扁平化前置批维
+        batch_ndims = x.dim() - 5
+        if batch_ndims > 0:
+            batch_shape = x.shape[:batch_ndims]
+            x_5d = x.flatten(0, batch_ndims - 1)
+        else:
+            batch_shape = None
+            x_5d = x
+        # from_dense 期望 NDHWC
+        x_ndhwc = x_5d.permute(0, 2, 3, 4, 1).contiguous()
+        sp_x = spconv.SparseConvTensor.from_dense(x_ndhwc)
+        # 若没有任何激活体素（常见于全零假输入初始化阶段），直接返回与 ToDense 后一致尺寸的零向量
+        if sp_x.features.shape[0] == 0:
+            Bf, _, D_in, H_in, W_in = x_5d.shape
+            def ceil_div(a, b): return (a + b - 1) // b
+            # 三次 (k=3, s=2, p=1) 在 H/W 维；D 维 (k=1, s=1, p=0) 不变
+            H1 = ceil_div(H_in, 2)
+            H2 = ceil_div(H1, 2)
+            H3 = ceil_div(H2, 2)
+            W1 = ceil_div(W_in, 2)
+            W2 = ceil_div(W1, 2)
+            W3 = ceil_div(W2, 2)
+            D3 = D_in
+            # 最后一层通道为 8（见 self.net 定义）
+            y = torch.zeros(Bf, 8, D3, H3, W3, device=x_5d.device, dtype=x_5d.dtype)
+            y = torch.flatten(y, 1)
+        else:
+            y = self.net(sp_x)  # 稠密输出 [B_flat, C, D, H, W]
+            y = torch.flatten(y, 1)  # [B_flat, F]
+        if batch_shape is not None:
+            y = y.unflatten(0, batch_shape)  # [..., F]
+        return y
 
 
 class MixedEncoder(nn.Module):
-    def __init__(self, cnn_history: bool=False, conv3d: bool=False, symmetry_transform=None):
+    def __init__(self, cnn_history: bool=False, conv3d: bool=False):
         super().__init__()
         self.cnn_history = cnn_history
-        self.symmetry_transform = symmetry_transform
         self.mlp_encoder = nn.Sequential(
             nn.LazyLinear(256), nn.Mish(), nn.LayerNorm(256), 
             nn.LazyLinear(256)
         )
 
         if conv3d:
-            cnn_cls = nn.LazyConv3d
-            data_dim = 4 # [C, X, Z, Y]
+            # 使用稀疏3D卷积骨干（内部自行处理批维展平/还原与 4D->5D 补维）
+            self.cnn_encoder = nn.Sequential(
+                Spconv3DBackbone(),
+                nn.LazyLinear(64),
+                nn.Mish(),
+                nn.LayerNorm(64),
+                nn.LazyLinear(64),
+            )
         else:
+            # 保持原 2D CNN
             cnn_cls = nn.LazyConv2d
-            data_dim = 3 # [C, X, Y]
-
-        self.cnn_encoder = nn.Sequential(
-            FlattenBatch(
-                nn.Sequential(
-                    cnn_cls(8, kernel_size=3, stride=2, padding=1), 
-                    nn.Mish(), # nn.GroupNorm(num_channels=2, num_groups=2),
-                    cnn_cls(8, kernel_size=3, stride=2, padding=1),
-                    nn.Mish(), # nn.GroupNorm(num_channels=4, num_groups=2),
-                    cnn_cls(8, kernel_size=3, stride=2, padding=1),
-                    nn.Mish(), # nn.GroupNorm(num_channels=8, num_groups=2), 
-                    nn.Flatten(),
+            data_dim = 3  # [C, H, W]
+            self.cnn_encoder = nn.Sequential(
+                FlattenBatch(
+                    nn.Sequential(
+                        cnn_cls(8, kernel_size=3, stride=2, padding=1), 
+                        nn.Mish(),
+                        cnn_cls(8, kernel_size=3, stride=2, padding=1),
+                        nn.Mish(),
+                        cnn_cls(8, kernel_size=3, stride=2, padding=1),
+                        nn.Mish(),
+                        nn.Flatten(),
+                    ),
+                    data_dim=data_dim,
                 ),
-                data_dim=data_dim,
-            ),
-            nn.LazyLinear(64),
-            nn.Mish(),
-            nn.LayerNorm(64),
-            nn.LazyLinear(64),
-        )
+                nn.LazyLinear(64),
+                nn.Mish(),
+                nn.LayerNorm(64),
+                nn.LazyLinear(64),
+            )
         self.out = nn.Sequential(nn.Mish(), nn.LazyLinear(256), nn.Mish())
 
     def forward(self, mlp_inp, cnn_inp, prev_cnn_feature, mask_cnn=None):
@@ -131,41 +192,10 @@ class MixedEncoder(nn.Module):
             cnn_feature = cnn_feature * mask_cnn
         if self.cnn_history:
             feature = torch.cat([mlp_feature, cnn_feature, prev_cnn_feature], dim=-1)
-            # If symmetry_transform is provided, also produce a symmetric cnn feature (from transformed voxel)
-            if self.symmetry_transform is not None:
-                cnn_inp_sym = self.symmetry_transform(cnn_inp)
-                cnn_feature_sym = self.cnn_encoder(cnn_inp_sym.float())
-                return self.out(feature), cnn_feature, cnn_feature_sym
             return self.out(feature), cnn_feature
         else:
             feature = torch.cat([mlp_feature, cnn_feature], dim=-1)
-            if self.symmetry_transform is not None:
-                cnn_inp_sym = self.symmetry_transform(cnn_inp)
-                cnn_feature_sym = self.cnn_encoder(cnn_inp_sym.float())
-                feature_sym = torch.cat([mlp_feature, cnn_feature_sym], dim=-1)
-                return self.out(feature), self.out(feature_sym)
             return self.out(feature)
-
-
-class GRUWrapper(nn.Module):
-    def __init__(self, hidden_size: int = 256):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.gru = nn.GRUCell(input_size=hidden_size, hidden_size=hidden_size)
-        self.norm = nn.LayerNorm(hidden_size)
-        self.act = nn.Mish()
-
-    def forward(self, feature, h):
-        """
-        feature: [*, H]  (H = hidden_size)
-        h: [*, H]
-        Returns:
-            next_feature: [*, H]
-            next_h: [*, H]
-        """
-        next_h = self.gru(feature, h)
-        next_feature = self.act(self.norm(next_h))
-        return next_feature, next_h
 
 
 class PPOPolicy(TensorDictModuleBase):
@@ -208,99 +238,37 @@ class PPOPolicy(TensorDictModuleBase):
             self.terrain_key = "height_scan"
         else:
             self.terrain_key = "grid_map_"
-        conv3d = len(observation_spec[self.terrain_key].shape) == 5 # [N, 1, D, H, W]
-        
+        # 始终走 3D 分支；实际运行时若输入为 4D，会在骨干中自动 unsqueeze
+        self.conv3d = True
         self.obs_transform = env.observation_funcs[OBS_KEY].symmetry_transforms().to(self.device)
-        self.priv_transform = env.observation_funcs[OBS_PRIV_KEY].symmetry_transforms().to(self.device)
+        if OBS_PRIV_KEY in observation_spec.keys(True, True):
+            self.priv_transform = env.observation_funcs[OBS_PRIV_KEY].symmetry_transforms().to(self.device)
         self.hsc_transform = env.observation_funcs[self.terrain_key].symmetry_transforms().to(self.device)
         self.act_transform = env.action_manager.symmetry_transforms().to(self.device)
         
-        # Build I/O keys considering cnn_history and symmetry together
-        if self.cfg.actor_rnn:
-            # Recurrent actor: ignore cnn_history for actor; keep it for critic as configured
-            actor_in_keys = [OBS_KEY, self.terrain_key, "mask", "actor_h"]
-            actor_out_keys = ["_actor_feature", ("next", "actor_h")]
-            if self.cfg.cnn_history:
-                critic_in_keys = [OBS_KEY, self.terrain_key, "critic_cnn_feature", "mask"]
-                if self.cfg.symmetry:
-                    critic_out_keys = ["_critic_feature", ("next", "critic_cnn_feature"), ("next", "critic_cnn_feature_sym")]
-                else:
-                    critic_out_keys = ["_critic_feature", ("next", "critic_cnn_feature")]
-            else:
-                critic_in_keys = ["critic_input", self.terrain_key, "mask"]
-                critic_out_keys = ["_critic_feature"]
+        assert not (self.cfg.cnn_history and self.cfg.symmetry), "cnn_history and symmetry cannot be True at the same time"
+        if self.cfg.cnn_history:
+            actor_in_keys = [OBS_KEY, self.terrain_key, "actor_cnn_feature", "mask"]
+            actor_out_keys = ["_actor_feature", ("next", "actor_cnn_feature")]
+            critic_in_keys = [OBS_KEY, self.terrain_key, "critic_cnn_feature", "mask"]
+            critic_out_keys = ["_critic_feature", ("next", "critic_cnn_feature")]
         else:
-            if self.cfg.cnn_history:
-                actor_in_keys = [OBS_KEY, self.terrain_key, "actor_cnn_feature", "mask"]
-                critic_in_keys = [OBS_KEY, self.terrain_key, "critic_cnn_feature", "mask"]
-                if self.cfg.symmetry:
-                    actor_out_keys = ["_actor_feature", ("next", "actor_cnn_feature"), ("next", "actor_cnn_feature_sym")]
-                    critic_out_keys = ["_critic_feature", ("next", "critic_cnn_feature"), ("next", "critic_cnn_feature_sym")]
-                else:
-                    actor_out_keys = ["_actor_feature", ("next", "actor_cnn_feature")]
-                    critic_out_keys = ["_critic_feature", ("next", "critic_cnn_feature")]
-            else:
-                actor_in_keys = [OBS_KEY, self.terrain_key, "mask"]
-                actor_out_keys = ["_actor_feature"]
+            actor_in_keys = [OBS_KEY, self.terrain_key, "mask"]
+            actor_out_keys = ["_actor_feature"]
+            if OBS_PRIV_KEY in observation_spec.keys(True, True):
                 critic_in_keys = ["critic_input", self.terrain_key, "mask"]
-                critic_out_keys = ["_critic_feature"]
+            else:
+                critic_in_keys = [OBS_KEY, self.terrain_key, "mask"]
+            critic_out_keys = ["_critic_feature"]
         
-        if self.cfg.actor_rnn:
-            if self.cfg.symmetry:
-                gru_module = GRUWrapper(hidden_size=256)
-                actor_module = TensorDictSequential(
-                    Mod(
-                        MixedEncoder(
-                            cnn_history=False,  # for actor, no prev latent path when using GRU
-                            conv3d=conv3d,
-                            symmetry_transform=self.hsc_transform
-                        ),
-                        [OBS_KEY, self.terrain_key, "mask"],  # feature extraction only
-                        ["_actor_feature", "_actor_feature_sym"]
-                    ),
-                    Mod(
-                        gru_module,
-                        ["_actor_feature", "actor_h"],
-                        ["_actor_feature", ("next", "actor_h")]
-                    ),
-                    Mod(
-                        gru_module,
-                        ["_actor_feature_sym", "actor_h_sym"],
-                        ["_actor_feature_sym", ("next", "actor_h_sym")]
-                    ),
-                    Mod(Actor(self.action_dim), ["_actor_feature"], ["loc", "scale"]),
-                )
-            else:
-                actor_module = TensorDictSequential(
-                    Mod(
-                        MixedEncoder(
-                            cnn_history=False,  # for actor, no prev latent path when using GRU
-                            conv3d=conv3d,
-                            symmetry_transform=None
-                        ),
-                        [OBS_KEY, self.terrain_key, "mask"],  # feature extraction only
-                        ["_actor_feature"]
-                    ),
-                    Mod(
-                        GRUWrapper(hidden_size=256),
-                        ["_actor_feature", "actor_h"],
-                        ["_actor_feature", ("next", "actor_h")]
-                    ),
-                    Mod(Actor(self.action_dim), ["_actor_feature"], ["loc", "scale"]),
-                )
-        else:
-            actor_module = TensorDictSequential(
-                Mod(
-                    MixedEncoder(
-                        cnn_history=self.cfg.cnn_history, 
-                        conv3d=conv3d, 
-                        symmetry_transform=self.hsc_transform if self.cfg.cnn_history and self.cfg.symmetry else None
-                    ),
-                    actor_in_keys,
-                    actor_out_keys
-                ),
-                Mod(Actor(self.action_dim), ["_actor_feature"], ["loc", "scale"]),
-            )
+        actor_module = TensorDictSequential(
+            Mod(
+                MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=self.conv3d),
+                actor_in_keys,
+                actor_out_keys
+            ),
+            Mod(Actor(self.action_dim), ["_actor_feature"], ["loc", "scale"]),
+        )
         self.actor: ProbabilisticActor = ProbabilisticActor(
             module=actor_module,
             in_keys=["loc", "scale"],
@@ -308,25 +276,27 @@ class PPOPolicy(TensorDictModuleBase):
             distribution_class=IndependentNormal,
             return_log_prob=True
         ).to(self.device)
-        
-        self.critic = TensorDictSequential(
-            CatTensors([OBS_KEY, OBS_PRIV_KEY], "critic_input", del_keys=False),
-            Mod(
-                MixedEncoder(
-                    cnn_history=self.cfg.cnn_history, 
-                    conv3d=conv3d, 
-                    symmetry_transform=self.hsc_transform if self.cfg.cnn_history and self.cfg.symmetry else None
+        if OBS_PRIV_KEY in observation_spec.keys(True, True):
+            critic_module = TensorDictSequential(
+                CatTensors([OBS_KEY, OBS_PRIV_KEY], "critic_input", del_keys=False),
+                Mod(
+                    MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=self.conv3d),
+                    critic_in_keys,
+                    critic_out_keys
                 ),
-                critic_in_keys,
-                critic_out_keys
-            ),
-            Mod(nn.LazyLinear(1), ["_critic_feature"], ["state_value"])
-        ).to(self.device)
+                Mod(nn.LazyLinear(1), ["_critic_feature"], ["state_value"])
+            ).to(self.device)
+        else:
+            critic_module = TensorDictSequential(
+                Mod(
+                    MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=self.conv3d),
+                    critic_in_keys,
+                    critic_out_keys
+                ),
+                Mod(nn.LazyLinear(1), ["_critic_feature"], ["state_value"])
+            ).to(self.device)
+        self.critic = critic_module
 
-        if self.cfg.actor_rnn:
-            fake_input["actor_h"] = torch.zeros(fake_input.shape[0], 256, device=self.device)
-            if self.cfg.symmetry:
-                fake_input["actor_h_sym"] = torch.zeros(fake_input.shape[0], 256, device=self.device)
         self.actor(fake_input)
         self.critic(fake_input)
         
@@ -385,18 +355,10 @@ class PPOPolicy(TensorDictModuleBase):
     
     def make_tensordict_primer(self):
         num_envs = self.observation_spec.shape[0]
-        spec_dict = {
+        spec = CompositeSpec({
             "actor_cnn_feature": UnboundedContinuous((num_envs, 64), device=self.device),
             "critic_cnn_feature": UnboundedContinuous((num_envs, 64), device=self.device),
-        }
-        if self.cfg.cnn_history and self.cfg.symmetry:
-            spec_dict["actor_cnn_feature_sym"] = UnboundedContinuous((num_envs, 64), device=self.device)
-            spec_dict["critic_cnn_feature_sym"] = UnboundedContinuous((num_envs, 64), device=self.device)
-        if self.cfg.actor_rnn:
-            spec_dict["actor_h"] = UnboundedContinuous((num_envs, 256), device=self.device)
-            if self.cfg.symmetry:
-                spec_dict["actor_h_sym"] = UnboundedContinuous((num_envs, 256), device=self.device)
-        spec = CompositeSpec(spec_dict, shape=[num_envs,], device=self.device)
+        }, shape=[num_envs,], device=self.device)
         return TensorDictPrimer(spec, reset_key="done")
 
     # @torch.compile
@@ -491,24 +453,14 @@ class PPOPolicy(TensorDictModuleBase):
         if self.cfg.symmetry:
             symmetry = tensordict.empty()
             symmetry[OBS_KEY] = self.obs_transform(tensordict[OBS_KEY])
-            symmetry[OBS_PRIV_KEY] = self.priv_transform(tensordict[OBS_PRIV_KEY])
+            if OBS_PRIV_KEY in tensordict.keys(True, True):
+                symmetry[OBS_PRIV_KEY] = self.priv_transform(tensordict[OBS_PRIV_KEY])
             symmetry[ACTION_KEY] = self.act_transform(tensordict[ACTION_KEY])
             symmetry[self.terrain_key] = self.hsc_transform(tensordict[self.terrain_key])
             symmetry["action_log_prob"] = tensordict["action_log_prob"]
             symmetry["is_init"] = tensordict["is_init"]
             symmetry["adv"] = tensordict["adv"]
             symmetry["ret"] = tensordict["ret"]
-            if self.cfg.cnn_history:
-                # Use symmetric previous latents for the symmetry branch
-                if ("actor_cnn_feature_sym" in tensordict.keys()) and ("critic_cnn_feature_sym" in tensordict.keys()):
-                    symmetry["actor_cnn_feature"] = tensordict["actor_cnn_feature_sym"]
-                    symmetry["critic_cnn_feature"] = tensordict["critic_cnn_feature_sym"]
-            if self.cfg.actor_rnn:
-                # For symmetry sample, use mirrored GRU hidden if available; fallback to raw if not
-                if "actor_h_sym" in tensordict.keys():
-                    symmetry["actor_h"] = tensordict["actor_h_sym"]
-                elif "actor_h" in tensordict.keys():
-                    symmetry["actor_h"] = tensordict["actor_h"]
             tensordict = torch.cat([tensordict.select(*symmetry.keys(True, True)), symmetry], dim=0)
 
         action_data = tensordict[ACTION_KEY]
