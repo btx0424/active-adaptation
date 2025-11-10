@@ -54,6 +54,7 @@ import active_adaptation
 import torch.distributed as distr
 from torch.nn.parallel import DistributedDataParallel as DDP
 from active_adaptation.utils.torchrl import EnsembleCritic
+import spconv.pytorch as spconv
 
 @dataclass
 class PPOConfig:
@@ -78,15 +79,71 @@ class PPOConfig:
 
     checkpoint_path: Union[str, None] = None
     in_keys: Tuple[str] = (OBS_KEY, "height_scan", "grid_map_", "base_height", "base_height_targ")
+    # 是否使用稀疏2D CNN 替换当前 2D CNN
+    use_sparse_2d: bool = False
 
 cs = ConfigStore.instance()
 cs.store("ppo_hussar", node=PPOConfig, group="algo")
 
 
+class Spconv2DBackbone(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = None  # 延迟构建以适配动态输入通道数
+
+    def _build(self, in_channels: int):
+        self.net = spconv.SparseSequential(
+            spconv.SparseConv2d(in_channels, 8, kernel_size=3, stride=2, padding=1),
+            nn.Mish(),
+            spconv.SparseConv2d(8, 8, kernel_size=3, stride=2, padding=1),
+            nn.Mish(),
+            spconv.SparseConv2d(8, 8, kernel_size=3, stride=2, padding=1),
+            nn.Mish(),
+            spconv.ToDense()
+        )
+
+    def forward(self, x: torch.Tensor):
+        # 支持任意批维；期望稠密 NCHW 输入
+        assert x.dim() >= 4, "2D输入应为 [ ..., C, H, W ]"
+        batch_ndims = x.dim() - 4
+        if batch_ndims > 0:
+            batch_shape = x.shape[:batch_ndims]
+            x_4d = x.flatten(0, batch_ndims - 1)
+        else:
+            batch_shape = None
+            x_4d = x
+
+        in_channels = x_4d.shape[1]
+        if self.net is None:
+            self._build(in_channels)
+
+        # NCHW -> NHWC 以适配 from_dense
+        x_nhwc = x_4d.permute(0, 2, 3, 1).contiguous()
+        sp_x = spconv.SparseConvTensor.from_dense(x_nhwc)
+
+        if sp_x.features.shape[0] == 0:
+            # 全零兜底：计算三次 stride=2 后的空间尺寸
+            def ceil_div(a, b): return (a + b - 1) // b
+            H_in, W_in = x_4d.shape[2], x_4d.shape[3]
+            H1 = ceil_div(H_in, 2); H2 = ceil_div(H1, 2); H3 = ceil_div(H2, 2)
+            W1 = ceil_div(W_in, 2); W2 = ceil_div(W1, 2); W3 = ceil_div(W2, 2)
+            Bf = x_4d.shape[0]
+            y = torch.zeros(Bf, 8, H3, W3, device=x_4d.device, dtype=x_4d.dtype)
+            y = torch.flatten(y, 1)
+        else:
+            y = self.net(sp_x)  # ToDense 输出（2D通常为 NHWC 或 NCHW，直接展平即可）
+            y = torch.flatten(y, 1)
+
+        if batch_shape is not None:
+            y = y.unflatten(0, batch_shape)
+        return y
+
+
 class MixedEncoder(nn.Module):
-    def __init__(self, cnn_history: bool=False, conv3d: bool=False):
+    def __init__(self, cnn_history: bool=False, conv3d: bool=False, use_sparse_2d: bool=False):
         super().__init__()
         self.cnn_history = cnn_history
+        self.use_sparse_2d = use_sparse_2d
         self.mlp_encoder = nn.Sequential(
             nn.LazyLinear(256), nn.Mish(), nn.LayerNorm(256), 
             nn.LazyLinear(256)
@@ -96,27 +153,60 @@ class MixedEncoder(nn.Module):
             cnn_cls = nn.LazyConv3d
             data_dim = 4 # [C, X, Z, Y]
         else:
-            cnn_cls = nn.LazyConv2d
-            data_dim = 3 # [C, X, Y]
+            if self.use_sparse_2d:
+                # 稀疏2D卷积骨干（内部处理批维与 from_dense/ToDense）
+                self.cnn_encoder = nn.Sequential(
+                    Spconv2DBackbone(),
+                    nn.LazyLinear(64),
+                    nn.Mish(),
+                    nn.LayerNorm(64),
+                    nn.LazyLinear(64),
+                )
+            else:
+                cnn_cls = nn.LazyConv2d
+                data_dim = 3 # [C, X, Y]
 
-        self.cnn_encoder = nn.Sequential(
-            FlattenBatch(
-                nn.Sequential(
-                    cnn_cls(8, kernel_size=3, stride=2, padding=1), 
-                    nn.Mish(), # nn.GroupNorm(num_channels=2, num_groups=2),
-                    cnn_cls(8, kernel_size=3, stride=2, padding=1),
-                    nn.Mish(), # nn.GroupNorm(num_channels=4, num_groups=2),
-                    cnn_cls(8, kernel_size=3, stride=2, padding=1),
-                    nn.Mish(), # nn.GroupNorm(num_channels=8, num_groups=2), 
-                    nn.Flatten(),
+                self.cnn_encoder = nn.Sequential(
+                    FlattenBatch(
+                        nn.Sequential(
+                            cnn_cls(8, kernel_size=3, stride=2, padding=1), 
+                            nn.Mish(), # nn.GroupNorm(num_channels=2, num_groups=2),
+                            cnn_cls(8, kernel_size=3, stride=2, padding=1),
+                            nn.Mish(), # nn.GroupNorm(num_channels=4, num_groups=2),
+                            cnn_cls(8, kernel_size=3, stride=2, padding=1),
+                            nn.Mish(), # nn.GroupNorm(num_channels=8, num_groups=2), 
+                            nn.Flatten(),
+                        ),
+                        data_dim=data_dim,
+                    ),
+                    nn.LazyLinear(64),
+                    nn.Mish(),
+                    nn.LayerNorm(64),
+                    nn.LazyLinear(64),
+                )
+
+        if not conv3d and not self.use_sparse_2d:
+            pass  # 已在上方构造 self.cnn_encoder
+        elif conv3d:
+            # conv3d 情况沿用原逻辑（上面只设置了 cnn_cls 与 data_dim，这里构造）
+            self.cnn_encoder = nn.Sequential(
+                FlattenBatch(
+                    nn.Sequential(
+                        cnn_cls(8, kernel_size=3, stride=2, padding=1), 
+                        nn.Mish(),
+                        cnn_cls(8, kernel_size=3, stride=2, padding=1),
+                        nn.Mish(),
+                        cnn_cls(8, kernel_size=3, stride=2, padding=1),
+                        nn.Mish(),
+                        nn.Flatten(),
+                    ),
+                    data_dim=data_dim,
                 ),
-                data_dim=data_dim,
-            ),
-            nn.LazyLinear(64),
-            nn.Mish(),
-            nn.LayerNorm(64),
-            nn.LazyLinear(64),
-        )
+                nn.LazyLinear(64),
+                nn.Mish(),
+                nn.LayerNorm(64),
+                nn.LazyLinear(64),
+            )
         self.out = nn.Sequential(nn.Mish(), nn.LazyLinear(256), nn.Mish())
 
     def forward(self, mlp_inp, cnn_inp, prev_cnn_feature, mask_cnn=None):
@@ -199,7 +289,7 @@ class PPOPolicy(TensorDictModuleBase):
         
         actor_module = TensorDictSequential(
             Mod(
-                MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=conv3d),
+                MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=conv3d, use_sparse_2d=self.cfg.use_sparse_2d),
                 actor_in_keys,
                 actor_out_keys
             ),
@@ -216,7 +306,7 @@ class PPOPolicy(TensorDictModuleBase):
             critic_module = TensorDictSequential(
                 CatTensors([OBS_KEY, OBS_PRIV_KEY], "critic_input", del_keys=False),
                 Mod(
-                    MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=conv3d),
+                    MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=conv3d, use_sparse_2d=self.cfg.use_sparse_2d),
                     critic_in_keys,
                     critic_out_keys
                 ),
@@ -225,7 +315,7 @@ class PPOPolicy(TensorDictModuleBase):
         else:
             critic_module = TensorDictSequential(
                 Mod(
-                    MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=conv3d),
+                    MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=conv3d, use_sparse_2d=self.cfg.use_sparse_2d),
                     critic_in_keys,
                     critic_out_keys
                 ),

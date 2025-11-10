@@ -79,6 +79,8 @@ class PPOConfig:
 
     checkpoint_path: Union[str, None] = None
     in_keys: Tuple[str] = (OBS_KEY, "height_scan", "grid_map_", "base_height", "base_height_targ")
+    # 是否使用稀疏3D卷积；False 时使用简单的密集 Conv3d（核为 1x3x3，stride=1x2x2，padding=0x1x1）
+    use_sparse_3d: bool = True
 
 cs = ConfigStore.instance()
 cs.store("ppo_hussar_spconv3d", node=PPOConfig, group="algo")
@@ -87,14 +89,13 @@ cs.store("ppo_hussar_spconv3d", node=PPOConfig, group="algo")
 class Spconv3DBackbone(nn.Module):
     def __init__(self):
         super().__init__()
-        # 与 2D CNN 参数/层数对齐：3 层卷积、每层 8 通道、3x3 核，仅在 H/W 下采样
-        # 用 3D 核 (1,3,3)、步幅 (1,2,2)、填充 (0,1,1)，避免跨深度维卷积，参数量与 2D 3x3 相当
+        # 使用完整 3D 卷积：3 层 (3,3,3) 核；在 H/W 下采样、Z 维参与卷积混合（stride_z=1）
         self.net = spconv.SparseSequential(
-            spconv.SparseConv3d(1, 8, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1)),
+            spconv.SparseConv3d(1, 8, kernel_size=(3, 3, 3), stride=(2, 2, 2), padding=(1, 1, 1)),
             nn.Mish(),
-            spconv.SparseConv3d(8, 8, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1)),
+            spconv.SparseConv3d(8, 8, kernel_size=(3, 3, 3), stride=(2, 2, 2), padding=(1, 1, 1)),
             nn.Mish(),
-            spconv.SparseConv3d(8, 8, kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1)),
+            spconv.SparseConv3d(8, 8, kernel_size=(3, 3, 3), stride=(2, 2, 2), padding=(1, 1, 1)),
             nn.Mish(),
             spconv.ToDense()  # -> [B, 8, D, H', W']
         )
@@ -131,19 +132,57 @@ class Spconv3DBackbone(nn.Module):
             D3 = D_in
             # 最后一层通道为 8（见 self.net 定义）
             y = torch.zeros(Bf, 8, D3, H3, W3, device=x_5d.device, dtype=x_5d.dtype)
-            y = torch.flatten(y, 1)
+            # 基线：深度维做平均池化以匹配 2D CNN 的特征尺寸
+            y = y.mean(dim=2)  # [Bf, 8, H3, W3]
+            y = torch.flatten(y, 1)  # [Bf, 8*H3*W3]
         else:
             y = self.net(sp_x)  # 稠密输出 [B_flat, C, D, H, W]
-            y = torch.flatten(y, 1)  # [B_flat, F]
+            # 基线：深度维做平均池化以匹配 2D CNN 的特征尺寸
+            y = y.mean(dim=2)  # [B_flat, C, H, W]
+            y = torch.flatten(y, 1)  # [B_flat, C*H*W]
         if batch_shape is not None:
             y = y.unflatten(0, batch_shape)  # [..., F]
         return y
 
 
+class DenseConv3DBackbone(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # 简单 3D Conv：核 (1,3,3)，只在 XY 下采样，Z 不下采样；与 2D 行为对齐
+        self.net = nn.Sequential(
+            nn.Conv3d(1, 8, kernel_size=(3, 3, 3), stride=(2, 2, 2), padding=(0, 1, 1), bias=True),
+            nn.Mish(),
+            nn.Conv3d(8, 8, kernel_size=(3, 3, 3), stride=(2, 2, 2), padding=(0, 1, 1), bias=True),
+            nn.Mish(),
+            nn.Conv3d(8, 8, kernel_size=(3, 3, 3), stride=(2, 2, 2), padding=(0, 1, 1), bias=True),
+            nn.Mish(),
+        )
+
+    def forward(self, x):
+        # 仅支持稠密张量输入；自动处理任意批维，并将 4D 输入补为 5D
+        assert x.dim() >= 4, "CNN input must be at least 4D ([..., C, H, W])."
+        if x.dim() == 4:
+            x = x.unsqueeze(1)  # [..., 1, D, H, W]
+        batch_ndims = x.dim() - 5
+        if batch_ndims > 0:
+            batch_shape = x.shape[:batch_ndims]
+            x_5d = x.flatten(0, batch_ndims - 1)
+        else:
+            batch_shape = None
+            x_5d = x
+        y = self.net(x_5d)  # [B_flat, 8, D, H', W']
+        y = y.mean(dim=2)   # 深度均值以匹配 2D 的特征尺寸 → [B_flat, 8, H', W']
+        y = torch.flatten(y, 1)
+        if batch_shape is not None:
+            y = y.unflatten(0, batch_shape)
+        return y
+
+
 class MixedEncoder(nn.Module):
-    def __init__(self, cnn_history: bool=False, conv3d: bool=False):
+    def __init__(self, cnn_history: bool=False, conv3d: bool=False, use_sparse_3d: bool=True):
         super().__init__()
         self.cnn_history = cnn_history
+        self.use_sparse_3d = use_sparse_3d
         self.mlp_encoder = nn.Sequential(
             nn.LazyLinear(256), nn.Mish(), nn.LayerNorm(256), 
             nn.LazyLinear(256)
@@ -152,7 +191,7 @@ class MixedEncoder(nn.Module):
         if conv3d:
             # 使用稀疏3D卷积骨干（内部自行处理批维展平/还原与 4D->5D 补维）
             self.cnn_encoder = nn.Sequential(
-                Spconv3DBackbone(),
+                Spconv3DBackbone() if self.use_sparse_3d else DenseConv3DBackbone(),
                 nn.LazyLinear(64),
                 nn.Mish(),
                 nn.LayerNorm(64),
@@ -263,7 +302,7 @@ class PPOPolicy(TensorDictModuleBase):
         
         actor_module = TensorDictSequential(
             Mod(
-                MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=self.conv3d),
+                MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=self.conv3d, use_sparse_3d=self.cfg.use_sparse_3d),
                 actor_in_keys,
                 actor_out_keys
             ),
@@ -280,7 +319,7 @@ class PPOPolicy(TensorDictModuleBase):
             critic_module = TensorDictSequential(
                 CatTensors([OBS_KEY, OBS_PRIV_KEY], "critic_input", del_keys=False),
                 Mod(
-                    MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=self.conv3d),
+                    MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=self.conv3d, use_sparse_3d=self.cfg.use_sparse_3d),
                     critic_in_keys,
                     critic_out_keys
                 ),
@@ -289,7 +328,7 @@ class PPOPolicy(TensorDictModuleBase):
         else:
             critic_module = TensorDictSequential(
                 Mod(
-                    MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=self.conv3d),
+                    MixedEncoder(cnn_history=self.cfg.cnn_history, conv3d=self.conv3d, use_sparse_3d=self.cfg.use_sparse_3d),
                     critic_in_keys,
                     critic_out_keys
                 ),
