@@ -79,7 +79,6 @@ class PPOConfig:
 
     checkpoint_path: Union[str, None] = None
     in_keys: Tuple[str] = (OBS_KEY, "height_scan", "grid_map_", "base_height", "base_height_targ")
-    # 是否使用稀疏2D CNN 替换当前 2D CNN
     use_sparse_2d: bool = False
 
 cs = ConfigStore.instance()
@@ -91,7 +90,7 @@ class Spconv2DBackbone(nn.Module):
         super().__init__()
         self.net = None  # 延迟构建以适配动态输入通道数
 
-    def _build(self, in_channels: int):
+    def _build(self, in_channels: int, device: torch.device, dtype: torch.dtype):
         self.net = spconv.SparseSequential(
             spconv.SparseConv2d(in_channels, 8, kernel_size=3, stride=2, padding=1),
             nn.Mish(),
@@ -100,7 +99,7 @@ class Spconv2DBackbone(nn.Module):
             spconv.SparseConv2d(8, 8, kernel_size=3, stride=2, padding=1),
             nn.Mish(),
             spconv.ToDense()
-        )
+        ).to(device=device, dtype=dtype)
 
     def forward(self, x: torch.Tensor):
         # 支持任意批维；期望稠密 NCHW 输入
@@ -115,7 +114,16 @@ class Spconv2DBackbone(nn.Module):
 
         in_channels = x_4d.shape[1]
         if self.net is None:
-            self._build(in_channels)
+            self._build(in_channels, x_4d.device, x_4d.dtype)
+        else:
+            # 确保延迟构建的模块与输入设备/精度一致
+            if next(self.net.parameters(), torch.zeros(0, device=x_4d.device)).device != x_4d.device:
+                self.net = self.net.to(x_4d.device)
+            # 若需要切换 dtype（很少见），也做对齐
+            try:
+                self.net = self.net.to(dtype=x_4d.dtype)
+            except Exception:
+                pass
 
         # NCHW -> NHWC 以适配 from_dense
         x_nhwc = x_4d.permute(0, 2, 3, 1).contiguous()

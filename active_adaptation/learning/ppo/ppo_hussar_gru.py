@@ -57,8 +57,8 @@ from active_adaptation.utils.torchrl import EnsembleCritic
 
 @dataclass
 class PPOConfig:
-    _target_: str = "active_adaptation.learning.ppo.ppo_hussar.PPOPolicy"
-    name: str = "ppo_hussar"
+    _target_: str = "active_adaptation.learning.ppo.ppo_hussar_gru.PPOPolicy"
+    name: str = "ppo_hussar_gru"
     train_every: int = 48
     ppo_epochs: int = 4
     num_minibatches: int = 8
@@ -80,7 +80,7 @@ class PPOConfig:
     in_keys: Tuple[str] = (OBS_KEY, "height_scan", "grid_map_", "base_height", "base_height_targ")
 
 cs = ConfigStore.instance()
-cs.store("ppo_hussar", node=PPOConfig, group="algo")
+cs.store("ppo_hussar_gru", node=PPOConfig, group="algo")
 
 
 class MixedEncoder(nn.Module):
