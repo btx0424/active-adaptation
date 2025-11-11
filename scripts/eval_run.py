@@ -118,6 +118,13 @@ def main():
             cfg["eval_render"] = True
             cfg["app"]["enable_cameras"] = True
             cfg["app"]["headless"] = True
+        cfg["task"]["num_envs"] = 1000
+        cfg.task.randomization.reset_joint_states_uniform.pos_ranges[".*"][0] = 0.0
+        cfg.task.randomization.reset_joint_states_uniform.pos_ranges[".*"][1] = 0.0
+        
+        if "grid_map_" in cfg["task"]["observation"].keys():
+            cfg["task"]["observation"]["grid_map_"]["lidar_voxel_map"]["include_self"] = True
+        
         eval(cfg)
 
 

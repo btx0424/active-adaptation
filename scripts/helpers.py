@@ -221,7 +221,10 @@ def evaluate(
     tensordict_ = env.reset()
     trajs = []
     frames = []
-
+    for item in range(100):
+        tensordict_ = policy(tensordict_)
+        tensordict, tensordict_ = env.step_and_maybe_reset(tensordict_)
+    tensordict_ = env.reset()
     inference_time = []
     torch.compiler.cudagraph_mark_step_begin()
     with set_exploration_type(exploration_type):

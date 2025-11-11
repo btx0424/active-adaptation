@@ -56,6 +56,8 @@ def main(cfg):
     info["checkpoint_path"] = cfg.checkpoint_path
     info["argv"] = sys.argv
     print(OmegaConf.to_yaml(info))
+    print("E_{collision}", info['eval/loco/penalize_contact_torso'])
+    print("E_{success}", info['eval/success'])
     
     time_str = datetime.datetime.now().strftime("%m-%d_%H-%M")
     dir_path = os.path.join(os.path.dirname(__file__), f"eval", cfg.task.name)
