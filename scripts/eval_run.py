@@ -104,7 +104,7 @@ def main():
     assert not (args.play and args.play_mujoco), "Cannot play and play_mujoco at the same time"
     if args.play:
         cfg["app"]["headless"] = False
-        cfg["task"]["num_envs"] = 64
+        cfg["task"]["num_envs"] = 1
         cfg["export_policy"] = args.export
         play(cfg)
     elif args.play_mujoco:

@@ -83,6 +83,7 @@ class height_scan(Observation):
     
     def debug_draw(self):
         if self.env.backend == "isaac":
+            return
             pos = self.asset.data.root_pos_w.reshape(self.num_envs, 1, 1, 3) + self.offset
             pos[:, :, :, 2] = self.height_map_w
             self.marker.visualize(pos.reshape(-1, 3))
