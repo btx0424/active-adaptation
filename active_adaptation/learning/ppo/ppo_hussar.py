@@ -54,7 +54,7 @@ import active_adaptation
 import torch.distributed as distr
 from torch.nn.parallel import DistributedDataParallel as DDP
 from active_adaptation.utils.torchrl import EnsembleCritic
-import spconv.pytorch as spconv
+# import spconv.pytorch as spconv
 
 @dataclass
 class PPOConfig:
