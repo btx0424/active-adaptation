@@ -95,6 +95,19 @@ class ScopedTimer(_DecoratorContextManager):
             root.print_recursive(root, 0, clear=clear, max_depth=depth, total_time=total_time)
 
         print("=" * 70 + "\n")
+        if clear:
+            ScopedTimer.clear()
+
+    @staticmethod
+    def clear():
+        """Clear timing values and hierarchy so timer names can be reused elsewhere."""
+        for timer in ScopedTimer._instances.values():
+            timer.time = 0.0
+            timer.count = 0
+            timer.children.clear()
+            timer.parent = None
+        ScopedTimer._root_nodes.clear()
+        ScopedTimer._stack.clear()
 
     def print_recursive(self, node: "ScopedTimer", depth: int = 0, clear: bool = True, max_depth: int = -1, total_time: float = 0.0):
         """Recursively print timer nodes in DFS order."""
@@ -112,4 +125,3 @@ class ScopedTimer(_DecoratorContextManager):
 
         for child in node.children:
             self.print_recursive(child, depth + 1, clear=clear, max_depth=max_depth, total_time=total_time)
-
